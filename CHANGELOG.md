@@ -15,6 +15,16 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Interrupted, duplicated, stale, or concurrent work no longer makes Kria claim an edit or render succeeded without evidence.** Durable receipts, exact-generation checks, bounded retries, and operator recovery preserve the creator's work and explain what can safely happen next.
 
+## [0.68.0.0] — 2026-09-07
+
+### Added
+- **Personalization gives every creator one editable source of truth.** The new `/plan/profile` page presents creator background, visual style, storytelling preferences, and things to avoid as one spacious text document, with inline suggestions, project sources, pause/clear controls, and ten-minute Undo.
+- **Kria learns durable instructions from normal project conversations.** Explicit “always”, “never”, and “from now on” guidance activates automatically with a visible receipt; softer patterns remain suggestions until the creator accepts them. Project-only overrides stay scoped to their project.
+
+### Changed
+- **Every planning and rendering path receives an immutable creator-direction snapshot.** Content planning, generative edits, classic templates, music edits, captions, custom effects, retries, and reburns now reuse generation-bound direction, including enforceable font and shadow controls.
+- **Creator direction stays private by construction.** Raw instructions are excluded from public job payloads, operational logs, agent traces, and admin diagnostics; owner-scoped CAS, idempotency, outbox recovery, and additive PostgreSQL storage protect mutations and automatic learning.
+
 ## [0.67.1.0] — 2026-09-07
 
 ### Fixed

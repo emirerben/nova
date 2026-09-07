@@ -96,6 +96,17 @@ def test_creation_thread_relationships_are_owner_scoped() -> None:
     assert models.User.creation_threads.property.back_populates == "creator"
 
 
+def test_creator_memory_outbox_source_event_is_nullable_on_event_delete() -> None:
+    column = models.Base.metadata.tables["creator_memory_outbox"].c.source_event_id
+    foreign_key = next(iter(column.foreign_keys))
+    assert foreign_key.ondelete == "SET NULL"
+
+    migration = Path(__file__).parents[1] / "app/migrations/versions"
+    migration /= "0096_creator_memory_foundation.py"
+    source = migration.read_text()
+    assert 'sa.ForeignKey("creation_thread_events.id", ondelete="SET NULL")' in source
+
+
 def test_creation_thread_migration_downgrade_refuses_nonempty_lifecycle_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

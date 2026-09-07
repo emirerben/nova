@@ -32,9 +32,9 @@ def test_runtime_version_is_additive_and_database_immutable() -> None:
     assert "ck_creation_threads_runtime_version" in _constraint_names("creation_threads")
 
     migration = (
-        Path(__file__).parents[1] / "app/migrations/versions/0096_kria_runtime_v2_persistence.py"
+        Path(__file__).parents[1] / "app/migrations/versions/0097_kria_runtime_v2_persistence.py"
     ).read_text()
-    assert 'down_revision = "0095"' in migration
+    assert 'down_revision = "0096"' in migration
     assert "creation_thread_runtime_version_immutable" in migration
     assert "BEFORE UPDATE OF runtime_version" in migration
     assert "runtime_version IS DISTINCT FROM OLD.runtime_version" in migration
@@ -213,9 +213,9 @@ def test_execution_schema_preserves_v1_and_distinguishes_v2_outcomes() -> None:
 def test_existing_table_indexes_are_built_concurrently_in_followup_migration() -> None:
     migration = (
         Path(__file__).parents[1]
-        / "app/migrations/versions/0097_kria_runtime_v2_concurrent_indexes.py"
+        / "app/migrations/versions/0098_kria_runtime_v2_concurrent_indexes.py"
     ).read_text()
-    assert 'down_revision = "0096"' in migration
+    assert 'down_revision = "0097"' in migration
     assert migration.count("CREATE INDEX CONCURRENTLY") == 4
     assert migration.count("CREATE UNIQUE INDEX CONCURRENTLY") == 1
     assert "DROP INDEX CONCURRENTLY IF EXISTS" in migration
@@ -236,7 +236,7 @@ def test_existing_table_indexes_are_built_concurrently_in_followup_migration() -
 def test_migration_refuses_destructive_downgrade_with_v2_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    migration = importlib.import_module("app.migrations.versions.0096_kria_runtime_v2_persistence")
+    migration = importlib.import_module("app.migrations.versions.0097_kria_runtime_v2_persistence")
     statements: list[str] = []
 
     class Bind:

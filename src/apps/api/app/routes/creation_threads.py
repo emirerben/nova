@@ -41,6 +41,7 @@ from app.models import (
     CreatorAgentEvent,
     CreatorAgentExecution,
     CreatorAgentSession,
+    CreatorMemoryOperation,
     EditArtifact,
     Job,
     JobClip,
@@ -66,6 +67,7 @@ from app.routes.plan_items import (
     _OVERLAY_ALLOWED_CONTENT_TYPES,
     _pool_asset_counts_toward_capacity,
 )
+from app.services.creator_direction_receipts import project_direction_receipt
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
@@ -411,6 +413,7 @@ class CreationThreadOut(BaseModel):
     creator_agent: dict[str, Any] | None = None
     job: dict[str, Any] | None = None
     media_capabilities: dict[str, Any] | None = None
+    direction_receipt: dict[str, Any] | None = None
     speech_cleanup: dict[str, Any] | None = None
     events: list[EventOut]
     created_at: datetime
@@ -1033,12 +1036,20 @@ async def _project(db: AsyncSession, user: CurrentUser) -> tuple[ContentPlan, Pl
         )
     ).scalar_one_or_none()
     if plan is None:
+        from app.services.creator_direction_snapshot import (  # noqa: PLC0415
+            resolve_snapshot_for_dispatch,
+            serialize_private_snapshot,
+        )
+
         plan = ContentPlan(
             user_id=user.id,
             persona_id=persona.id,
             plan_status="edited",
             horizon_days=30,
             ownership_epoch=0,
+            creator_direction_snapshot=serialize_private_snapshot(
+                await resolve_snapshot_for_dispatch(db, user.id), source="chat_plan"
+            ),
         )
         db.add(plan)
         await db.flush()
@@ -1218,8 +1229,17 @@ async def _append(
         content=content,
         payload=payload,
     )
+    # Populate the relationship so transactional creator-memory admission can
+    # use the owning creator without a second lookup. The event and outbox row
+    # commit together with the thread mutation.
+    if hasattr(thread, "_sa_instance_state"):
+        event.thread = thread
     db.add(event)
     await db.flush()
+    if hasattr(thread, "_sa_instance_state"):
+        from app.services.creator_memory_learning import enqueue_memory_extraction  # noqa: PLC0415
+
+        await enqueue_memory_extraction(db, event)
     return event
 
 
@@ -1957,6 +1977,50 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
             clip_count=len(item.clip_gcs_paths or []),
             visual_count=visual_count,
         )
+    public_state = dict(thread.state or {})
+    # Older rollout builds briefly placed a redacted direction snapshot in the
+    # public state projection. Remove it defensively while migrating to the
+    # private JSONB column.
+    public_state.pop("_creator_direction_snapshot_v1", None)
+    private_direction = (
+        thread.creator_direction_snapshot
+        if isinstance(getattr(thread, "creator_direction_snapshot", None), dict)
+        else None
+    )
+    direction_receipt = None
+    if private_direction is not None:
+        direction_receipt = project_direction_receipt(private_direction)
+    event_rows = await _event_rows(db, thread.id)
+    undone_operations: dict[str, datetime] = {}
+    if isinstance(db, AsyncSession):
+        operation_ids: list[uuid.UUID] = []
+        for event in event_rows:
+            payload = event.payload if isinstance(event.payload, dict) else None
+            if event.event_type != "memory_updated" or not payload:
+                continue
+            try:
+                operation_ids.append(uuid.UUID(str(payload.get("operation_id"))))
+            except (TypeError, ValueError):
+                continue
+        if operation_ids:
+            undone_operations = {
+                str(operation_id): undone_at
+                for operation_id, undone_at in (
+                    await db.execute(
+                        select(
+                            CreatorMemoryOperation.id,
+                            CreatorMemoryOperation.undone_at,
+                        ).where(
+                            CreatorMemoryOperation.user_id == thread.creator_id,
+                            CreatorMemoryOperation.id.in_(operation_ids),
+                            CreatorMemoryOperation.undone_at.is_not(None),
+                        )
+                    )
+                ).all()
+                if undone_at is not None
+            }
+
+    if isinstance(db, AsyncSession) and item is not None:
         active_job_plan = (
             job.assembly_plan if job is not None and isinstance(job.assembly_plan, dict) else {}
         )
@@ -2010,7 +2074,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         title=getattr(thread, "title", None) or _DEFAULT_TITLE,
         status=thread.status,
         revision=thread.revision,
-        state=dict(thread.state or {}),
+        state=public_state,
         content_plan_id=str(thread.content_plan_id) if thread.content_plan_id else None,
         active_plan_item_id=str(thread.active_plan_item_id) if thread.active_plan_item_id else None,
         active_creator_agent_session_id=str(thread.active_creator_agent_session_id)
@@ -2020,6 +2084,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         creator_agent=_creator_agent_projection(session),
         job=_job_projection(job),
         media_capabilities=media_capabilities,
+        direction_receipt=direction_receipt,
         speech_cleanup=speech_cleanup,
         events=[
             EventOut(
@@ -2029,10 +2094,23 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 role=event.role,
                 event_type=event.event_type,
                 content=event.content,
-                payload=event.payload if isinstance(event.payload, dict) else None,
+                payload=(
+                    {
+                        **event.payload,
+                        "undone": True,
+                        "undone_at": undone_operations[
+                            str(event.payload.get("operation_id"))
+                        ].isoformat(),
+                    }
+                    if isinstance(event.payload, dict)
+                    and str(event.payload.get("operation_id")) in undone_operations
+                    else event.payload
+                    if isinstance(event.payload, dict)
+                    else None
+                ),
                 created_at=event.created_at,
             )
-            for event in await _event_rows(db, thread.id)
+            for event in event_rows
         ],
         created_at=thread.created_at,
         updated_at=thread.updated_at,
@@ -2210,6 +2288,12 @@ async def create_thread(
             **({"title_source": "first_prompt"} if body.message else {}),
         },
     )
+    from app.services.creator_direction_receipts import stamp_private_receipt  # noqa: PLC0415
+    from app.services.creator_direction_snapshot import (  # noqa: PLC0415
+        resolve_snapshot_for_dispatch,
+        serialize_private_snapshot,
+    )
+
     db.add(thread)
     await db.flush()
     if body.runtime_version == 2:
@@ -2220,6 +2304,11 @@ async def create_thread(
         db.add(session)
         await db.flush()
         thread.active_creator_agent_session_id = session.id
+    resolved_direction = await resolve_snapshot_for_dispatch(db, user.id, thread_id=thread.id)
+    thread.creator_direction_snapshot = stamp_private_receipt(
+        serialize_private_snapshot(resolved_direction, source="creation_thread"),
+        resolved_direction,
+    )
     await _append(
         db,
         thread,

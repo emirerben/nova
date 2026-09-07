@@ -28,6 +28,7 @@ Optional overrides:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from abc import ABC, abstractmethod
@@ -48,6 +49,28 @@ log = structlog.get_logger()
 # code in app/routes/admin_jobs.py — keep this set as the single source of
 # truth so adding a new success outcome doesn't silently miscount.
 SUCCESS_OUTCOMES: frozenset[str] = frozenset({"ok", "ok_fallback"})
+_SENSITIVE_INPUT_KEYS = frozenset({"creator_direction", "creator_direction_prompt"})
+
+
+def _project_sensitive_input(value: Any) -> Any:
+    """Redact prompt-bearing personalization before logs/admin/Langfuse."""
+
+    if isinstance(value, dict):
+        projected: dict[str, Any] = {}
+        for key, item in value.items():
+            if str(key) in _SENSITIVE_INPUT_KEYS:
+                text = str(item or "")
+                projected[str(key)] = {
+                    "redacted": True,
+                    "chars": len(text),
+                    "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                }
+            else:
+                projected[str(key)] = _project_sensitive_input(item)
+        return projected
+    if isinstance(value, list):
+        return [_project_sensitive_input(item) for item in value]
+    return value
 
 
 # ── Errors ────────────────────────────────────────────────────────────────────
@@ -120,6 +143,10 @@ class AgentSpec:
     # avoid masking genuine refusals on agents whose downstream consumers
     # need terminal_refusal to fire.
     enable_json_repair: bool = False
+    # Sensitive agents handle creator-authored private text. Their raw model
+    # response must never enter AgentRun, Langfuse, or error-preview logs.
+    # Input/output projections still provide safe ids, counts, and statuses.
+    sensitive_io: bool = False
 
 
 @dataclass(slots=True)
@@ -268,16 +295,47 @@ class Agent(ABC, Generic[InputT, OutputT]):
             f"{type(self).__name__}.compute() must be overridden when spec.model='rule_based'"
         )
 
+    def project_input_for_observability(
+        self, input_dict: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Return safe input JSON for logs, admin persistence, and Langfuse."""
+
+        projected = _project_sensitive_input(input_dict)
+        return projected if isinstance(projected, dict) else None
+
+    def project_output_for_observability(
+        self, output_dict: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Return the output projection persisted to logs and traces."""
+
+        if self.spec.sensitive_io and output_dict is not None:
+            encoded = json.dumps(output_dict, sort_keys=True, separators=(",", ":"), default=str)
+            return {
+                "redacted": True,
+                "keys": sorted(str(key) for key in output_dict),
+                "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            }
+        return output_dict
+
     # ── Public entry point ────────────────────────────────────────
 
     def run(self, input: InputT | dict, *, ctx: RunContext | None = None) -> OutputT:  # noqa: A002
         ctx = ctx or RunContext()
-        validated_input = self._validate_input(input)
+        try:
+            validated_input = self._validate_input(input)
+        except Exception as exc:
+            # Pydantic's validation text can include the creator's private
+            # instruction. Keep the sensitive-agent boundary private even
+            # before a provider call is attempted.
+            if self.spec.sensitive_io:
+                raise TerminalError(f"{self.spec.name}: invalid input") from exc
+            raise
         start = time.monotonic()
 
         input_dump = (
             validated_input.model_dump() if hasattr(validated_input, "model_dump") else None
         )
+        input_dump = self.project_input_for_observability(input_dump)
 
         # Rule-based bypass: no model client, no retries, no fallbacks
         if self.spec.model == "rule_based":
@@ -294,7 +352,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=str(exc),
                     input_dict=input_dump,
                 )
-                raise TerminalError(f"{self.spec.name}: rule_based compute failed — {exc}") from exc
+                raise TerminalError(
+                    self._terminal_message("rule_based compute failed", exc)
+                ) from exc
             self._log_outcome(
                 outcome="ok",
                 model="rule_based",
@@ -303,7 +363,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 latency_ms=int((time.monotonic() - start) * 1000),
                 ctx=ctx,
                 input_dict=input_dump,
-                output_dict=output.model_dump() if hasattr(output, "model_dump") else None,
+                output_dict=self.project_output_for_observability(
+                    output.model_dump() if hasattr(output, "model_dump") else None
+                ),
             )
             return output
 
@@ -326,7 +388,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     latency_ms=int((time.monotonic() - start) * 1000),
                     ctx=ctx,
                     input_dict=input_dump,
-                    output_dict=output.model_dump() if hasattr(output, "model_dump") else None,
+                    output_dict=self.project_output_for_observability(
+                        output.model_dump() if hasattr(output, "model_dump") else None
+                    ),
                 )
                 return output
             except RefusalError as exc:
@@ -341,7 +405,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=str(exc),
                     input_dict=input_dump,
                 )
-                raise TerminalError(f"{self.spec.name}: refusal — {exc}") from exc
+                raise TerminalError(self._terminal_message("refusal", exc)) from exc
             except SchemaError as exc:
                 # Schema retries already exhausted — same model can't fix it; fallback won't either.
                 self._log_outcome(
@@ -354,7 +418,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=str(exc),
                     input_dict=input_dump,
                 )
-                raise TerminalError(f"{self.spec.name}: schema — {exc}") from exc
+                raise TerminalError(self._terminal_message("schema", exc)) from exc
             except TransientError as exc:
                 last_exc = exc
                 # Try the next model in the fallback chain.
@@ -374,6 +438,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=str(exc),
                     input_dict=input_dump,
                 )
+                if self.spec.sensitive_io:
+                    raise TerminalError(self._terminal_message("terminal failure")) from exc
                 raise
 
         # All models exhausted on TransientError.
@@ -384,7 +450,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
             fallback_used=len(models_to_try) > 1,
             latency_ms=int((time.monotonic() - start) * 1000),
             ctx=ctx,
-            error=str(last_exc) if last_exc else "exhausted",
+            error=self._safe_error(last_exc) if last_exc else "exhausted",
             input_dict=input_dump,
         )
         raise TerminalError(
@@ -433,7 +499,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     attempt=attempt + 1,
                     of=self.spec.max_attempts,
                     backoff_s=backoff,
-                    error=str(exc),
+                    error=self._safe_error(exc),
                     job_id=ctx.job_id,
                 )
                 time.sleep(backoff)
@@ -441,7 +507,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
             except TerminalError:
                 raise
             except Exception as exc:  # SDK leaks something we didn't classify
-                raise TerminalError(f"{self.spec.name}: unclassified — {exc}") from exc
+                raise TerminalError(self._terminal_message("unclassified", exc)) from exc
 
             stats.tokens_in += inv.tokens_in
             stats.tokens_out += inv.tokens_out
@@ -451,11 +517,11 @@ class Agent(ABC, Generic[InputT, OutputT]):
             # or `self.parse` raises below, `_log_outcome` can thread it into
             # the Langfuse trace. Without this, refusal traces look like
             # `output: None` and the diagnostic signal is lost.
-            stats.last_raw_text = (inv.raw_text or "")[:500]
+            stats.last_raw_text = None if self.spec.sensitive_io else (inv.raw_text or "")[:500]
             # Full text (untruncated) for the admin debug-view persistence
             # layer. Truncation happens in `_persistence.persist_agent_run`
             # at a much higher cap (100KB) than the Langfuse preview.
-            stats.last_full_raw_text = inv.raw_text or ""
+            stats.last_full_raw_text = None if self.spec.sensitive_io else inv.raw_text or ""
 
             # Refusal check (safety + required fields)
             try:
@@ -505,6 +571,21 @@ class Agent(ABC, Generic[InputT, OutputT]):
         raise TerminalError(f"{self.spec.name}: max_attempts exhausted on {model}")
 
     # ── Helpers ───────────────────────────────────────────────────
+
+    def _safe_error(self, exc: BaseException | None) -> str | None:
+        """Return a diagnostic error without exposing sensitive model text."""
+
+        if exc is None:
+            return None
+        if self.spec.sensitive_io:
+            return "sensitive_agent_error"
+        return str(exc)
+
+    def _terminal_message(self, category: str, exc: BaseException | None = None) -> str:
+        if self.spec.sensitive_io:
+            return f"{self.spec.name}: {category}"
+        suffix = f" — {exc}" if exc is not None else ""
+        return f"{self.spec.name}: {category}{suffix}"
 
     def _validate_input(self, input: InputT | dict) -> InputT:  # noqa: A002
         if isinstance(input, self.Input):
@@ -613,7 +694,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
         log.warning(
             "agent_json_repair_applied",
             agent=self.spec.name,
-            error=str(original_error)[:200],
+            error=self._safe_error(original_error),
             job_id=ctx.job_id if ctx else None,
             segment_idx=ctx.segment_idx if ctx else None,
         )
@@ -632,6 +713,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
         input_dict: dict[str, Any] | None = None,
         output_dict: dict[str, Any] | None = None,
     ) -> None:
+        if self.spec.sensitive_io and error is not None:
+            error = "sensitive_agent_error"
         cost_usd = (stats.tokens_in / 1000.0) * self.spec.cost_per_1k_input_usd + (
             stats.tokens_out / 1000.0
         ) * self.spec.cost_per_1k_output_usd

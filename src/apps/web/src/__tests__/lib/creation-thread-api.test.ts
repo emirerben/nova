@@ -1,5 +1,6 @@
 import {
   applyCreationAction,
+  creationDirectionReceiptLabel,
   creationFormat,
   creationClipLimit,
   creationJobFailed,
@@ -844,5 +845,21 @@ describe("creation thread projection", () => {
     ] }));
     expect(projected.map((item) => item.id)).toEqual(["direction", "upload-prompt", "follow-up"]);
     expect(projected.filter((item) => item.artifact === "upload")).toHaveLength(1);
+  });
+
+  it("summarizes the redacted personalization receipt without instruction text", () => {
+    const label = creationDirectionReceiptLabel(thread({
+      direction_receipt: {
+        enabled: true,
+        applied_count: 3,
+        enforced_count: 2,
+        advisory_count: 1,
+        unsupported_count: 0,
+        conflicted_count: 0,
+      },
+    }));
+
+    expect(label).toBe("Personalization · 3 applied (2 enforced, 1 advisory)");
+    expect(creationDirectionReceiptLabel(thread())).toBeNull();
   });
 });

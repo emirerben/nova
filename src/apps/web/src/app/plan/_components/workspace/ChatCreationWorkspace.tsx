@@ -9,6 +9,11 @@ import {
   PanelLeftOpen, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import {
+  CREATOR_MEMORY_ENABLED,
+  MemoryApiError,
+  undoCreatorMemoryOperation,
+} from "@/lib/memory-api";
 import { Button } from "@/components/ui/button";
 import { Dropzone } from "@/components/ui/dropzone";
 import {
@@ -46,9 +51,12 @@ import {
   isCreationThreadRevisionConflict,
   creationVariantPlayable, latestCreationDirection,
   renameCreationThread, sendKriaTurn, undoKriaDraft,
+  creationDirectionReceiptLabel,
   type CreationFormat, type CreationSpeechCleanupChoice, type CreationThread,
+  type CreationThreadEvent,
 } from "@/lib/creation-thread-api";
 import { cn } from "@/lib/cn";
+import CreatorDirectionReceipt from "@/app/plan/_components/CreatorDirectionReceipt";
 import { listMyJobs, type LibraryJob } from "@/lib/me-api";
 import { getPlanItemFresh, type PlanItem } from "@/lib/plan-api";
 import LibraryTile from "@/components/library/LibraryTile";
@@ -173,6 +181,68 @@ function failedVariant(thread: CreationThread | null) {
 
 function variantLabel(variantId: string | undefined): string {
   return (variantId ?? "Cut").replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+interface AutomaticMemoryReceipt {
+  operationId: string;
+  memoryRevision: number;
+  undoExpiresAt: string;
+  undone: boolean;
+}
+
+function automaticMemoryReceipt(event: CreationThreadEvent | undefined): AutomaticMemoryReceipt | null {
+  if (!event || !["memory_updated", "creator_memory_receipt"].includes(event.event_type) || !event.payload) return null;
+  const operationId = event.payload.operation_id;
+  const memoryRevision = Number(event.payload.memory_revision);
+  const undoExpiresAt = event.payload.undo_expires_at;
+  if (
+    typeof operationId !== "string"
+    || !operationId
+    || !Number.isInteger(memoryRevision)
+    || memoryRevision < 0
+    || typeof undoExpiresAt !== "string"
+    || !undoExpiresAt
+  ) return null;
+  return { operationId, memoryRevision, undoExpiresAt, undone: event.payload.undone === true };
+}
+
+function AutomaticMemoryReceiptCard({
+  receipt,
+  busy,
+  undone,
+  error,
+  onUndo,
+}: {
+  receipt: AutomaticMemoryReceipt;
+  busy: boolean;
+  undone: boolean;
+  error?: string;
+  onUndo: () => void;
+}) {
+  const expiresAt = Date.parse(receipt.undoExpiresAt);
+  const [expired, setExpired] = useState(() => !Number.isFinite(expiresAt) || expiresAt <= Date.now());
+
+  useEffect(() => {
+    if (expired || !Number.isFinite(expiresAt)) return undefined;
+    const timer = window.setTimeout(() => setExpired(true), Math.max(0, expiresAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [expired, expiresAt]);
+
+  return (
+    <ChatArtifactCard
+      badge={<Badge variant="secondary">Personalization</Badge>}
+      title={undone ? "Automatic update undone" : "Preference updated"}
+      description={undone ? "That automatic update is no longer applied." : "You can undo this automatic update for 10 minutes."}
+    >
+      {!undone && !expired ? (
+        <Button type="button" variant="outline" className="min-h-11 w-full" disabled={busy} onClick={onUndo}>
+          {busy ? "Undoing…" : "Undo (10 minutes)"}
+        </Button>
+      ) : null}
+      {!undone && expired ? <p className="text-sm text-muted-foreground">The 10-minute Undo window has expired.</p> : null}
+      {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
+    </ChatArtifactCard>
+  );
 }
 
 const PRODUCTION_LIBRARY_THREAD_PREFIX = "production-library:";
@@ -412,6 +482,9 @@ export default function ChatCreationWorkspace({
   const [deleteTarget, setDeleteTarget] = useState<CreationThread | null>(null);
   const [projectActionBusy, setProjectActionBusy] = useState(false);
   const [projectActionError, setProjectActionError] = useState<string | null>(null);
+  const [memoryUndoBusy, setMemoryUndoBusy] = useState<string | null>(null);
+  const [undoneMemoryOperations, setUndoneMemoryOperations] = useState<Record<string, boolean>>({});
+  const [memoryUndoErrors, setMemoryUndoErrors] = useState<Record<string, string>>({});
   const [galleryJobs, setGalleryJobs] = useState<LibraryJob[]>([]);
   const [galleryCursor, setGalleryCursor] = useState<string | null>(null);
   const [galleryLoading, setGalleryLoading] = useState(false);
@@ -563,6 +636,32 @@ export default function ChatCreationWorkspace({
     acceptThreadResponse(expectedId, next, requestSequence);
     return next;
   }, [acceptThreadResponse]);
+
+  async function undoAutomaticMemory(receipt: AutomaticMemoryReceipt) {
+    if (productionPreview || !thread || memoryUndoBusy) return;
+    const threadId = thread.id;
+    setMemoryUndoBusy(receipt.operationId);
+    setMemoryUndoErrors((current) => {
+      const next = { ...current };
+      delete next[receipt.operationId];
+      return next;
+    });
+    try {
+      await undoCreatorMemoryOperation(receipt.operationId, receipt.memoryRevision);
+      setUndoneMemoryOperations((current) => ({ ...current, [receipt.operationId]: true }));
+      await requestThreadResponse(threadId, () => refreshCreationThread(threadId));
+    } catch (cause) {
+      const apiError = cause instanceof MemoryApiError ? cause : null;
+      const message = apiError?.code === "undo_expired" || apiError?.status === 410
+        ? "This Undo window has expired."
+        : apiError?.code === "stale_revision"
+          ? "This preference changed after the receipt, so Undo is no longer available."
+          : "I couldn’t undo this preference. Try refreshing the chat.";
+      setMemoryUndoErrors((current) => ({ ...current, [receipt.operationId]: message }));
+    } finally {
+      setMemoryUndoBusy(null);
+    }
+  }
 
   const load = useCallback(async () => {
     if (loadInFlightRef.current) return loadInFlightRef.current;
@@ -1619,7 +1718,7 @@ export default function ChatCreationWorkspace({
       </nav>
       <div className="mt-auto border-t pt-4">
         <p className="truncate text-sm font-medium">{accountName}</p>
-        <div className="mt-2 flex items-center gap-1"><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={openGallery}>My videos</Button><span className="text-muted-foreground">·</span><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={() => void signOut({ callbackUrl: "/" })}>Sign out</Button></div>
+        <div className="mt-2 flex items-center gap-1"><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={openGallery}>My videos</Button>{CREATOR_MEMORY_ENABLED ? <><span className="text-muted-foreground">·</span><Button type="button" variant="ghost" asChild className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8"><Link href="/plan/profile">Personalization</Link></Button></> : null}<span className="text-muted-foreground">·</span><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={() => void signOut({ callbackUrl: "/" })}>Sign out</Button></div>
       </div>
     </aside>
   );
@@ -1718,12 +1817,14 @@ export default function ChatCreationWorkspace({
           <div className="min-w-0">
             <h1 data-testid="project-title" className="truncate font-display text-xl font-medium">{thread ? projectTitle(thread) : "Loading project…"}</h1>
             <p className="truncate text-xs capitalize text-muted-foreground">{headerSubtitle}</p>
+            {CREATOR_MEMORY_ENABLED && creationDirectionReceiptLabel(thread) ? <p className="truncate text-[11px] text-muted-foreground"><Link href="/plan/profile" className="hover:text-foreground">{creationDirectionReceiptLabel(thread)}</Link></p> : null}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
         </div>
       </header>
+      {CREATOR_MEMORY_ENABLED && thread?.direction_receipt ? <div className="px-4 sm:px-6"><CreatorDirectionReceipt receipt={thread.direction_receipt} projectId={thread.id} expectedRevision={thread.direction_receipt.memory_revision} /></div> : null}
       <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="creation-live-announcer">{announcement}</p>
       <p className="sr-only" role="status" aria-atomic="true" data-testid="speech-cleanup-live-announcer">{liveAnnouncement}</p>
       <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="off" tabIndex={0} onScroll={onTranscriptScroll} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
@@ -1749,6 +1850,18 @@ export default function ChatCreationWorkspace({
             {message.artifact === "progress" && thread?.active_job_id && !creationJobFailed(thread) && !speechCleanupOutcomeFailed ? <RenderStatusCard thread={thread} /> : null}
             {message.artifact === "failure" && thread && (speechCleanupOutcomeFailed || ((creationJobFailed(thread) || planningFailed) && (!hasPendingConfirmation || planningFailed))) ? (speechCleanupOutcomeFailed ? cleanupCard : <FailureStatusCard thread={thread} busy={busy} readOnly={productionPreview} planningFailure={planningFailed} onRetry={creationJobFailed(thread) && thread.runtime_version !== 2 ? () => void confirm("retry") : undefined} onAdjust={() => setInput(latestCreationDirection(thread) || "Try a different opening and keep the pacing quick.")} />) : null}
             {message.artifact === "result" && thread && hasReady ? <ReadyStatusCard thread={thread} isPartial={isPartial} selectedReadyVariant={selectedReadyVariant} selectedFailedVariant={selectedFailedVariant} busy={busy} readOnly={productionPreview} onSelectVariant={(id) => void selectVariant(id)} onOpenEditor={() => { setEditorOpen(true); setMobileTab("editor"); }} onRetryVariant={(id) => void confirm("retry", { variant_id: id })} /> : null}
+            {(() => {
+              const receipt = automaticMemoryReceipt(thread?.events.find((event) => event.id === message.id));
+              return receipt ? (
+                <AutomaticMemoryReceiptCard
+                  receipt={receipt}
+                  busy={memoryUndoBusy === receipt.operationId}
+                  undone={receipt.undone || Boolean(undoneMemoryOperations[receipt.operationId])}
+                  error={memoryUndoErrors[receipt.operationId]}
+                  onUndo={() => void undoAutomaticMemory(receipt)}
+                />
+              ) : null;
+            })()}
           </div>;
         })}
         {thinking ? <ChatThinking /> : null}

@@ -1,14 +1,14 @@
 """Build Kria indexes on continuously written tables without blocking writes.
 
-Revision ID: 0097
-Revises: 0096
+Revision ID: 0098
+Revises: 0097
 Create Date: 2026-09-07
 """
 
 from alembic import op
 
-revision = "0097"
-down_revision = "0096"
+revision = "0098"
+down_revision = "0097"
 branch_labels = None
 depends_on = None
 

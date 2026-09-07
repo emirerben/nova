@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.intro_writer import (
+    _creator_direction_block,
     _filming_guide_block,
     _persona_context,
     _preferences_block,
@@ -159,6 +160,8 @@ class SequenceQuoteInput(BaseModel):
     idea: str = ""
     # Feedback-loop rollup (services/feedback_summary). Empty → block omitted.
     preference_summary: str = ""
+    # Immutable account/project direction captured at dispatch.
+    creator_direction: str = ""
     # Deep TikTok analysis summary — injected into the persona context block.
     tiktok_analysis: str = ""
     # Per-item filming guide (shot list) — DATA only, never instructions.
@@ -176,7 +179,7 @@ class SequenceQuoteWriterAgent(Agent[SequenceQuoteInput, SequenceQuoteOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.sequence_quote",
         prompt_id="sequence_quote",
-        prompt_version="1.0.0",
+        prompt_version="1.1.0-creator-direction",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -184,6 +187,9 @@ class SequenceQuoteWriterAgent(Agent[SequenceQuoteInput, SequenceQuoteOutput]):
         # intro_writer (the sibling brand-voice generator): enough headroom for
         # the creative step without the multi-thousand-token default.
         thinking_budget=512,
+        # Standing creator direction is private account data and may be echoed
+        # by the model, so keep raw responses out of traces and diagnostics.
+        sensitive_io=True,
     )
     Input = SequenceQuoteInput
     Output = SequenceQuoteOutput
@@ -202,6 +208,7 @@ class SequenceQuoteWriterAgent(Agent[SequenceQuoteInput, SequenceQuoteOutput]):
             # two brand-voice agents can never drift on sanitization rules.
             persona_context=_persona_context(input),  # type: ignore[arg-type]
             preferences=_preferences_block(input.preference_summary),
+            creator_direction=_creator_direction_block(input.creator_direction),
             filming_guide=_filming_guide_block(input.filming_guide),
             hero_subject=_sanitize_text(c.subject) or "(unknown)",
             hero_hook=_sanitize_text(c.hook_text),

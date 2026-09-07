@@ -26,6 +26,7 @@ import {
   type CreationThread,
 } from "@/lib/creation-thread-api";
 import { listMyJobs, refreshMyJobPosters, type LibraryJob } from "@/lib/me-api";
+import { undoCreatorMemoryOperation } from "@/lib/memory-api";
 import { getPlanItemFresh } from "@/lib/plan-api";
 
 const mockReplace = jest.fn();
@@ -46,6 +47,14 @@ jest.mock("@/lib/creation-thread-api", () => {
 jest.mock("@/lib/me-api", () => {
   const actual = jest.requireActual("@/lib/me-api");
   return { ...actual, listMyJobs: jest.fn(), refreshMyJobPosters: jest.fn() };
+});
+jest.mock("@/lib/memory-api", () => {
+  const actual = jest.requireActual("@/lib/memory-api");
+  return {
+    ...actual,
+    CREATOR_MEMORY_ENABLED: true,
+    undoCreatorMemoryOperation: jest.fn(),
+  };
 });
 jest.mock("@/lib/plan-api", () => {
   const actual = jest.requireActual("@/lib/plan-api");
@@ -136,6 +145,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(listMyJobs).mockReset();
     jest.mocked(refreshMyJobPosters).mockReset();
     jest.mocked(getPlanItemFresh).mockReset();
+    jest.mocked(undoCreatorMemoryOperation).mockReset();
     mockReplace.mockReset();
     mockSearchParams = new URLSearchParams();
     jest.mocked(listCreationThreads).mockResolvedValue([baseThread]);
@@ -170,6 +180,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(listMyJobs).mockResolvedValue({ jobs: [], next_cursor: null });
     jest.mocked(refreshMyJobPosters).mockResolvedValue({ jobs: [] });
     jest.mocked(getPlanItemFresh).mockRejectedValue(new Error("No linked plan item"));
+    jest.mocked(undoCreatorMemoryOperation).mockResolvedValue({ revision: 2 });
     jest.mocked(getCreationCapabilities).mockResolvedValue({
       formats: [
         { id: "montage", edit_format: "montage" },
@@ -2273,6 +2284,42 @@ describe("ChatCreationWorkspace", () => {
     await waitFor(() => expect(refreshCreationThread).toHaveBeenLastCalledWith("thread-2", expect.any(AbortSignal)));
     expect(firstPollSignal?.aborted).toBe(true);
     expect(await screen.findByText("Pick a format")).toBeInTheDocument();
+  });
+
+  it("shows and applies the ten-minute Undo receipt for automatic learning", async () => {
+    const learnedThread = {
+      ...baseThread,
+      revision: 1,
+      events: [
+        ...baseThread.events,
+        {
+          id: "memory-event-1",
+          sequence: 1,
+          revision: 1,
+          role: "assistant" as const,
+          event_type: "memory_updated",
+          content: "Remembered for future videos.",
+          payload: {
+            kind: "creator_memory_receipt",
+            operation_id: "operation-1",
+            memory_revision: 1,
+            undo_expires_at: "2099-01-01T00:00:00Z",
+          },
+          created_at: "2026-01-01T00:00:01Z",
+        },
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([learnedThread]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(learnedThread);
+
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Preference updated")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo (10 minutes)" }));
+    await waitFor(() =>
+      expect(undoCreatorMemoryOperation).toHaveBeenCalledWith("operation-1", 1),
+    );
+    expect(await screen.findByText("Automatic update undone")).toBeInTheDocument();
   });
 
   it.each([

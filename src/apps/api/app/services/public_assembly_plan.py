@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 SPEECH_CLEANUP_INTERNAL_FIELD = "_speech_cleanup_internal"
+CREATOR_DIRECTION_SNAPSHOT_FIELD = "_creator_direction_snapshot_v1"
 
 _PRIVATE_IDENTITY_FIELDS = frozenset({"clip_source_instance_ids", "source_tag"})
 _PRIVATE_IDENTITY_PREFIXES = ("clip_metadata_identity_index_v",)
@@ -155,6 +156,7 @@ def _is_private_key(key: object) -> bool:
         return False
     return (
         key == SPEECH_CLEANUP_INTERNAL_FIELD
+        or key == CREATOR_DIRECTION_SNAPSHOT_FIELD
         or key in _PRIVATE_IDENTITY_FIELDS
         or key in _PRIVATE_SPEECH_CONTROL_FIELDS
         or key.startswith(_PRIVATE_IDENTITY_PREFIXES)

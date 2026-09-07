@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """SQLAlchemy ORM models matching the plan's data model exactly."""
 
 import uuid
@@ -99,6 +100,10 @@ class WaitlistSignup(Base):
 class User(Base):
     __tablename__ = "users"
 
+    __table_args__ = (
+        CheckConstraint("creator_memory_revision >= 0", name="ck_users_creator_memory_revision"),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     name: Mapped[str | None] = mapped_column(Text)
@@ -106,6 +111,14 @@ class User(Base):
     # pending | persona_ready | plan_ready | complete
     onboarding_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    # Account-wide creator direction controls. These intentionally live on the
+    # durable account row rather than Persona, which is resettable.
+    creator_memory_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+    creator_memory_revision: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0"
+    )
 
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
     oauth_tokens: Mapped[list["OAuthToken"]] = relationship(back_populates="user")
@@ -141,6 +154,18 @@ class User(Base):
     )
     creation_threads: Mapped[list["CreationThread"]] = relationship(
         back_populates="creator", cascade="all, delete-orphan"
+    )
+    creator_memory_items: Mapped[list["CreatorMemoryItem"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    creator_memory_operations: Mapped[list["CreatorMemoryOperation"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    creator_memory_outbox: Mapped[list["CreatorMemoryOutbox"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    creator_direction_overrides: Mapped[list["ProjectDirectionOverride"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -832,6 +857,9 @@ class CreationThread(Base):
     runtime_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     state: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    # Private immutable creator-direction prompt snapshot. Never expose through
+    # thread state/API projections; it is the chat's generation context pin.
+    creator_direction_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     content_plan_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("content_plans.id", ondelete="SET NULL"), nullable=True
     )
@@ -936,6 +964,215 @@ class CreationThreadEvent(Base):
             unique=True,
             postgresql_where=text("source_agent_event_id IS NOT NULL"),
         ),
+    )
+
+
+class CreatorMemoryItem(Base):
+    """Versioned, owner-scoped creator direction ledger item."""
+
+    __tablename__ = "creator_memory_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    scope_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="account")
+    category: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    enforcement: Mapped[str] = mapped_column(Text, nullable=False)
+    structured_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="profile")
+    source_thread_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="SET NULL"), nullable=True
+    )
+    source_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creation_thread_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    user_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="creator_memory_items")
+    source_thread: Mapped["CreationThread | None"] = relationship(foreign_keys=[source_thread_id])
+    source_event: Mapped["CreationThreadEvent | None"] = relationship(
+        foreign_keys=[source_event_id]
+    )
+
+    __table_args__ = (
+        CheckConstraint("scope_kind = 'account'", name="ck_creator_memory_scope_kind"),
+        CheckConstraint(
+            "enforcement IN ('constraint','default','advisory')",
+            name="ck_creator_memory_enforcement",
+        ),
+        CheckConstraint(
+            "source_kind IN ('profile','creation_thread')", name="ck_creator_memory_source_kind"
+        ),
+        CheckConstraint(
+            "state IN ('active','suggested','dismissed','superseded','forgotten')",
+            name="ck_creator_memory_state",
+        ),
+        CheckConstraint(
+            "length(instruction) BETWEEN 1 AND 500", name="ck_creator_memory_instruction"
+        ),
+        Index(
+            "idx_creator_memory_items_user_state_updated",
+            "user_id",
+            "state",
+            text("updated_at DESC"),
+        ),
+        Index("idx_creator_memory_items_source_event", "source_event_id"),
+        Index("idx_creator_memory_items_source_thread", "source_thread_id"),
+        Index(
+            "uq_creator_memory_items_active_key",
+            "user_id",
+            "scope_kind",
+            "normalized_key",
+            unique=True,
+            postgresql_where=text("state = 'active' AND normalized_key IS NOT NULL"),
+        ),
+        Index(
+            "uq_creator_memory_items_advisory_hash",
+            "user_id",
+            "scope_kind",
+            "content_hash",
+            unique=True,
+            postgresql_where=text("content_hash IS NOT NULL AND state IN ('active','suggested')"),
+        ),
+    )
+
+
+class CreatorMemoryOperation(Base):
+    """Immutable command receipt used for retries and exact Undo."""
+
+    __tablename__ = "creator_memory_operations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    operation_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_memory_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    prior_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    resulting_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    actor_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creation_thread_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    undo_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    undone_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="creator_memory_operations")
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "idempotency_key", name="uq_creator_memory_operation_idempotency"
+        ),
+        Index("idx_creator_memory_operations_user_created", "user_id", text("created_at DESC")),
+        Index("idx_creator_memory_operations_item", "item_id"),
+        Index("idx_creator_memory_operations_source_event", "source_event_id"),
+    )
+
+
+class CreatorMemoryOutbox(Base):
+    """Durable extraction work item; dispatcher implementation is separate."""
+
+    __tablename__ = "creator_memory_outbox"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    source_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creation_thread_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_message: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    available_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extractor_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="creator_memory_outbox")
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','leased','succeeded','dead')",
+            name="ck_creator_memory_outbox_status",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_creator_memory_outbox_attempts"),
+        UniqueConstraint("source_event_id", name="uq_creator_memory_outbox_source_event"),
+        CheckConstraint(
+            "length(source_message) BETWEEN 1 AND 2000",
+            name="ck_creator_memory_outbox_source_message",
+        ),
+        Index("idx_creator_memory_outbox_user", "user_id"),
+        Index(
+            "idx_creator_memory_outbox_pending_claim",
+            "available_at",
+            "created_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "idx_creator_memory_outbox_leased_claim",
+            "lease_until",
+            "available_at",
+            "created_at",
+            postgresql_where=text("status = 'leased'"),
+        ),
+    )
+
+
+class ProjectDirectionOverride(Base):
+    """Owner-scoped project-local direction that never mutates account memory."""
+
+    __tablename__ = "project_direction_overrides"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    normalized_key: Mapped[str] = mapped_column(Text, nullable=False)
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    structured_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="creator_direction_overrides")
+    thread: Mapped["CreationThread"] = relationship(foreign_keys=[thread_id])
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "thread_id", "normalized_key", name="uq_project_direction_override_key"
+        ),
+        Index("idx_project_direction_override_thread", "thread_id"),
     )
 
 
@@ -1855,6 +2092,8 @@ class ContentPlan(Base):
     persona_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     # Optional user-supplied events that bias generation (trips, launches, exams).
     events: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Private immutable account-direction snapshot used by plan generation.
+    creator_direction_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # generating | ready | failed | edited
     plan_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="generating")
     horizon_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default="30")

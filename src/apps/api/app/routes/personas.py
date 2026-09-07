@@ -27,6 +27,7 @@ from app.auth import CurrentUser
 from app.database import get_db
 from app.models import Persona as PersonaRow
 from app.models import User
+from app.services.creator_direction import CreatorDirectionService
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -251,9 +252,7 @@ async def reset_persona(
         .all()
     )
     persona = (
-        await db.execute(
-            select(PersonaRow).where(PersonaRow.user_id == user.id).with_for_update()
-        )
+        await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id).with_for_update())
     ).scalar_one_or_none()
     if persona is not None and any(plan.persona_id != persona.id for plan in plans):
         raise HTTPException(
@@ -594,7 +593,7 @@ async def get_style(
     if raw is None:
         # Persona exists but no style — write "deriving" first (prevents re-queue
         # on concurrent requests), then kick off derivation in the background.
-        row.style = {"status": "deriving"}
+        CreatorDirectionService.set_compatibility_persona_style(row, {"status": "deriving"})
         await db.commit()
         try:
             from app.tasks.style_build import derive_user_style  # noqa: PLC0415
@@ -678,7 +677,7 @@ async def _apply_style_edit(row: PersonaRow, edit: StyleEdit, db: AsyncSession) 
 
     # Mark as edited — derivation guards will not auto-overwrite.
     raw["status"] = "edited"
-    row.style = raw
+    CreatorDirectionService.set_compatibility_persona_style(row, raw)
     await db.commit()
     await db.refresh(row)
     return dict(row.style)
@@ -736,7 +735,7 @@ async def rederive_style(
     # Mark as deriving so the UI can poll status.
     raw: dict = dict(row.style) if row.style else {}
     raw["status"] = "deriving"
-    row.style = raw
+    CreatorDirectionService.set_compatibility_persona_style(row, raw)
     await db.commit()
 
     from app.tasks.style_build import derive_user_style  # noqa: PLC0415

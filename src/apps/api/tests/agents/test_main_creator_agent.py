@@ -93,6 +93,14 @@ def test_main_creator_prompt_explains_guided_media_and_music_contracts() -> None
     assert "only when the manifest catalog contains a usable music entry" in prompt
 
 
+def test_main_creator_prompt_receives_pinned_account_direction() -> None:
+    agent_input = _input().model_copy(update={"creator_direction": "- Never use drop shadows"})
+
+    prompt = MainCreatorAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert "Never use drop shadows" in prompt
+
+
 def test_main_creator_recognizes_mixed_media_timing_request() -> None:
     agent_input = _input().model_copy(
         update={

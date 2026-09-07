@@ -977,6 +977,10 @@ class Settings(BaseSettings):
     # "user_style" key → renders are byte-identical to pre-M1 output.
     user_style_enabled: bool = False
 
+    # Account-wide creator memory/direction control plane. Storage and owner
+    # routes are additive; prompt/render extraction remains separately wired.
+    creator_memory_enabled: bool = False
+
     # Conversational style agent (Creator Agent M2). When True, the
     # POST /personas/agent/start and POST /personas/agent/turn routes are live.
     # Ships OFF — enable after live-eval validation of StyleIntentAgent quality:

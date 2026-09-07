@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0096"
-down_revision = "0095"
+revision = "0097"
+down_revision = "0096"
 branch_labels = None
 depends_on = None
 
@@ -32,7 +32,7 @@ def upgrade() -> None:
     )
     op.execute(
         """
-        CREATE FUNCTION creation_thread_runtime_version_immutable_0096()
+        CREATE FUNCTION creation_thread_runtime_version_immutable_0097()
         RETURNS trigger AS $$
         BEGIN
             IF NEW.runtime_version IS DISTINCT FROM OLD.runtime_version THEN
@@ -47,7 +47,7 @@ def upgrade() -> None:
         """
         CREATE TRIGGER creation_thread_runtime_version_immutable
         BEFORE UPDATE OF runtime_version ON creation_threads
-        FOR EACH ROW EXECUTE FUNCTION creation_thread_runtime_version_immutable_0096()
+        FOR EACH ROW EXECUTE FUNCTION creation_thread_runtime_version_immutable_0097()
         """
     )
 
@@ -431,7 +431,7 @@ def downgrade() -> None:
     )
     if has_v2_state:
         raise RuntimeError(
-            "Refusing to downgrade 0096 while Kria runtime-v2 data exists; "
+            "Refusing to downgrade 0097 while Kria runtime-v2 data exists; "
             "use the runtime flag rollback or export and remove v2 state first."
         )
 
@@ -498,6 +498,6 @@ def downgrade() -> None:
     op.execute(
         "DROP TRIGGER IF EXISTS creation_thread_runtime_version_immutable ON creation_threads"
     )
-    op.execute("DROP FUNCTION IF EXISTS creation_thread_runtime_version_immutable_0096()")
+    op.execute("DROP FUNCTION IF EXISTS creation_thread_runtime_version_immutable_0097()")
     op.drop_constraint("ck_creation_threads_runtime_version", "creation_threads", type_="check")
     op.drop_column("creation_threads", "runtime_version")
