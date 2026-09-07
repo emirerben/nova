@@ -195,6 +195,8 @@ export interface DirectionOverrideResponse {
   instruction: string;
   structured_value?: Record<string, unknown> | null;
   revision: number;
+  operation_id?: string;
+  undo_expires_at?: string | null;
   direction_receipt?: CreatorDirectionReceipt | null;
 }
 
@@ -226,8 +228,18 @@ export function clearCreationThreadDirectionOverride(
   threadId: string,
   normalizedKey: string,
   expectedRevision: number,
-): Promise<{ revision: number; direction_receipt?: CreatorDirectionReceipt | null }> {
-  return request<{ revision: number; direction_receipt?: CreatorDirectionReceipt | null }>(
+): Promise<{
+  revision: number;
+  operation_id?: string;
+  undo_expires_at?: string | null;
+  direction_receipt?: CreatorDirectionReceipt | null;
+}> {
+  return request<{
+    revision: number;
+    operation_id?: string;
+    undo_expires_at?: string | null;
+    direction_receipt?: CreatorDirectionReceipt | null;
+  }>(
     `/${encodeURIComponent(threadId)}/direction-overrides/${encodeURIComponent(normalizedKey)}`,
     {
       method: "DELETE",

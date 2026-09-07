@@ -23,7 +23,7 @@ from sqlalchemy.orm import selectinload
 from app import storage
 from app.auth import CurrentUser
 from app.database import get_db
-from app.models import ContentPlan, PlanItem
+from app.models import ContentPlan, CreationThread, PlanItem
 from app.models import Persona as PersonaRow
 from app.routes.plan_items import (
     _ALLOWED_CONTENT_TYPES,
@@ -422,14 +422,36 @@ async def regenerate_plan(
         )
     plan.plan_status = "generating"
     plan.generation_started_at = datetime.now(UTC)
+    from app.services.creator_direction_receipts import stamp_private_receipt  # noqa: PLC0415
     from app.services.creator_direction_snapshot import (  # noqa: PLC0415
         resolve_snapshot_for_dispatch,
         serialize_private_snapshot,
     )
 
+    plan_direction = await resolve_snapshot_for_dispatch(db, user.id)
     plan.creator_direction_snapshot = serialize_private_snapshot(
-        await resolve_snapshot_for_dispatch(db, user.id), source="plan_regenerate"
+        plan_direction, source="plan_regenerate"
     )
+    linked_threads = list(
+        (
+            await db.execute(
+                select(CreationThread)
+                .where(
+                    CreationThread.creator_id == user.id,
+                    CreationThread.content_plan_id == plan.id,
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for thread in linked_threads:
+        thread_direction = await resolve_snapshot_for_dispatch(db, user.id, thread_id=thread.id)
+        thread.creator_direction_snapshot = stamp_private_receipt(
+            serialize_private_snapshot(thread_direction, source="plan_regenerate"),
+            thread_direction,
+        )
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     await db.commit()
 
