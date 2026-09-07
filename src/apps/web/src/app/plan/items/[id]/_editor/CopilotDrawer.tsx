@@ -12,12 +12,12 @@ import { NovaActivityFeed, NovaStepRow } from "@/components/progress";
 import type { NovaStep } from "@/lib/job-phases";
 import { InfoDot } from "@/components/ui/InfoDot";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ArrowUp } from "lucide-react";
-import { ChatBubble } from "@/components/chat/ChatBubble";
+import { AgentComposer } from "@/components/chat/AgentComposer";
+import { ChatMessage } from "@/components/chat/ChatMessage";
+import { ChatThinking } from "@/components/chat/ChatThinking";
 import { useAutoScrollToEnd } from "@/components/chat/useAutoScrollToEnd";
 import { CloseIcon } from "./editor-icons";
 
@@ -28,20 +28,6 @@ const STARTERS = [
 ];
 
 const MAX_CHARS = 500;
-
-function useElapsed(active: boolean): number {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    if (!active) {
-      setElapsed(0);
-      return;
-    }
-    const started = Date.now();
-    const id = window.setInterval(() => setElapsed(Date.now() - started), 250);
-    return () => window.clearInterval(id);
-  }, [active]);
-  return elapsed;
-}
 
 function useKeyboardOffset(active: boolean): number {
   const [offset, setOffset] = useState(0);
@@ -146,7 +132,7 @@ export default function CopilotDrawer({
    *  the latest server-render turn in THIS mount. False (default) for a
    *  freshly (re)mounted drawer, including one reopened onto a thread whose
    *  render-turn already finished in a prior session — that historical
-   *  message shows its disclosure bubble text only, no stale spinner. */
+   *  message shows its assistant prose only, no stale spinner. */
   renderTurnActive?: boolean;
   /** Last-polled `steps` for the active render turn (PR1 projection, same
    *  field the item page's ProgressTheater consumes). Null until the first
@@ -155,8 +141,7 @@ export default function CopilotDrawer({
 }) {
   const [draft, setDraft] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const inputRef = useRef<HTMLInputElement>(null);
-  const elapsed = useElapsed(sending);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const keyboardOffset = useKeyboardOffset(layoutMode === "light" && open);
   const latestChanged = useMemo(() => latestAssistantWithChanges(messages), [messages]);
   const latestRenderTurn = useMemo(() => latestAssistantRenderTurn(messages), [messages]);
@@ -265,7 +250,7 @@ export default function CopilotDrawer({
           />
         )}
 
-        {messages.map((message) => {
+        {messages.map((message, messageIndex) => {
           const isUser = message.role === "user";
           const isRenderTurnMsg = stepsFeedEnabled && !isUser && !!message.isRenderTurn;
           const chips = [...(message.applied ?? []), ...(message.rejected ?? [])];
@@ -284,14 +269,17 @@ export default function CopilotDrawer({
             isRenderTurnMsg && renderTurnActive && message.id === latestRenderTurn?.id;
           return (
             <div key={message.id} className="space-y-1.5">
-              <ChatBubble role={isUser ? "user" : "assistant"}>
+              <ChatMessage
+                role={isUser ? "user" : "assistant"}
+                animate={messageIndex === messages.length - 1}
+              >
                 {message.text}
-              </ChatBubble>
+              </ChatMessage>
 
               {/* Server-render turn (artboard 03): disclosure + live compact
                   NovaActivityFeed while THIS mount is polling; a historical
                   render turn (reopened later, or superseded by a newer one)
-                  shows only the bubble text above — no stale spinner, no
+                  shows only the message text above — no stale spinner, no
                   Undo (non-undoable contract). */}
               {isRenderTurnMsg && isActiveRenderTurn && (
                 <div className="mr-auto max-w-[85%]">
@@ -420,7 +408,16 @@ export default function CopilotDrawer({
           );
         })}
 
-        {sending && <Thinking elapsed={elapsed} onStop={onStop} />}
+        {sending && (
+          <ChatThinking
+            initialLabel="Thinking through the edit…"
+            label="Planning edits…"
+            specificLabel="Still working — keep editing."
+            longLabel="Still working — keep editing."
+            onStop={onStop}
+            stopAfterMs={5000}
+          />
+        )}
         {queued && (
           <div className="ml-auto max-w-[85%] rounded-lg rounded-br-sm border border-dashed border-border bg-background px-3 py-2 text-sm text-foreground">
             <p className="mb-1 text-xs text-muted-foreground">
@@ -514,87 +511,36 @@ export default function CopilotDrawer({
         )}
       </div>
 
-      <form
-        className="flex flex-none items-end gap-2 px-4 pb-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
-        }}
-      >
-        <div className="min-w-0 flex-1">
-          <Input
-            ref={inputRef}
-            type="text"
-            value={draft}
-            maxLength={MAX_CHARS}
-            onChange={(e) => {
-              // Typing must NOT live-mutate the queued message — a half-typed
-              // fragment would be dispatched if the in-flight turn resolves
-              // mid-keystroke, and backspacing to empty would silently cancel
-              // it (review F2). Queued edits happen only on explicit submit.
-              setDraft(e.target.value.slice(0, MAX_CHARS));
-            }}
-            disabled={unavailable}
-            placeholder={
-              unavailable
-                ? "Kria editing is unavailable"
-                : sending
-                  ? "Add more while I work..."
-                  : "Tell me what to change..."
-            }
-            aria-label="Tell Kria what to change"
-          />
-          {draft.length >= MAX_CHARS * 0.8 && (
-            <p className="mt-1.5 text-right text-xs text-muted-foreground">
+      <div className="flex-none px-4 pb-4">
+        <AgentComposer
+          ref={inputRef}
+          value={draft}
+          onValueChange={(value) => {
+            // Typing must NOT live-mutate the queued message — a half-typed
+            // fragment would be dispatched if the in-flight turn resolves
+            // mid-keystroke. Queued edits happen only on explicit submit.
+            setDraft(value.slice(0, MAX_CHARS));
+          }}
+          onSubmit={submit}
+          disabled={unavailable}
+          multiline={false}
+          maxLength={MAX_CHARS}
+          placeholder={
+            unavailable
+              ? "Kria editing is unavailable"
+              : sending
+                ? "Add more while I work..."
+                : "Tell me what to change..."
+          }
+          inputLabel="Tell Kria what to change"
+          submitLabel={sending ? "Queue message" : "Send message"}
+          status={draft.length >= MAX_CHARS * 0.8 ? (
+            <p className="text-right text-xs text-muted-foreground">
               {draft.length}/{MAX_CHARS}
             </p>
-          )}
-        </div>
-        <Button
-          type="submit"
-          size="icon"
-          disabled={unavailable || draft.trim().length === 0}
-          aria-label={sending ? "Queue message" : "Send message"}
-          className="flex-none"
-        >
-          <ArrowUp className="h-4 w-4" />
-        </Button>
-      </form>
-    </section>
-  );
-}
-
-function Thinking({
-  elapsed,
-  onStop,
-}: {
-  elapsed: number;
-  onStop: () => void;
-}) {
-  const showPlanning = elapsed >= 2000;
-  const showStop = elapsed >= 5000;
-  const late = elapsed >= 8000;
-  return (
-    <ChatBubble role="assistant">
-      <div role="status" className="space-y-2">
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-primary motion-safe:animate-ping" />
-          {showPlanning && (
-            <span>{late ? "Still working — keep editing." : "Planning edits..."}</span>
-          )}
-          {showStop && (
-            <Button type="button" variant="ghost" size="sm" onClick={onStop} className="ml-2">
-              Stop
-            </Button>
-          )}
-        </div>
-        {showPlanning && (
-          <div className="space-y-1">
-            <Skeleton className="h-3 w-4/5" />
-            <Skeleton className="h-3 w-1/2" />
-          </div>
-        )}
+          ) : null}
+        />
       </div>
-    </ChatBubble>
+    </section>
   );
 }

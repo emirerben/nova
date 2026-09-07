@@ -21,6 +21,7 @@ agents/         — agent context (read before working on video processing)
 docs/           — pipeline internals, runbooks, specs, designs (start at docs/pipelines/)
 CLAUDE.md       — working agreements, invariants, key paths, env vars
 DESIGN.md       — design-system tokens, loading rules, anti-slop rules, a11y baseline
+LICENSES.md     — third-party component and font licenses
 TODOS.md        — deferred work backlog, grouped by the PR that deferred it
 ```
 

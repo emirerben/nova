@@ -92,6 +92,29 @@ it("asks for intent and never renders before explicit confirmation", async () =>
   expect(confirmPlan).not.toHaveBeenCalled();
 });
 
+it("shows sending feedback and blocks duplicate creator requests", async () => {
+  let resolveStart!: (value: typeof proposed) => void;
+  startSession.mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveStart = resolve;
+    }),
+  );
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  const creatorMessage = await screen.findByLabelText("Message Kria");
+  fireEvent.change(creatorMessage, { target: { value: "Make it feel energetic" } });
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+  expect(await screen.findByText("Sending to Kria…")).not.toBeNull();
+  const submit = screen.getByRole("button", { name: "Start" });
+  expect(submit.hasAttribute("disabled")).toBe(true);
+  fireEvent.click(submit);
+  expect(startSession).toHaveBeenCalledTimes(1);
+
+  await act(async () => resolveStart(proposed));
+  await screen.findByText("A fast arrival-to-sunset story.");
+});
+
 it("dispatches only after Render this is clicked", async () => {
   getSession.mockResolvedValue(proposed);
   confirmPlan.mockResolvedValue({

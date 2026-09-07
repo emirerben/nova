@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { AgentApprovalCard } from "@/components/chat/AgentApprovalCard";
+import { AgentComposer } from "@/components/chat/AgentComposer";
+import { ChatMessage } from "@/components/chat/ChatMessage";
+import { ChatThinking, WAIT_LADDER_MS } from "@/components/chat/ChatThinking";
 import { BeamLoader } from "@/components/progress";
 import {
   SpeechCleanupDecisionCard,
@@ -119,7 +123,9 @@ const FIXTURE_STYLES = `
   .chat-fixture-reduced-motion .beam-loader__beam,
   .chat-fixture-reduced-motion .beam-loader__bloom,
   .chat-fixture-reduced-motion .beam-loader__line { animation: none !important; }
-  .chat-fixture-reduced-motion .animate-bounce { animation: none !important; }
+  .chat-fixture-reduced-motion .animate-bounce,
+  .chat-fixture-reduced-motion .motion-safe\\:animate-chat-message-in,
+  .chat-fixture-reduced-motion .motion-safe\\:animate-chat-thinking { animation: none !important; }
   .chat-fixture[data-view="editor"] .editor-pane { display: flex; }
   .chat-fixture[data-view="editor"] .chat-rail { flex: 0 0 420px; }
   @keyframes fixture-fade { from { opacity: .1; transform: translateY(5px); } to { opacity: 1; transform: none; } }
@@ -133,23 +139,36 @@ function readParam(name: string, fallback: string) {
 }
 
 export default function ChatFirstCreationFixture() {
-  const initialState = readParam("state", "choose") as FixtureState;
-  const initialView = readParam("view", "chat") as View;
-  const [state, setState] = useState<FixtureState>(STATES.includes(initialState) ? initialState : "choose");
-  const [view, setView] = useState<View>(initialView === "editor" ? "editor" : "chat");
-  const [mediaCount, setMediaCount] = useState(state === "choose" ? 0 : 3);
+  const [state, setState] = useState<FixtureState>("choose");
+  const [view, setView] = useState<View>("chat");
+  const [mediaCount, setMediaCount] = useState(0);
   const [format, setFormat] = useState<keyof typeof FORMAT_COPY>("montage");
   const [composer, setComposer] = useState("");
   const [reducedMotion, setReducedMotion] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [projectName, setProjectName] = useState(() => readParam("name", "Weekend in Corfu"));
+  const [projectName, setProjectName] = useState("Weekend in Corfu");
   const [renameDraft, setRenameDraft] = useState(projectName);
-  const [deleted, setDeleted] = useState(initialState === "deleted");
-  const projectId = readParam("project", "project-corfu");
-  const thinkingElapsed = Number.parseInt(readParam("elapsed", "0"), 10) || 0;
+  const [deleted, setDeleted] = useState(false);
+  const [projectId, setProjectId] = useState("project-corfu");
+  const [thinkingElapsed, setThinkingElapsed] = useState(0);
   const [speechChoice, setSpeechChoice] = useState<CreationSpeechCleanupChoice>("clean");
+
+  useEffect(() => {
+    const requestedState = readParam("state", "choose") as FixtureState;
+    const requestedView = readParam("view", "chat") as View;
+    const nextState = STATES.includes(requestedState) ? requestedState : "choose";
+    setState(nextState);
+    setView(requestedView === "editor" ? "editor" : "chat");
+    setMediaCount(nextState === "choose" ? 0 : 3);
+    setDeleted(nextState === "deleted");
+    setProjectId(readParam("project", "project-corfu"));
+    setThinkingElapsed(Number.parseInt(readParam("elapsed", "0"), 10) || 0);
+    const requestedName = readParam("name", "Weekend in Corfu");
+    setProjectName(requestedName);
+    setRenameDraft(requestedName);
+  }, []);
 
   useEffect(() => {
     const onOnline = () => setState("choose");
@@ -282,12 +301,17 @@ export default function ChatFirstCreationFixture() {
               </div>
             </div>
             <div className="shrink-0 border-t border-[#ededE8] bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-10">
-              <div className="mx-auto flex max-w-[620px] items-end gap-2 rounded-xl border border-[#cfcfc8] bg-[#fafaf8] p-2 focus-within:border-[#8c8c85]">
-                <label className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[#d7ff90] text-lg" aria-label="Attach primary video clips"><input className="sr-only" type="file" accept="video/*" multiple onChange={() => { setMediaCount((count) => count + 1); navigate(state === "speech-audio-only" ? "speech-findings" : "upload"); }} />＋</label>
-                <textarea aria-label="Message Kria" value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); navigate(state === "ready" ? "revision" : "confirm"); } }} placeholder="Tell Kria what you want to make…" rows={1} className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-[#9b9b94]" />
-                <button aria-label="Send message" className="h-10 rounded-lg bg-[#0c0c0e] px-4 text-sm font-semibold text-white disabled:opacity-40" disabled={!composer.trim()} onClick={() => { setComposer(""); navigate(state === "ready" ? "revision" : "confirm"); }}>Send</button>
-              </div>
-              <p className="mx-auto mt-2 max-w-[620px] text-center text-[11px] text-[#a0a098]">Kria won’t render until you confirm the direction.</p>
+              <AgentComposer
+                className="mx-auto max-w-[620px]"
+                value={composer}
+                onValueChange={setComposer}
+                onSubmit={() => { setComposer(""); navigate(state === "ready" ? "revision" : "confirm"); }}
+                placeholder="Tell Kria what you want to make…"
+                inputLabel="Message Kria"
+                submitLabel="Send message"
+                leadingAction={<label className="flex size-11 shrink-0 items-center justify-center rounded-full bg-lime-200 text-lg" aria-label="Attach primary video clips"><input className="sr-only" type="file" accept="video/*" multiple onChange={() => { setMediaCount((count) => count + 1); navigate(state === "speech-audio-only" ? "speech-findings" : "upload"); }} />＋</label>}
+                status={<p className="text-center text-[11px] text-[#a0a098]">Kria won’t render until you confirm the direction.</p>}
+              />
             </div>
           </section>
           <section className="editor-pane hidden min-w-0 flex-1 items-center justify-center bg-[#20201e]" aria-label="Embedded editor">
@@ -531,23 +555,16 @@ function ConversationState({
   if (state === "thinking") return <ThinkingState elapsed={thinkingElapsed} />;
   if (state === "revision") return <ChronologicalRevisionState mediaCount={mediaCount} onState={onState} projectName={projectName} />;
 
-  return <div className="fade" data-testid={`${state}-state`}><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#77776f]">{current.eyebrow}</p><h1 className="font-display mt-4 max-w-xl text-4xl font-medium leading-tight sm:text-5xl">{current.title}</h1><p className="mt-4 max-w-xl text-sm leading-6 text-[#686860]">{current.body}</p><p className="mt-7 text-xs text-[#85857e]" data-testid="media-count">{mediaCount} primary clips attached</p><div className="mt-8 flex flex-wrap gap-2">{state === "upload" && <><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm">Add visuals (optional)</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("confirm")}>Continue with footage</button></>}{state === "confirm" && <button className="rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white" onClick={() => onState("rendering")}>Confirm & render</button>}{state === "rendering" && <BeamLoader tone="light" mode="line" strength="medium" ariaLabel="Rendering your video"><div data-testid="render-progress" className="space-y-3 rounded-lg border border-[#deded9] bg-white/80 p-4"><div className="flex items-center justify-between text-sm font-medium"><span>Rendering your video</span><span>68%</span></div><div className="h-2 overflow-hidden rounded-full bg-[#e7e7e1]"><div className="h-full w-[68%] rounded-full bg-[#9ac34f]" /></div><p className="text-xs text-[#686860]">Assembling clips, sound, and captions.</p></div></BeamLoader>}{state === "ready" && <><button className="rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white">Play cut</button><button className="rounded-full border border-[#bdbdb5] px-5 py-2.5 text-sm" onClick={() => onState("ready", "editor")}>Open editor</button><button className="rounded-full border border-[#bdbdb5] px-5 py-2.5 text-sm">Download</button></>}{state === "upload-failed" && <><button className="rounded-lg bg-[#0c0c0e] px-4 py-2 text-sm font-semibold text-white" onClick={() => onState("upload")}>Retry upload</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("upload")}>Remove file</button></>}{state === "voiceover" && <><button className="rounded-lg bg-[#0c0c0e] px-4 py-2 text-sm font-semibold text-white" onClick={() => onState("upload")}>Record voiceover</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("choose")}>Change format</button></>}{state === "stale" && <button className="rounded-lg bg-[#0c0c0e] px-4 py-2.5 text-sm font-semibold text-white" onClick={() => onState("ready")}>Reload latest</button>}{state === "offline" && <button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("choose")}>Try again</button>}{state === "unavailable" && <><button className="rounded-lg bg-[#0c0c0e] px-4 py-2 text-sm font-semibold text-white" onClick={() => onState("choose")}>Choose Montage</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("choose")}>Choose Talking to camera</button></>}{state === "partial" && <><BeamLoader tone="light" mode="pulse" active={false} ariaLabel="One render variant is ready"><div data-testid="partial-progress" className="space-y-2 rounded-lg border border-[#deded9] bg-white/80 p-4"><p className="text-sm font-medium">Original-audio cut · Ready</p><p className="text-xs text-[#686860]">Song-text variant · Needs another pass</p></div></BeamLoader><button className="rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white">Play available cut</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("rendering")}>Retry variant</button></>}{state === "failed" && <><button className="rounded-lg bg-[#0c0c0e] px-4 py-2 text-sm font-semibold text-white" onClick={() => onState("rendering")}>Retry render</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("revision")}>Adjust direction</button></>}</div></div>;
+  return <div className="fade" data-testid={`${state}-state`}><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#77776f]">{current.eyebrow}</p><h1 className="font-display mt-4 max-w-xl text-4xl font-medium leading-tight sm:text-5xl">{current.title}</h1><p className="mt-4 max-w-xl text-sm leading-6 text-[#686860]">{current.body}</p><p className="mt-7 text-xs text-[#85857e]" data-testid="media-count">{mediaCount} primary clips attached</p><div className="mt-8 flex flex-wrap gap-2">{state === "upload" && <><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm">Add visuals (optional)</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("confirm")}>Continue with footage</button></>}{state === "confirm" && <AgentApprovalCard className="w-full" title="Create this video?" description="Rendering starts only after you approve this direction." actions={<button className="min-h-11 rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white" onClick={() => onState("rendering")}>Confirm & render</button>} />}{state === "rendering" && <BeamLoader tone="light" mode="line" strength="medium" ariaLabel="Rendering your video"><div data-testid="render-progress" className="space-y-3 rounded-lg border border-[#deded9] bg-white/80 p-4"><div className="flex items-center justify-between text-sm font-medium"><span>Rendering your video</span><span>68%</span></div><div className="h-2 overflow-hidden rounded-full bg-[#e7e7e1]"><div className="h-full w-[68%] rounded-full bg-[#9ac34f]" /></div><p className="text-xs text-[#686860]">Assembling clips, sound, and captions.</p></div></BeamLoader>}{state === "ready" && <><button className="rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white">Play cut</button><button className="rounded-full border border-[#bdbdb5] px-5 py-2.5 text-sm" onClick={() => onState("ready", "editor")}>Open editor</button><button className="rounded-full border border-[#bdbdb5] px-5 py-2.5 text-sm">Download</button></>}{state === "upload-failed" && <><button className="rounded-lg bg-[#0c0c0e] px-4 py-2 text-sm font-semibold text-white" onClick={() => onState("upload")}>Retry upload</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("upload")}>Remove file</button></>}{state === "voiceover" && <><button className="rounded-lg bg-[#0c0c0e] px-4 py-2 text-sm font-semibold text-white" onClick={() => onState("upload")}>Record voiceover</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("choose")}>Change format</button></>}{state === "stale" && <button className="rounded-lg bg-[#0c0c0e] px-4 py-2.5 text-sm font-semibold text-white" onClick={() => onState("ready")}>Reload latest</button>}{state === "offline" && <button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("choose")}>Try again</button>}{state === "unavailable" && <><button className="rounded-lg bg-[#0c0c0e] px-4 py-2 text-sm font-semibold text-white" onClick={() => onState("choose")}>Choose Montage</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("choose")}>Choose Talking to camera</button></>}{state === "partial" && <><BeamLoader tone="light" mode="pulse" active={false} ariaLabel="One render variant is ready"><div data-testid="partial-progress" className="space-y-2 rounded-lg border border-[#deded9] bg-white/80 p-4"><p className="text-sm font-medium">Original-audio cut · Ready</p><p className="text-xs text-[#686860]">Song-text variant · Needs another pass</p></div></BeamLoader><button className="rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white">Play available cut</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("rendering")}>Retry variant</button></>}{state === "failed" && <><button className="rounded-lg bg-[#0c0c0e] px-4 py-2 text-sm font-semibold text-white" onClick={() => onState("rendering")}>Retry render</button><button className="rounded-lg border border-[#bdbdb5] px-4 py-2 text-sm" onClick={() => onState("revision")}>Adjust direction</button></>}</div></div>;
 }
 
 function ThinkingState({ elapsed }: { elapsed: number }) {
-  const tier = elapsed < 1500 ? "dots" : elapsed < 8000 ? "reading" : elapsed < 20000 ? "shaping" : "long";
-  const copy = tier === "dots"
-    ? null
-    : tier === "reading"
-      ? "Reading your direction…"
-      : tier === "shaping"
-        ? "Shaping the edit around your clips…"
-        : "Still working — your direction is saved.";
-  return <div className="fade" data-testid="thinking-state" data-thinking-tier={tier} data-thinking-elapsed={elapsed}>{tier !== "dots" ? <p className="text-xs font-semibold uppercase tracking-[.18em] text-[#77776f]">Thinking</p> : null}<div role="status" aria-label={tier === "dots" ? "Kria is thinking" : undefined} aria-live="polite" className="mt-4 rounded-xl border border-[#deded9] bg-[#f7f7f5] p-4 text-sm text-[#686860]"><span className="mr-2 inline-flex gap-1 align-middle" aria-hidden="true"><i className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#9ac34f]" /><i className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#9ac34f] [animation-delay:120ms]" /><i className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#9ac34f] [animation-delay:240ms]" /></span>{copy}</div>{tier !== "dots" ? <p className="mt-3 text-xs text-[#85857e]">Response timing: {elapsed}ms · {tier} context</p> : null}</div>;
+  const tier = elapsed < WAIT_LADDER_MS.QUIET ? "initial" : elapsed < WAIT_LADDER_MS.SPECIFIC ? "reading" : elapsed < WAIT_LADDER_MS.LONG ? "shaping" : "long";
+  return <div className="fade" data-testid="thinking-state" data-thinking-tier={tier} data-thinking-elapsed={elapsed}><ChatThinking elapsedMs={elapsed} /></div>;
 }
 
 function ChronologicalRevisionState({ mediaCount, onState, projectName }: { mediaCount: number; onState: (state: FixtureState, view?: View) => void; projectName: string }) {
-  return <div className="fade" data-testid="revision-state"><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#77776f]">Revision</p><h1 className="font-display mt-4 max-w-xl text-4xl font-medium leading-tight sm:text-5xl">Your direction stays in sequence.</h1><div className="mt-6 space-y-3" data-testid="chronological-transcript" role="log" aria-label="Conversation history"><div data-testid="clips-section" className="rounded-xl border border-[#deded9] bg-[#f7f7f5] p-4"><p className="text-xs font-semibold uppercase tracking-[.14em] text-[#85857e]">Clips</p><p className="mt-2 text-sm font-medium">{mediaCount} clips attached to {projectName}</p></div><div data-testid="post-clip-user-message" className="ml-auto max-w-[85%] rounded-lg rounded-br-sm bg-[#0c0c0e] px-3 py-2 text-sm text-white">Hold the harbor shot longer.</div><div data-testid="post-clip-assistant-message" className="max-w-[85%] rounded-lg rounded-bl-sm bg-[#f1f1ee] px-3 py-2 text-sm">I’ll hold that shot, then prepare the exact revision for your confirmation.</div><p data-testid="latest-chat-anchor" className="text-xs text-[#85857e]">Latest message · no scrolling upward required</p></div><div className="mt-6 flex flex-wrap gap-2"><button className="rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white" onClick={() => onState("rendering")}>Confirm revision</button></div></div>;
+  return <div className="fade" data-testid="revision-state"><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#77776f]">Revision</p><h1 className="font-display mt-4 max-w-xl text-4xl font-medium leading-tight sm:text-5xl">Your direction stays in sequence.</h1><div className="mt-6 space-y-3" data-testid="chronological-transcript" role="log" aria-label="Conversation history"><div data-testid="clips-section" className="rounded-xl border border-[#deded9] bg-[#f7f7f5] p-4"><p className="text-xs font-semibold uppercase tracking-[.14em] text-[#85857e]">Clips</p><p className="mt-2 text-sm font-medium">{mediaCount} clips attached to {projectName}</p></div><ChatMessage role="user" animate={false} data-testid="post-clip-user-message">Hold the harbor shot longer.</ChatMessage><ChatMessage role="assistant" data-testid="post-clip-assistant-message">I’ll hold that shot, then prepare the exact revision for your confirmation.</ChatMessage><p data-testid="latest-chat-anchor" className="text-xs text-[#85857e]">Latest message · no scrolling upward required</p></div><div className="mt-6 flex flex-wrap gap-2"><button className="rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white" onClick={() => onState("rendering")}>Confirm revision</button></div></div>;
 }
 
 function DeletedState({ onRestore }: { onRestore: () => void }) {
