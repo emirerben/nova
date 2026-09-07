@@ -830,6 +830,19 @@
                 "title": "Edit Format",
                 "type": "string"
               },
+              "execution_contract": {
+                "anyOf": [
+                  {
+                    "const": "guided_voiceover_v1",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Execution Contract"
+              },
               "font_family": {
                 "anyOf": [
                   {
@@ -885,6 +898,22 @@
                   }
                 ],
                 "default": null
+              },
+              "media_scope": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "all",
+                      "selected"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Media Scope"
               },
               "mixed_media_timing": {
                 "anyOf": [
@@ -957,6 +986,15 @@
                 "title": "Pacing",
                 "type": "string"
               },
+              "participant_labels": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "single_subject"
+                ],
+                "title": "Participant Labels",
+                "type": "string"
+              },
               "rationale": {
                 "default": "",
                 "maxLength": 2000,
@@ -972,6 +1010,11 @@
                 "title": "Render Program",
                 "type": "string"
               },
+              "score_labels": {
+                "default": false,
+                "title": "Score Labels",
+                "type": "boolean"
+              },
               "selected_media_ids": {
                 "items": {
                   "type": "string"
@@ -979,6 +1022,11 @@
                 "maxItems": 50,
                 "title": "Selected Media Ids",
                 "type": "array"
+              },
+              "sport_labels": {
+                "default": false,
+                "title": "Sport Labels",
+                "type": "boolean"
               },
               "story_structure": {
                 "items": {
