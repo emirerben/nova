@@ -181,7 +181,7 @@ def upgrade() -> None:
         sa.Column(
             "source_event_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("creation_thread_events.id", ondelete="CASCADE"),
+            sa.ForeignKey("creation_thread_events.id", ondelete="SET NULL"),
             nullable=True,
         ),
         sa.Column("source_message", sa.Text(), nullable=False),

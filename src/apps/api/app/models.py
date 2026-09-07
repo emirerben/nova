@@ -1040,7 +1040,7 @@ class CreatorMemoryOutbox(Base):
     )
     source_event_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("creation_thread_events.id", ondelete="CASCADE"),
+        ForeignKey("creation_thread_events.id", ondelete="SET NULL"),
         nullable=True,
     )
     source_message: Mapped[str] = mapped_column(Text, nullable=False)

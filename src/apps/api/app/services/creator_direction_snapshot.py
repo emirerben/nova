@@ -28,15 +28,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     CreatorMemoryItem,
+    Persona,
     ProjectDirectionOverride,
     User,
 )
 from app.services.creator_direction import (
+    COMPATIBILITY_INPUT_VERSION,
     MAX_ACTIVE_ITEMS,
     MAX_TOTAL_INSTRUCTION_CHARS,
     CreatorDirectionResolver,
     CreatorDirectionSnapshot,
 )
+from app.services.creator_direction_capabilities import capability_status
 
 SNAPSHOT_KEY = "_creator_direction_snapshot_v1"
 SNAPSHOT_SCHEMA = "CreatorDirectionSnapshotV1"
@@ -80,6 +83,84 @@ def _prompt_hash(snapshot: CreatorDirectionSnapshot) -> str | None:
     return hashlib.sha256(snapshot.prompt_block.encode("utf-8")).hexdigest()
 
 
+def _snapshot_rows(snapshot: CreatorDirectionSnapshot) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in (
+            *snapshot.compatibility_items,
+            *snapshot.items,
+            *snapshot.overrides,
+        )
+        if isinstance(row, dict)
+    ]
+
+
+def _capability_results(snapshot: CreatorDirectionSnapshot) -> list[dict[str, Any]]:
+    """Persist capability receipts without copying instruction text."""
+
+    results: list[dict[str, Any]] = []
+    scoped_rows = (
+        [(row, "compatibility") for row in snapshot.compatibility_items]
+        + [(row, "account") for row in snapshot.items]
+        + [(row, "project") for row in snapshot.overrides]
+    )
+    for row, scope in scoped_rows:
+        item_id = row.get("id")
+        if not item_id:
+            continue
+        normalized_key = row.get("normalized_key")
+        conflict = row.get("conflicted") is True or bool(row.get("conflict_id"))
+        results.append(
+            {
+                "id": str(item_id),
+                "normalized_key": str(normalized_key) if normalized_key else None,
+                "scope": scope,
+                "status": capability_status(
+                    normalized_key,
+                    enforcement=str(row.get("enforcement") or "advisory"),
+                    conflicted=conflict,
+                ),
+                "enforcement": str(row.get("enforcement") or "advisory"),
+            }
+        )
+    return results
+
+
+def _conflict_ids(snapshot: CreatorDirectionSnapshot) -> list[str]:
+    ids: list[str] = []
+    for row in _snapshot_rows(snapshot):
+        conflict_id = row.get("conflict_id")
+        if conflict_id:
+            ids.append(str(conflict_id))
+        for value in row.get("conflict_ids") or ():
+            if value:
+                ids.append(str(value))
+    return list(dict.fromkeys(ids))
+
+
+def _redacted_context_sections(snapshot: CreatorDirectionSnapshot) -> dict[str, dict[str, Any]]:
+    sections: dict[str, dict[str, Any]] = {}
+    for section, instructions in snapshot.context_sections.items():
+        ids = [
+            str(row.get("id"))
+            for row in _snapshot_rows(snapshot)
+            if row.get("id") and row.get("instruction") in instructions
+        ]
+        sections[section] = {"item_ids": ids, "count": len(instructions)}
+    return sections
+
+
+def _project_override_values(snapshot: CreatorDirectionSnapshot) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for row in snapshot.overrides:
+        key = row.get("normalized_key")
+        structured = row.get("structured_value")
+        if key and isinstance(structured, dict):
+            value = structured.get(str(key)) if len(structured) == 1 else structured
+            values[str(key)] = _json_safe(value)
+    return values
+
+
 def serialize_snapshot(
     snapshot: CreatorDirectionSnapshot,
     *,
@@ -104,7 +185,17 @@ def serialize_snapshot(
             "enabled": bool(snapshot.enabled),
             "applied_item_ids": [str(row.get("id")) for row in rows if row.get("id")],
             "applied_override_ids": [str(row.get("id")) for row in overrides if row.get("id")],
+            "compatibility_item_ids": [
+                str(row.get("id"))
+                for row in snapshot.compatibility_items
+                if isinstance(row, dict) and row.get("id")
+            ],
             "typed_overrides": typed,
+            "context_sections": _redacted_context_sections(snapshot),
+            "capability_results": _capability_results(snapshot),
+            "conflict_ids": _conflict_ids(snapshot),
+            "project_override_values": _project_override_values(snapshot),
+            "compatibility_input_version": snapshot.compatibility_input_version,
             "prompt_hash": _prompt_hash(snapshot),
             "generation_id": str(generation_id) if generation_id else None,
         }
@@ -121,6 +212,7 @@ def serialize_private_snapshot(
 
     result = serialize_snapshot(snapshot, source=source, generation_id=generation_id)
     result["prompt_block"] = snapshot.prompt_block
+    result["context_sections"] = copy.deepcopy(snapshot.context_sections)
     return result
 
 
@@ -246,11 +338,15 @@ def _sync_snapshot(
                 )
             ).scalars()
         ]
+    persona = db.execute(select(Persona).where(Persona.user_id == user_id)).scalar_one_or_none()
+    compatibility_items = CreatorDirectionResolver._compatibility_items(persona)
     return CreatorDirectionSnapshot(
         enabled,
         revision,
         tuple(items if enabled else ()),
         tuple(overrides if enabled else ()),
+        tuple(compatibility_items if enabled else ()),
+        COMPATIBILITY_INPUT_VERSION,
     )
 
 

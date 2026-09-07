@@ -18,10 +18,12 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents._schemas.user_style import coerce_user_style, user_style_knobs_dict
 from app.models import (
     CreationThread,
     CreatorMemoryItem,
     CreatorMemoryOperation,
+    Persona,
     ProjectDirectionOverride,
     User,
 )
@@ -36,6 +38,7 @@ MAX_ACTIVE_ITEMS = 100
 MAX_TOTAL_INSTRUCTION_CHARS = 4_000
 MAX_INSTRUCTION_CHARS = 500
 UNDO_TTL = timedelta(minutes=10)
+COMPATIBILITY_INPUT_VERSION = "persona-style-v1"
 _WS = re.compile(r"\s+")
 _FONT_PATTERNS = (
     re.compile(r"\balways use (?:the )?([a-z0-9][a-z0-9 ._-]{0,59}?) font\b", re.IGNORECASE),
@@ -193,6 +196,62 @@ class CreatorDirectionSnapshot:
     revision: int
     items: tuple[dict[str, Any], ...]
     overrides: tuple[dict[str, Any], ...] = ()
+    compatibility_items: tuple[dict[str, Any], ...] = ()
+    compatibility_input_version: str = COMPATIBILITY_INPUT_VERSION
+
+    @staticmethod
+    def _row_instruction(row: dict[str, Any]) -> str:
+        instruction = row.get("instruction")
+        return instruction.strip() if isinstance(instruction, str) else ""
+
+    @property
+    def context_sections(self) -> dict[str, list[str]]:
+        """Bounded prompt sections used by private planner snapshots."""
+
+        sections: dict[str, list[str]] = {
+            "hard_constraints": [],
+            "preferences": [],
+            "creator_context": [],
+        }
+        if not self.enabled:
+            return sections
+        override_keys = {
+            row.get("normalized_key") for row in self.overrides if row.get("normalized_key")
+        }
+        active_keys = {row.get("normalized_key") for row in self.items if row.get("normalized_key")}
+        total = 0
+        for row in self.compatibility_items:
+            if row.get("normalized_key") in override_keys | active_keys:
+                continue
+            instruction = self._row_instruction(row)
+            if not instruction:
+                continue
+            if total + len(instruction) > MAX_TOTAL_INSTRUCTION_CHARS:
+                break
+            sections["creator_context"].append(instruction)
+            total += len(instruction)
+        for row in self.items:
+            if row.get("normalized_key") in override_keys:
+                continue
+            instruction = self._row_instruction(row)
+            if not instruction:
+                continue
+            section = (
+                "hard_constraints" if row.get("enforcement") == "constraint" else "preferences"
+            )
+            if total + len(instruction) > MAX_TOTAL_INSTRUCTION_CHARS:
+                break
+            sections[section].append(instruction)
+            total += len(instruction)
+        for row in self.overrides:
+            instruction = self._row_instruction(row)
+            if not instruction:
+                continue
+            if total + len(instruction) > MAX_TOTAL_INSTRUCTION_CHARS:
+                break
+            sections["preferences"].append(instruction)
+            total += len(instruction)
+        return sections
 
     @property
     def prompt_block(self) -> str:
@@ -201,22 +260,30 @@ class CreatorDirectionSnapshot:
         override_keys = {
             row.get("normalized_key") for row in self.overrides if row.get("normalized_key")
         }
-        account_lines = [
-            f"- {row['instruction']}"
-            for row in self.items
-            if not row.get("normalized_key") or row.get("normalized_key") not in override_keys
-        ]
-        project_lines = [
-            f"- {row['instruction']} (this project only)"
-            for row in self.overrides
-            if row.get("instruction")
-        ]
-        return "\n".join([*account_lines, *project_lines])
+        active_keys = {row.get("normalized_key") for row in self.items if row.get("normalized_key")}
+        lines: list[str] = []
+        for row in self.compatibility_items:
+            if row.get("normalized_key") in override_keys | active_keys:
+                continue
+            instruction = self._row_instruction(row)
+            if instruction:
+                lines.append(f"- {instruction}")
+        for row in self.items:
+            if row.get("normalized_key") in override_keys:
+                continue
+            instruction = self._row_instruction(row)
+            if instruction:
+                lines.append(f"- {instruction}")
+        for row in self.overrides:
+            instruction = self._row_instruction(row)
+            if instruction:
+                lines.append(f"- {instruction} (this project only)")
+        return "\n".join(lines)
 
     @property
     def typed_overrides(self) -> dict[str, Any]:
         result: dict[str, Any] = {}
-        for row in self.items:
+        for row in (*self.compatibility_items, *self.items):
             if row.get("structured_value"):
                 result.update(row["structured_value"])
         for row in self.overrides:
@@ -268,6 +335,10 @@ class CreatorDirectionResolver:
             .scalars()
             .all()
         )
+        persona = (
+            await db.execute(select(Persona).where(Persona.user_id == user_id))
+        ).scalar_one_or_none()
+        compatibility_items = self._compatibility_items(persona)
         total = 0
         items: list[dict[str, Any]] = []
         for row in rows:
@@ -291,8 +362,78 @@ class CreatorDirectionResolver:
             )
             overrides = [self._override(row) for row in override_rows]
         return CreatorDirectionSnapshot(
-            enabled, revision, tuple(items if enabled else ()), tuple(overrides if enabled else ())
+            enabled,
+            revision,
+            tuple(items if enabled else ()),
+            tuple(overrides if enabled else ()),
+            tuple(compatibility_items if enabled else ()),
+            COMPATIBILITY_INPUT_VERSION,
         )
+
+    @staticmethod
+    def _compatibility_items(persona: Persona | None) -> tuple[dict[str, Any], ...]:
+        """Project the legacy derived style as lower-precedence direction.
+
+        Persona.style is compatibility input, not creator-authored memory. It
+        is deliberately kept out of the ledger and receives no user-lock or
+        mutation semantics. Active memory and project overrides win later in
+        ``CreatorDirectionSnapshot.typed_overrides``.
+        """
+
+        if persona is None:
+            return ()
+        style = coerce_user_style(persona.style)
+        if style is None:
+            return ()
+        knobs = user_style_knobs_dict(style)
+        key_map = {
+            "font_family": "font_family",
+            "text_color": "text_color",
+            "highlight_color": "highlight_color",
+            "text_size_px": "text_size",
+            "position": "text_position",
+            "text_anchor": "text_alignment",
+            "stroke_width": "stroke_width",
+            "cycle_fonts": "font_cycling",
+        }
+        rows: list[dict[str, Any]] = []
+        for source_key, normalized_key in key_map.items():
+            value = knobs.get(source_key)
+            if value is None:
+                continue
+            row_value = {normalized_key: value}
+            if not validate_capability_values(row_value):
+                continue
+            rows.append(
+                {
+                    "id": f"compatibility-style-{normalized_key}",
+                    "category": "video_style",
+                    "normalized_key": normalized_key,
+                    "instruction": f"Existing style preference: {normalized_key}={value}",
+                    "enforcement": "default",
+                    "structured_value": row_value,
+                    "source_kind": "persona_style",
+                    "source_thread_id": None,
+                    "state": "active",
+                    "user_locked": False,
+                }
+            )
+        if style.style_set_id and style.style_set_id != "default":
+            rows.append(
+                {
+                    "id": "compatibility-style-set",
+                    "category": "video_style",
+                    "normalized_key": None,
+                    "instruction": f"Existing curated style set: {style.style_set_id}",
+                    "enforcement": "advisory",
+                    "structured_value": None,
+                    "source_kind": "persona_style",
+                    "source_thread_id": None,
+                    "state": "active",
+                    "user_locked": False,
+                }
+            )
+        return tuple(rows)
 
     @staticmethod
     def _item(row: CreatorMemoryItem) -> dict[str, Any]:
@@ -317,6 +458,7 @@ class CreatorDirectionResolver:
             "id": str(row.id),
             "normalized_key": row.normalized_key,
             "instruction": row.instruction,
+            "enforcement": "default",
             "structured_value": row.structured_value,
         }
 

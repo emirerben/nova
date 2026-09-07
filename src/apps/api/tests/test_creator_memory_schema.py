@@ -10,9 +10,9 @@ def _foreign_key(table_name: str, column_name: str):
     return next(iter(column.foreign_keys))
 
 
-def test_creator_memory_source_deletion_preserves_items_but_removes_raw_outbox() -> None:
+def test_creator_memory_source_deletion_preserves_items_and_durable_outbox() -> None:
     assert _foreign_key("creator_memory_items", "source_event_id").ondelete == "SET NULL"
-    assert _foreign_key("creator_memory_outbox", "source_event_id").ondelete == "CASCADE"
+    assert _foreign_key("creator_memory_outbox", "source_event_id").ondelete == "SET NULL"
 
 
 def test_creator_memory_claim_and_foreign_key_indexes_are_declared() -> None:

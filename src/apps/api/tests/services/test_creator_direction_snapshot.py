@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 
-from app.services.creator_direction import CreatorDirectionSnapshot
+import pytest
+
+from app.models import CreatorMemoryItem, Persona, ProjectDirectionOverride
+from app.services.creator_direction import CreatorDirectionResolver, CreatorDirectionSnapshot
 from app.services.creator_direction_snapshot import (
     SNAPSHOT_KEY,
     apply_direction_overrides,
@@ -11,6 +14,7 @@ from app.services.creator_direction_snapshot import (
     ensure_job_snapshot_async,
     renderer_policy_scope,
     resolve_snapshot_for_dispatch,
+    resolve_snapshot_sync,
     serialize_private_snapshot,
     serialize_snapshot,
 )
@@ -30,6 +34,189 @@ def _resolved(*, shadow: bool = False) -> CreatorDirectionSnapshot:
             },
         ),
     )
+
+
+def _rich_resolved() -> CreatorDirectionSnapshot:
+    return CreatorDirectionSnapshot(
+        enabled=True,
+        revision=7,
+        items=(
+            {
+                "id": "memory-raw",
+                "instruction": "Private active direction text",
+                "normalized_key": "text_color",
+                "enforcement": "constraint",
+                "structured_value": {"text_color": "#112233"},
+                "source_kind": "creation_thread",
+            },
+        ),
+        overrides=(
+            {
+                "id": "override-1",
+                "instruction": "Project-only font direction",
+                "normalized_key": "font_family",
+                "enforcement": "default",
+                "structured_value": {"font_family": "Montserrat"},
+                "conflict_id": "conflict-1",
+            },
+        ),
+        compatibility_items=(
+            {
+                "id": "compatibility-style-font",
+                "instruction": "Private compatibility style text",
+                "normalized_key": "font_family",
+                "enforcement": "default",
+                "structured_value": {"font_family": "Inter"},
+                "source_kind": "persona_style",
+            },
+            {
+                "id": "compatibility-style-highlight",
+                "instruction": "Existing style preference: highlight_color=#ffffff",
+                "normalized_key": "highlight_color",
+                "enforcement": "default",
+                "structured_value": {"highlight_color": "#ffffff"},
+                "source_kind": "persona_style",
+            },
+        ),
+    )
+
+
+class _AwaitableResult:
+    def __init__(self, *, rows=None, scalar=None):
+        self._rows = rows
+        self._scalar = scalar
+
+    def __await__(self):
+        async def _return_self():
+            return self
+
+        return _return_self().__await__()
+
+    @property
+    def scalars(self):
+        return _ScalarRows(self._rows)
+
+    def scalar_one_or_none(self):
+        return self._scalar
+
+
+class _AwaitableValue:
+    def __init__(self, value):
+        self.value = value
+
+    def __await__(self):
+        async def _return_value():
+            return self.value
+
+        return _return_value().__await__()
+
+    def __getattr__(self, name):
+        return getattr(self.value, name)
+
+
+class _ScalarRows:
+    def __init__(self, rows):
+        self.rows = list(rows or ())
+
+    def __call__(self):
+        return self
+
+    def __iter__(self):
+        return iter(self.rows)
+
+    def all(self):
+        return self.rows
+
+
+class _SeededDirectionDB:
+    def __init__(self):
+        self.user = SimpleNamespace(
+            creator_memory_enabled=True,
+            creator_memory_revision=12,
+        )
+        self.items = [
+            SimpleNamespace(
+                id="memory-1",
+                category="video_style",
+                normalized_key="text_color",
+                instruction="Use the seeded active color",
+                enforcement="constraint",
+                structured_value={"text_color": "#112233"},
+                source_kind="creation_thread",
+                source_thread_id="thread-1",
+                state="active",
+                user_locked=True,
+                confidence=1.0,
+                updated_at="2026-01-01T00:00:00+00:00",
+            )
+        ]
+        self.persona = SimpleNamespace(
+            style={
+                "style_set_id": "default",
+                "knobs": {
+                    "font_family": "Inter",
+                    "highlight_color": "#ffffff",
+                },
+            }
+        )
+        self.overrides = [
+            SimpleNamespace(
+                id="override-1",
+                normalized_key="font_family",
+                instruction="Use Montserrat for this project",
+                structured_value={"font_family": "Montserrat"},
+            )
+        ]
+
+    def get(self, _model, _user_id):
+        return _AwaitableValue(self.user)
+
+    def execute(self, statement):
+        entity = statement.column_descriptions[0]["entity"]
+        if entity is CreatorMemoryItem:
+            return _AwaitableResult(rows=self.items)
+        if entity is Persona:
+            return _AwaitableResult(scalar=self.persona)
+        if entity is ProjectDirectionOverride:
+            return _AwaitableResult(rows=self.overrides)
+        raise AssertionError(f"unexpected resolver entity: {entity!r}")
+
+
+@pytest.fixture
+def seeded_direction_db():
+    return _SeededDirectionDB()
+
+
+@pytest.mark.asyncio
+async def test_sync_and_async_resolvers_have_identical_seeded_projection(seeded_direction_db):
+    thread_id = "thread-1"
+
+    async_snapshot = await CreatorDirectionResolver().snapshot(
+        seeded_direction_db,
+        "user-1",
+        thread_id=thread_id,
+    )
+    sync_snapshot = resolve_snapshot_sync(
+        seeded_direction_db,
+        "user-1",
+        thread_id=thread_id,
+    )
+
+    assert async_snapshot.enabled == sync_snapshot.enabled
+    assert async_snapshot.revision == sync_snapshot.revision
+    assert async_snapshot.compatibility_items == sync_snapshot.compatibility_items
+    assert async_snapshot.overrides == sync_snapshot.overrides
+    assert async_snapshot.context_sections == sync_snapshot.context_sections
+    assert async_snapshot.prompt_block == sync_snapshot.prompt_block
+    assert async_snapshot.typed_overrides == sync_snapshot.typed_overrides
+    assert async_snapshot.overrides[0]["enforcement"] == "default"
+    project_result = next(
+        row
+        for row in serialize_snapshot(async_snapshot, source="test")["capability_results"]
+        if row["scope"] == "project"
+    )
+    assert project_result["status"] == "enforced"
+    assert project_result["enforcement"] == "default"
 
 
 def test_snapshot_serialization_is_redacted_and_versioned():
@@ -127,6 +314,51 @@ def test_private_snapshot_upgrades_public_dispatch_snapshot_for_worker_prompt():
     assert private["prompt_block"] == "- Use the same look every time"
     assert private["generation_id"] == "generation-1"
     assert private["typed_overrides"] == {"shadow_enabled": False}
+
+
+def test_snapshot_v1_persists_receipts_but_private_only_keeps_context_text():
+    snapshot = _rich_resolved()
+
+    public = serialize_snapshot(snapshot, source="dispatch")
+    private = serialize_private_snapshot(snapshot, source="dispatch")
+
+    assert public["compatibility_item_ids"] == [
+        "compatibility-style-font",
+        "compatibility-style-highlight",
+    ]
+    assert public["project_override_values"] == {"font_family": "Montserrat"}
+    assert public["conflict_ids"] == ["conflict-1"]
+    assert {row["scope"] for row in public["capability_results"]} == {
+        "account",
+        "compatibility",
+        "project",
+    }
+    assert public["context_sections"]["creator_context"]["item_ids"] == [
+        "compatibility-style-highlight"
+    ]
+    assert "Private active direction text" not in str(public)
+    assert "Private compatibility style text" not in str(public)
+    assert "Private active direction text" in private["prompt_block"]
+    assert "highlight_color=#ffffff" in str(private["context_sections"])
+    assert private["context_sections"]["creator_context"] == [
+        "Existing style preference: highlight_color=#ffffff"
+    ]
+
+
+def test_private_snapshot_reuse_preserves_v1_receipts_and_redaction():
+    first = attach_private_snapshot({}, _rich_resolved(), source="dispatch")
+    changed = attach_private_snapshot(
+        {SNAPSHOT_KEY: first},
+        CreatorDirectionSnapshot(enabled=True, revision=99, items=()),
+        source="retry",
+    )
+
+    assert changed == first
+    assert changed["memory_revision"] == 7
+    assert changed["compatibility_input_version"] == "persona-style-v1"
+    assert "Private active direction text" not in str(
+        project_public_assembly_plan({SNAPSHOT_KEY: changed})
+    )
 
 
 async def test_async_job_dispatch_pins_private_prompt_for_direct_generators(monkeypatch):

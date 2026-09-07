@@ -938,6 +938,72 @@ async def test_outbox_handles_disabled_missing_noop_and_success_states(monkeypat
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_project_deletion_preserves_pending_outbox_and_nulls_source_event(monkeypatch):
+    from app.tasks import creator_memory as creator_memory_task
+
+    try:
+        user_id = await _create_user()
+    except (OperationalError, OSError) as exc:
+        pytest.skip(f"nova_test Postgres not reachable: {exc!r}")
+    try:
+        monkeypatch.setattr(creator_memory_task.settings, "creator_memory_enabled", True)
+        async with AsyncSessionLocal() as db:
+            thread = CreationThread(creator_id=user_id)
+            db.add(thread)
+            await db.flush()
+            source = CreationThreadEvent(
+                thread_id=thread.id,
+                sequence=0,
+                revision=0,
+                role="user",
+                event_type="user_message",
+                content="Never add shadows",
+            )
+            db.add(source)
+            await db.flush()
+            outbox = CreatorMemoryOutbox(
+                user_id=user_id,
+                source_event_id=source.id,
+                source_message="Never add shadows",
+                status="pending",
+            )
+            db.add(outbox)
+            await db.commit()
+            outbox_id, thread_id = outbox.id, thread.id
+
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(CreationThread).where(CreationThread.id == thread_id))
+            await db.commit()
+
+            preserved = await db.get(CreatorMemoryOutbox, outbox_id)
+            assert preserved is not None
+            assert preserved.status == "pending"
+            assert preserved.source_event_id is None
+            assert preserved.source_message == "Never add shadows"
+
+        assert (
+            await asyncio.to_thread(creator_memory_task.process_outbox, str(outbox_id))
+            == "create_item"
+        )
+
+        async with AsyncSessionLocal() as db:
+            processed = await db.get(CreatorMemoryOutbox, outbox_id)
+            assert processed is not None
+            assert processed.status == "succeeded"
+            learned = (
+                await db.execute(
+                    select(CreatorMemoryItem).where(
+                        CreatorMemoryItem.user_id == user_id,
+                        CreatorMemoryItem.instruction == "Never add shadows",
+                    )
+                )
+            ).scalar_one()
+            assert learned.source_event_id is None
+    finally:
+        await _delete_users(user_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_explicit_project_learning_appends_one_undo_receipt(monkeypatch):
     from app.tasks import creator_memory as creator_memory_task
 

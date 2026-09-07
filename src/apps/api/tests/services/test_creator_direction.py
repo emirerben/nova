@@ -1,5 +1,9 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 from app.services.creator_direction import (
     MAX_TOTAL_INSTRUCTION_CHARS,
+    CreatorDirectionResolver,
     CreatorDirectionSnapshot,
     infer_typed_direction,
     normalize_instruction,
@@ -112,3 +116,46 @@ def test_project_override_replaces_account_prompt_and_typed_value() -> None:
     assert "Always use Inter font" not in snapshot.prompt_block
     assert "Use a lighter serif for this launch (this project only)" in snapshot.prompt_block
     assert snapshot.typed_overrides == {"tone": "warm"}
+
+
+async def test_resolver_projects_persona_style_below_active_memory():
+    user_id = "user-1"
+    persona = SimpleNamespace(style={"style_set_id": "default", "knobs": {"font_family": "Inter"}})
+    active = SimpleNamespace(
+        id="memory-1",
+        category="video_style",
+        normalized_key="font_family",
+        instruction="Always use Playfair Display",
+        enforcement="constraint",
+        structured_value={"font_family": "Playfair Display"},
+        source_kind="creation_thread",
+        source_thread_id=None,
+        state="active",
+        user_locked=True,
+        confidence=1.0,
+        updated_at=None,
+    )
+
+    def result(rows):
+        return SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: rows),
+            scalar_one_or_none=lambda: rows,
+        )
+
+    db = SimpleNamespace(
+        get=AsyncMock(
+            return_value=SimpleNamespace(
+                creator_memory_enabled=True,
+                creator_memory_revision=3,
+            )
+        ),
+        execute=AsyncMock(side_effect=[result([active]), result(persona)]),
+    )
+
+    snapshot = await CreatorDirectionResolver().snapshot(db, user_id)
+
+    assert snapshot.compatibility_input_version == "persona-style-v1"
+    assert snapshot.typed_overrides["font_family"] == "Playfair Display"
+    assert snapshot.compatibility_items[0]["structured_value"] == {"font_family": "Inter"}
+    assert "Existing style preference: font_family=Inter" not in snapshot.prompt_block
+    assert "Always use Playfair Display" in snapshot.prompt_block
