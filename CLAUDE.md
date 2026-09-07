@@ -62,7 +62,6 @@ Rules:
 - `src/apps/web/src/app/plan/` — canonical chat-first creation workspace; `/plan/new` redirects there, while `/plan/items/*` retains item/editor contracts
 - `src/apps/web/src/app/create/` — redirects to `/plan`; persisted job/editor contracts live in `routes/{me,manual_drafts}.py` (`plans/017-qendresa-creation-flow.md`).
 - `src/apps/api/app/kria/` — runtime-v2 contracts, policy, drafts, and replay; HTTP/task entrypoints are `routes/kria_runtime.py` and `tasks/kria_runtime.py` ([architecture](docs/pipelines/kria-agent-runtime.md); [runbook](docs/runbooks/kria-agent-runtime.md)).
-- `src/apps/api/app/agents/edit_proposal.py`, `src/apps/api/app/services/edit_direction_planner.py`, and `src/apps/api/app/tasks/edit_proposal_build.py` — narrated mixed-media prompt fidelity and source-bounded fallback ([runbook](docs/runbooks/creator-prompt-fidelity.md)).
 - `src/apps/api/app/pipeline/music_recipe.py` — beat-snap recipe generator (see `docs/pipelines/music.md`)
 - `src/apps/api/app/tasks/music_orchestrate.py` — Celery tasks: beat analysis + music job orchestration
 - `src/apps/api/app/services/audio_download.py` — yt-dlp audio download + beat detection via FFmpeg
