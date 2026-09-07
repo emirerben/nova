@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.66.1.0] — 2026-09-07
+
+### Fixed
+- **Videos stuck on "Rendering" now get cleared again.** The watchdog that reconciles frozen render tiles had been silently doing nothing in production: its PostgreSQL query used `&&` with a bare field reference, which Postgres rejects as a jsonpath syntax error at execution time. Worker startup caught the error as non-fatal, so every worker logged it and moved on while stuck tiles were never swept. A tile frozen mid-render now reaches a terminal state instead of polling forever.
+- **A re-render that dies no longer shows the pre-edit video as the finished edit.** Only editor Saves carried a recovery lease, so a dead swap-song, retext, caption reburn, or style change was marked "ready" while still pointing at the previous video — reporting an edit as complete that never rendered. Those now fail honestly, keep the last-good video playable, and say the edit could not finish.
+- **A variant the watchdog fails can now actually be retried.** The parent video moves to a partial-ready state whenever any variant is failed, so the Retry action the interface offers no longer returns a conflict. A video already in a failed state is never promoted back into the ready bucket.
+
+### Internal
+- Both reaper jsonpaths are bound as query parameters cast to `jsonpath` instead of being spliced in as raw SQL text, and are executed against a real PostgreSQL in `tests/tasks/test_reaper_jsonpath.py` — a malformed path now fails the suite instead of being swallowed at runtime. The existing reaper tests mock the database entirely, which is why this shipped unnoticed.
+- Guards a malformed JSON-object `variants` from being iterated as keys and written back, which would destroy the assembly plan. Lax-mode `$.variants[*]` auto-wraps a non-array, so the shape matched the predicate.
+- Migration 0096 adds `idx_jobs_stuck_variant_reconcile_sweep`, a sparse `(updated_at, id)` index built `CONCURRENTLY`, so the reactivated sweep does not seq-scan `jobs` on every worker start. Its predicate is pinned byte-identical to the reaper constant by test.
+- New kill switch `RECONCILE_STUCK_VARIANTS_ENABLED` (default `true`) halts the sweep without a code revert.
+
 ## [0.66.0.0] — 2026-09-06
 
 ### Added
