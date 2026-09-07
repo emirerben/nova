@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.67.0.0] — 2026-09-07
+## [0.68.0.0] — 2026-09-07
 
 ### Added
 - **Personalization gives every creator one editable source of truth.** The new `/plan/profile` page presents creator background, visual style, storytelling preferences, and things to avoid as one spacious text document, with inline suggestions, project sources, pause/clear controls, and ten-minute Undo.
@@ -11,6 +11,14 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - **Every planning and rendering path receives an immutable creator-direction snapshot.** Content planning, generative edits, classic templates, music edits, captions, custom effects, retries, and reburns now reuse generation-bound direction, including enforceable font and shadow controls.
 - **Creator direction stays private by construction.** Raw instructions are excluded from public job payloads, operational logs, agent traces, and admin diagnostics; owner-scoped CAS, idempotency, outbox recovery, and additive PostgreSQL storage protect mutations and automatic learning.
+
+## [0.67.1.0] — 2026-09-07
+
+### Fixed
+- **Voiceover projects created in chat now start rendering.** Kria accepts the private, thread-scoped audio location produced by the chat uploader when it belongs to the same creator, while public uploads and other users' media remain rejected.
+
+### Internal
+- The render-dispatch regression now uses the same `users/{user}/creation-threads/{thread}/...` storage contract as the product flow, closing the gap that let direct-upload canaries pass while real chat voiceovers failed before a Job was created.
 
 ## [0.66.0.0] — 2026-09-06
 
