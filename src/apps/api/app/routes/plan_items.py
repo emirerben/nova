@@ -2747,6 +2747,18 @@ async def _respond_to_dispatch_result(
             status_code=status.HTTP_409_CONFLICT,
             detail="speech_cleanup_unavailable:Speech cleanup is unavailable for this item",
         )
+    if result.outcome == "speech_cleanup_analysis_conflict":
+        # Enforce mode fails a render closed when the source is in the preflight
+        # cohort but no cleanup decision was supplied. The chat flow always
+        # supplies one; this route has no cleanup affordance, so surface the
+        # conflict instead of falling through to the unknown-outcome 500 below.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "speech_cleanup_analysis_conflict: Choose whether to clean up the "
+                "speech in chat before creating this video"
+            ),
+        )
     if result.outcome == "speech_cleanup_recovery_conflict":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
