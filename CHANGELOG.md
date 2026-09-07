@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.66.1.0] — 2026-09-07
+## [0.67.1.0] — 2026-09-07
 
 ### Fixed
 - **Voiceover projects created in chat now start rendering.** Kria accepts the private, thread-scoped audio location produced by the chat uploader when it belongs to the same creator, while public uploads and other users' media remain rejected.
