@@ -500,6 +500,8 @@ def test_reset_happy_path(client: TestClient) -> None:
     user = _fake_user()
     db_user = MagicMock()
     db_user.onboarding_status = "complete"
+    db_user.creator_memory_enabled = False
+    db_user.creator_memory_revision = 7
 
     persona = MagicMock(id=uuid.uuid4(), user_id=user.id)
     db = _reset_db(db_user, persona=persona)
@@ -515,6 +517,9 @@ def test_reset_happy_path(client: TestClient) -> None:
     db.delete.assert_not_awaited()
     # Onboarding status reset.
     assert db_user.onboarding_status == "pending"
+    # Persona reset cannot erase or re-enable account-scoped creator memory.
+    assert db_user.creator_memory_enabled is False
+    assert db_user.creator_memory_revision == 7
     # Single commit.
     db.commit.assert_awaited_once()
 

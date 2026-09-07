@@ -288,7 +288,7 @@ test.describe("Kria chat-first creation fixture", () => {
       contentType: "application/json",
       body: JSON.stringify([thread]),
     }));
-    await page.route("**/api/plan/creation-threads/thread-e2e", (route) => route.fulfill({
+    await page.route("**/api/plan/creation-threads/thread-e2e?projection=full", (route) => route.fulfill({
       contentType: "application/json",
       body: JSON.stringify(thread),
     }));
@@ -296,6 +296,7 @@ test.describe("Kria chat-first creation fixture", () => {
     await page.goto("/plan/thread-e2e");
     await expect(page).toHaveURL(/\/plan\/thread-e2e$/);
     await expect(page.getByTestId("project-title")).toBeVisible();
+    await expect(page.getByTestId("project-title")).toHaveText("Untitled video");
     await expect(page.getByTestId("project-title")).not.toHaveText("Create with Kria");
     await expect(page.getByLabel("Attach primary video clips")).toBeVisible();
     await page.getByRole("button", { name: "Change format" }).click();

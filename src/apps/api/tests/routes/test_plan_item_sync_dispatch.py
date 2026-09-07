@@ -811,9 +811,10 @@ def test_audio_led_dispatch_preserves_proposal_but_omits_guided_snapshot(
 
     monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", True)
     monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
-    _user_id, item_id = _seed_item()
-    path = f"users/test/plan/{item_id}/a.mp4"
-    voiceover = "voiceover-uploads/test/voice.m4a"
+    user_id, item_id = _seed_item()
+    thread_id = uuid.uuid4()
+    path = f"users/{user_id}/creation-threads/{thread_id}/clip.mp4"
+    voiceover = f"users/{user_id}/creation-threads/{thread_id}/voice.m4a"
     with sync_session() as s:
         item = s.get(PlanItem, item_id)
         assert item is not None

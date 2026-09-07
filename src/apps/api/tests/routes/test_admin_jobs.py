@@ -362,6 +362,53 @@ class TestJobDebug:
         assert body["job"]["pipeline_trace"] is None
         assert body["render_summary"] is None
 
+    def test_runtime_v2_job_includes_lazy_turn_correlation(self, client):
+        item_id = uuid.uuid4()
+        turn_id = uuid.uuid4()
+        j = _job_row(content_plan_item_id=item_id, mode="generative")
+        with patch("app.routes.admin.settings") as settings:
+            settings.admin_api_key = VALID_TOKEN
+
+            async def _gen():
+                db = AsyncMock()
+                job_res = MagicMock()
+                job_res.scalar_one_or_none.return_value = j
+                clips_res = MagicMock()
+                clips_res.scalars.return_value.all.return_value = []
+                mt_res = MagicMock()
+                mt_res.scalar_one_or_none.return_value = None
+                runs_res = MagicMock()
+                runs_res.scalars.return_value.all.return_value = []
+                track_runs_res = MagicMock()
+                track_runs_res.scalars.return_value.all.return_value = []
+                execution_res = MagicMock()
+                execution_res.scalars.return_value.first.return_value = SimpleNamespace(
+                    turn_id=turn_id
+                )
+                db.execute = AsyncMock(
+                    side_effect=[
+                        job_res,
+                        clips_res,
+                        mt_res,
+                        runs_res,
+                        track_runs_res,
+                        execution_res,
+                    ]
+                )
+                yield db
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                response = client.get(
+                    f"/admin/jobs/{j.id}/debug",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 200
+        assert response.json()["kria_turn_id"] == str(turn_id)
+
     def test_debug_projects_private_assembly_controls_but_keeps_timing_trace(self, client):
         import copy
 

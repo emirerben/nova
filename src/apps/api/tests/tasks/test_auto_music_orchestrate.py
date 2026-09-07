@@ -742,6 +742,42 @@ def test_track_slot_count_memoizes_generated_current_section_recipe() -> None:
     mock_generate.assert_called_once()
 
 
+def test_auto_music_variant_workers_receive_pinned_direction(monkeypatch, tmp_path) -> None:
+    """The ThreadPoolExecutor must receive the immutable render policy explicitly.
+
+    ContextVars do not cross into worker threads, so relying on the task entry
+    scope would silently disable hard font/shadow rules for auto-music variants.
+    """
+    import app.tasks.auto_music_orchestrate as task
+
+    received: list[dict] = []
+    track = MagicMock()
+    track.id = "track-1"
+
+    def _fake_render_one_variant(**kwargs):
+        received.append(kwargs)
+        return {"ok": True, "rank": kwargs["rank"], "track_id": kwargs["track"].id}
+
+    monkeypatch.setattr(task, "_render_one_variant", _fake_render_one_variant)
+
+    result = task._render_variants_parallel(
+        job_id=JOB_ID,
+        picks=[(track, 8.0, "fit")],
+        clip_metas=[],
+        clip_id_to_local={},
+        clip_id_to_gcs={},
+        probe_map={},
+        tmpdir=str(tmp_path),
+        creator_direction_typed_overrides={"font_family": "Inter", "shadow_enabled": False},
+    )
+
+    assert result == [{"ok": True, "rank": 1, "track_id": "track-1"}]
+    assert received[0]["creator_direction_typed_overrides"] == {
+        "font_family": "Inter",
+        "shadow_enabled": False,
+    }
+
+
 # ── celery task wrapper: failure is swallowed (never raises) ─────────────────
 
 

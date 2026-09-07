@@ -252,7 +252,7 @@ save (`render=False`) must NOT call either helper. `mark_started` is unchanged
 and still refuses to move `started_at` — it models worker pickup of one
 orchestrator run, so a Celery redelivery can't restart a clock mid-render.
 
-**Second consumer: the stuck-variant reaper (v0.66.1.0).** These two timestamps
+**Second consumer: the stuck-variant reaper (v0.69.1.0).** These two timestamps
 are no longer only a UI clock. `_replacement_render_in_flight` in
 `tasks/reaper.py` compares `render_started_at` against `render_finished_at` to
 decide whether a stuck variant's `video_path` is the current artifact or a
@@ -544,7 +544,7 @@ The variant sits "rendering" until the 60-min reaper (`tasks/reaper.py`)
 converts it to a failed badge; the user recovers by re-tapping Apply. See
 agents/DECISIONS.md (2026-07-11) for the reusable rule.
 
-**That recovery only actually worked from v0.66.1.0.** `reconcile_stuck_variants`
+**That recovery only actually worked from v0.69.1.0.** `reconcile_stuck_variants`
 was a silent no-op in production from #962 onward: its editor-lease jsonpath used
 `&&` with a bare accessor, Postgres parses jsonpath at execution time, and
 `worker_ready` swallowed the resulting `ProgrammingError` as non-fatal — so the
@@ -563,7 +563,7 @@ user-visible:
 Kill switch: `RECONCILE_STUCK_VARIANTS_ENABLED` (default `true`) — the sweep
 writes user-visible state, so it can be halted without a code revert via
 `fly secrets set RECONCILE_STUCK_VARIANTS_ENABLED=false --app nova-video` plus a
-worker restart. Migration 0096 backs the reactivated query with a sparse partial
+worker restart. Migration 0099 backs the reactivated query with a sparse partial
 index whose predicate must stay byte-identical to `_STUCK_VARIANT_JSONPATH`.
 Full incident: agents/DECISIONS.md "Stuck-variant reaper: a jsonpath that never
 parsed".

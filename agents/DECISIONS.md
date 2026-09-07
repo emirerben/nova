@@ -229,7 +229,7 @@ Locked by `tests/tasks/test_task_time_limits.py`.
 
 ---
 
-## Stuck-variant reaper: a jsonpath that never parsed (v0.66.1.0, 2026-09-07)
+## Stuck-variant reaper: a jsonpath that never parsed (v0.69.1.0, 2026-09-07)
 
 `reconcile_stuck_variants` builds a Postgres jsonpath to find variants frozen
 mid-render. One of its two paths was:
@@ -246,7 +246,7 @@ to ruff, and to every test — `tests/tasks/test_reaper.py` mocks `sync_session`
 wholesale. `app/worker.py` catches the `worker_ready` reconcile as non-fatal,
 so every worker logged the ProgrammingError and moved on. Both jsonpaths are
 OR'd into one discovery query, so the malformed branch took the valid one down
-with it: the entire sweep was a silent no-op from #962 until v0.66.1.0.
+with it: the entire sweep was a silent no-op from #962 until v0.69.1.0.
 Confirmed on the autoplace machine and both speech_analysis machines 2026-09-06.
 
 Fix: `exists (@.editor_render_attempt)`. Both paths are now bound as SQL
@@ -279,7 +279,7 @@ JSON-OBJECT `variants`. The reconcile loop would then iterate the dict's KEYS
 and persist `variants: ["render_status", ...]`, destroying the plan. Guarded
 with `isinstance(variants, list)` in both reaper loops.
 
-Migration 0096 adds a sparse `(updated_at, id)` index with the sweep's jsonpath
+Migration 0099 adds a sparse `(updated_at, id)` index with the sweep's jsonpath
 as its predicate; without it the reactivated query seq-scans `jobs` on every
 `worker_ready`. Verified with EXPLAIN: the planner absorbs the jsonpath into the
 index predicate and the ORDER BY short-circuits the LIMIT.

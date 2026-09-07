@@ -19,6 +19,18 @@ def _input(**clip_overrides) -> IntroWriterInput:
     return IntroWriterInput(hero_clip=ClipSummary(**base), tone="punchy")
 
 
+def test_render_prompt_includes_dispatch_pinned_creator_direction():
+    prompt = _agent().render_prompt(
+        IntroWriterInput(
+            hero_clip=_input().hero_clip,
+            creator_direction="Always use a clean serif title; never add shadows.",
+        )
+    )
+
+    assert "Standing creator direction" in prompt
+    assert "never add shadows" in prompt
+
+
 def _agent() -> IntroTextWriterAgent:
     return IntroTextWriterAgent.__new__(IntroTextWriterAgent)
 

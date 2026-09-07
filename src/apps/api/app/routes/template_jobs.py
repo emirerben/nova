@@ -221,6 +221,9 @@ async def create_template_job(
         status="queued",
     )
     db.add(job)
+    from app.services.creator_direction_snapshot import ensure_job_snapshot_async  # noqa: PLC0415
+
+    await ensure_job_snapshot_async(db, job, source="template_dispatch")
     await db.commit()
     await db.refresh(job)
 
@@ -338,6 +341,9 @@ async def reroll_template_job(
     # Create new job with same clips and template
     original_candidates = original.all_candidates or {}
     inherited_inputs = original_candidates.get("inputs") or {}
+    from app.services.creator_direction_snapshot import private_snapshot_from
+
+    inherited_direction_snapshot = private_snapshot_from(original.assembly_plan)
 
     new_job = Job(
         user_id=current_user.id,
@@ -352,6 +358,14 @@ async def reroll_template_job(
         status="queued",
     )
     db.add(new_job)
+    from app.services.creator_direction_snapshot import ensure_job_snapshot_async
+
+    await ensure_job_snapshot_async(
+        db,
+        new_job,
+        source="template_reroll",
+        inherited_snapshot=inherited_direction_snapshot,
+    )
     await db.commit()
     await db.refresh(new_job)
 

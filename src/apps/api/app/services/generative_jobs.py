@@ -48,6 +48,39 @@ def _validate_generative_clip_paths(user_id: uuid.UUID, clip_paths: list[str]) -
         _validate_clip_path_prefixes(legacy_paths)
 
 
+def _validate_job_voiceover_path(*, user_id: uuid.UUID, mode: str, path: str) -> str:
+    """Validate voiceovers for the public and authenticated plan-job namespaces.
+
+    Browser-direct voiceovers retain the existing single-prefix contract. Creation
+    threads store their media beside the thread's footage, so content-plan dispatch
+    additionally accepts the exact server-authored path shape for the job owner.
+    Never widen the public request validator or accept another user's thread media.
+    """
+    if isinstance(path, str) and path.startswith("voiceover-uploads/"):
+        return _validate_voiceover_path(path)
+    if (
+        mode != "content_plan"
+        or not isinstance(path, str)
+        or ".." in path
+        or "\\" in path
+        or path.startswith("/")
+    ):
+        raise ValueError(f"Invalid voiceover path: {path!r}")
+
+    parts = path.split("/")
+    if len(parts) != 5 or parts[:1] != ["users"] or parts[2] != "creation-threads":
+        raise ValueError(f"Invalid content-plan voiceover path: {path!r}")
+    if parts[1] != str(user_id):
+        raise ValueError("Content-plan voiceover owner mismatch")
+    try:
+        thread_id = uuid.UUID(parts[3])
+    except ValueError as exc:
+        raise ValueError(f"Invalid content-plan voiceover path: {path!r}") from exc
+    if str(thread_id) != parts[3] or not parts[4]:
+        raise ValueError(f"Invalid content-plan voiceover path: {path!r}")
+    return path
+
+
 # Upper bounds on the persona context stashed onto the job. Keeps a runaway
 # persona row from bloating all_candidates / the downstream intro_writer prompt.
 # (intro_writer re-clamps + re-sanitizes too — this is the storage-side cap.)
@@ -301,7 +334,11 @@ def build_generative_job(
     # never be mistaken for a footage clip. Omitted entirely when absent → public/song
     # jobs keep their exact pre-voiceover all_candidates shape.
     if voiceover_gcs_path:
-        all_candidates["voiceover_gcs_path"] = _validate_voiceover_path(voiceover_gcs_path)
+        all_candidates["voiceover_gcs_path"] = _validate_job_voiceover_path(
+            user_id=user_id,
+            mode=mode,
+            path=voiceover_gcs_path,
+        )
     # Narrated original-audio bed level (0..1). Clamped here; omitted when absent so
     # non-narrated / pre-feature jobs keep their exact all_candidates shape.
     if voiceover_bed_level is not None:

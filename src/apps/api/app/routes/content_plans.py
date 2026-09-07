@@ -214,6 +214,13 @@ async def create_plan(
     from app.config import settings  # noqa: PLC0415
 
     horizon = max(1, min(body.horizon_days or 30, 60))
+    from app.services.creator_direction_snapshot import (  # noqa: PLC0415
+        resolve_snapshot_for_dispatch,
+        serialize_private_snapshot,
+    )
+
+    direction_snapshot = await resolve_snapshot_for_dispatch(db, user.id)
+    private_direction = serialize_private_snapshot(direction_snapshot, source="plan_dispatch")
 
     if settings.idea_centric_plan_enabled:
         # Idea-centric mode: plan starts ready; no auto-generation.
@@ -224,6 +231,7 @@ async def create_plan(
             user_id=user.id,
             persona_id=persona.id,
             events={"text": body.events} if body.events else None,
+            creator_direction_snapshot=private_direction,
             plan_status="ready",
             horizon_days=horizon,
         )
@@ -311,6 +319,7 @@ async def create_plan(
         plan_status="generating",
         horizon_days=horizon,
         generation_started_at=datetime.now(UTC),
+        creator_direction_snapshot=private_direction,
     )
     db.add(plan)
     await db.commit()
@@ -413,6 +422,14 @@ async def regenerate_plan(
         )
     plan.plan_status = "generating"
     plan.generation_started_at = datetime.now(UTC)
+    from app.services.creator_direction_snapshot import (  # noqa: PLC0415
+        resolve_snapshot_for_dispatch,
+        serialize_private_snapshot,
+    )
+
+    plan.creator_direction_snapshot = serialize_private_snapshot(
+        await resolve_snapshot_for_dispatch(db, user.id), source="plan_regenerate"
+    )
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     await db.commit()
 

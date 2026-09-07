@@ -14,10 +14,12 @@ from app.limiter import limiter
 from app.routes import (
     admin,
     admin_build_tasks,
+    admin_creator_memory,
     admin_creator_style,
     admin_edit_feedback,
     admin_generative,
     admin_jobs,
+    admin_kria,
     admin_music,
     admin_plan_items,
     admin_review,
@@ -30,9 +32,11 @@ from app.routes import (
     creator_workspace,
     dev_qa_storage,
     generative_jobs,
+    kria_runtime,
     landing,
     manual_drafts,
     me,
+    memory,
     music,
     music_jobs,
     personas,
@@ -173,12 +177,18 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
+app.include_router(admin_kria.router, prefix="/admin/kria", tags=["admin-kria"])
 app.include_router(admin_plan_items.router, prefix="/admin/plan-items", tags=["admin-plan-items"])
 app.include_router(admin_music.router, prefix="/admin/music-tracks", tags=["admin-music"])
 app.include_router(
     admin_sound_effects.router, prefix="/admin/sound-effects", tags=["admin-sound-effects"]
 )
 app.include_router(admin_generative.router, prefix="/admin/generative", tags=["admin-generative"])
+app.include_router(
+    admin_creator_memory.router,
+    prefix="/admin/creator-memory",
+    tags=["admin-creator-memory"],
+)
 app.include_router(
     admin_build_tasks.router, prefix="/admin/build-tasks", tags=["admin-build-tasks"]
 )
@@ -201,11 +211,14 @@ app.include_router(generative_jobs.router, prefix="/generative-jobs", tags=["gen
 app.include_router(personas.router, prefix="/personas", tags=["personas"])
 app.include_router(content_plans.router, prefix="/content-plans", tags=["content-plans"])
 app.include_router(creation_threads.router, prefix="/creation-threads", tags=["creation-threads"])
+app.include_router(kria_runtime.router, prefix="/creation-threads", tags=["kria-runtime-v2"])
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-agent"])
 app.include_router(creator_workspace.router, prefix="/content-plans", tags=["creator-workspace"])
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(me.router, prefix="/me", tags=["me"])
+app.include_router(memory.router, prefix="/me", tags=["memory"])
+app.include_router(memory.direction_router, tags=["direction-overrides"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
 app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])

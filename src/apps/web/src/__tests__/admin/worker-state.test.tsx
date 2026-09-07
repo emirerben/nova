@@ -26,9 +26,11 @@ jest.mock("next/link", () => {
 });
 
 const mockGetDebug = jest.fn();
+const mockGetKriaTrace = jest.fn();
 const mockCancelJob = jest.fn();
 jest.mock("@/lib/admin-jobs-api", () => ({
   adminGetJobDebug: (...args: unknown[]) => mockGetDebug(...args),
+  adminGetKriaTrace: (...args: unknown[]) => mockGetKriaTrace(...args),
   adminCancelJob: (...args: unknown[]) => mockCancelJob(...args),
 }));
 
@@ -76,6 +78,12 @@ const baseJob = {
 
 function buildDebugResponse(overrides: {
   status?: string;
+  kriaTrace?: {
+    trace: Record<string, unknown>;
+    metrics: Record<string, unknown>;
+    alerts: Array<Record<string, unknown>>;
+    recovery_actions: Array<Record<string, unknown>>;
+  } | null;
   runtime: {
     state: "active" | "reserved" | "not_found" | "unknown";
     worker?: string | null;
@@ -100,11 +108,18 @@ function buildDebugResponse(overrides: {
       queue_position: null,
       ...overrides.runtime,
     },
+    kria_turn_id: overrides.kriaTrace ? "turn-1" : null,
   };
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockGetKriaTrace.mockResolvedValue({
+    trace: {},
+    metrics: {},
+    alerts: [],
+    recovery_actions: [],
+  });
 });
 
 describe("WorkerStatePanel — operator-safety rendering", () => {
@@ -179,6 +194,62 @@ describe("WorkerStatePanel — operator-safety rendering", () => {
     expect(
       screen.getByText(/Broker unreachable/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Kria turn diagnostics", () => {
+  it("renders a clear empty state for Jobs outside runtime v2", async () => {
+    mockGetDebug.mockResolvedValue(
+      buildDebugResponse({ runtime: { state: "not_found" }, kriaTrace: null }),
+    );
+    render(<JobDebugPage params={{ id: baseJob.id }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Kria Turn" }));
+    expect(
+      screen.getByText("This Job was not dispatched by a runtime-v2 Kria turn."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders alerts, safe recovery, and the redacted chain", async () => {
+    const kriaTrace = {
+      trace: { redacted: true, thread: { thread_id: "thread-1" } },
+      metrics: { alert_count: 1 },
+      alerts: [{ code: "expired_turn_lease" }],
+      recovery_actions: [{ action: "reclaim_expired_turn" }],
+    };
+    mockGetKriaTrace.mockResolvedValue(kriaTrace);
+    mockGetDebug.mockResolvedValue(
+      buildDebugResponse({
+        runtime: { state: "not_found" },
+        kriaTrace,
+      }),
+    );
+    render(<JobDebugPage params={{ id: baseJob.id }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Kria Turn" }));
+    expect(await screen.findByText("Alerts (1)")).toBeInTheDocument();
+    expect(mockGetKriaTrace).toHaveBeenCalledWith("turn-1");
+    expect(screen.getByText("Safe recovery")).toBeInTheDocument();
+    expect(
+      screen.getByText("Redacted thread → turn → approval → execution → Job chain"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByTestId("json-tree-stub")).toHaveLength(3);
+  });
+
+  it("shows a retry action when the lazy Kria trace fails", async () => {
+    mockGetKriaTrace.mockRejectedValueOnce(new Error("Trace unavailable"));
+    mockGetDebug.mockResolvedValue(
+      buildDebugResponse({
+        runtime: { state: "not_found" },
+        kriaTrace: { trace: {}, metrics: {}, alerts: [], recovery_actions: [] },
+      }),
+    );
+    render(<JobDebugPage params={{ id: baseJob.id }} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Kria Turn" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Trace unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mockGetKriaTrace).toHaveBeenCalledTimes(2));
   });
 });
 

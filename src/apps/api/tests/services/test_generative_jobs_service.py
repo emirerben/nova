@@ -338,6 +338,60 @@ def test_rejects_path_traversal() -> None:
         build_generative_job(user_id=uuid.uuid4(), clip_paths=["users/../../etc/passwd"])
 
 
+def test_content_plan_accepts_owner_scoped_creation_thread_voiceover() -> None:
+    user_id = uuid.uuid4()
+    thread_id = uuid.uuid4()
+    voiceover_path = f"users/{user_id}/creation-threads/{thread_id}/voice.webm"
+
+    job = build_generative_job(
+        user_id=user_id,
+        clip_paths=[f"users/{user_id}/creation-threads/{thread_id}/clip.mp4"],
+        mode="content_plan",
+        content_plan_item_id=uuid.uuid4(),
+        content_plan_ownership_epoch=0,
+        voiceover_gcs_path=voiceover_path,
+    )
+
+    assert job.all_candidates["voiceover_gcs_path"] == voiceover_path
+
+
+@pytest.mark.parametrize(
+    "voiceover_path",
+    [
+        "users/{other_user}/creation-threads/thread/voice.webm",
+        "users/{user_id}/creation-threads/../voice.webm",
+        "/users/{user_id}/creation-threads/thread/voice.webm",
+    ],
+)
+def test_content_plan_rejects_unowned_or_unsafe_creation_thread_voiceover(
+    voiceover_path: str,
+) -> None:
+    user_id = uuid.uuid4()
+    resolved_path = voiceover_path.format(user_id=user_id, other_user=uuid.uuid4())
+
+    with pytest.raises(ValueError):
+        build_generative_job(
+            user_id=user_id,
+            clip_paths=[f"users/{user_id}/plan/item/clip.mp4"],
+            mode="content_plan",
+            content_plan_item_id=uuid.uuid4(),
+            content_plan_ownership_epoch=0,
+            voiceover_gcs_path=resolved_path,
+        )
+
+
+def test_public_job_rejects_creation_thread_voiceover() -> None:
+    user_id = uuid.uuid4()
+    voiceover_path = f"users/{user_id}/creation-threads/thread/voice.webm"
+
+    with pytest.raises(ValueError):
+        build_generative_job(
+            user_id=user_id,
+            clip_paths=["slot-uploads/clip.mp4"],
+            voiceover_gcs_path=voiceover_path,
+        )
+
+
 # ── T1: topic/intent passthrough ─────────────────────────────────────────────
 
 

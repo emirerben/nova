@@ -15,7 +15,7 @@ ingested_via: put_page
 broadcasts at `_INSPECT_TIMEOUT_S = 5` per stuck variant — ~20s — while the
 transaction still holds `SELECT ... FOR UPDATE` on a user-visible `jobs` row. A
 concurrent creator save on that row blocks for the duration, and `sweep_stale_jobs`
-only budgets `soft_time_limit=60`. Unreachable until v0.66.1.0 fixed the jsonpath.
+only budgets `soft_time_limit=60`. Unreachable until v0.69.1.0 fixed the jsonpath.
 **Fix:** hoist the probe outside the lock (read, commit, probe, re-acquire and
 revalidate `render_generation_id`), or reuse one fleet snapshot per sweep the way
 `sweep_stale_jobs` already does for `live`.
@@ -48,6 +48,18 @@ ffmpeg analysis with exact-match acceptance assertions.
 **Fix:** loosen the assertions to ranges, or gate the module behind an explicit
 opt-in env var so an unrelated `/ship` run is not blocked by it.
 **Priority:** P3
+
+## Kria agent platform follow-up — creator preference memory (autoplan CEO review, 2026-09-06)
+
+### Learn from accepted edits across projects
+**What:** Add consented, versioned creator preference memory derived from accepted/undone edits and selected final outputs, then expose only bounded preference summaries to Kria.
+**Why:** Longitudinal taste memory could become a meaningful advantage over generic editor agents, but adding it before exact edit execution and outcome measurement work would introduce privacy and feedback-loop risk without proving value.
+**Pros:** Fewer repeated instructions, more creator-specific first cuts, and a defensible outcome-data loop.
+**Cons:** Requires consent/revocation semantics, confidence/decay rules, correction UI, bias controls, and new evaluation against stale or contradictory preferences.
+**Context:** Deferred from `plans/023-kria-agent-platform.md`. Start only after the unified runtime shows improved accepted/exported cuts and hands-on time; reuse receipt-backed accepted/undone outcomes rather than raw chat as training truth.
+**Effort:** L (with CC+gstack: M)
+**Priority:** P2
+**Depends on:** Kria agent platform cohort outcome gate and privacy review.
 
 ## Speech-cleanup budget clamp — deferrals (from red-team review, 2026-08-31)
 

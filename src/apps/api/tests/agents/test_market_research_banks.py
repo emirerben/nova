@@ -247,7 +247,7 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
     assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-06-v3-creator-direction"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -269,8 +269,10 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     #                  (success-factor bank unchanged; overlay bank moved separately).
     assert success_factors_version() == "2026-06-14"
     assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-05"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-06-v3-creator-direction"
+    # Creator direction was added to the consuming prompt without changing
+    # the research bank, so only the agent version advances.
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -303,7 +305,9 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  tests/agents/test_overlay_examples_slop_guard.py now lints
     #                  every exemplar against the slop pattern class.
     assert library_version() == "2026-08-05"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-08-05"
+    # Creator direction was added to the consuming prompt without changing
+    # the exemplar bank, so only the agent version advances.
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"
     assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-08-05"
 
 

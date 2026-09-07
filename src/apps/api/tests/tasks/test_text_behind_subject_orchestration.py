@@ -1025,7 +1025,15 @@ def _patch_subtitled_compose(monkeypatch, burn_seen: dict):
 
     monkeypatch.setattr(skia_mod, "burn_text_overlays_skia", _fake_burn, raising=False)
 
-    def _fake_captions(input_path, output_path, variant, tmpdir):
+    def _fake_captions(
+        input_path,
+        output_path,
+        variant,
+        tmpdir,
+        *,
+        creator_direction_typed_overrides=None,
+    ):
+        burn_seen["caption_direction"] = creator_direction_typed_overrides
         burn_seen["captions_input"] = input_path
         with open(output_path, "wb") as f:
             f.write(b"cap")

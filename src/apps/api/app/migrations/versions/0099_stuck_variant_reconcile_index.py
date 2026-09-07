@@ -1,7 +1,7 @@
 """Index the bounded stuck-variant reconcile sweep.
 
-Revision ID: 0096
-Revises: 0095
+Revision ID: 0099
+Revises: 0098
 Create Date: 2026-09-07
 
 `reconcile_stuck_variants` runs on every Celery `worker_ready` and on the Beat
@@ -20,8 +20,8 @@ an index predicate.
 
 from alembic import op
 
-revision = "0096"
-down_revision = "0095"
+revision = "0099"
+down_revision = "0098"
 branch_labels = None
 depends_on = None
 
@@ -42,7 +42,7 @@ def upgrade() -> None:
     # duration of the scan.
     with op.get_context().autocommit_block():
         # A failed prior CONCURRENTLY attempt can leave an invalid same-name
-        # index while Alembic still records 0095. Remove that artifact first;
+        # index while Alembic still records 0098. Remove that artifact first;
         # CREATE ... IF NOT EXISTS would otherwise accept a broken index.
         op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {_INDEX}")
         op.execute(

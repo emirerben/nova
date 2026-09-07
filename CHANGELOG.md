@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.66.1.0] — 2026-09-07
+## [0.69.1.0] — 2026-09-07
 
 ### Fixed
 - **Videos stuck on "Rendering" now get cleared again.** The watchdog that reconciles frozen render tiles had been silently doing nothing in production: its PostgreSQL query used `&&` with a bare field reference, which Postgres rejects as a jsonpath syntax error at execution time. Worker startup caught the error as non-fatal, so every worker logged it and moved on while stuck tiles were never swept. A tile frozen mid-render now reaches a terminal state instead of polling forever.
@@ -12,8 +12,39 @@ All notable changes to this project will be documented in this file.
 ### Internal
 - Both reaper jsonpaths are bound as query parameters cast to `jsonpath` instead of being spliced in as raw SQL text, and are executed against a real PostgreSQL in `tests/tasks/test_reaper_jsonpath.py` — a malformed path now fails the suite instead of being swallowed at runtime. The existing reaper tests mock the database entirely, which is why this shipped unnoticed.
 - Guards a malformed JSON-object `variants` from being iterated as keys and written back, which would destroy the assembly plan. Lax-mode `$.variants[*]` auto-wraps a non-array, so the shape matched the predicate.
-- Migration 0096 adds `idx_jobs_stuck_variant_reconcile_sweep`, a sparse `(updated_at, id)` index built `CONCURRENTLY`, so the reactivated sweep does not seq-scan `jobs` on every worker start. Its predicate is pinned byte-identical to the reaper constant by test.
+- Migration 0099 adds `idx_jobs_stuck_variant_reconcile_sweep`, a sparse `(updated_at, id)` index built `CONCURRENTLY`, so the reactivated sweep does not seq-scan `jobs` on every worker start. Its predicate is pinned byte-identical to the reaper constant by test.
 - New kill switch `RECONCILE_STUCK_VARIANTS_ENABLED` (default `true`) halts the sweep without a code revert.
+
+## [0.69.0.0] — 2026-09-07
+
+### Added
+- **Kria can now carry a video project from raw footage through a reviewed first cut and natural-language revisions in one conversation.** It understands the requested format, makes editorial choices, prepares reversible draft edits, and supports montage, talking-head, day-vlog, single-hero, subtitled, and narrated workflows.
+- **Every render has an explicit, exact approval step.** The approval is pinned to the draft and media generation the creator reviewed, expires safely, and cannot silently authorize a newer edit.
+
+### Changed
+- **Kria replies with a useful decision, action, focused question, progress update, or recovery path instead of echoing the creator's request.** Conversation state survives refreshes, rendering, failures, and movement between chat and the editor.
+- **Runtime v2 ships dark for controlled validation.** Existing runtime-v1 projects are unchanged, and new runtime-v2 projects require both server and web rollout flags plus an explicit internal runtime selection.
+
+### Fixed
+- **Interrupted, duplicated, stale, or concurrent work no longer makes Kria claim an edit or render succeeded without evidence.** Durable receipts, exact-generation checks, bounded retries, and operator recovery preserve the creator's work and explain what can safely happen next.
+
+## [0.68.0.0] — 2026-09-07
+
+### Added
+- **Personalization gives every creator one editable source of truth.** The new `/plan/profile` page presents creator background, visual style, storytelling preferences, and things to avoid as one spacious text document, with inline suggestions, project sources, pause/clear controls, and ten-minute Undo.
+- **Kria learns durable instructions from normal project conversations.** Explicit “always”, “never”, and “from now on” guidance activates automatically with a visible receipt; softer patterns remain suggestions until the creator accepts them. Project-only overrides stay scoped to their project.
+
+### Changed
+- **Every planning and rendering path receives an immutable creator-direction snapshot.** Content planning, generative edits, classic templates, music edits, captions, custom effects, retries, and reburns now reuse generation-bound direction, including enforceable font and shadow controls.
+- **Creator direction stays private by construction.** Raw instructions are excluded from public job payloads, operational logs, agent traces, and admin diagnostics; owner-scoped CAS, idempotency, outbox recovery, and additive PostgreSQL storage protect mutations and automatic learning.
+
+## [0.67.1.0] — 2026-09-07
+
+### Fixed
+- **Voiceover projects created in chat now start rendering.** Kria accepts the private, thread-scoped audio location produced by the chat uploader when it belongs to the same creator, while public uploads and other users' media remain rejected.
+
+### Internal
+- The render-dispatch regression now uses the same `users/{user}/creation-threads/{thread}/...` storage contract as the product flow, closing the gap that let direct-upload canaries pass while real chat voiceovers failed before a Job was created.
 
 ## [0.66.0.0] — 2026-09-06
 

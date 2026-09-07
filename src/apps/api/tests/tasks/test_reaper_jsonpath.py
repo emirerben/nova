@@ -349,7 +349,7 @@ def test_jsonpath_constants_are_bound_not_spliced():
 
 
 def test_reconcile_sweep_index_predicate_matches_the_reaper_jsonpath():
-    """Migration 0096's index predicate must be byte-identical to the constant.
+    """Migration 0099's index predicate must be byte-identical to the constant.
 
     A partial index only serves a query whose predicate the planner can prove
     implies the index's. Drifting the jsonpath by one character silently drops
@@ -359,7 +359,7 @@ def test_reconcile_sweep_index_predicate_matches_the_reaper_jsonpath():
     import importlib  # noqa: PLC0415
 
     migration = importlib.import_module(
-        "app.migrations.versions.0096_stuck_variant_reconcile_index"
+        "app.migrations.versions.0099_stuck_variant_reconcile_index"
     )
 
     assert f"'{_STUCK_VARIANT_JSONPATH}'::jsonpath" in migration._PREDICATE

@@ -62,7 +62,17 @@ def _db(execute_results: list) -> AsyncMock:
     db = AsyncMock()
     db.add = MagicMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=execute_results)
+    remaining = iter(execute_results)
+
+    async def execute(statement):
+        # Creator memory is an additive privacy surface. Keep the existing
+        # account-flow fixtures focused on their historical query sequence;
+        # dedicated memory tests cover the new tables themselves.
+        if "creator_memory_" in str(statement):
+            return _scalars([])
+        return next(remaining)
+
+    db.execute = AsyncMock(side_effect=execute)
     return db
 
 
@@ -167,7 +177,7 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
         resp = client.post("/me/account/delete-confirm", json={"token": token})
 
     assert resp.status_code == 204
-    assert db.execute.await_count == 12
+    assert db.execute.await_count == 13
     lock_sql = [str(call.args[0]) for call in db.execute.await_args_list[:3]]
     assert "content_plans" in lock_sql[0]
     assert "personas" in lock_sql[1]

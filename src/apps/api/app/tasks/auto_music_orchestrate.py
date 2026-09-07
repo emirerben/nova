@@ -229,9 +229,10 @@ def orchestrate_auto_music_job(self, job_id: str) -> None:
     # `pipeline_trace_for` binds job_id into a contextvar so every
     # `record_pipeline_event` call inside the assembly pipeline attributes
     # to this job. Cleared on exit (including on exception).
+    from app.services.creator_direction_snapshot import renderer_policy_scope  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
-    with pipeline_trace_for(job_id):
+    with renderer_policy_scope(), pipeline_trace_for(job_id):
         try:
             _run_auto_music_job(job_id)
         except OperationalError as db_exc:
@@ -266,6 +267,13 @@ def _run_auto_music_job(job_id: str) -> None:
         if job is None:
             log.info("auto_music_job_start_skipped", job_id=job_id)
             return
+
+        from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
+
+        creator_direction_snapshot = ensure_job_snapshot(db, job, source="auto_music_worker")
+        creator_direction_typed_overrides = dict(
+            creator_direction_snapshot.get("typed_overrides") or {}
+        )
 
         job.status = "processing"
         if job.mode is None:
@@ -421,6 +429,7 @@ def _run_auto_music_job(job_id: str) -> None:
             clip_id_to_gcs=clip_id_to_gcs,
             probe_map=probe_map,
             tmpdir=tmpdir,
+            creator_direction_typed_overrides=creator_direction_typed_overrides,
         )
 
     # [9] Terminal status — based on per-variant success
@@ -781,6 +790,7 @@ def _render_variants_parallel(
     clip_id_to_gcs: dict[str, str],
     probe_map: dict,
     tmpdir: str,
+    creator_direction_typed_overrides: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Render each picked track as a separate variant in parallel.
 
@@ -806,6 +816,7 @@ def _render_variants_parallel(
                 clip_id_to_gcs=clip_id_to_gcs,
                 probe_map=probe_map,
                 variant_dir=variant_dir,
+                creator_direction_typed_overrides=creator_direction_typed_overrides,
             )
             futures[fut] = (rank, track.id)
         for fut in as_completed(futures):
@@ -847,6 +858,7 @@ def _render_one_variant(
     clip_id_to_gcs: dict[str, str],
     probe_map: dict,
     variant_dir: str,
+    creator_direction_typed_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render a single variant. Writes a JobClip row regardless of outcome.
 
@@ -954,6 +966,7 @@ def _render_one_variant(
             user_subject="",
             interstitials=[],
             force_single_pass=False,
+            creator_direction_typed_overrides=creator_direction_typed_overrides,
         )
         final_path = os.path.join(variant_dir, "final.mp4")
         _mix_template_audio(assembled_path, track.audio_gcs_path, final_path, variant_dir)

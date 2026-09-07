@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     # set true on Fly to require voiceover-uploads/direct/{user_id}/ exactly.
     generative_direct_voiceover_strict_enabled: bool = False
 
+    # Runtime-v2 mutation gate. Existing CreationThread routes and every
+    # runtime_version=1 project remain available when this is false; the new
+    # durable turn/approval endpoints deliberately fail closed as 404.
+    kria_runtime_v2_enabled: bool = False
+    kria_turn_lease_seconds: int = Field(default=15, ge=10, le=120)
     # Live speech-cleanup rollout state. New jobs always receive an explicit
     # required_v1/off_v1 contract; legacy_auto is historical-job compatibility
     # only and is intentionally rejected as a live setting.
@@ -979,6 +984,10 @@ class Settings(BaseSettings):
     # When False OR when personas.style is NULL: all_candidates carries no
     # "user_style" key → renders are byte-identical to pre-M1 output.
     user_style_enabled: bool = False
+
+    # Account-wide creator memory/direction control plane. Storage and owner
+    # routes are additive; prompt/render extraction remains separately wired.
+    creator_memory_enabled: bool = False
 
     # Conversational style agent (Creator Agent M2). When True, the
     # POST /personas/agent/start and POST /personas/agent/turn routes are live.

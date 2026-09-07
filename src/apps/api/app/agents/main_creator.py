@@ -29,7 +29,7 @@ from app.schemas.edit_proposal import (
     rejects_round_robin_cadence,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-05-v13"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-06-v15-creator-direction"
 
 
 class MainCreatorInput(BaseModel):
@@ -37,6 +37,7 @@ class MainCreatorInput(BaseModel):
 
     user_message: str = Field(min_length=1, max_length=2000)
     creator_context: str = Field(default="", max_length=4000)
+    creator_direction: str = Field(default="", max_length=4000)
     item_context: str = Field(default="", max_length=4000)
     media_context: list[dict] = Field(default_factory=list, max_length=50)
     conversation: list[dict] = Field(default_factory=list, max_length=20)
@@ -60,6 +61,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         backoff_s=(2.0,),
         timeout_s=35.0,
         thinking_level="medium",
+        sensitive_io=True,
     )
     Input = MainCreatorInput
     Output = MainCreatorOutput
@@ -73,6 +75,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         return load_prompt(
             "main_creator",
             creator_context=input.creator_context or "(not available)",
+            creator_direction=input.creator_direction or "(none)",
             item_context=input.item_context or "(not available)",
             media_context=json.dumps(input.media_context, ensure_ascii=False),
             capability_manifest=input.capability_manifest.model_dump_json(exclude_none=True),

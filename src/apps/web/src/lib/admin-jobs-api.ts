@@ -241,6 +241,14 @@ export interface JobDebugResponse {
   runtime: JobRuntimePayload;
   render_summary?: RenderSummary | null;
   render_timing?: RenderTimingBreakdownPayload;
+  kria_turn_id?: string | null;
+}
+
+export interface KriaTraceResponse {
+  trace: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  alerts: Array<Record<string, unknown>>;
+  recovery_actions: Array<Record<string, unknown>>;
 }
 
 export interface QueueInfoPayload {
@@ -305,6 +313,11 @@ export async function adminListJobs(
 
 export async function adminGetJobDebug(jobId: string): Promise<JobDebugResponse> {
   return _adminJson<JobDebugResponse>(`/jobs/${encodeURIComponent(jobId)}/debug`);
+}
+
+export async function adminGetKriaTrace(turnId: string): Promise<KriaTraceResponse> {
+  const query = new URLSearchParams({ turn_id: turnId });
+  return _adminJson<KriaTraceResponse>(`/kria/trace?${query.toString()}`);
 }
 
 export async function adminGetQueueState(): Promise<QueueSnapshotResponse> {
