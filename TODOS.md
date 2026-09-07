@@ -40,6 +40,19 @@ state actually persisted (the previous video IS still available).
 **Fix:** add a `render_worker_lost` case to `variantFailureCopy` + `ERROR_CLASS_COPY`.
 **Priority:** P2
 
+### Two Kria runtime Postgres tests fail locally on a reused test DB
+**What:** `tests/kria/test_runtime_postgres_integration.py::test_live_planner_strategy_creates_draft_and_separate_pinned_approval`
+and `::test_editor_revision_approval_atomically_stages_exact_job_generation` fail
+with `RuntimeFailure: (409, 'approval_stale', ...)`. Verified pre-existing: they
+fail identically on a clean `origin/main` worktree with no other changes present.
+CI merged #973 green, so the likely cause is leftover rows in a reused local
+`nova_test` rather than a logic bug — the sibling 14 failures in the same modules
+were purely a stale schema (local DB was pinned at 0096, missing 0097/0098).
+**Fix:** confirm against a freshly-created `nova_test`; if it reproduces there,
+it is a real staleness bug in the approval path. Either way give the module
+per-test isolation so a reused DB cannot poison it.
+**Priority:** P2
+
 ### `tests/scripts/test_analyze_waka_waka_diff.py` is flaky under load
 **What:** local-only integration test over `~/Downloads/morocco.mp4` +
 `thisismorocco.mp4` (skipped in CI, runs on the maintainer's machine). Identical
