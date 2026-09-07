@@ -19,10 +19,13 @@ describe("ChatThinking", () => {
   it("shows an immediate accessible shimmer before progressive copy", () => {
     render(<ChatThinking />);
     expect(screen.queryByText("Reading your direction…")).not.toBeInTheDocument();
-    expect(screen.getByText("Kria is thinking")).toBeInTheDocument();
+    const initialStatus = screen.getByText("Kria is thinking");
+    expect(initialStatus).toHaveClass("motion-safe:animate-chat-thinking");
     expect(screen.getByRole("status")).toHaveTextContent("Kria is thinking");
     act(() => { now = 1500; jest.advanceTimersByTime(1500); });
-    expect(screen.getByText("Reading your direction…")).toBeInTheDocument();
+    const specificStatus = screen.getByText("Reading your direction…");
+    expect(specificStatus).not.toBe(initialStatus);
+    expect(specificStatus).toHaveClass("motion-safe:animate-chat-thinking");
     expect(screen.getByRole("status")).toHaveTextContent("Reading your direction…");
   });
 
@@ -41,7 +44,10 @@ describe("ChatThinking", () => {
 
   it("marks the shimmer as reduced-motion safe", () => {
     render(<ChatThinking />);
-    expect(screen.getByText("Kria is thinking")).toHaveClass("motion-safe:animate-shimmer", "motion-reduce:text-muted-foreground");
+    expect(screen.getByText("Kria is thinking")).toHaveClass(
+      "motion-reduce:animate-chat-fade-in",
+      "motion-reduce:text-muted-foreground",
+    );
   });
 
   it("renders nothing and schedules no timers while inactive", () => {

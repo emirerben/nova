@@ -16,6 +16,8 @@ export interface ChatMessageProps extends Omit<HTMLAttributes<HTMLDivElement>, "
   role: "user" | "assistant";
   /** Reduced-opacity treatment for an optimistic message awaiting the server. */
   pending?: boolean;
+  /** Disable entrance motion for historical turns restored with a transcript. */
+  animate?: boolean;
   presentation?: "conversation" | "editorial";
   children: ReactNode;
 }
@@ -23,6 +25,7 @@ export interface ChatMessageProps extends Omit<HTMLAttributes<HTMLDivElement>, "
 export function ChatMessage({
   role,
   pending = false,
+  animate = true,
   presentation = "conversation",
   className,
   children,
@@ -35,6 +38,7 @@ export function ChatMessage({
       <div
         className={cn(
           "max-w-prose whitespace-pre-line [overflow-wrap:anywhere]",
+          animate && "motion-safe:animate-chat-message-in motion-reduce:animate-chat-fade-in",
           isUser
             ? "border-l-2 border-primary pl-3 text-sm italic text-muted-foreground"
             : "font-display text-xl leading-snug text-foreground",
@@ -52,6 +56,7 @@ export function ChatMessage({
     <div
       className={cn(
         "whitespace-pre-line [overflow-wrap:anywhere]",
+        animate && "motion-safe:animate-chat-message-in motion-reduce:animate-chat-fade-in",
         isUser
           ? "ml-auto max-w-[85%] rounded-[18px] rounded-br-[6px] bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground"
           : "mr-auto w-full max-w-prose text-sm leading-5 text-foreground",

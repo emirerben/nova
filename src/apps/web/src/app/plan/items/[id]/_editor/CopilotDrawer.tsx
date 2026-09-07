@@ -250,7 +250,7 @@ export default function CopilotDrawer({
           />
         )}
 
-        {messages.map((message) => {
+        {messages.map((message, messageIndex) => {
           const isUser = message.role === "user";
           const isRenderTurnMsg = stepsFeedEnabled && !isUser && !!message.isRenderTurn;
           const chips = [...(message.applied ?? []), ...(message.rejected ?? [])];
@@ -269,7 +269,10 @@ export default function CopilotDrawer({
             isRenderTurnMsg && renderTurnActive && message.id === latestRenderTurn?.id;
           return (
             <div key={message.id} className="space-y-1.5">
-              <ChatMessage role={isUser ? "user" : "assistant"}>
+              <ChatMessage
+                role={isUser ? "user" : "assistant"}
+                animate={messageIndex === messages.length - 1}
+              >
                 {message.text}
               </ChatMessage>
 

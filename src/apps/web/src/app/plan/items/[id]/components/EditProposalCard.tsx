@@ -1144,11 +1144,12 @@ function ConversationThread({
           a live region on the whole thread would announce the creator's own
           pending echo back at them as if Kria had said it. */}
       <div role="log" tabIndex={0} className="space-y-3 p-4">
-        {showOpener && <ChatMessage role="assistant">{opener}</ChatMessage>}
+        {showOpener && <ChatMessage role="assistant" animate={turns.length === 0 && pendingMessage === null}>{opener}</ChatMessage>}
         {turns.map((turn, index) => (
           <ChatMessage
             key={`${turn.role}-${turn.phase ?? "briefing"}-${index}-${turn.content.slice(0, 24)}`}
             role={turn.role === "user" ? "user" : "assistant"}
+            animate={index === turns.length - 1 && pendingMessage === null}
           >
             {turn.content}
           </ChatMessage>

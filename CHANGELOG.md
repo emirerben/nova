@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 - **Kria conversations now share one polished creator-agent system.** Creation, guided editing, Editor Copilot, Director Suggestions, the Main Creator Agent, and Ask Kria use readable unboxed responses, accessible progressive thinking states, quiet composers, and explicit approval cards adapted from AICSS.
 
 ### Changed
-- **Creator messages stay easy to act on while AI work is in flight.** Composers support keyboard and IME input safely, queued Copilot follow-ups remain editable, delayed Stop actions stay available, and every render, revision, re-read, Accept, or Dismiss choice still requires an explicit click.
+- **Creator messages stay easy to act on while AI work is in flight.** New turns use a restrained opacity-and-rise entrance, thinking labels crossfade without fake token streaming, composers support keyboard and IME input safely, queued Copilot follow-ups remain editable, delayed Stop actions stay available, and every render, revision, re-read, Accept, or Dismiss choice still requires an explicit click.
 - **The deterministic chat preview now exercises the production chat primitives.** Desktop, mobile, 200% zoom, reduced motion, dark OS preference, safe-area placement, recovery, revision, and render states share the same components creators see.
 
 ## [0.65.0.0] — 2026-09-06

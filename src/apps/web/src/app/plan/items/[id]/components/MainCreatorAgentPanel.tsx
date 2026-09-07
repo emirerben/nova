@@ -298,7 +298,10 @@ export default function MainCreatorAgentPanel({
         >
           {visibleEvents.map((event, eventIndex) => (
             <div key={event.id} className="text-sm text-[#27272a]">
-              <ChatMessage role={event.role === "user" ? "user" : "assistant"}>
+              <ChatMessage
+                role={event.role === "user" ? "user" : "assistant"}
+                animate={eventIndex === visibleEvents.length - 1}
+              >
                 {eventText(event)}
               </ChatMessage>
               {eventIndex === visibleEvents.length - 1 && event.event_type === "assistant_question" &&

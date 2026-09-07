@@ -369,6 +369,7 @@ test.describe("Kria chat-first creation fixture", () => {
     await expect(clips).toBeVisible();
     await expect(userMessage).toBeVisible();
     await expect(assistantMessage).toBeVisible();
+    await expect(assistantMessage).toHaveCSS("animation-name", "chat-message-in");
     await expect(page.getByTestId("latest-chat-anchor")).toBeVisible();
   });
 
@@ -386,6 +387,10 @@ test.describe("Kria chat-first creation fixture", () => {
       await page.goto(`${fixture}?state=thinking&elapsed=${elapsed}`);
       await expect(page.getByTestId("thinking-state")).toHaveAttribute("data-thinking-tier", tier);
       await expect(page.getByRole("status")).toContainText(copy);
+      await expect(page.getByRole("status").locator("span")).toHaveCSS(
+        "animation-name",
+        "chat-status-in, shimmer",
+      );
     }
   });
 
@@ -427,7 +432,7 @@ test.describe("Kria chat-first creation fixture", () => {
 
     await expect(page.locator(".chat-rail")).toHaveCSS("background-color", "rgb(255, 255, 255)");
     await expect(page.getByRole("status")).toContainText("Still working — your direction is saved.");
-    await expect(page.getByRole("status").locator("span")).toHaveCSS("animation-name", "none");
+    await expect(page.getByRole("status").locator("span")).toHaveCSS("animation-name", "chat-fade-in");
     await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 375);
     await expect(page.getByLabel("Message Kria")).toBeVisible();
   });

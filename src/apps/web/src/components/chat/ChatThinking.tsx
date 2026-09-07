@@ -74,7 +74,8 @@ export function ChatThinking({
     <div className={cn("mr-auto flex min-h-8 items-center gap-2 text-sm", className)}>
       <span role="status" aria-live="polite">
         <span
-          className="bg-gradient-to-r from-muted-foreground via-foreground to-muted-foreground bg-[length:200%_100%] bg-clip-text text-transparent motion-safe:animate-shimmer motion-reduce:bg-none motion-reduce:text-muted-foreground"
+          key={text}
+          className="bg-gradient-to-r from-muted-foreground via-foreground to-muted-foreground bg-[length:200%_100%] bg-clip-text text-transparent motion-safe:animate-chat-thinking motion-reduce:animate-chat-fade-in motion-reduce:bg-none motion-reduce:text-muted-foreground"
         >
           {text}
         </span>

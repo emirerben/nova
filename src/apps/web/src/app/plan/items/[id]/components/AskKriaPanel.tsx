@@ -142,13 +142,13 @@ export default function AskKriaPanel({ item, mode, onClose, onItemChanged }: Ask
 
       {/* Prior-utterance pull-quote (editorial pattern — one quote, accent border) */}
       {lastUser && (
-        <ChatMessage role="user" presentation="editorial" className="mt-3 line-clamp-3">
+        <ChatMessage key={`user-${lastUser.content}`} role="user" presentation="editorial" className="mt-3 line-clamp-3">
           {lastUser.content}
         </ChatMessage>
       )}
 
       {/* Agent reply — capped at text-xl: a sub-surface, never the page title. */}
-      <ChatMessage role="assistant" presentation="editorial" className="mt-3" aria-live="polite">
+      <ChatMessage key={`agent-${lastAgent?.content ?? "empty"}`} role="assistant" presentation="editorial" className="mt-3" aria-live="polite">
         {lastAgent?.content}
       </ChatMessage>
 

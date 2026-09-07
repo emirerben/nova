@@ -124,7 +124,8 @@ const FIXTURE_STYLES = `
   .chat-fixture-reduced-motion .beam-loader__bloom,
   .chat-fixture-reduced-motion .beam-loader__line { animation: none !important; }
   .chat-fixture-reduced-motion .animate-bounce,
-  .chat-fixture-reduced-motion .motion-safe\\:animate-shimmer { animation: none !important; }
+  .chat-fixture-reduced-motion .motion-safe\\:animate-chat-message-in,
+  .chat-fixture-reduced-motion .motion-safe\\:animate-chat-thinking { animation: none !important; }
   .chat-fixture[data-view="editor"] .editor-pane { display: flex; }
   .chat-fixture[data-view="editor"] .chat-rail { flex: 0 0 420px; }
   @keyframes fixture-fade { from { opacity: .1; transform: translateY(5px); } to { opacity: 1; transform: none; } }
@@ -563,7 +564,7 @@ function ThinkingState({ elapsed }: { elapsed: number }) {
 }
 
 function ChronologicalRevisionState({ mediaCount, onState, projectName }: { mediaCount: number; onState: (state: FixtureState, view?: View) => void; projectName: string }) {
-  return <div className="fade" data-testid="revision-state"><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#77776f]">Revision</p><h1 className="font-display mt-4 max-w-xl text-4xl font-medium leading-tight sm:text-5xl">Your direction stays in sequence.</h1><div className="mt-6 space-y-3" data-testid="chronological-transcript" role="log" aria-label="Conversation history"><div data-testid="clips-section" className="rounded-xl border border-[#deded9] bg-[#f7f7f5] p-4"><p className="text-xs font-semibold uppercase tracking-[.14em] text-[#85857e]">Clips</p><p className="mt-2 text-sm font-medium">{mediaCount} clips attached to {projectName}</p></div><ChatMessage role="user" data-testid="post-clip-user-message">Hold the harbor shot longer.</ChatMessage><ChatMessage role="assistant" data-testid="post-clip-assistant-message">I’ll hold that shot, then prepare the exact revision for your confirmation.</ChatMessage><p data-testid="latest-chat-anchor" className="text-xs text-[#85857e]">Latest message · no scrolling upward required</p></div><div className="mt-6 flex flex-wrap gap-2"><button className="rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white" onClick={() => onState("rendering")}>Confirm revision</button></div></div>;
+  return <div className="fade" data-testid="revision-state"><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#77776f]">Revision</p><h1 className="font-display mt-4 max-w-xl text-4xl font-medium leading-tight sm:text-5xl">Your direction stays in sequence.</h1><div className="mt-6 space-y-3" data-testid="chronological-transcript" role="log" aria-label="Conversation history"><div data-testid="clips-section" className="rounded-xl border border-[#deded9] bg-[#f7f7f5] p-4"><p className="text-xs font-semibold uppercase tracking-[.14em] text-[#85857e]">Clips</p><p className="mt-2 text-sm font-medium">{mediaCount} clips attached to {projectName}</p></div><ChatMessage role="user" animate={false} data-testid="post-clip-user-message">Hold the harbor shot longer.</ChatMessage><ChatMessage role="assistant" data-testid="post-clip-assistant-message">I’ll hold that shot, then prepare the exact revision for your confirmation.</ChatMessage><p data-testid="latest-chat-anchor" className="text-xs text-[#85857e]">Latest message · no scrolling upward required</p></div><div className="mt-6 flex flex-wrap gap-2"><button className="rounded-full bg-[#0c0c0e] px-5 py-2.5 text-sm font-semibold text-white" onClick={() => onState("rendering")}>Confirm revision</button></div></div>;
 }
 
 function DeletedState({ onRestore }: { onRestore: () => void }) {
