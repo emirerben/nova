@@ -53,25 +53,23 @@ Rules:
 - `src/apps/web/src/app/admin/templates/[id]/components/` — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
 - `src/apps/web/src/app/admin/music/` — admin music management; `/admin/music/[id]` Config + Test tabs
 - `src/apps/web/src/lib/music-api.ts` — typed API client for music routes
-- `src/apps/api/` — Python API (upload endpoint, job queue, FFmpeg pipeline)
-- `src/apps/api/app/routes/admin_music.py` — music CRUD + publish/reanalyze + Test tab endpoints (test-job, rerender-job, status, test-jobs list); `clip_gcs_paths` allowlisted to `music-uploads/` and `slot-uploads/` prefixes
-- `src/apps/api/app/routes/music.py` — public music-track gallery endpoint
-- `src/apps/api/app/routes/music_jobs.py` — beat-sync job submission + status; `_validate_clip_count` is public so `admin_music.py` can reuse it
+- `src/apps/api/` — FastAPI/Celery; music routes live in `routes/{admin_music,music,music_jobs}.py` (`_validate_clip_count` stays public for admin reuse).
 - `src/apps/api/app/routes/generative_jobs.py` — generative-edit submission + status + swap-song/retext; re-signs ready variant URLs on read (`_variants_for_response`)
 - `src/apps/api/app/routes/admin_generative.py` — `/admin/generative` dashboard list
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery task (see `docs/pipelines/generative.md`)
 - `src/apps/api/app/pipeline/generative_overlays.py` — agent-authored intro overlay injector
 - `src/apps/web/src/app/generative/` — redirects to /plan (v0.45; siblings = shared editor modules); `admin/generative/` — admin dashboard
 - `src/apps/web/src/app/plan/` — canonical chat-first creation workspace; `/plan/new` redirects there, while `/plan/items/*` retains item/editor contracts
-- `src/apps/web/src/app/create/` — `/create` and `/create/manual` redirect to `/plan`; `src/apps/api/app/routes/{me,manual_drafts}.py` serves persisted jobs/editor contracts; `PlanItem.audio_mode` is `kria|original|voiceover` (`plans/017-qendresa-creation-flow.md`)
+- `src/apps/web/src/app/create/` — redirects to `/plan`; persisted job/editor contracts live in `routes/{me,manual_drafts}.py` (`plans/017-qendresa-creation-flow.md`).
+- `src/apps/api/app/kria/` — runtime-v2 contracts, policy, drafts, and replay; HTTP/task entrypoints are `routes/kria_runtime.py` and `tasks/kria_runtime.py` ([architecture](docs/pipelines/kria-agent-runtime.md); [runbook](docs/runbooks/kria-agent-runtime.md)).
 - `src/apps/api/app/pipeline/music_recipe.py` — beat-snap recipe generator (see `docs/pipelines/music.md`)
 - `src/apps/api/app/tasks/music_orchestrate.py` — Celery tasks: beat analysis + music job orchestration
 - `src/apps/api/app/services/audio_download.py` — yt-dlp audio download + beat detection via FFmpeg
-- `src/apps/api/app/services/seed_provenance.py` — token-set matcher (`match_specs_to_seeds`) that links generated plan items back to the idea seed they honour; called at plan-generation time to set `PlanItem.source_idea_seed_id` and flip matched seeds to `in_plan`
+- `src/apps/api/app/services/seed_provenance.py` — links generated items to honoured idea seeds via `match_specs_to_seeds` and `PlanItem.source_idea_seed_id`.
 - `.../plan/_components/ui/SeedProvenanceBadge.tsx` — "From your idea" lime badge on the item page
 - `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
 - `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
-- `plans/` — implementation plans (`plans/README.md` has status; 001–017)
+- `plans/` — implementation plans (`plans/README.md` has status; 001–023)
 
 ## Local dev
 ```bash
@@ -106,6 +104,7 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 - Frontend lint: `cd src/apps/web && npm run lint`
 - Frontend typecheck: `cd src/apps/web && npx tsc --noEmit`
 - Frontend tests: `cd src/apps/web && npm test` (Jest)
+- Kria runtime gate: `make verify-kria`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
 - Pre-PR gate: `bash scripts/preship-check.sh` — scoped ruff on changed files, tsc when web TS changed, drift vs origin/main, VERSION-slot check, CI `[skip-*]` marker list. Run before every PR.
 
 ## Admin API access (for automation / Claude Code)
@@ -188,6 +187,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - OPENAI_API_KEY
 - GEMINI_API_KEY — clip + template analysis
 - Chat-first creation is the permanent signed-in `/plan` experience. There is no cohort or legacy-UI feature gate; rollback requires reverting the deployment. Runbook: `docs/runbooks/chat-first-creation.md`.
+- `KRIA_RUNTIME_V2_ENABLED` / `NEXT_PUBLIC_KRIA_RUNTIME_V2_ENABLED` — default `false`; enable Fly first, then rebuild Vercel. `KRIA_TURN_LEASE_SECONDS` defaults to 15s ([runbook](docs/runbooks/kria-agent-runtime.md)).
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
 - `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` a no-op (safety valve for orientation regressions).
 - `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults to `true`. Set to `false` to roll back to legacy `_inject_line` behavior byte-identically. **WARNING: disabling re-introduces the stacked-text bug — emergency rollback ONLY.** Kill-switch test: `tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`. Apply: `fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false --app nova-video` + `fly machine restart <id>`. See agents/DECISIONS.md "Kill-switch incidents" for the full warning.

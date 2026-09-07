@@ -1,0 +1,27 @@
+{
+  "fixture_id": "nermin-matcha-update",
+  "user_message": "Make a short update about the matcha restock. Energetic, but not too salesy.",
+  "snapshot": {
+    "edit_format": "montage",
+    "media_labels": ["whisking close-up", "packing orders", "first sip"],
+    "strongest_moment": "the whisking close-up",
+    "editorial_decision": "The whisking close-up is the strongest opening. Build the story as restock, packing orders, then the first sip.",
+    "goal": "restock update"
+  },
+  "plan": {
+    "schema_version": 2,
+    "mode": "act",
+    "turn_value": "decision",
+    "evidence_ids": ["snapshot:media"],
+    "intents": [
+      {
+        "intent_id": "inspect-project",
+        "tool_name": "project.inspect",
+        "tool_version": 1,
+        "arguments": {},
+        "depends_on": []
+      }
+    ]
+  },
+  "expected_message": "The whisking close-up is the strongest opening. Build the story as restock, packing orders, then the first sip."
+}

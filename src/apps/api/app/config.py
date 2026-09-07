@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     # set true on Fly to require voiceover-uploads/direct/{user_id}/ exactly.
     generative_direct_voiceover_strict_enabled: bool = False
 
+    # Runtime-v2 mutation gate. Existing CreationThread routes and every
+    # runtime_version=1 project remain available when this is false; the new
+    # durable turn/approval endpoints deliberately fail closed as 404.
+    kria_runtime_v2_enabled: bool = False
+    kria_turn_lease_seconds: int = Field(default=15, ge=10, le=120)
     # Live speech-cleanup rollout state. New jobs always receive an explicit
     # required_v1/off_v1 contract; legacy_auto is historical-job compatibility
     # only and is intentionally rejected as a live setting.

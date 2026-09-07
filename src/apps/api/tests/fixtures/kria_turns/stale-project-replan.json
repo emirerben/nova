@@ -1,0 +1,27 @@
+{
+  "fixture_id": "stale-project-replan",
+  "scenario": "stale",
+  "user_message": "Move the beach arrival to the opening.",
+  "snapshot": {
+    "edit_format": "day_vlog",
+    "media_labels": ["airport departure", "beach arrival"]
+  },
+  "expected_thread_revision": 11,
+  "current_thread_revision": 12,
+  "plan": {
+    "schema_version": 2,
+    "mode": "act",
+    "turn_value": "action",
+    "evidence_ids": ["snapshot:revision:11"],
+    "intents": [
+      {
+        "intent_id": "inspect-project",
+        "tool_name": "project.inspect",
+        "tool_version": 1,
+        "arguments": {},
+        "depends_on": []
+      }
+    ]
+  },
+  "expected_message": "The project changed, so I left it untouched. I’ll replan from the latest cut."
+}

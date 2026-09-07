@@ -13,7 +13,13 @@ import {
   creationThreadPreparing,
   creationThreadProgressKey,
   creationThreadMediaCount,
+  cancelKriaTurn,
+  creationGenerationArtifactKey,
   CreationThreadError,
+  decideKriaApproval,
+  getKriaDelta,
+  getKriaDraft,
+  getKriaApproval,
   creationSpeechCleanupActionId,
   getCreationCapabilities,
   deleteCreationThread,
@@ -21,6 +27,8 @@ import {
   isCreationSpeechCleanupStaleConflict,
   isCreationThreadRevisionConflict,
   refreshCreationThread,
+  sendKriaTurn,
+  undoKriaDraft,
   latestCreationDirection,
   threadMessages,
   type CreationThread,
@@ -121,9 +129,202 @@ describe("creation thread projection", () => {
     try {
       await refreshCreationThread("thread-1");
       expect(global.fetch).toHaveBeenCalledWith(
-        "/api/plan/creation-threads/thread-1",
+        "/api/plan/creation-threads/thread-1?projection=full",
         expect.objectContaining({ cache: "no-store" }),
       );
+    } finally {
+      global.fetch = previousFetch;
+    }
+  });
+
+  it("reads the pinned approval and submits its exact revision and fingerprint", async () => {
+    const previousFetch = global.fetch;
+    const approval = {
+      approval_id: "approval-1",
+      turn_id: "turn-1",
+      draft_id: "draft-1",
+      draft_revision: 7,
+      status: "pending" as const,
+      consequence_summary: "Render the selected cut",
+      cost_summary: null,
+      expires_at: "2026-01-01T00:10:00Z",
+      approval_fingerprint: "a".repeat(64),
+    };
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => approval })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          approval_id: "approval-1",
+          turn_id: "turn-1",
+          status: "approved",
+          thread_revision: 9,
+          render_dispatched: false,
+        }),
+      });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      await expect(getKriaApproval("thread-1", "approval-1")).resolves.toEqual(approval);
+      await expect(decideKriaApproval("thread-1", approval, "approve", 8)).resolves.toMatchObject({
+        status: "approved",
+        render_dispatched: false,
+      });
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        "/api/plan/creation-threads/thread-1/approvals/approval-1",
+      );
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: "no-store" });
+      expect(fetchMock.mock.calls[1]?.[0]).toBe(
+        "/api/plan/creation-threads/thread-1/approvals/approval-1/approve",
+      );
+      expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+        expected_thread_revision: 8,
+        expected_draft_revision: 7,
+        expected_approval_fingerprint: "a".repeat(64),
+      });
+    } finally {
+      global.fetch = previousFetch;
+    }
+  });
+
+  it("submits runtime-v2 turns and reads forward-only event deltas", async () => {
+    const previousFetch = global.fetch;
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: async () => ({
+          turn_id: "turn-1",
+          thread_revision: 5,
+          status: "pending",
+          replayed: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          thread_id: "thread-1",
+          runtime_version: 2,
+          status: "active",
+          thread_revision: 6,
+          events: [],
+          after_sequence: 3,
+          next_after_sequence: 3,
+          has_more: false,
+        }),
+      });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      await sendKriaTurn(thread({ runtime_version: 2 }), "Use the whisk", "client-turn-1");
+      await getKriaDelta("thread-1", 3, 25);
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+        message: "Use the whisk",
+        client_event_id: "client-turn-1",
+        expected_thread_revision: 4,
+      });
+      expect(fetchMock.mock.calls[1]?.[0]).toBe(
+        "/api/plan/creation-threads/thread-1?after_sequence=3&limit=25",
+      );
+      expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ cache: "no-store" });
+    } finally {
+      global.fetch = previousFetch;
+    }
+  });
+
+  it("cancels one revision-fenced queued Kria turn", async () => {
+    const previousFetch = global.fetch;
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        turn_id: "turn-queued",
+        thread_revision: 8,
+        status: "cancelled",
+        approval_ids: [],
+      }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      await cancelKriaTurn("thread-1", "turn-queued", 7);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/plan/creation-threads/thread-1/turns/turn-queued/cancel",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ expected_thread_revision: 7 }),
+        }),
+      );
+    } finally {
+      global.fetch = previousFetch;
+    }
+  });
+
+  it("reads and undoes the exact authoritative draft revision", async () => {
+    const previousFetch = global.fetch;
+    const draft = {
+      draft_id: "draft-1",
+      item_id: "item-1",
+      variant_key: "initial",
+      draft_revision: 3,
+      snapshot_hash: "b".repeat(64),
+      etag: `"${"b".repeat(64)}"`,
+      base_job_id: null,
+      base_generation_id: null,
+      snapshot: { schema_version: 2, kind: "strategy", changes: ["Open on whisk"] },
+      can_undo: true,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => draft })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ ...draft, draft_revision: 4 }),
+      });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      await expect(getKriaDraft("thread-1")).resolves.toEqual(draft);
+      await expect(undoKriaDraft("thread-1", 3)).resolves.toMatchObject({
+        draft_revision: 4,
+      });
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        "/api/plan/creation-threads/thread-1/draft",
+      );
+      expect(fetchMock.mock.calls[1]?.[0]).toBe(
+        "/api/plan/creation-threads/thread-1/draft/undo",
+      );
+      expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+        expected_draft_revision: 3,
+      });
+    } finally {
+      global.fetch = previousFetch;
+    }
+  });
+
+  it("preserves Kria's typed problem on client errors", async () => {
+    const previousFetch = global.fetch;
+    const problem = {
+      code: "stale_revision",
+      phase: "approval" as const,
+      message: "Creation thread changed",
+      retryable: true,
+      recovery: "refresh_replan" as const,
+      trace_id: "trace-1",
+      current_revision: 12,
+      target: { approval_id: "approval-1" },
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ problem }),
+    } as Response);
+    try {
+      const call = getKriaApproval("thread-1", "approval-1");
+      await expect(call).rejects.toMatchObject({
+        message: "Creation thread changed",
+        status: 409,
+        problem,
+      });
     } finally {
       global.fetch = previousFetch;
     }
@@ -161,6 +362,99 @@ describe("creation thread projection", () => {
       { id: "3", sequence: 2, revision: 3, role: "assistant", event_type: "confirm_generation", content: "Here’s the direction", payload: { kind: "confirm_generation" }, created_at: "2026-01-01T00:00:02Z" },
     ] }));
     expect(result.map((item) => item.artifact)).toEqual(["format", undefined, "confirmation"]);
+  });
+
+  it("renders only semantic turns and never echoes the durable intent as assistant speech", () => {
+    const intent = "Make the matcha update warm and quick";
+    const result = threadMessages(thread({
+      state: { edit_format: "montage", intent },
+      events: [
+        { id: "created", sequence: 0, revision: 1, role: "system", event_type: "thread_created", content: intent, payload: null, created_at: "2026-01-01T00:00:00Z" },
+        { id: "user", sequence: 1, revision: 2, role: "user", event_type: "user_message", content: intent, payload: null, created_at: "2026-01-01T00:00:01Z" },
+        { id: "mirrored-user", sequence: 2, revision: 3, role: "system", event_type: "agent_user_message", content: intent, payload: null, created_at: "2026-01-01T00:00:02Z" },
+        { id: "planning", sequence: 3, revision: 4, role: "assistant", event_type: "agent_assistant_auto_iteration_queued", content: "Planning another attempt", payload: null, created_at: "2026-01-01T00:00:03Z" },
+        { id: "echo", sequence: 4, revision: 5, role: "assistant", event_type: "agent_assistant_strategy", content: intent, payload: null, created_at: "2026-01-01T00:00:04Z" },
+        { id: "question", sequence: 5, revision: 6, role: "assistant", event_type: "agent_assistant_question", content: "Should the first sip or the packing table open the story?", payload: null, created_at: "2026-01-01T00:00:05Z" },
+      ],
+    }));
+
+    expect(result.map((message) => message.id)).toEqual(["user", "echo", "question"]);
+    expect(result.find((message) => message.id === "echo")).toMatchObject({
+      content: "",
+      artifact: "confirmation",
+    });
+    expect(result.filter((message) => message.content === intent)).toHaveLength(1);
+  });
+
+  it("renders a runtime-v2 assistant response as a conversation turn", () => {
+    const result = threadMessages(thread({ events: [
+      { id: "user", sequence: 0, revision: 1, role: "user", event_type: "user_message", content: "Use the whisk as the opening", payload: null, created_at: "2026-01-01T00:00:00Z" },
+      { id: "response", sequence: 1, revision: 2, role: "assistant", event_type: "assistant_response", content: "The whisk close-up is the strongest opening; I’ve shaped the draft around it.", payload: { kind: "observed_result" }, created_at: "2026-01-01T00:00:01Z" },
+    ] }));
+
+    expect(result).toEqual([
+      expect.objectContaining({ id: "user", role: "user", content: "Use the whisk as the opening" }),
+      expect.objectContaining({
+        id: "response",
+        role: "assistant",
+        content: "The whisk close-up is the strongest opening; I’ve shaped the draft around it.",
+      }),
+    ]);
+  });
+
+  it("projects runtime-v2 draft, approval, and render lifecycle artifacts", () => {
+    const result = threadMessages(thread({
+      runtime_version: 2,
+      active_job_id: "job-1",
+      events: [
+        { id: "draft", sequence: 0, revision: 1, role: "assistant", event_type: "draft_applied", content: "Open on the whisk.", payload: { draft_id: "draft-1", draft_revision: 2, changes: ["Tighter opening"] }, created_at: "2026-01-01T00:00:00Z" },
+        { id: "approval", sequence: 1, revision: 2, role: "system", event_type: "approval_requested", content: null, payload: { approval_id: "approval-1", draft_revision: 2 }, created_at: "2026-01-01T00:00:01Z" },
+        { id: "queued", sequence: 2, revision: 3, role: "system", event_type: "render_queued", content: null, payload: { job_id: "job-1" }, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    }));
+
+    expect(result).toEqual([
+      expect.objectContaining({ id: "draft", artifact: "draft", content: "Open on the whisk." }),
+      expect.objectContaining({ id: "approval", artifact: "approval", payload: expect.objectContaining({ approval_id: "approval-1" }) }),
+      expect.objectContaining({ artifact: "progress", content: "" }),
+    ]);
+  });
+
+  it("coalesces lifecycle callbacks by exact generation identity", () => {
+    const result = threadMessages(thread({
+      active_job_id: "job-1",
+      events: [
+        { id: "queued-one", sequence: 0, revision: 1, role: "system", event_type: "generation_started", content: "Queued", payload: { job_id: "job-1", variant_id: "main", generation_id: "gen-1" }, created_at: "2026-01-01T00:00:00Z" },
+        { id: "ready-one", sequence: 1, revision: 2, role: "system", event_type: "generation_ready", content: "Ready", payload: { job_id: "job-1", variant_id: "main", generation_id: "gen-1" }, created_at: "2026-01-01T00:00:01Z" },
+        { id: "queued-two", sequence: 2, revision: 3, role: "system", event_type: "generation_started", content: "Queued again", payload: { job_id: "job-1", variant_id: "main", generation_id: "gen-2" }, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    }));
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      id: "thread-1:generation:job:job-1:variant:main:generation:gen-1",
+      artifact: "result",
+      content: "",
+    });
+    expect(result[1]).toMatchObject({
+      id: "thread-1:generation:job:job-1:variant:main:generation:gen-2",
+      artifact: "progress",
+      content: "",
+    });
+  });
+
+  it("keeps the active lifecycle key stable across status changes", () => {
+    const rendering = thread({ active_job_id: "job-1", job: {
+      id: "job-1", status: "rendering", variants: [{
+        variant_id: "main", render_generation_id: "gen-7", render_status: "rendering",
+      }],
+    } });
+    const ready = thread({ active_job_id: "job-1", job: {
+      id: "job-1", status: "ready", variants: [{
+        variant_id: "main", render_generation_id: "gen-7", render_status: "ready", output_url: "/cut.mp4",
+      }],
+    } });
+    expect(creationGenerationArtifactKey(rendering)).toBe(creationGenerationArtifactKey(ready));
   });
 
   it("keeps project rename receipts out of the creative conversation", () => {
@@ -377,7 +671,7 @@ describe("creation thread projection", () => {
     try {
       await refreshCreationThread("thread-1", controller.signal);
       expect(global.fetch).toHaveBeenCalledWith(
-        "/api/plan/creation-threads/thread-1",
+        "/api/plan/creation-threads/thread-1?projection=full",
         expect.objectContaining({ cache: "no-store", signal: controller.signal }),
       );
 

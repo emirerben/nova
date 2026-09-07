@@ -1,0 +1,25 @@
+{
+  "fixture_id": "nermin-lifestyle-needs-footage",
+  "user_message": "Make this week feel like a quiet lifestyle diary.",
+  "snapshot": {
+    "edit_format": "montage",
+    "media_labels": [],
+    "goal": "quiet lifestyle diary"
+  },
+  "plan": {
+    "schema_version": 2,
+    "mode": "act",
+    "turn_value": "question",
+    "evidence_ids": ["snapshot:media"],
+    "intents": [
+      {
+        "intent_id": "inspect-project",
+        "tool_name": "project.inspect",
+        "tool_version": 1,
+        "arguments": {},
+        "depends_on": []
+      }
+    ]
+  },
+  "expected_message": "This project needs footage before I can make an editorial decision."
+}

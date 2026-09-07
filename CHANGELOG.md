@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.0.0] — 2026-09-07
+
+### Added
+- **Kria can now carry a video project from raw footage through a reviewed first cut and natural-language revisions in one conversation.** It understands the requested format, makes editorial choices, prepares reversible draft edits, and supports montage, talking-head, day-vlog, single-hero, subtitled, and narrated workflows.
+- **Every render has an explicit, exact approval step.** The approval is pinned to the draft and media generation the creator reviewed, expires safely, and cannot silently authorize a newer edit.
+
+### Changed
+- **Kria replies with a useful decision, action, focused question, progress update, or recovery path instead of echoing the creator's request.** Conversation state survives refreshes, rendering, failures, and movement between chat and the editor.
+- **Runtime v2 ships dark for controlled validation.** Existing runtime-v1 projects are unchanged, and new runtime-v2 projects require both server and web rollout flags plus an explicit internal runtime selection.
+
+### Fixed
+- **Interrupted, duplicated, stale, or concurrent work no longer makes Kria claim an edit or render succeeded without evidence.** Durable receipts, exact-generation checks, bounded retries, and operator recovery preserve the creator's work and explain what can safely happen next.
+
 ## [0.68.0.0] — 2026-09-07
 
 ### Added

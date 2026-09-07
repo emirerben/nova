@@ -41,6 +41,44 @@ CREATOR_AGENT_ACTIVE_STATUSES = (
 CREATOR_AGENT_TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 CREATOR_AGENT_STATUSES = CREATOR_AGENT_ACTIVE_STATUSES + CREATOR_AGENT_TERMINAL_STATUSES
 
+# Runtime-v2 lifecycles are persisted as text so additive states can be rolled
+# out without replacing PostgreSQL enums. ``succeeded`` remains execution-only
+# compatibility for runtime-v1 receipts; v2 completion uses ``completed``.
+CREATOR_AGENT_TURN_STATUSES = (
+    "pending",
+    "queued",
+    "planning",
+    "executing",
+    "awaiting_approval",
+    "observing",
+    "completed",
+    "failed",
+    "cancelled",
+    "superseded",
+)
+CREATOR_AGENT_APPROVAL_STATUSES = (
+    "pending",
+    "approved",
+    "denied",
+    "expired",
+    "cancelled",
+    "consumed",
+)
+CREATOR_AGENT_EXECUTION_STATUSES = (
+    "pending",
+    "running",
+    "awaiting_approval",
+    "accepted",
+    "dispatched",
+    "completed",
+    "succeeded",  # runtime-v1 compatibility
+    "failed",
+    "cancelled",
+    "stale",
+    "duplicate",
+    "outcome_unknown",
+)
+
 
 class Base(DeclarativeBase):
     pass
@@ -814,6 +852,9 @@ class CreationThread(Base):
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Untitled video")
+    # Selected once when the thread is created. Runtime flags may choose the
+    # value for a new thread, but the database rejects changing an existing one.
+    runtime_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     state: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     # Private immutable creator-direction prompt snapshot. Never expose through
@@ -850,12 +891,16 @@ class CreationThread(Base):
         cascade="all, delete-orphan",
         order_by="CreationThreadEvent.sequence",
     )
+    turns: Mapped[list["CreatorAgentTurn"]] = relationship(
+        back_populates="thread", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         CheckConstraint(
             "status IN ('active','archived','failed')", name="ck_creation_threads_status"
         ),
         CheckConstraint("revision >= 0", name="ck_creation_threads_revision"),
+        CheckConstraint("runtime_version IN (1, 2)", name="ck_creation_threads_runtime_version"),
         CheckConstraint("length(title) BETWEEN 1 AND 120", name="ck_creation_threads_title_length"),
         UniqueConstraint("active_plan_item_id", name="uq_creation_threads_active_plan_item"),
         Index("idx_creation_threads_creator_updated", "creator_id", "updated_at"),
@@ -875,6 +920,14 @@ class CreationThreadEvent(Base):
     )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     client_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Runtime-v1 only: identifies the legacy agent event projected into this
+    # canonical transcript. It deliberately is not a foreign key: deleting a
+    # legacy session must not issue SET NULL against this append-only table.
+    # Runtime-v2 writes semantic thread events directly.
+    source_agent_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
     role: Mapped[str] = mapped_column(Text, nullable=False, server_default="system")
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -903,6 +956,13 @@ class CreationThreadEvent(Base):
             "event_type",
             "created_at",
             postgresql_where=text("client_event_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_creation_thread_events_source_agent_event",
+            "thread_id",
+            "source_agent_event_id",
+            unique=True,
+            postgresql_where=text("source_agent_event_id IS NOT NULL"),
         ),
     )
 
@@ -1229,6 +1289,8 @@ class CreatorAgentSession(Base):
     executions: Mapped[list["CreatorAgentExecution"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+    turns: Mapped[list["CreatorAgentTurn"]] = relationship(back_populates="session")
+    approvals: Mapped[list["CreatorAgentApproval"]] = relationship(back_populates="session")
     agent_runs: Mapped[list["AgentRun"]] = relationship(back_populates="creator_agent_session")
 
     __table_args__ = (
@@ -1305,6 +1367,243 @@ class CreatorAgentEvent(Base):
     )
 
 
+class CreatorAgentTurn(Base):
+    """Durable identity and lease for one runtime-v2 user turn.
+
+    The two partial indexes below are the concurrency boundary: a thread may
+    have one mutating turn and one queued successor. Workers release row locks
+    before evidence/model I/O and use ``lease_epoch`` to reject stale owners.
+    """
+
+    __tablename__ = "creator_agent_turns"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creation_thread_events.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    client_event_id: Mapped[str] = mapped_column(Text, nullable=False)
+    request_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    plan_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    observed_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creation_thread_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    queued_replaces_turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_turns.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    lease_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    thread: Mapped["CreationThread"] = relationship(back_populates="turns")
+    session: Mapped["CreatorAgentSession | None"] = relationship(back_populates="turns")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','queued','planning','executing','awaiting_approval',"
+            "'observing','completed','failed','cancelled','superseded')",
+            name="ck_creator_agent_turns_status",
+        ),
+        CheckConstraint("lease_epoch >= 0", name="ck_creator_agent_turns_lease_epoch"),
+        UniqueConstraint("thread_id", "client_event_id", name="uq_creator_agent_turns_client_id"),
+        UniqueConstraint("source_event_id", name="uq_creator_agent_turns_source_event"),
+        Index("idx_creator_agent_turns_thread_created", "thread_id", "created_at", "id"),
+        Index(
+            "uq_creator_agent_turns_active",
+            "thread_id",
+            unique=True,
+            postgresql_where=text("status IN ('planning','executing','observing')"),
+        ),
+        Index(
+            "uq_creator_agent_turns_queued",
+            "thread_id",
+            unique=True,
+            postgresql_where=text("status = 'queued'"),
+        ),
+        Index(
+            "idx_creator_agent_turns_lease_expiry",
+            "lease_expires_at",
+            postgresql_where=text("lease_expires_at IS NOT NULL"),
+        ),
+        Index(
+            "idx_creator_agent_turns_reconcile",
+            "status",
+            "lease_expires_at",
+            "created_at",
+            "id",
+            postgresql_where=text("status IN ('pending','planning')"),
+        ),
+    )
+
+
+class CreatorEditDraft(Base):
+    """Immutable-versioned server edit snapshot for runtime-v2."""
+
+    __tablename__ = "creator_edit_drafts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    variant_key: Mapped[str] = mapped_column(Text, nullable=False)
+    base_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    base_generation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creator_edit_drafts.id", ondelete="SET NULL"), nullable=True
+    )
+    # Nullable only so retention can prune a superseded unapproved body while
+    # preserving its identity, hash, ancestry, and receipts.
+    snapshot_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    snapshot_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    source_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_executions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_head: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("draft_revision >= 0", name="ck_creator_edit_drafts_revision"),
+        CheckConstraint("length(variant_key) > 0", name="ck_creator_edit_drafts_variant_key"),
+        CheckConstraint(
+            "snapshot_json IS NULL OR octet_length(snapshot_json::text) <= 2097152",
+            name="ck_creator_edit_drafts_snapshot_size",
+        ),
+        UniqueConstraint(
+            "item_id",
+            "variant_key",
+            "draft_revision",
+            name="uq_creator_edit_drafts_revision",
+        ),
+        Index("idx_creator_edit_drafts_thread_created", "thread_id", "created_at"),
+        Index(
+            "uq_creator_edit_drafts_head",
+            "item_id",
+            "variant_key",
+            unique=True,
+            postgresql_where=text("is_head IS TRUE"),
+        ),
+        Index(
+            "idx_creator_edit_drafts_prune",
+            "created_at",
+            "id",
+            postgresql_where=text("is_head IS FALSE AND snapshot_json IS NOT NULL"),
+        ),
+    )
+
+
+class CreatorAgentApproval(Base):
+    """Deterministically pinned approval for one consequential action bundle."""
+
+    __tablename__ = "creator_agent_approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    turn_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creator_agent_turns.id", ondelete="CASCADE"), nullable=False
+    )
+    draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creator_edit_drafts.id", ondelete="SET NULL"), nullable=True
+    )
+    draft_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    target_variant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_generation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_manifest_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    execution_ids: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    consequence_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    cost_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    session: Mapped["CreatorAgentSession"] = relationship(back_populates="approvals")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','approved','denied','expired','cancelled','consumed')",
+            name="ck_creator_agent_approvals_status",
+        ),
+        CheckConstraint(
+            "draft_revision IS NULL OR draft_revision >= 0",
+            name="ck_creator_agent_approvals_draft_revision",
+        ),
+        CheckConstraint(
+            "target_ownership_epoch >= 0",
+            name="ck_creator_agent_approvals_ownership_epoch",
+        ),
+        Index("idx_creator_agent_approvals_thread_created", "thread_id", "created_at"),
+        Index(
+            "idx_creator_agent_approvals_pending_expiry",
+            "expires_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "uq_creator_agent_approvals_pending_turn",
+            "turn_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "idx_creator_agent_approvals_approved_reconcile",
+            "created_at",
+            "id",
+            postgresql_where=text("status = 'approved'"),
+        ),
+    )
+
+
 class CreatorAgentExecution(Base):
     """Idempotent execution receipt for a controller action."""
 
@@ -1316,28 +1615,92 @@ class CreatorAgentExecution(Base):
         ForeignKey("creator_agent_sessions.id", ondelete="CASCADE"),
         nullable=False,
     )
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creator_agent_turns.id", ondelete="SET NULL"), nullable=True
+    )
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     request_digest: Mapped[str] = mapped_column(Text, nullable=False)
     expected_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     expected_manifest_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    risk: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dependency_group: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    group_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_thread_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="SET NULL"), nullable=True
+    )
+    target_draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creator_edit_drafts.id", ondelete="SET NULL"), nullable=True
+    )
+    target_draft_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    target_variant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_generation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_manifest_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_ownership_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    external_task_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    awaiting_approval_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    dispatched_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    observed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    observed_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creation_thread_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     session: Mapped["CreatorAgentSession"] = relationship(back_populates="executions")
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending','running','succeeded','failed','stale','duplicate')",
+            "status IN ('pending','running','awaiting_approval','accepted','dispatched',"
+            "'completed','succeeded','failed','cancelled','stale','duplicate','outcome_unknown')",
             name="ck_creator_agent_executions_status",
         ),
         CheckConstraint("expected_revision >= 0", name="ck_creator_agent_executions_revision"),
+        CheckConstraint(
+            "(dependency_group IS NULL OR dependency_group >= 0) AND "
+            "(group_order IS NULL OR group_order >= 0) AND "
+            "(target_draft_revision IS NULL OR target_draft_revision >= 0) AND "
+            "(target_ownership_epoch IS NULL OR target_ownership_epoch >= 0)",
+            name="ck_creator_agent_executions_v2_counters",
+        ),
         UniqueConstraint(
             "session_id", "idempotency_key", name="uq_creator_agent_executions_idempotency"
         ),
         Index("idx_creator_agent_executions_session_created", "session_id", "created_at"),
+        Index(
+            "idx_creator_agent_executions_turn_order",
+            "turn_id",
+            "dependency_group",
+            "group_order",
+        ),
+        Index(
+            "idx_creator_agent_executions_pending_dispatch",
+            "accepted_at",
+            postgresql_where=text("status = 'accepted'"),
+        ),
+        Index(
+            "idx_creator_agent_executions_dispatched_observe",
+            "dispatched_at",
+            "id",
+            postgresql_where=text("status = 'dispatched' AND target_job_id IS NOT NULL"),
+        ),
+        Index(
+            "idx_creator_agent_executions_target_job_created",
+            "target_job_id",
+            "created_at",
+            postgresql_where=text("turn_id IS NOT NULL AND target_job_id IS NOT NULL"),
+        ),
     )
 
 

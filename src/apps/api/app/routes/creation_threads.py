@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,9 @@ from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.kria.api_schemas import KriaProblemOut, ThreadDeltaOut
+from app.kria.http import KriaFailureRoute, problem_response
+from app.kria.runtime import RuntimeFailure, read_delta
 from app.limiter import limiter
 from app.models import (
     ContentPlan,
@@ -217,6 +221,7 @@ class StrictBody(BaseModel):
 class CreateBody(StrictBody):
     message: str | None = Field(default=None, max_length=4000)
     client_event_id: str | None = Field(default=None, max_length=160)
+    runtime_version: Literal[1, 2] = 1
 
     @field_validator("message")
     @classmethod
@@ -396,6 +401,7 @@ class UploadTarget(BaseModel):
 
 class CreationThreadOut(BaseModel):
     id: str
+    runtime_version: Literal[1, 2] = 1
     title: str
     status: str
     revision: int
@@ -420,7 +426,29 @@ async def _require_creation_thread_authentication(user: CurrentUser) -> None:
     _ = user
 
 
-router = APIRouter(dependencies=[Depends(_require_creation_thread_authentication)])
+_RUNTIME_V2_SHARED_ACTIONS = frozenset(
+    {"select_format", "select_edit_format", "remove_media", "select_variant"}
+)
+
+
+def _require_runtime_v1_mutation(
+    thread: CreationThread,
+    *,
+    action: str | None = None,
+) -> None:
+    """Keep agent/render authority v2-only while sharing source configuration."""
+
+    if int(getattr(thread, "runtime_version", 1)) == 2 and action not in _RUNTIME_V2_SHARED_ACTIONS:
+        raise HTTPException(
+            status_code=409,
+            detail="This project uses the new Kria experience. Refresh or update the app.",
+        )
+
+
+router = APIRouter(
+    dependencies=[Depends(_require_creation_thread_authentication)],
+    route_class=KriaFailureRoute,
+)
 
 
 def _client_id(value: str) -> str:
@@ -2042,6 +2070,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 speech_cleanup = None
     return CreationThreadOut(
         id=str(thread.id),
+        runtime_version=int(getattr(thread, "runtime_version", 1)),
         title=getattr(thread, "title", None) or _DEFAULT_TITLE,
         status=thread.status,
         revision=thread.revision,
@@ -2187,14 +2216,37 @@ async def capabilities(user: CurrentUser) -> dict[str, Any]:
     }
 
 
-@router.post("", response_model=CreationThreadOut, status_code=201)
+@router.post(
+    "",
+    response_model=CreationThreadOut,
+    status_code=201,
+    responses={404: {"model": KriaProblemOut}, 422: {"model": KriaProblemOut}},
+)
 @limiter.limit("20/minute")
 async def create_thread(
     request: Request,
     body: CreateBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> CreationThreadOut:
+) -> CreationThreadOut | JSONResponse:
+    if body.runtime_version == 2:
+        if body.message is not None:
+            return problem_response(
+                request,
+                status_code=422,
+                code="request_invalid",
+                message="Runtime-v2 messages must be submitted through /turns.",
+                recovery="manual",
+            )
+        if not settings.kria_runtime_v2_enabled:
+            # Deliberate 404 preserves cohort privacy during API/web deploy skew.
+            # Omitted runtime_version stays byte-compatible with v1.
+            return problem_response(
+                request,
+                status_code=404,
+                code="kria_runtime_unavailable",
+                message="Creation chat unavailable",
+            )
     _ = request
     # Serialize creation receipts before their lookup. Otherwise concurrent
     # retries can both observe no receipt and mint two projects.
@@ -2217,12 +2269,16 @@ async def create_thread(
         ).first()
         if prior is not None:
             event, existing = prior
-            if event.content != body.message:
+            if (
+                event.content != body.message
+                or int(getattr(existing, "runtime_version", 1)) != body.runtime_version
+            ):
                 raise HTTPException(status_code=409, detail="Idempotency key reused")
             return await _response(db, existing)
     plan, item = await _project(db, user)
     thread = CreationThread(
         creator_id=user.id,
+        runtime_version=body.runtime_version,
         content_plan_id=plan.id,
         active_plan_item_id=item.id,
         title=(body.message[:_MAX_TITLE_LENGTH] if body.message else _DEFAULT_TITLE),
@@ -2240,6 +2296,14 @@ async def create_thread(
 
     db.add(thread)
     await db.flush()
+    if body.runtime_version == 2:
+        # Runtime-v2 receipts are session-scoped. Provision the durable owner
+        # with the thread so even the first read-only turn can persist a real
+        # execution receipt instead of reporting an in-memory intent ID.
+        session = CreatorAgentSession(creator_id=user.id, plan_item_id=item.id)
+        db.add(session)
+        await db.flush()
+        thread.active_creator_agent_session_id = session.id
     resolved_direction = await resolve_snapshot_for_dispatch(db, user.id, thread_id=thread.id)
     thread.creator_direction_snapshot = stamp_private_receipt(
         serialize_private_snapshot(resolved_direction, source="creation_thread"),
@@ -2321,6 +2385,7 @@ async def list_threads(
         summaries.append(
             CreationThreadOut(
                 id=str(row.id),
+                runtime_version=int(getattr(row, "runtime_version", 1)),
                 title=getattr(row, "title", None) or _DEFAULT_TITLE,
                 status=row.status,
                 revision=row.revision,
@@ -2364,11 +2429,63 @@ async def list_threads(
     return summaries
 
 
-@router.get("/{thread_id}", response_model=CreationThreadOut)
+@router.get("/{thread_id}", response_model=CreationThreadOut | ThreadDeltaOut)
 async def get_thread(
-    thread_id: str, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]
-) -> CreationThreadOut:
+    thread_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    after_sequence: Annotated[int | None, Query(ge=-1)] = None,
+    before_sequence: Annotated[int | None, Query(ge=0)] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    projection: str | None = None,
+) -> CreationThreadOut | ThreadDeltaOut:
+    if after_sequence is not None or before_sequence is not None:
+        if not settings.kria_runtime_v2_enabled:
+            raise RuntimeFailure(
+                404,
+                "kria_runtime_unavailable",
+                "Creation chat unavailable",
+            )
+        try:
+            identifier = uuid.UUID(thread_id)
+        except ValueError as exc:
+            raise RuntimeFailure(
+                404,
+                "thread_not_found",
+                "Creation thread not found",
+            ) from exc
+        return await read_delta(
+            db,
+            thread_id=identifier,
+            creator_id=user.id,
+            after_sequence=after_sequence if after_sequence is not None else -1,
+            before_sequence=before_sequence,
+            limit=limit,
+        )
     thread = await _load(thread_id, user, db, lock=True)
+    if int(getattr(thread, "runtime_version", 1)) == 2 and projection != "full":
+        if not settings.kria_runtime_v2_enabled:
+            raise RuntimeFailure(
+                404,
+                "kria_runtime_unavailable",
+                "Creation chat unavailable",
+            )
+        identifier = thread.id
+        await db.rollback()
+        return await read_delta(
+            db,
+            thread_id=identifier,
+            creator_id=user.id,
+            after_sequence=-1,
+            limit=limit,
+        )
+    if projection not in {None, "full"}:
+        raise RuntimeFailure(
+            422,
+            "projection_invalid",
+            "Choose the full projection or omit the parameter.",
+            recovery="manual",
+        )
     repaired_cleanup, repair_analysis_id = await _repair_stale_cleanup_failure_graph(
         db,
         thread,
@@ -2422,6 +2539,7 @@ async def message_thread(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
     thread = await _load(thread_id, user, db, lock=True)
+    _require_runtime_v1_mutation(thread)
     if thread.status != "active":
         raise HTTPException(status_code=409, detail="Creation thread is archived")
     duplicate = await _duplicate(db, thread.id, _client_id(body.client_event_id))
@@ -2589,6 +2707,7 @@ async def action_thread(
 ) -> CreationThreadOut:
     owner_id = user.id
     thread = await _load(thread_id, user, db, lock=True, creator_id=owner_id)
+    _require_runtime_v1_mutation(thread, action=body.action)
     cleanup_application_retry = bool(
         body.action == "retry"
         and body.payload.get("speech_cleanup_analysis_id")

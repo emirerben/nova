@@ -8,6 +8,18 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Kria agent platform follow-up — creator preference memory (autoplan CEO review, 2026-09-06)
+
+### Learn from accepted edits across projects
+**What:** Add consented, versioned creator preference memory derived from accepted/undone edits and selected final outputs, then expose only bounded preference summaries to Kria.
+**Why:** Longitudinal taste memory could become a meaningful advantage over generic editor agents, but adding it before exact edit execution and outcome measurement work would introduce privacy and feedback-loop risk without proving value.
+**Pros:** Fewer repeated instructions, more creator-specific first cuts, and a defensible outcome-data loop.
+**Cons:** Requires consent/revocation semantics, confidence/decay rules, correction UI, bias controls, and new evaluation against stale or contradictory preferences.
+**Context:** Deferred from `plans/023-kria-agent-platform.md`. Start only after the unified runtime shows improved accepted/exported cuts and hands-on time; reuse receipt-backed accepted/undone outcomes rather than raw chat as training truth.
+**Effort:** L (with CC+gstack: M)
+**Priority:** P2
+**Depends on:** Kria agent platform cohort outcome gate and privacy review.
+
 ## Speech-cleanup budget clamp — deferrals (from red-team review, 2026-08-31)
 
 ### Clamp trim boundaries vs tokenless acoustic-filler regions

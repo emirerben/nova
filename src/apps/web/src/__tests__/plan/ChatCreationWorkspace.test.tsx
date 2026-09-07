@@ -1,19 +1,26 @@
 import { StrictMode } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import ChatCreationWorkspace, { renderPhaseLabel } from "@/app/plan/_components/workspace/ChatCreationWorkspace";
 import { POSTER_RECOVERY_DELAYS_MS } from "@/hooks/useLibraryPosterRecovery";
 import {
   applyCreationAction,
+  cancelKriaTurn,
   CreationThreadError,
   createCreationThread,
+  decideKriaApproval,
   deleteCreationThread,
   getCreationCapabilities,
+  getKriaApproval,
+  getKriaDelta,
+  getKriaDraft,
   listCreationThreads,
   refreshCreationThread,
   renameCreationThread,
   sendCreationMessage,
+  sendKriaTurn,
+  undoKriaDraft,
   uploadCreationMedia,
   type CreationSpeechCleanupProjection,
   type CreationThread,
@@ -35,7 +42,7 @@ jest.mock("next-auth/react", () => ({
 }));
 jest.mock("@/lib/creation-thread-api", () => {
   const actual = jest.requireActual("@/lib/creation-thread-api");
-  return { ...actual, applyCreationAction: jest.fn(), createCreationThread: jest.fn(), deleteCreationThread: jest.fn(), getCreationCapabilities: jest.fn(), listCreationThreads: jest.fn(), refreshCreationThread: jest.fn(), renameCreationThread: jest.fn(), sendCreationMessage: jest.fn(), uploadCreationMedia: jest.fn() };
+  return { ...actual, applyCreationAction: jest.fn(), cancelKriaTurn: jest.fn(), createCreationThread: jest.fn(), decideKriaApproval: jest.fn(), deleteCreationThread: jest.fn(), getCreationCapabilities: jest.fn(), getKriaApproval: jest.fn(), getKriaDelta: jest.fn(), getKriaDraft: jest.fn(), listCreationThreads: jest.fn(), refreshCreationThread: jest.fn(), renameCreationThread: jest.fn(), sendCreationMessage: jest.fn(), sendKriaTurn: jest.fn(), undoKriaDraft: jest.fn(), uploadCreationMedia: jest.fn() };
 });
 jest.mock("@/lib/me-api", () => {
   const actual = jest.requireActual("@/lib/me-api");
@@ -120,9 +127,16 @@ describe("ChatCreationWorkspace", () => {
 
   beforeEach(() => {
     jest.mocked(listCreationThreads).mockReset();
+    jest.mocked(cancelKriaTurn).mockReset();
     jest.mocked(createCreationThread).mockReset();
     jest.mocked(refreshCreationThread).mockReset();
     jest.mocked(sendCreationMessage).mockReset();
+    jest.mocked(sendKriaTurn).mockReset();
+    jest.mocked(getKriaDelta).mockReset();
+    jest.mocked(getKriaApproval).mockReset();
+    jest.mocked(decideKriaApproval).mockReset();
+    jest.mocked(getKriaDraft).mockReset();
+    jest.mocked(undoKriaDraft).mockReset();
     jest.mocked(deleteCreationThread).mockReset();
     jest.mocked(renameCreationThread).mockReset();
     jest.mocked(uploadCreationMedia).mockReset();
@@ -138,6 +152,28 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(createCreationThread).mockResolvedValue(baseThread);
     jest.mocked(refreshCreationThread).mockResolvedValue(baseThread);
     jest.mocked(sendCreationMessage).mockResolvedValue(baseThread);
+    jest.mocked(sendKriaTurn).mockResolvedValue({
+      turn_id: "turn-1",
+      thread_revision: 1,
+      status: "pending",
+      replayed: false,
+    });
+    jest.mocked(cancelKriaTurn).mockResolvedValue({
+      turn_id: "turn-queued",
+      thread_revision: 2,
+      status: "cancelled",
+      approval_ids: [],
+    });
+    jest.mocked(getKriaDelta).mockResolvedValue({
+      thread_id: "thread-1",
+      runtime_version: 2,
+      status: "active",
+      thread_revision: 1,
+      events: [],
+      after_sequence: 0,
+      next_after_sequence: 0,
+      has_more: false,
+    });
     jest.mocked(deleteCreationThread).mockResolvedValue();
     jest.mocked(renameCreationThread).mockImplementation(async (thread, title) => ({ ...thread, title }));
     jest.mocked(uploadCreationMedia).mockResolvedValue(baseThread);
@@ -173,6 +209,186 @@ describe("ChatCreationWorkspace", () => {
     expect(await screen.findByRole("button", { name: /Narrated Let/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Talking to camera A clean/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
+  });
+
+  it("uses runtime-v2 turn transport and hydrates the semantic reply", async () => {
+    const user = userEvent.setup();
+    const runtimeThread = {
+      ...baseThread,
+      runtime_version: 2 as const,
+      revision: 2,
+      events: [{
+        id: "created",
+        sequence: 0,
+        revision: 1,
+        role: "assistant" as const,
+        event_type: "format_prompt",
+        content: "Pick a format",
+        payload: { kind: "select_format" },
+        created_at: "2026-01-01T00:00:00Z",
+      }],
+    };
+    const reply = {
+      ...runtimeThread,
+      revision: 4,
+      events: [
+        ...runtimeThread.events,
+        { id: "user", sequence: 1, revision: 3, role: "user" as const, event_type: "user_message", content: "Open on the whisk", payload: { turn_id: "turn-1" }, created_at: "2026-01-01T00:00:01Z" },
+        { id: "assistant", sequence: 2, revision: 4, role: "assistant" as const, event_type: "assistant_response", content: "The whisk is the strongest opening.", payload: { turn_id: "turn-1" }, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([runtimeThread]);
+    jest.mocked(refreshCreationThread)
+      .mockResolvedValueOnce(runtimeThread)
+      .mockResolvedValueOnce(reply);
+    jest.mocked(getKriaDelta).mockResolvedValueOnce({
+      thread_id: runtimeThread.id,
+      runtime_version: 2,
+      status: "active",
+      thread_revision: 4,
+      events: [reply.events[2]],
+      after_sequence: 0,
+      next_after_sequence: 2,
+      has_more: false,
+    });
+
+    render(<ChatCreationWorkspace />);
+    const composer = await screen.findByRole("textbox", { name: "Message Kria" });
+    await user.type(composer, "Open on the whisk");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(sendKriaTurn).toHaveBeenCalledWith(
+      runtimeThread,
+      "Open on the whisk",
+    ));
+    expect(sendCreationMessage).not.toHaveBeenCalled();
+    expect(await screen.findByText("The whisk is the strongest opening.")).toBeInTheDocument();
+  });
+
+  it("renders a reversible draft and consumes only the pinned approval", async () => {
+    const user = userEvent.setup();
+    const approvalId = "approval-1";
+    const runtimeThread = {
+      ...baseThread,
+      runtime_version: 2 as const,
+      revision: 5,
+      active_plan_item_id: "item-1",
+      events: [
+        { id: "draft", sequence: 0, revision: 4, role: "assistant" as const, event_type: "draft_applied", content: "Open on the whisk and finish on the order.", payload: { turn_id: "turn-1", draft_id: "draft-1", draft_revision: 2, changes: ["Tighter opening", "Product reveal last"] }, created_at: "2026-01-01T00:00:01Z" },
+        { id: "approval", sequence: 1, revision: 5, role: "system" as const, event_type: "approval_requested", content: null, payload: { turn_id: "turn-1", approval_id: approvalId, consequence_summary: "Render the saved matcha draft.", cost_summary: "One render" }, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    };
+    const approval = {
+      approval_id: approvalId,
+      turn_id: "turn-1",
+      draft_id: "draft-1",
+      draft_revision: 2,
+      status: "pending" as const,
+      consequence_summary: "Render the saved matcha draft.",
+      cost_summary: "One render",
+      expires_at: "2026-01-01T00:15:00Z",
+      approval_fingerprint: "a".repeat(64),
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([runtimeThread]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(runtimeThread);
+    jest.mocked(getKriaApproval).mockResolvedValueOnce(approval);
+    jest.mocked(decideKriaApproval).mockResolvedValueOnce({
+      approval_id: approvalId,
+      turn_id: "turn-1",
+      status: "approved",
+      thread_revision: 6,
+      render_dispatched: false,
+    });
+
+    render(<ChatCreationWorkspace />);
+    const composer = await screen.findByRole("textbox", { name: "Message Kria" });
+    expect(await screen.findByText("Tighter opening · Product reveal last")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo draft" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Approve and render" }));
+
+    await waitFor(() => expect(decideKriaApproval).toHaveBeenCalledWith(
+      runtimeThread.id,
+      approval,
+      "approve",
+      runtimeThread.revision,
+    ));
+    expect(applyCreationAction).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "generate",
+      expect.anything(),
+    );
+    await waitFor(() => expect(composer).toHaveFocus());
+  });
+
+  it("undoes the current runtime draft through its revision fence", async () => {
+    const user = userEvent.setup();
+    const runtimeThread = {
+      ...baseThread,
+      runtime_version: 2 as const,
+      revision: 4,
+      active_plan_item_id: "item-1",
+      events: [{ id: "draft", sequence: 0, revision: 4, role: "assistant" as const, event_type: "draft_applied", content: "Use a faster opening.", payload: { turn_id: "turn-1", changes: ["Faster opening"] }, created_at: "2026-01-01T00:00:01Z" }],
+    };
+    const draft = {
+      draft_id: "draft-1",
+      item_id: "item-1",
+      variant_key: "initial",
+      draft_revision: 3,
+      snapshot_hash: "b".repeat(64),
+      etag: `"${"b".repeat(64)}"`,
+      base_job_id: null,
+      base_generation_id: null,
+      snapshot: { schema_version: 2, kind: "strategy", changes: ["Faster opening"] },
+      can_undo: true,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([runtimeThread]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(runtimeThread);
+    jest.mocked(getKriaDraft).mockResolvedValueOnce(draft);
+    jest.mocked(undoKriaDraft).mockResolvedValueOnce({ ...draft, draft_revision: 4 });
+
+    render(<ChatCreationWorkspace />);
+    const composer = await screen.findByRole("textbox", { name: "Message Kria" });
+    await user.click(await screen.findByRole("button", { name: "Undo draft" }));
+
+    await waitFor(() => expect(undoKriaDraft).toHaveBeenCalledWith(runtimeThread.id, 3));
+    await waitFor(() => expect(composer).toHaveFocus());
+  });
+
+  it("shows one queued runtime request with change and cancel controls", async () => {
+    const user = userEvent.setup();
+    const queuedThread = {
+      ...baseThread,
+      runtime_version: 2 as const,
+      revision: 6,
+      events: [{
+        id: "queued-user",
+        sequence: 0,
+        revision: 6,
+        role: "user" as const,
+        event_type: "user_message",
+        content: "Make the ending quieter",
+        payload: { turn_id: "turn-queued", turn_status: "queued" },
+        created_at: "2026-01-01T00:00:01Z",
+      }],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([queuedThread]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(queuedThread);
+
+    render(<ChatCreationWorkspace />);
+    expect(await screen.findByText("After this render")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Change request" }));
+
+    await waitFor(() => expect(cancelKriaTurn).toHaveBeenCalledWith(
+      queuedThread.id,
+      "turn-queued",
+      queuedThread.revision,
+    ));
+    const composer = screen.getByRole("textbox", { name: "Message Kria" });
+    expect(composer).toHaveValue(
+      "Make the ending quieter",
+    );
+    await waitFor(() => expect(composer).toHaveFocus());
   });
 
   it("keeps the sidebar toggle left of the title and animates the collapsed spacing", async () => {
@@ -413,6 +629,35 @@ describe("ChatCreationWorkspace", () => {
       if (descriptor) Object.defineProperty(HTMLElement.prototype, "scrollHeight", descriptor);
       else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
     }
+  });
+
+  it("preserves reading position and offers a new-update jump", async () => {
+    const updated = {
+      ...baseThread,
+      revision: 1,
+      events: [
+        ...baseThread.events,
+        { id: "user-2", sequence: 1, revision: 1, role: "user" as const, event_type: "user_message", content: "Keep the close-up longer", payload: null, created_at: "2026-01-01T00:00:01Z" },
+      ],
+    };
+    jest.mocked(sendCreationMessage).mockResolvedValueOnce(updated);
+    render(<ChatCreationWorkspace />);
+    await screen.findByText("Pick a format");
+    const transcript = await screen.findByRole("log", { name: "Conversation history" });
+    Object.defineProperties(transcript, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+    fireEvent.scroll(transcript);
+    const composer = screen.getByRole("textbox", { name: "Message Kria" });
+    fireEvent.change(composer, { target: { value: "Keep the close-up longer" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    const jump = await screen.findByRole("button", { name: "New update" });
+    expect(transcript.scrollTop).toBe(100);
+    fireEvent.click(jump);
+    expect(transcript.scrollTop).toBe(1000);
   });
 
   it("creates only one empty project when Strict Mode replays the boot effect", async () => {
@@ -665,6 +910,31 @@ describe("ChatCreationWorkspace", () => {
     ));
   });
 
+  it("does not repeat state intent in the render approval card", async () => {
+    const intent = "Make the matcha restock update warm and quick";
+    const awaitingApproval = {
+      ...baseThread,
+      state: {
+        edit_format: "montage",
+        intent,
+        media: [{ media_id: "m1", kind: "video" }],
+        media_count: 1,
+      },
+      active_plan_item_id: "item-1",
+      events: [
+        { id: "user", sequence: 0, revision: 1, role: "user" as const, event_type: "user_message", content: intent, payload: null, created_at: "2026-01-01T00:00:00Z" },
+        { id: "strategy", sequence: 1, revision: 2, role: "assistant" as const, event_type: "agent_assistant_strategy", content: "Open on the whisk, then move from restock to packing orders.", payload: null, created_at: "2026-01-01T00:00:01Z" },
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([awaitingApproval]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(awaitingApproval);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Open on the whisk, then move from restock to packing orders.")).toBeInTheDocument();
+    expect(within(screen.getByRole("log", { name: "Conversation history" })).getAllByText(intent)).toHaveLength(1);
+    expect(screen.getByText("Kria will use the proposed direction to make a new cut. Rendering starts only after you approve.")).toBeInTheDocument();
+  });
+
   it("keeps one lifecycle card and leaves later chat below the finished result", async () => {
     const ready = {
       ...baseThread,
@@ -711,6 +981,33 @@ describe("ChatCreationWorkspace", () => {
     expect(await screen.findByText("1 of 2 ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play Original Text" })).toBeInTheDocument();
     expect(screen.getByLabelText(/Rendering the edit variations.*1 of 2 ready/)).toBeInTheDocument();
+  });
+
+  it("keeps the composer usable while a render is running", async () => {
+    const rendering = {
+      ...baseThread,
+      revision: 5,
+      state: { edit_format: "montage", media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "variants_rendering", current_phase: "render_variants", variants: [
+        { variant_id: "original_text", render_status: "rendering" },
+      ] },
+      events: [],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([rendering]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(rendering);
+    jest.mocked(sendCreationMessage).mockResolvedValue(rendering);
+    render(<ChatCreationWorkspace />);
+
+    const composer = await screen.findByRole("textbox", { name: "Message Kria" });
+    expect(composer).toBeEnabled();
+    fireEvent.change(composer, { target: { value: "Use a quieter ending after this render" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(sendCreationMessage).toHaveBeenCalledWith(
+      rendering,
+      "Use a quieter ending after this render",
+    ));
   });
 
   it("shows retry recovery for a failed render with no newer confirmation", async () => {
@@ -1122,6 +1419,7 @@ describe("ChatCreationWorkspace", () => {
     };
     const freshPoll = {
       ...rendering,
+      job: { ...rendering.job, current_phase: "finalize" },
       events: [...rendering.events, {
         id: "fresh-poll",
         sequence: 1,
@@ -1135,6 +1433,7 @@ describe("ChatCreationWorkspace", () => {
     };
     const staleSend = {
       ...rendering,
+      job: { ...rendering.job, current_phase: "analyze_clips" },
       events: [...rendering.events, {
         id: "stale-send",
         sequence: 1,
@@ -1165,10 +1464,11 @@ describe("ChatCreationWorkspace", () => {
       await act(async () => { jest.advanceTimersByTime(2500); });
       await waitFor(() => expect(refreshCreationThread).toHaveBeenCalledTimes(3));
       await act(async () => { resolvePoll(freshPoll); });
-      expect(await screen.findByText("Fresh poll state")).toBeInTheDocument();
+      expect(await screen.findByText("Polishing the final cut…", { selector: "span" })).toBeInTheDocument();
+      expect(screen.queryByText("Fresh poll state")).not.toBeInTheDocument();
 
       await act(async () => { resolveSend(staleSend); });
-      expect(screen.getByText("Fresh poll state")).toBeInTheDocument();
+      expect(screen.getByText("Polishing the final cut…", { selector: "span" })).toBeInTheDocument();
       expect(screen.queryByText("Stale send state")).not.toBeInTheDocument();
     } finally {
       jest.useRealTimers();
@@ -1836,7 +2136,7 @@ describe("ChatCreationWorkspace", () => {
       "speech-cleanup:analysis-failed:r3:bypass",
     ));
     expect(container.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
-    expect(screen.getByTestId("creation-live-announcer")).toHaveTextContent(/could not check the speech/i);
+    expect(screen.getByTestId("speech-cleanup-live-announcer")).toHaveTextContent(/could not check the speech/i);
     expect(screen.getByRole("log", { name: "Conversation history" })).toHaveAttribute("aria-live", "off");
   });
 

@@ -1,4 +1,5 @@
 .PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
+        kria-replay verify-kria \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays verify-motion-performance \
         carousel-capture carousel-verify verify-editor-timeline \
@@ -9,6 +10,7 @@ API_DIR := src/apps/api
 API_VENV ?= $(API_DIR)/.venv
 API_PYTHON := $(API_VENV)/bin/python
 API_LOCAL_PYTHON := .venv/bin/python
+FIXTURE ?= nermin-matcha-update
 
 # ── Local dev ──────────────────────────────────────────────────────────────────
 
@@ -20,6 +22,13 @@ dev-web:
 
 dev-api:
 	docker-compose up api worker redis db
+
+# Credential-free control-plane proof. It calls no model, storage, broker, or renderer.
+kria-replay:
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m app.cli.kria_replay $(FIXTURE))
+
+verify-kria:
+	KRIA_VERIFY_PYTHON="$(abspath $(API_PYTHON))" bash scripts/verify-kria.sh
 
 # ── Local-render parity (runs the prod Dockerfile locally) ────────────────────
 # Usage:
