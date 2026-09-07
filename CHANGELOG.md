@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.67.1.0] — 2026-09-07
+
+### Fixed
+- **Voiceover projects created in chat now start rendering.** Kria accepts the private, thread-scoped audio location produced by the chat uploader when it belongs to the same creator, while public uploads and other users' media remain rejected.
+
+### Internal
+- The render-dispatch regression now uses the same `users/{user}/creation-threads/{thread}/...` storage contract as the product flow, closing the gap that let direct-upload canaries pass while real chat voiceovers failed before a Job was created.
+
 ## [0.66.0.0] — 2026-09-06
 
 ### Added
