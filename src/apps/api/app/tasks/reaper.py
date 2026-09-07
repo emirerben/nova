@@ -35,8 +35,10 @@ from typing import Any, Literal
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
 from celery import Celery
-from sqlalchemy import and_, func, literal_column, or_, select, update
+from sqlalchemy import and_, cast, func, literal, literal_column, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONPATH
 
+from app.config import settings
 from app.database import sync_session
 from app.models import Job
 from app.services.durable_attempt_cleanup import reconcile_storage_attempt_cleanup
@@ -96,6 +98,42 @@ _EDITOR_RENDER_SCAN_AGE_S = 180
 # then independently locked, revalidated, and committed.
 _STUCK_VARIANT_RECONCILE_BATCH = 50
 
+# PostgreSQL parses a jsonpath at EXECUTION time, so a malformed one is
+# invisible to import, to lint, and to any test that only compiles the
+# statement. Both paths below are exercised against a real Postgres by
+# `tests/tasks/test_reaper_jsonpath.py` — keep them covered there.
+#
+# Operands of `&&` / `||` must be PREDICATES, not bare accessors. A bare
+# `@.editor_render_attempt` raises `syntax error at or near ")" of jsonpath
+# input`; `exists (...)` is the accessor-to-predicate wrapper. That exact
+# bug made this whole reconcile a silent no-op in production (the error was
+# swallowed by the non-fatal `worker_ready` handler in app/worker.py).
+_STUCK_VARIANT_JSONPATH = (
+    "$.variants[*] ? ("
+    + " || ".join(f'@.render_status == "{status}"' for status in _STUCK_VARIANT_STATUSES)
+    + ")"
+)
+_EDITOR_RENDER_ATTEMPT_JSONPATH = (
+    '$.variants[*] ? (@.render_status == "rendering" && exists (@.editor_render_attempt))'
+)
+
+
+def _assembly_plan_matches_jsonpath(path: str) -> Any:
+    """Return `assembly_plan @? <path>` with the path bound as a parameter.
+
+    The path travels as a bind parameter cast to ``jsonpath`` instead of
+    being spliced into the statement as raw SQL text via `literal_column`.
+    Splicing forced this module to hand-manage the quoting and the
+    ``::jsonpath`` cast inside a Python string literal, which is how a
+    malformed filter shipped unnoticed.
+
+    This applies to jsonpath text specifically. The static key names that
+    `_terminal_reconcile_state_predicate` still passes to `literal_column`
+    carry no grammar of their own and are pinned by an executing test.
+    """
+
+    return Job.assembly_plan.bool_op("@?")(cast(literal(path), JSONPATH))
+
 
 def _terminal_reconcile_state_predicate() -> Any:
     """Return the JSONB predicate for state this watchdog can repair."""
@@ -110,13 +148,62 @@ def _terminal_reconcile_state_predicate() -> Any:
             private.op("?")(literal_column("'terminal_pending'")),
         ),
     )
-    stuck_variant = Job.assembly_plan.op("@?")(
-        literal_column(
-            '\'$.variants[*] ? (@.render_status == "rendering" '
-            '|| @.render_status == "pending")\'::jsonpath'
-        )
-    )
+    stuck_variant = _assembly_plan_matches_jsonpath(_STUCK_VARIANT_JSONPATH)
     return or_(stuck_variant, required_speech_state)
+
+
+def _editor_render_attempt_predicate() -> Any:
+    """Return the JSONB predicate for a rendering variant with a save lease key.
+
+    `exists (...)` matches the key in ANY form — JSON null, a scalar, `{}` —
+    which is deliberately wider than the `isinstance(attempt, dict)` re-check
+    the reconcile loop applies under the row lock. Over-inclusion costs one
+    wasted lock; under-inclusion loses repairs silently.
+    """
+
+    return _assembly_plan_matches_jsonpath(_EDITOR_RENDER_ATTEMPT_JSONPATH)
+
+
+def _repairable_state_predicate(
+    cutoff: datetime,
+    editor_scan_cutoff: datetime,
+) -> Any:
+    """Return `reconcile_stuck_variants`' discovery predicate.
+
+    Extracted so a test can execute the exact expression the sweep runs
+    against a real Postgres. Both branches embed a jsonpath, which Postgres
+    only parses at execution time.
+    """
+
+    return or_(
+        and_(Job.updated_at < cutoff, _terminal_reconcile_state_predicate()),
+        and_(Job.updated_at < editor_scan_cutoff, _editor_render_attempt_predicate()),
+    )
+
+
+def _reconcile_discovery_clauses(
+    repairable_state_predicate: Any,
+    lookback: datetime,
+    live_job_uuids: list[uuid.UUID],
+) -> list[Any]:
+    """Return the full WHERE for `reconcile_stuck_variants`' discovery SELECT.
+
+    Extracted so a test can EXECUTE the assembled clause list against a real
+    Postgres, and so the locked re-check below cannot drift from discovery. The
+    pre-existing string assertions only prove an `@?` operator appears in the
+    SQL — not that it parses, nor that it selects the right rows.
+    """
+
+    clauses = [
+        Job.status.notin_(_NON_TERMINAL_STATUSES),
+        Job.status != "cancelled",
+        Job.updated_at >= lookback,
+        Job.assembly_plan.isnot(None),
+        repairable_state_predicate,
+    ]
+    if live_job_uuids:
+        clauses.append(Job.id.notin_(live_job_uuids))
+    return clauses
 
 
 @dataclass(frozen=True)
@@ -326,7 +413,7 @@ def reap_orphans(
                     recovery.terminal_contexts,
                 )
                 variants = recovered_plan.get("variants")
-                if variants:
+                if isinstance(variants, list) and variants:
                     new_variants = [
                         {
                             **v,
@@ -415,6 +502,31 @@ def _editor_render_task_is_absent(celery_app: Celery, v: dict) -> bool:
     return True
 
 
+def _replacement_render_in_flight(v: dict) -> bool:
+    """Whether a render was dispatched AFTER the variant's `video_path` was made.
+
+    Only editor Saves take a generation-stamped lease (`_stamp_editor_render_attempt`);
+    every other re-render dispatcher — swap-song, retext, caption reburn, style
+    change — calls `stamp_variant_attempt`, which flips `render_status` and bumps
+    `render_started_at` while LEAVING the previous `video_path` in place. Keying
+    "is this a replacement?" on the lease alone therefore flipped those dead
+    re-renders to "ready" and served the PRE-EDIT video as the finished edit.
+
+    `render_started_at` (every dispatch) vs `render_finished_at` (every
+    completion) is the signal that survives without a schema change. A variant
+    that never recorded a start is legacy status drift, and its `video_path` IS
+    the current artifact — that case keeps flipping to "ready".
+    """
+
+    started = str(v.get("render_started_at") or "")
+    if not started:
+        return False
+    finished = str(v.get("render_finished_at") or "")
+    # Both fields share one frozen wire format (naive-UTC isoformat + "Z", see
+    # `stamp_variant_attempt`), so they order lexicographically.
+    return not finished or started > finished
+
+
 def _finalize_stuck_variant(v: dict, *, failed_replacement: bool = False) -> dict:
     """Flip a single stuck variant to a terminal render_status.
 
@@ -425,7 +537,8 @@ def _finalize_stuck_variant(v: dict, *, failed_replacement: bool = False) -> dic
     """
     if not isinstance(v, dict) or v.get("render_status") not in _STUCK_VARIANT_STATUSES:
         return v
-    if v.get("video_path") and not failed_replacement:
+    lost_replacement = failed_replacement or _replacement_render_in_flight(v)
+    if v.get("video_path") and not lost_replacement:
         return {**v, "render_status": "ready", "ok": True}
     return {
         **v,
@@ -434,11 +547,10 @@ def _finalize_stuck_variant(v: dict, *, failed_replacement: bool = False) -> dic
         "error": v.get("error")
         or (
             "Your saved edit could not finish rendering. The previous video is still available."
-            if failed_replacement and v.get("video_path")
+            if lost_replacement and v.get("video_path")
             else "render interrupted: worker died (reaped as stuck)"
         ),
-        "error_class": v.get("error_class")
-        or ("render_worker_lost" if failed_replacement else None),
+        "error_class": v.get("error_class") or ("render_worker_lost" if lost_replacement else None),
     }
 
 
@@ -465,6 +577,8 @@ def reconcile_stuck_variants(
     Returns the number of jobs whose variants were reconciled. No-op (0) when
     inspect() fails — same "don't act on unknown" safety as `reap_orphans`.
     """
+    if not settings.reconcile_stuck_variants_enabled:
+        return 0
     if live is None:
         live = _live_job_ids(celery_app)
     if live is None:
@@ -477,24 +591,7 @@ def reconcile_stuck_variants(
     editor_scan_cutoff = now - timedelta(seconds=_EDITOR_RENDER_SCAN_AGE_S)
     lookback = now - timedelta(days=_RECONCILE_LOOKBACK_DAYS)
 
-    state_predicate = _terminal_reconcile_state_predicate()
-    editor_state_predicate = Job.assembly_plan.op("@?")(
-        literal_column(
-            '\'$.variants[*] ? (@.render_status == "rendering" '
-            "&& @.editor_render_attempt)'::jsonpath"
-        )
-    )
-    repairable_state_predicate = or_(
-        and_(Job.updated_at < cutoff, state_predicate),
-        and_(Job.updated_at < editor_scan_cutoff, editor_state_predicate),
-    )
-    discovery_clauses = [
-        Job.status.notin_(_NON_TERMINAL_STATUSES),
-        Job.status != "cancelled",
-        Job.updated_at >= lookback,
-        Job.assembly_plan.isnot(None),
-        repairable_state_predicate,
-    ]
+    repairable_state_predicate = _repairable_state_predicate(cutoff, editor_scan_cutoff)
     live_job_uuids: list[uuid.UUID] = []
     for raw_job_id in live:
         try:
@@ -504,8 +601,11 @@ def reconcile_stuck_variants(
             # is not a Job UUID. Keep those out of the UUID SQL bind while the
             # exact string set remains authoritative for the locked re-check.
             continue
-    if live_job_uuids:
-        discovery_clauses.append(Job.id.notin_(live_job_uuids))
+    discovery_clauses = _reconcile_discovery_clauses(
+        repairable_state_predicate,
+        lookback,
+        live_job_uuids,
+    )
 
     fixed = 0
     fixed_job_ids: list[object] = []
@@ -530,14 +630,19 @@ def reconcile_stuck_variants(
             # after discovery. SKIP LOCKED prevents concurrent sweepers from
             # queueing behind a creator mutation or another watchdog.
             locked_row = db.execute(
-                select(Job.id, Job.assembly_plan, Job.updated_at, Job.pipeline_trace)
+                select(
+                    Job.id,
+                    Job.assembly_plan,
+                    Job.updated_at,
+                    Job.pipeline_trace,
+                    Job.status,
+                )
                 .where(
                     Job.id == candidate_id,
-                    Job.status.notin_(_NON_TERMINAL_STATUSES),
-                    Job.status != "cancelled",
-                    Job.updated_at >= lookback,
-                    Job.assembly_plan.isnot(None),
-                    repairable_state_predicate,
+                    # Same clauses as discovery, by construction. The live-job
+                    # exclusion is re-applied separately below against the exact
+                    # string set rather than the UUID bind.
+                    *_reconcile_discovery_clauses(repairable_state_predicate, lookback, []),
                 )
                 .with_for_update(skip_locked=True)
                 .limit(1)
@@ -545,7 +650,7 @@ def reconcile_stuck_variants(
             if locked_row is None:
                 db.commit()
                 continue
-            job_id_val, assembly_plan, job_updated_at, pipeline_trace = locked_row
+            job_id_val, assembly_plan, job_updated_at, pipeline_trace, job_status = locked_row
             # A re-render actively running on a live worker is NEVER reaped.
             if live and str(job_id_val) in live:
                 db.commit()
@@ -573,7 +678,7 @@ def reconcile_stuck_variants(
                 recovery.terminal_contexts,
             )
             variants = recovered_plan.get("variants")
-            if not variants:
+            if not isinstance(variants, list) or not variants:
                 if recovered_plan != assembly_plan:
                     values: dict[str, Any] = {"assembly_plan": recovered_plan}
                     if final_trace != pipeline_trace:
@@ -590,7 +695,7 @@ def reconcile_stuck_variants(
             row_is_generically_stale = job_updated_at < cutoff
             now_epoch_s = now.timestamp()
             new_variants = []
-            failed_replacement_seen = False
+            failed_seen = False
             for value in variants:
                 attempt = value.get("editor_render_attempt") if isinstance(value, dict) else None
                 has_editor_attempt = isinstance(attempt, dict) and str(
@@ -602,14 +707,16 @@ def reconcile_stuck_variants(
                     # the broker is recovering, so require an absent result from
                     # every editor queue before failing the replacement.
                     if _editor_render_task_is_absent(celery_app, value):
-                        failed_replacement_seen = True
+                        failed_seen = True
                         new_variants.append(_finalize_stuck_variant(value, failed_replacement=True))
                     else:
                         new_variants.append(value)
                 elif has_editor_attempt:
                     new_variants.append(value)
                 elif row_is_generically_stale:
-                    new_variants.append(_finalize_stuck_variant(value))
+                    finalized = _finalize_stuck_variant(value)
+                    failed_seen = failed_seen or finalized.get("render_status") == "failed"
+                    new_variants.append(finalized)
                 else:
                     new_variants.append(value)
             final_plan = (
@@ -621,7 +728,12 @@ def reconcile_stuck_variants(
                 values = {"assembly_plan": final_plan}
                 if final_trace != pipeline_trace:
                     values["pipeline_trace"] = final_trace
-                if failed_replacement_seen:
+                # ANY variant this sweep failed must move the parent out of a
+                # ready status, or `_prepare_partial_variant_retry` 409s on a tile
+                # the UI still offers a Retry button for. Guarded on the ready
+                # statuses so an already-failed job is never promoted INTO the
+                # ready bucket (mirrors the sibling writer in generative_build).
+                if failed_seen and job_status in {"done", "variants_ready"}:
                     values["status"] = "variants_ready_partial"
                 db.execute(
                     update(Job)

@@ -196,6 +196,14 @@ class Settings(BaseSettings):
     # recorded voiceover edits. Off preserves the legacy upload-order path.
     narrated_storyboard_enabled: bool = False
 
+    # Kill switch for the terminal-job stuck-variant watchdog
+    # (`reconcile_stuck_variants`). This sweep WRITES user-visible state — it
+    # rewrites assembly_plan and can move a job to variants_ready_partial — and
+    # it was dead in production for months behind a malformed jsonpath that
+    # `worker_ready` swallowed as non-fatal. Set False + restart the worker to
+    # halt it without a code revert.
+    reconcile_stuck_variants_enabled: bool = True
+
     # Kill switch for the subtitled single-clip talking-head archetype. When False,
     # a job whose plan declares edit_format="subtitled" falls back to montage (so an
     # unimplemented/rolled-back token never renders half a feature). When True, a
