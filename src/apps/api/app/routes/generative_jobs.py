@@ -9320,6 +9320,9 @@ async def create_generative_job(
         montage_preset=_creation_montage_preset(req.clip_gcs_paths),
     )
     db.add(job)
+    from app.services.creator_direction_snapshot import ensure_job_snapshot_async  # noqa: PLC0415
+
+    await ensure_job_snapshot_async(db, job, source="generative_dispatch")
     await db.commit()
     await db.refresh(job)
 

@@ -14,6 +14,7 @@ from app.limiter import limiter
 from app.routes import (
     admin,
     admin_build_tasks,
+    admin_creator_memory,
     admin_creator_style,
     admin_edit_feedback,
     admin_generative,
@@ -33,6 +34,7 @@ from app.routes import (
     landing,
     manual_drafts,
     me,
+    memory,
     music,
     music_jobs,
     personas,
@@ -180,6 +182,11 @@ app.include_router(
 )
 app.include_router(admin_generative.router, prefix="/admin/generative", tags=["admin-generative"])
 app.include_router(
+    admin_creator_memory.router,
+    prefix="/admin/creator-memory",
+    tags=["admin-creator-memory"],
+)
+app.include_router(
     admin_build_tasks.router, prefix="/admin/build-tasks", tags=["admin-build-tasks"]
 )
 app.include_router(admin_review.router, prefix="/admin/review", tags=["admin-review"])
@@ -206,6 +213,8 @@ app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-ag
 app.include_router(creator_workspace.router, prefix="/content-plans", tags=["creator-workspace"])
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(me.router, prefix="/me", tags=["me"])
+app.include_router(memory.router, prefix="/me", tags=["memory"])
+app.include_router(memory.direction_router, tags=["direction-overrides"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
 app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])

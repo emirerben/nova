@@ -29,6 +29,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Job, OAuthToken, Persona, TikTokPublication
 from app.services import tiktok_client
+from app.services.creator_direction import CreatorDirectionService
 from app.services.tiktok_lifecycle import (
     visibility_after_draft_inbox,
     visibility_after_draft_post,
@@ -971,7 +972,7 @@ async def _purge_connected_profile(db: AsyncSession, user_id: uuid.UUID) -> None
         style.get("status") != "edited"
         and (style.get("derived_from") or {}).get("source") == "tiktok_official"
     ):
-        persona.style = None
+        CreatorDirectionService.set_compatibility_persona_style(persona, None)
 
 
 def _suggested_title(job: Job) -> str:

@@ -30,7 +30,7 @@ from app.agents._schemas.content_plan import (
 from app.agents._schemas.persona import Persona
 from app.agents.content_plan_generator import ContentPlanGeneratorAgent
 from app.database import sync_session
-from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem, User
+from app.models import ContentPlan, CreationThread, CreatorAgentSession, Job, PlanItem, User
 from app.models import Persona as PersonaRow
 from app.services.content_plan_dedup import choose_replacements, flag_replacement_indices
 from app.services.content_plan_persona import (
@@ -49,6 +49,25 @@ log = structlog.get_logger()
 def _plan_epoch(plan: ContentPlan) -> int:
     """Return the ownership generation captured around off-database work."""
     return int(getattr(plan, "ownership_epoch", 0) or 0)
+
+
+def _plan_direction_prompt(plan: ContentPlan) -> str:
+    snapshot = getattr(plan, "creator_direction_snapshot", None)
+    return str(snapshot.get("prompt_block") or "") if isinstance(snapshot, dict) else ""
+
+
+def _item_direction_snapshot(session, item: PlanItem, plan: ContentPlan) -> dict | None:  # noqa: ANN001
+    """Prefer a chat project's private snapshot, otherwise use the plan snapshot."""
+
+    thread_snapshot = session.execute(
+        select(CreationThread.creator_direction_snapshot)
+        .where(CreationThread.active_plan_item_id == item.id)
+        .limit(1)
+    ).scalar_one_or_none()
+    if isinstance(thread_snapshot, dict):
+        return thread_snapshot
+    plan_snapshot = getattr(plan, "creator_direction_snapshot", None)
+    return plan_snapshot if isinstance(plan_snapshot, dict) else None
 
 
 def _coerce_dispatch_epoch(value: object) -> int | None:
@@ -149,6 +168,7 @@ def generate_content_plan(
             return
         plan, persona_row = owned
         ownership_epoch = _plan_epoch(plan)
+        creator_direction_prompt = _plan_direction_prompt(plan)
         if not persona_row.persona:
             _fail(session, plan, "persona is not ready")
             return
@@ -188,6 +208,7 @@ def generate_content_plan(
             instruction_level=instruction_level,  # type: ignore[arg-type]
             preferred_edit_format_mix=preferred_edit_format_mix,
             user_idea_seeds=idea_seed_texts,
+            creator_direction=creator_direction_prompt,
         )
 
     try:
@@ -374,6 +395,7 @@ def regenerate_content_plan(
             return
         plan, persona_row = owned
         ownership_epoch = _plan_epoch(plan)
+        creator_direction_prompt = _plan_direction_prompt(plan)
         if not persona_row.persona:
             _fail(session, plan, "persona is not ready")
             return
@@ -417,6 +439,7 @@ def regenerate_content_plan(
             instruction_level=instruction_level,  # type: ignore[arg-type]
             preferred_edit_format_mix=preferred_edit_format_mix,
             user_idea_seeds=idea_seed_texts_regen,
+            creator_direction=creator_direction_prompt,
         )
 
     try:
@@ -1336,6 +1359,18 @@ def _dispatch_item_render(
             **(job.assembly_plan or {}),
             "creator_generation_id": uuid.uuid4().hex,
         }
+        from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
+
+        ensure_job_snapshot(
+            session,
+            job,
+            source="content_plan_dispatch",
+            generation_id=(job.assembly_plan or {}).get("creator_generation_id"),
+            # Chat projects own a project-local snapshot (including overrides).
+            # Non-chat plan items inherit the plan's immutable dispatch snapshot.
+            # Neither path resolves live memory when a render starts later.
+            inherited_snapshot=_item_direction_snapshot(session, item, plan),
+        )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
         return DispatchResult("invalid_clips")
@@ -2570,6 +2605,7 @@ def reroll_plan_item(
             horizon_days=plan.horizon_days or 30,
             exclude_ideas=all_ideas,
             user_idea_seeds=idea_seed_texts_reroll,
+            creator_direction=_plan_direction_prompt(plan),
         )
         original_day_index = item.day_index
 
@@ -2801,6 +2837,7 @@ def generate_ideas_into_plan(
             existing_items = list(plan.items or [])
             events_text = str((plan.events or {}).get("text", "") or "")
             exclude_ideas = [it.idea for it in existing_items if it.idea]
+            creator_direction_prompt = _plan_direction_prompt(plan)
 
         agent_input = ContentPlanInput(
             persona=persona,
@@ -2808,6 +2845,7 @@ def generate_ideas_into_plan(
             horizon_days=1,
             exclude_ideas=exclude_ideas,
             user_idea_seeds=[],
+            creator_direction=creator_direction_prompt,
         )
         with pipeline_trace_for(pid):
             agent = ContentPlanGeneratorAgent(default_client())

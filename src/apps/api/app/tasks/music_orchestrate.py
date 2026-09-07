@@ -614,6 +614,7 @@ def orchestrate_music_job(self, job_id: str) -> None:
     track's cached recipe declares typed slots; otherwise runs the legacy
     beat-sync pipeline that fills every slot from user clips.
     """
+    from app.services.creator_direction_snapshot import renderer_policy_scope  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     log.info("music_job_start", job_id=job_id)
@@ -622,7 +623,7 @@ def orchestrate_music_job(self, job_id: str) -> None:
     # to this job. The finally-block in the context manager clears it on
     # exit (including on exception) so the next Celery task on this worker
     # doesn't inherit a stale job_id.
-    with pipeline_trace_for(job_id):
+    with renderer_policy_scope(), pipeline_trace_for(job_id):
         try:
             if _job_uses_templated_recipe(job_id):
                 _run_templated_music_job(job_id)
@@ -673,6 +674,13 @@ def _run_music_job(job_id: str) -> None:
         if job is None:
             log.info("music_job_start_skipped", job_id=job_id)
             return
+
+        from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
+
+        creator_direction_snapshot = ensure_job_snapshot(db, job, source="music_worker")
+        creator_direction_typed_overrides = dict(
+            creator_direction_snapshot.get("typed_overrides") or {}
+        )
 
         job.status = "processing"
 
@@ -890,6 +898,7 @@ def _run_music_job(job_id: str) -> None:
             # `_coerce_best_start_s` handles None / NaN / non-numeric DB
             # values without crashing the worker.
             lyric_audio_mix_song_start_s=_coerce_best_start_s(cfg),
+            creator_direction_typed_overrides=creator_direction_typed_overrides,
         )
 
         # [10] Mix in music track audio
@@ -1509,6 +1518,13 @@ def _run_templated_music_job(job_id: str) -> None:
         if job is None:
             log.info("templated_music_job_start_skipped", job_id=job_id)
             return
+
+        from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
+
+        creator_direction_snapshot = ensure_job_snapshot(db, job, source="templated_music_worker")
+        creator_direction_typed_overrides = dict(
+            creator_direction_snapshot.get("typed_overrides") or {}
+        )
         job.status = "processing"
 
         if not job.music_track_id:
@@ -1820,7 +1836,14 @@ def _run_templated_music_job(job_id: str) -> None:
             burned_path = os.path.join(tmpdir, "burned.mp4")
             # Music jobs use Skia for lyrics rendering (karaoke-line, per-word-pop).
             # Gated globally by settings.text_renderer_skia_enabled inside _burn_text_overlays.
-            _burn_text_overlays(assembled_path, abs_overlays, burned_path, tmpdir, use_skia=True)
+            _burn_text_overlays(
+                assembled_path,
+                abs_overlays,
+                burned_path,
+                tmpdir,
+                use_skia=True,
+                typed_overrides=creator_direction_typed_overrides,
+            )
             if os.path.exists(burned_path) and os.path.getsize(burned_path) > 0:
                 assembled_path = burned_path
             else:

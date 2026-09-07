@@ -34,6 +34,7 @@ from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from typing import Any
 
 import redis as redis_lib
 import structlog
@@ -798,9 +799,10 @@ def orchestrate_template_job(
     # to this job. The finally inside the context manager clears it on
     # exit (including on exception) — prevents leaking into the next
     # Celery task on this worker process.
+    from app.services.creator_direction_snapshot import renderer_policy_scope  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
-    with pipeline_trace_for(job_id):
+    with renderer_policy_scope(), pipeline_trace_for(job_id):
         _orchestrate_template_job_inner(job_id, job_uuid, force_single_pass)
 
 
@@ -934,6 +936,13 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             log.info("template_job_start_skipped", job_id=job_id)
             return
 
+        from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
+
+        creator_direction_snapshot = ensure_job_snapshot(db, job, source="template_worker")
+        creator_direction_typed_overrides = dict(
+            creator_direction_snapshot.get("typed_overrides") or {}
+        )
+
         job.status = "processing"
 
         # Fast path: locked re-render skips Gemini entirely
@@ -944,6 +953,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
                 "template_id": job.template_id,
                 "selected_platforms": list(job.selected_platforms or []),
                 "all_candidates": copy.deepcopy(job.all_candidates or {}),
+                "creator_direction_typed_overrides": creator_direction_typed_overrides,
             }
 
         # Snapshot fields before session closes
@@ -1357,6 +1367,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             force_single_pass=effective_single_pass,
             is_agentic=is_agentic,
             transition_duration_s=getattr(recipe, "transition_duration_s", None),
+            creator_direction_typed_overrides=creator_direction_typed_overrides,
         )
 
         record_phase(
@@ -1586,6 +1597,11 @@ def _run_rerender(
     from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
 
     plan = job_snapshot["assembly_plan"]
+    from app.services.creator_direction_snapshot import (  # noqa: PLC0415
+        typed_overrides_from_container,
+    )
+
+    creator_direction_typed_overrides = typed_overrides_from_container(plan)
     steps_data = plan.get("steps", [])
     template_id = job_snapshot["template_id"]
     selected_platforms = job_snapshot["selected_platforms"] or [
@@ -1713,6 +1729,7 @@ def _run_rerender(
             force_single_pass=effective_single_pass,
             is_agentic=is_agentic,
             transition_duration_s=getattr(recipe, "transition_duration_s", None),
+            creator_direction_typed_overrides=creator_direction_typed_overrides,
         )
 
         # Mix template audio if available
@@ -3444,6 +3461,7 @@ def _generate_single_pass_overlays(
     tmpdir: str,
     is_agentic: bool = False,
     lyric_audio_mix_song_start_s: float | None = None,
+    creator_direction_typed_overrides: dict[str, Any] | None = None,
 ) -> tuple[list[dict], list[str], str]:
     """Build absolute-overlay PNG configs + ASS paths for single-pass M6.
 
@@ -3478,6 +3496,7 @@ def _generate_single_pass_overlays(
         interstitial_map=interstitial_map,
         is_agentic=is_agentic,
         lyric_audio_mix_song_start_s=lyric_audio_mix_song_start_s,
+        typed_overrides=creator_direction_typed_overrides,
     )
     if not overlays:
         return [], [], ""
@@ -3703,6 +3722,7 @@ def _assemble_clips(
     resolved_plans_out: list | None = None,
     landscape_fit: str = "fill",
     canvas: Canvas | None = None,
+    creator_direction_typed_overrides: dict[str, Any] | None = None,
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -3806,6 +3826,7 @@ def _assemble_clips(
                 tmpdir=tmpdir,
                 is_agentic=is_agentic,
                 lyric_audio_mix_song_start_s=lyric_audio_mix_song_start_s,
+                creator_direction_typed_overrides=creator_direction_typed_overrides,
             )
             spec = _build_single_pass_spec(
                 plans,
@@ -3973,6 +3994,7 @@ def _assemble_clips(
                 tmpdir,
                 inter,
                 is_agentic=is_agentic,
+                typed_overrides=creator_direction_typed_overrides,
             )
 
             # Apply curtain-close animation to the tail of this slot
@@ -4109,6 +4131,7 @@ def _assemble_clips(
         interstitial_map=interstitial_map,
         is_agentic=is_agentic,
         lyric_audio_mix_song_start_s=lyric_audio_mix_song_start_s,
+        typed_overrides=creator_direction_typed_overrides,
     )
     if abs_overlays:
         # Skia for agentic templates; Pillow + libass for classic.
@@ -4119,7 +4142,12 @@ def _assemble_clips(
         # falling to libass.
         effective_use_skia = is_agentic if use_skia is None else use_skia
         _burn_text_overlays(
-            joined_path, abs_overlays, output_path, tmpdir, use_skia=effective_use_skia
+            joined_path,
+            abs_overlays,
+            output_path,
+            tmpdir,
+            use_skia=effective_use_skia,
+            typed_overrides=creator_direction_typed_overrides,
         )
         _burned_dur = _probe_duration(output_path)
         log.info("debug_post_burn_duration", burned_dur=_burned_dur)
@@ -4476,6 +4504,7 @@ def _collect_absolute_overlays(
     interstitial_map: dict[int, dict] | None = None,
     is_agentic: bool = False,
     lyric_audio_mix_song_start_s: float | None = None,
+    typed_overrides: dict[str, Any] | None = None,
 ) -> list[dict]:
     """Collect text overlays across all slots with absolute video timestamps.
 
@@ -5147,6 +5176,10 @@ def _collect_absolute_overlays(
     # all get the same guarantee. Only rewrites text_size_px/position_*_frac
     # (renderer-parity-safe). Gated so a layout regression can be isolated
     # without a redeploy. Classic templates never reach this function.
+    from app.services.creator_direction_snapshot import apply_direction_overrides  # noqa: PLC0415
+
+    result = apply_direction_overrides(result, typed_overrides=typed_overrides)
+
     if settings.style_constraints_enabled:
         from app.pipeline.overlay_constraints import (  # noqa: PLC0415
             apply_overlay_constraints,
@@ -5333,6 +5366,7 @@ def _pre_burn_curtain_slot_text(
     tmpdir: str,
     inter: dict | None = None,
     is_agentic: bool = False,
+    typed_overrides: dict[str, Any] | None = None,
 ) -> str:
     """Burn text overlays onto a slot clip BEFORE curtain-close is applied.
 
@@ -5476,6 +5510,9 @@ def _pre_burn_curtain_slot_text(
 
         slot_overlays.append(entry)
 
+    from app.services.creator_direction_snapshot import apply_direction_overrides  # noqa: PLC0415
+
+    slot_overlays = apply_direction_overrides(slot_overlays, typed_overrides=typed_overrides)
     if not slot_overlays:
         return clip_path
 
@@ -5575,6 +5612,7 @@ def _burn_text_overlays(
     tmpdir: str,
     *,
     use_skia: bool = False,
+    typed_overrides: dict[str, Any] | None = None,
 ) -> None:
     """Burn text overlays onto the joined video.
 
@@ -5604,6 +5642,9 @@ def _burn_text_overlays(
     wins visually.
     """
     from app.config import settings  # noqa: PLC0415
+    from app.services.creator_direction_snapshot import apply_direction_overrides  # noqa: PLC0415
+
+    overlays = apply_direction_overrides(overlays, typed_overrides=typed_overrides)
 
     needs_handwriting_skia = any(o.get("effect") == "handwriting" for o in overlays)
     if (use_skia or needs_handwriting_skia) and settings.text_renderer_skia_enabled:
@@ -7796,12 +7837,23 @@ def orchestrate_single_video_job(self, job_id: str) -> None:
 
 
 def _run_single_video_job_entry(job_id: str) -> None:
+    from app.services.creator_direction_snapshot import renderer_policy_scope  # noqa: PLC0415
+
+    with renderer_policy_scope():
+        _run_single_video_job_entry_impl(job_id)
+
+
+def _run_single_video_job_entry_impl(job_id: str) -> None:
     """Hydrate job state, set processing, then call _run_single_video_job."""
     with _sync_session() as db:
         job = active_job_for_update(db, job_id, operation="single_video_job_start")
         if job is None:
             log.info("single_video_job_start_skipped", job_id=job_id)
             return
+
+        from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
+
+        ensure_job_snapshot(db, job, source="single_video_worker")
 
         job.status = "processing"
         # Clear any previous failure tags from a re-enqueue.

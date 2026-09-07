@@ -21,11 +21,47 @@ from app.models import Persona as PersonaRow
 from app.tasks.content_plan_build import (
     _dispatch_item_render,
     _guided_render_queue,
+    _item_direction_snapshot,
     dispatch_item_render_for,
     generate_content_plan,
     generate_plan_item_videos,
     regenerate_content_plan,
 )
+
+
+def test_chat_item_direction_snapshot_wins_over_account_plan_snapshot() -> None:
+    thread_snapshot = {"memory_revision": 7, "source": "project_override"}
+    plan_snapshot = {"memory_revision": 4, "source": "content_plan"}
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = thread_snapshot
+    session = MagicMock()
+    session.execute.return_value = result
+
+    assert (
+        _item_direction_snapshot(
+            session,
+            SimpleNamespace(id=uuid.uuid4()),
+            SimpleNamespace(creator_direction_snapshot=plan_snapshot),
+        )
+        is thread_snapshot
+    )
+
+
+def test_non_chat_item_direction_snapshot_uses_immutable_plan_snapshot() -> None:
+    plan_snapshot = {"memory_revision": 4, "source": "content_plan"}
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    session = MagicMock()
+    session.execute.return_value = result
+
+    assert (
+        _item_direction_snapshot(
+            session,
+            SimpleNamespace(id=uuid.uuid4()),
+            SimpleNamespace(creator_direction_snapshot=plan_snapshot),
+        )
+        is plan_snapshot
+    )
 
 
 def _recovery_payload(source_fingerprint: str) -> dict[str, object]:

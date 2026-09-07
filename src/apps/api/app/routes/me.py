@@ -42,6 +42,9 @@ from app.database import get_db
 from app.models import (
     VIDEO_FEEDBACK_THUMB_SIGNALS,
     ContentPlan,
+    CreatorMemoryItem,
+    CreatorMemoryOperation,
+    CreatorMemoryOutbox,
     Job,
     JobClip,
     JobStorageDeletion,
@@ -2374,6 +2377,7 @@ _EXPORT_SIGNED_URL_MINUTES = 60
 # included in full — only the signed source-media link is capped, and the
 # response says so explicitly (no silent truncation).
 _EXPORT_MAX_SIGNED_MEDIA = 100
+_EXPORT_MAX_MEMORY_HISTORY = 200
 
 
 class ExportResponse(BaseModel):
@@ -2384,6 +2388,7 @@ class ExportResponse(BaseModel):
     jobs: list[dict[str, Any]]
     feedback: list[dict[str, Any]]
     tiktok_publications: list[dict[str, Any]]
+    creator_memory: dict[str, Any] | None = None
     note: str
 
 
@@ -2407,7 +2412,6 @@ async def export_my_data(
     persona_row = (
         await db.execute(select(Persona).where(Persona.user_id == user.id))
     ).scalar_one_or_none()
-
     plans = (
         (await db.execute(select(ContentPlan).where(ContentPlan.user_id == user.id)))
         .scalars()
@@ -2424,6 +2428,51 @@ async def export_my_data(
             status_code=status.HTTP_409_CONFLICT,
             detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
         ) from exc
+    current_memory_items = (
+        (
+            await db.execute(
+                select(CreatorMemoryItem)
+                .where(
+                    CreatorMemoryItem.user_id == user.id,
+                    CreatorMemoryItem.state.in_(("active", "suggested")),
+                )
+                .order_by(CreatorMemoryItem.updated_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    historical_memory_items = (
+        (
+            await db.execute(
+                select(CreatorMemoryItem)
+                .where(
+                    CreatorMemoryItem.user_id == user.id,
+                    CreatorMemoryItem.state.not_in(("active", "suggested")),
+                )
+                .order_by(CreatorMemoryItem.updated_at.desc())
+                .limit(_EXPORT_MAX_MEMORY_HISTORY + 1)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    memory_items = [
+        *current_memory_items,
+        *historical_memory_items[:_EXPORT_MAX_MEMORY_HISTORY],
+    ]
+    memory_operations = (
+        (
+            await db.execute(
+                select(CreatorMemoryOperation)
+                .where(CreatorMemoryOperation.user_id == user.id)
+                .order_by(CreatorMemoryOperation.created_at.desc())
+                .limit(100)
+            )
+        )
+        .scalars()
+        .all()
+    )
     plan_ids = [p.id for p in plans]
     items_by_plan: dict[uuid.UUID, list[PlanItem]] = {pid: [] for pid in plan_ids}
     if plan_ids:
@@ -2579,6 +2628,38 @@ async def export_my_data(
             }
             for t in tiktok_rows
         ],
+        creator_memory={
+            "items": [
+                {
+                    "id": str(row.id),
+                    "instruction": row.instruction,
+                    "category": row.category,
+                    "normalized_key": row.normalized_key,
+                    "enforcement": row.enforcement,
+                    "structured_value": row.structured_value,
+                    "source_kind": row.source_kind,
+                    "state": row.state,
+                    "user_locked": row.user_locked,
+                    "created_at": row.created_at.isoformat(),
+                    "updated_at": row.updated_at.isoformat(),
+                }
+                for row in memory_items
+            ],
+            "operations": [
+                {
+                    "id": str(row.id),
+                    "operation_kind": row.operation_kind,
+                    "item_id": str(row.item_id) if row.item_id else None,
+                    "resulting_revision": row.resulting_revision,
+                    "actor_kind": row.actor_kind,
+                    "created_at": row.created_at.isoformat(),
+                    "undone_at": row.undone_at.isoformat() if row.undone_at else None,
+                }
+                for row in memory_operations
+            ],
+            "operations_truncated": len(memory_operations) >= 100,
+            "items_truncated": len(historical_memory_items) > _EXPORT_MAX_MEMORY_HISTORY,
+        },
         note=(
             f"{signed_count} of {len(jobs)} jobs include a re-signed source-media link"
             f" (capped at {_EXPORT_MAX_SIGNED_MEDIA})."
@@ -2850,6 +2931,27 @@ async def confirm_account_deletion(
     await db.execute(delete(OAuthToken).where(OAuthToken.user_id == user.id))
     # 4. Jobs — cascades AgentRun + VideoFeedback automatically.
     await db.execute(delete(Job).where(Job.user_id == user.id))
+    # Invalidate memory extraction leases before erasing the owner. A worker
+    # that wakes after this transaction can only observe a missing User and
+    # safely no-op; it must never recreate memory state.
+    memory_outboxes = (
+        (
+            await db.execute(
+                select(CreatorMemoryOutbox)
+                .where(CreatorMemoryOutbox.user_id == user.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for memory_outbox in memory_outboxes:
+        memory_outbox.status = "dead"
+        memory_outbox.lease_until = None
+        if hasattr(memory_outbox, "result_code"):
+            memory_outbox.result_code = "account_deleted"
+        else:
+            memory_outbox.last_error_code = "account_deleted"
     # 5. The user row — cascades Persona/ContentPlan/PlanItem/PlanItemAsset/
     #    any remaining VideoFeedback.
     await db.execute(delete(User).where(User.id == user.id))

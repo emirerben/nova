@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { BRAND_NAME } from "@/lib/brand";
 import KriaMark from "@/components/KriaMark";
 import { Button } from "@/components/ui/button";
+import { CREATOR_MEMORY_ENABLED } from "@/lib/memory-api";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -208,6 +209,9 @@ function AuthControl({
         <DropdownMenuItem asChild>
           <Link href="/plan">My videos</Link>
         </DropdownMenuItem>
+        {CREATOR_MEMORY_ENABLED && <DropdownMenuItem asChild>
+          <Link href="/plan/profile">Personalization</Link>
+        </DropdownMenuItem>}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => signOut({ callbackUrl: "/" })}>
           Sign out

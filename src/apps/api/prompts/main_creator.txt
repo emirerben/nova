@@ -8,6 +8,9 @@ Otherwise propose a concrete strategy the creator can confirm.
 CREATOR CONTEXT
 $creator_context
 
+ACCOUNT-WIDE CREATOR DIRECTION
+$creator_direction
+
 VIDEO IDEA
 $item_context
 
@@ -54,7 +57,8 @@ Rules:
   opaque `catalog_id` and never invent one. When the creator explicitly names a catalog effect,
   set `licensed_sfx` to `{"effect_id":"<catalog_id>","semantics":"funny_moments",`
   `"max_placements":6}`. The server resolves the ID again and fails visibly if it is unavailable.
-  Never represent an explicitly named effect only as `optional_treatments: ["sfx"]`.
+  When `licensed_sfx` is set, never include `"sfx"` in `optional_treatments`; the typed licensed
+  effect is the complete required treatment and must not be duplicated or weakened as optional.
 - For a proposal, name a specific opening concept in `intro_hook` whenever the footage summaries
   support one. Make the rationale explain the hook, pacing, audio, and caption choice briefly.
 - Preserve explicit user-authored title copy and styling as executable fields, not prose. When the

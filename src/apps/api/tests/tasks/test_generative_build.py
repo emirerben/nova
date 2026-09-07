@@ -6831,7 +6831,14 @@ def test_compose_subtitled_burns_text_before_captions(monkeypatch, tmp_path):
         with open(output_path, "wb") as f:
             f.write(b"text")
 
-    def _burn_captions(input_path, output_path, variant, tmpdir):
+    def _burn_captions(
+        input_path,
+        output_path,
+        variant,
+        tmpdir,
+        *,
+        creator_direction_typed_overrides=None,
+    ):
         order.append(("captions", input_path, output_path, variant["caption_cues"]))
         with open(output_path, "wb") as f:
             f.write(b"captions")
@@ -6877,7 +6884,14 @@ def test_compose_subtitled_without_text_passes_base_to_captions(monkeypatch, tmp
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("no text burn expected")),
     )
 
-    def _burn_captions(input_path, output_path, variant, tmpdir):
+    def _burn_captions(
+        input_path,
+        output_path,
+        variant,
+        tmpdir,
+        *,
+        creator_direction_typed_overrides=None,
+    ):
         seen["input"] = input_path
         with open(output_path, "wb") as f:
             f.write(b"captions")
@@ -7666,6 +7680,72 @@ def test_subtitled_render_passes_caption_appearance_to_first_burn(monkeypatch, t
         "stroke_width": 5,
         "shadow_enabled": False,
     }
+
+
+def test_subtitled_first_render_merges_pinned_direction_into_caption_burn(monkeypatch, tmp_path):
+    """The immutable job direction applies to the first caption ASS burn."""
+    from pathlib import Path
+
+    _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    seen = {}
+
+    def fake_ass(_cues, path, **kwargs):
+        seen.update(kwargs)
+        Path(path).write_text("ass", encoding="utf-8")
+
+    monkeypatch.setattr("app.pipeline.captions.generate_ass_from_cues", fake_ass)
+    monkeypatch.setattr(
+        "app.pipeline.narrated_assembler.resolve_caption_font",
+        lambda font: f"resolved:{font}",
+    )
+
+    result = gb._render_subtitled_variant(
+        job_id="job-direction-first-render",
+        rank=1,
+        spec={"variant_id": "subtitled", "caption_style": "sentence"},
+        clip_id_to_local={"clip-1": str(tmp_path / "source.mp4")},
+        variant_dir=str(tmp_path),
+        creator_direction_typed_overrides={
+            "font_family": "Inter",
+            "shadow_enabled": False,
+        },
+    )
+
+    assert result["ok"] is True
+    assert seen["font_name"] == "resolved:Inter"
+    assert seen["appearance"] == {"shadow_enabled": False}
+
+
+def test_caption_reburn_reads_pinned_direction_from_job_snapshot(monkeypatch):
+    """Editor Apply uses the job snapshot, not current/live creator memory."""
+    snapshot = {
+        "schema": "CreatorDirectionSnapshotV1",
+        "version": 1,
+        "snapshot_id": "snapshot-1",
+        "memory_revision": 3,
+        "typed_overrides": {"font_family": "Inter", "shadow_enabled": False},
+    }
+    variant = _narrated_caption_variant(resolved_archetype="subtitled", variant_id="subtitled")
+    job = _FakeJob(
+        assembly_plan={"_creator_direction_snapshot_v1": snapshot, "variants": [variant]}
+    )
+    _patch_job_session(monkeypatch, job)
+    _patch_reburn_io(monkeypatch, {"called": False})
+    seen = {}
+
+    def fake_ass(_cues, _path, **kwargs):
+        seen.update(kwargs)
+
+    monkeypatch.setattr("app.pipeline.captions.generate_ass_from_cues", fake_ass)
+    monkeypatch.setattr(
+        "app.pipeline.narrated_assembler.resolve_caption_font",
+        lambda font: f"resolved:{font}",
+    )
+
+    gb._run_reburn_narrated_captions(str(uuid.uuid4()), "subtitled")
+
+    assert seen["font_name"] == "resolved:Inter"
+    assert seen["appearance"] == {"shadow_enabled": False}
 
 
 def test_subtitled_render_smart_planner_failure_fails_open(monkeypatch, tmp_path):

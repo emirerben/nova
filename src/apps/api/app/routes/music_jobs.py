@@ -169,6 +169,9 @@ async def create_music_job(
         status="queued",
     )
     db.add(job)
+    from app.services.creator_direction_snapshot import ensure_job_snapshot_async  # noqa: PLC0415
+
+    await ensure_job_snapshot_async(db, job, source="music_dispatch")
     await db.commit()
     await db.refresh(job)
 

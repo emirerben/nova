@@ -4086,6 +4086,9 @@ def render_text_overlay_sequences(
     ``matte`` is an optional `SubjectMatteProvider` (duck-typed, see that
     Protocol) consulted only for overlays carrying `behind_subject: True`.
     """
+    from app.services.creator_direction_snapshot import apply_direction_overrides  # noqa: PLC0415
+
+    overlays = apply_direction_overrides(overlays)
     if not overlays:
         return [], None
 

@@ -26,6 +26,7 @@ Feature/incident plans written after the June audit (005–017 live alongside; o
 | 018 | Guided Story Editor V2 with immutable approval provenance and revision-safe post-approval edits | DONE (implemented behind a default-off write gate; rollout pending) |
 | 010 | Automatic speech cuts + reviewable Director apply/restore | DONE (implemented behind default-off flags; production activation pending) |
 | 019 | Speech cleanup render contract fix (`unsafe_plan` render-failure incident, 2026-08-25) | DONE (strict contract live; 2026-08-31 addendum ships the explicit-consent budget clamp in v0.59.2.0) |
+| 020 | Unified creator personalization and durable creator memory | DONE (implemented behind default-off backend/frontend flags; staged rollout pending) |
 
 ## Dependency notes
 

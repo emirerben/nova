@@ -62,6 +62,7 @@ celery_app = Celery(
         "app.tasks.edit_training_artifacts",
         "app.tasks.creator_quality_review",
         "app.tasks.creator_workspace",
+        "app.tasks.creator_memory",
         "app.tasks.speech_cleanup_analysis",
         # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
         # a full MP4 into the RAM-backed /tmp, which is exactly the workload that
@@ -98,6 +99,8 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "app.tasks.tiktok.poll_tiktok_publications",
     "app.tasks.tiktok.schedule_tiktok_account_syncs",
     "app.tasks.tiktok.cleanup_tiktok_publications",
+    "app.tasks.creator_memory.claim_outbox",
+    "app.tasks.creator_memory.process_outbox",
     # The render-worker lifecycle task itself MUST run on `light`, never on
     # the `worker` machine it's managing — obviously.
     "tasks.manage_render_worker_lifecycle",
@@ -225,6 +228,10 @@ celery_app.conf.update(
         "cleanup-tiktok-snapshots-daily": {
             "task": "app.tasks.tiktok.cleanup_tiktok_publications",
             "schedule": crontab(hour=4, minute=30),
+        },
+        "claim-creator-memory-outbox-every-minute": {
+            "task": "app.tasks.creator_memory.claim_outbox",
+            "schedule": 60.0,
         },
         # Render-worker autostop lifecycle (stop-when-idle + start-backstop).
         # 2 min: short enough that a missed/failed wake-hook call (worker.py's

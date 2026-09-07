@@ -212,6 +212,7 @@ def _run_apply_custom_effect(
         _burn_persisted_captions_onto_base,
         _compose_subtitled_final,
         _fresh_variant_snapshot,
+        _pinned_creator_direction_typed_overrides,
         _project_carousel_timed_lanes,
         _reapply_user_media_layers,
         _rendered_duration_s,
@@ -235,6 +236,9 @@ def _run_apply_custom_effect(
             log.error("custom_effect_render_job_not_found", job_id=job_id)
             return
         variants = (job.assembly_plan or {}).get("variants") or []
+        creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(
+            job.assembly_plan or {}
+        )
         variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
     if variant is None:
         raise ValueError(f"variant {variant_id} not found on job {job_id}")
@@ -313,10 +317,17 @@ def _run_apply_custom_effect(
                 job_id=job_id,
                 variant_id=variant_id,
                 upload_key_base=str(source_path),
+                creator_direction_typed_overrides=creator_direction_typed_overrides,
             )
         elif burning_onto_clean_base and render_variant.get("caption_cues"):
             final_local = os.path.join(tmpdir, "final.mp4")
-            _burn_persisted_captions_onto_base(effected_local, final_local, render_variant, tmpdir)
+            _burn_persisted_captions_onto_base(
+                effected_local,
+                final_local,
+                render_variant,
+                tmpdir,
+                creator_direction_typed_overrides=creator_direction_typed_overrides,
+            )
         else:
             final_local = effected_local
 

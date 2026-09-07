@@ -52,6 +52,7 @@ from app.database import get_db
 from app.limiter import limiter
 from app.models import (
     ContentPlan,
+    CreationThread,
     CreatorAgentEvent,
     CreatorAgentExecution,
     CreatorAgentSession,
@@ -1165,6 +1166,19 @@ async def _run_planning_turn(
         return await _response(db, locked)
 
     creator_summary, item_summary = creator_context(persona, item)
+    direction_prompt = ""
+    thread_row = None
+    if isinstance(db, AsyncSession):
+        thread_row = (
+            await db.execute(
+                select(CreationThread.creator_direction_snapshot).where(
+                    CreationThread.creator_id == user.id,
+                    CreationThread.active_plan_item_id == item.id,
+                )
+            )
+        ).scalar_one_or_none()
+    if isinstance(thread_row, dict):
+        direction_prompt = str(thread_row.get("prompt_block") or "")[:4000]
     creator_request = _confirmed_creator_request(session.events, user_message)
     latest_cut_s = recognize_round_robin_cadence(user_message)
     current_rejects_cadence = rejects_round_robin_cadence(user_message)
@@ -1254,6 +1268,7 @@ async def _run_planning_turn(
     agent_input = MainCreatorInput(
         user_message=user_message,
         creator_context=creator_summary,
+        creator_direction=direction_prompt,
         item_context=item_summary,
         media_context=media_context,
         conversation=_conversation(session.events),

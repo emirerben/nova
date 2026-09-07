@@ -192,6 +192,48 @@ def test_valid_spec_replaces_not_stacks_prior_custom_effect(
     assert final["custom_effects"][0]["id"] == "vintage_1"
 
 
+def test_custom_effect_caption_reburn_receives_pinned_direction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caption recomposition after an effect must keep the job's font/shadow policy."""
+    from app.services.creator_direction_snapshot import SNAPSHOT_KEY
+
+    job = _FakeJob(
+        [
+            _variant(
+                variant_id="subtitled",
+                resolved_archetype="subtitled",
+                caption_cues=[{"text": "hello", "start_s": 0.0, "end_s": 1.0}],
+            )
+        ]
+    )
+    job.assembly_plan[SNAPSHOT_KEY] = {
+        "schema": "CreatorDirectionSnapshotV1",
+        "version": 1,
+        "snapshot_id": "snapshot-1",
+        "memory_revision": 3,
+        "typed_overrides": {"font_family": "Inter", "shadow_enabled": False},
+    }
+    _patch_session(monkeypatch, job)
+    _capture_updates(monkeypatch, job)
+    _stub_render_io(monkeypatch)
+    monkeypatch.setattr(gb, "_should_compose_subtitled_final", lambda _v: False)
+    captured: dict = {}
+
+    def _capture_caption_burn(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(gb, "_burn_persisted_captions_onto_base", _capture_caption_burn)
+
+    cer._run_apply_custom_effect(JOB_ID, "subtitled", VALID_EFFECT, None, {"accepted": False})
+
+    assert captured["kwargs"]["creator_direction_typed_overrides"] == {
+        "font_family": "Inter",
+        "shadow_enabled": False,
+    }
+
+
 def test_no_source_video_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     job = _FakeJob([_variant(video_path=None, base_video_path=None)])
     _patch_session(monkeypatch, job)
