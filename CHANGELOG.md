@@ -15,6 +15,13 @@ All notable changes to this project will be documented in this file.
 - Migration 0099 adds `idx_jobs_stuck_variant_reconcile_sweep`, a sparse `(updated_at, id)` index built `CONCURRENTLY`, so the reactivated sweep does not seq-scan `jobs` on every worker start. Its predicate is pinned byte-identical to the reaper constant by test.
 - New kill switch `RECONCILE_STUCK_VARIANTS_ENABLED` (default `true`) halts the sweep without a code revert.
 
+## [0.69.0.1] — 2026-09-07
+
+### Fixed
+- **Creator personalization now stays consistent at every mutation and generation boundary.** Accepting or editing remembered rules respects active limits, duplicate prose returns a conflict instead of an internal error, project-only overrides have stable ten-minute Undo receipts, and explicit plan regeneration refreshes the project snapshot.
+- **First-message durable instructions cannot race the first render.** Unambiguous “always” and “never” guidance is applied transactionally before the initial project snapshot, while stateful revoke/replace requests remain provider-reviewed and paused-account messages cannot activate after personalization is resumed.
+- **Creator profiles are now reachable from the creation workspace.** The passive account name in the project sidebar is replaced by an accessible profile icon whose menu links directly to Personalization, My videos, and Sign out.
+
 ## [0.69.0.0] — 2026-09-07
 
 ### Added

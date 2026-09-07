@@ -14,7 +14,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -33,8 +33,10 @@ from app.services.creator_direction_capabilities import (
 )
 from app.services.creator_memory_learning import (
     CREATOR_MEMORY_PAYLOAD_VERSION,
+    append_memory_receipt,
     classify_memory_candidate,
     normalize_creator_message,
+    requires_stateful_extraction,
 )
 from app.worker import celery_app
 
@@ -277,7 +279,7 @@ async def _apply_deterministic_direction(
         except LimitReached:
             await db.rollback()
             return "limit_reached"
-        await _append_memory_receipt(
+        await append_memory_receipt(
             db,
             user_id=user_id,
             thread_id=source_thread_id,
@@ -286,95 +288,6 @@ async def _apply_deterministic_direction(
         )
         await db.commit()
         return operation.operation_kind
-
-
-async def _append_memory_receipt(
-    db,
-    *,
-    user_id: uuid.UUID,
-    thread_id: uuid.UUID | None,
-    operation,
-    candidate: str,
-) -> None:  # noqa: ANN001
-    """Append the visible automatic-memory receipt in the same transaction.
-
-    This intentionally does not use the creation-thread ``_append`` helper:
-    that helper enqueues every event for extraction, and a system receipt must
-    never become another memory candidate. The operation id is also used as a
-    deterministic client id so retries/replayed idempotency keys do not add a
-    second receipt.
-    """
-
-    if (
-        thread_id is None
-        or candidate != "explicit"
-        or getattr(operation, "actor_kind", None) != "system"
-        or getattr(operation, "operation_kind", None)
-        not in {"create_item", "extracted_supersede", "extracted_forget"}
-        or getattr(operation, "undo_expires_at", None) is None
-    ):
-        return
-
-    thread = (
-        await db.execute(
-            select(CreationThread)
-            .where(CreationThread.id == thread_id, CreationThread.creator_id == user_id)
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if thread is None:
-        return
-
-    operation_id = str(operation.id)
-    client_event_id = f"creator-memory-receipt:{operation_id}"
-    existing = (
-        await db.execute(
-            select(CreationThreadEvent.id).where(
-                CreationThreadEvent.thread_id == thread.id,
-                CreationThreadEvent.client_event_id == client_event_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return
-
-    sequence = (
-        int(
-            (
-                await db.execute(
-                    select(func.coalesce(func.max(CreationThreadEvent.sequence), -1)).where(
-                        CreationThreadEvent.thread_id == thread.id
-                    )
-                )
-            ).scalar_one()
-        )
-        + 1
-    )
-    thread.revision = int(thread.revision) + 1
-    copy = {
-        "create_item": "Remembered for future videos.",
-        "extracted_supersede": "Updated what I remember for future videos.",
-        "extracted_forget": "Stopped using that preference for future videos.",
-    }[operation.operation_kind]
-    db.add(
-        CreationThreadEvent(
-            thread_id=thread.id,
-            sequence=sequence,
-            client_event_id=client_event_id,
-            role="assistant",
-            event_type="memory_updated",
-            content=copy,
-            payload={
-                "kind": "creator_memory_receipt",
-                "operation_id": operation_id,
-                "memory_revision": int(operation.resulting_revision),
-                "revision": int(operation.resulting_revision),
-                "undo_expires_at": operation.undo_expires_at.isoformat(),
-            },
-            revision=thread.revision,
-        )
-    )
-    await db.flush()
 
 
 async def _apply_on_isolated_engine(**kwargs) -> str:  # noqa: ANN003
@@ -462,12 +375,17 @@ def process_outbox(outbox_id: str) -> str:
             )
             return "direction_service_unavailable"
         try:
-            extraction = _extract_typed_direction(
-                session,
-                user_id=row.user_id,
-                message=message,
-                candidate=candidate,
-            )
+            try:
+                extraction = _extract_typed_direction(
+                    session,
+                    user_id=row.user_id,
+                    message=message,
+                    candidate=candidate,
+                )
+            except Exception:  # noqa: BLE001 - explicit rules have a safe local path
+                if candidate != "explicit" or requires_stateful_extraction(message):
+                    raise
+                extraction = None
             if extraction and extraction.get("operation") == "noop":
                 _complete(session, row, code="noop")
                 return "noop"

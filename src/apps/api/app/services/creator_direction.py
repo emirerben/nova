@@ -845,6 +845,7 @@ class CreatorDirectionService:
         if required_state is not None and item.state != required_state:
             raise UndoNotApplicable(f"memory item must be {required_state}")
         prior = {"state": item.state, "user_locked": item.user_locked}
+        conflict = None
         if state == "active" and item.normalized_key:
             conflict = (
                 await db.execute(
@@ -865,6 +866,17 @@ class CreatorDirectionService:
                 # replacement; one executemany batch can apply these updates
                 # in the opposite order and fail transiently.
                 await db.flush()
+        if state == "active" and item.state != "active" and conflict is None:
+            active_count = await db.scalar(
+                select(func.count())
+                .select_from(CreatorMemoryItem)
+                .where(
+                    CreatorMemoryItem.user_id == user_id,
+                    CreatorMemoryItem.state == "active",
+                )
+            )
+            if int(active_count or 0) >= MAX_ACTIVE_ITEMS:
+                raise LimitReached("too many active memory items")
         item.state = state
         if state == "active":
             item.user_locked = True
@@ -948,6 +960,33 @@ class CreatorDirectionService:
             ).scalar_one_or_none()
             if conflict is not None:
                 raise DirectionConflict("another active memory item already uses this key")
+        else:
+            duplicate = (
+                await db.execute(
+                    select(CreatorMemoryItem)
+                    .where(
+                        CreatorMemoryItem.user_id == user_id,
+                        CreatorMemoryItem.scope_kind == "account",
+                        CreatorMemoryItem.content_hash == _hash(instruction),
+                        CreatorMemoryItem.state.in_(("active", "suggested")),
+                        CreatorMemoryItem.id != item.id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if duplicate is not None:
+                raise DirectionConflict("another memory item already uses this instruction")
+        if item.state != "active":
+            active_count = await db.scalar(
+                select(func.count())
+                .select_from(CreatorMemoryItem)
+                .where(
+                    CreatorMemoryItem.user_id == user_id,
+                    CreatorMemoryItem.state == "active",
+                )
+            )
+            if int(active_count or 0) >= MAX_ACTIVE_ITEMS:
+                raise LimitReached("too many active memory items")
         prior = {
             "instruction": item.instruction,
             "category": item.category,
@@ -1187,17 +1226,17 @@ class CreatorDirectionService:
             "structured_value": result.structured_value,
             "revision": result.revision,
         }
-        db.add(
-            CreatorMemoryOperation(
-                user_id=user_id,
-                idempotency_key=idempotency_key,
-                request_fingerprint=fingerprint,
-                operation_kind="set_override",
-                prior_state=prior_state,
-                resulting_revision=result.revision,
-                actor_kind="user",
-            )
+        operation = CreatorMemoryOperation(
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+            request_fingerprint=fingerprint,
+            operation_kind="set_override",
+            prior_state=prior_state,
+            resulting_revision=result.revision,
+            actor_kind="user",
+            undo_expires_at=datetime.now(UTC) + UNDO_TTL,
         )
+        db.add(operation)
         await db.flush()
         return result
 
@@ -1257,6 +1296,7 @@ class CreatorDirectionService:
             prior_state=prior_state,
             resulting_revision=user.creator_memory_revision,
             actor_kind="user",
+            undo_expires_at=datetime.now(UTC) + UNDO_TTL,
         )
         db.add(operation)
         await db.flush()
@@ -1347,6 +1387,77 @@ class CreatorDirectionService:
                 ).scalar_one_or_none()
                 if item is not None:
                     item.state = prior_state
+        elif op.operation_kind == "set_override":
+            prior = op.prior_state or {}
+            result = prior.get("_result")
+            if not isinstance(result, dict):
+                raise UndoNotApplicable("override operation has invalid prior state")
+            try:
+                override_id = uuid.UUID(str(result["id"]))
+            except (KeyError, TypeError, ValueError):
+                raise UndoNotApplicable("override operation has invalid prior state") from None
+            override = (
+                await db.execute(
+                    select(ProjectDirectionOverride)
+                    .where(
+                        ProjectDirectionOverride.id == override_id,
+                        ProjectDirectionOverride.user_id == user_id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if override is None:
+                raise UndoNotApplicable("project override no longer exists")
+            if prior.get("created") is True:
+                await db.delete(override)
+            else:
+                instruction = prior.get("instruction")
+                if not isinstance(instruction, str):
+                    raise UndoNotApplicable("override operation has invalid prior state")
+                override.instruction = instruction
+                override.structured_value = prior.get("structured_value")
+        elif op.operation_kind == "delete_override":
+            prior = op.prior_state or {}
+            try:
+                override_id = uuid.UUID(str(prior["id"]))
+                thread_id = uuid.UUID(str(prior["thread_id"]))
+            except (KeyError, TypeError, ValueError):
+                raise UndoNotApplicable("override operation has invalid prior state") from None
+            normalized_key = prior.get("normalized_key")
+            instruction = prior.get("instruction")
+            if not isinstance(normalized_key, str) or not isinstance(instruction, str):
+                raise UndoNotApplicable("override operation has invalid prior state")
+            thread = (
+                await db.execute(
+                    select(CreationThread.id).where(
+                        CreationThread.id == thread_id,
+                        CreationThread.creator_id == user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if thread is None:
+                raise UndoNotApplicable("project no longer exists")
+            existing_override = (
+                await db.execute(
+                    select(ProjectDirectionOverride.id).where(
+                        ProjectDirectionOverride.user_id == user_id,
+                        ProjectDirectionOverride.thread_id == thread_id,
+                        ProjectDirectionOverride.normalized_key == normalized_key,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_override is not None:
+                raise UndoNotApplicable("project override already exists")
+            db.add(
+                ProjectDirectionOverride(
+                    id=override_id,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    normalized_key=normalized_key,
+                    instruction=instruction,
+                    structured_value=prior.get("structured_value"),
+                )
+            )
         elif op.item_id:
             item = await db.get(CreatorMemoryItem, op.item_id, with_for_update=True)
             if item is not None:

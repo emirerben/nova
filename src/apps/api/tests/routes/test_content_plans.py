@@ -384,6 +384,66 @@ def test_regenerate_enqueues_and_sets_generating(client: TestClient) -> None:
     task.delay.assert_called_once_with(str(plan.id), 0)
 
 
+def test_regenerate_refreshes_linked_chat_snapshot_with_project_overrides(
+    client: TestClient,
+) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="ready")
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        content_plan_id=plan.id,
+        creator_direction_snapshot={"source": "old"},
+    )
+    db = _async_db(scalar_result=plan)
+
+    async def _execute(stmt):  # noqa: ANN001
+        if "FROM creation_threads" in str(stmt):
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = [thread]
+            return result
+        if "FROM personas" in str(stmt):
+            return _scalar_result(plan._owned_persona_fixture)
+        return _scalar_result(plan)
+
+    db.execute = AsyncMock(side_effect=_execute)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    account_direction = SimpleNamespace(name="account")
+    project_direction = SimpleNamespace(name="project")
+
+    with (
+        patch(
+            "app.services.creator_direction_snapshot.resolve_snapshot_for_dispatch",
+            AsyncMock(side_effect=[account_direction, project_direction]),
+        ),
+        patch(
+            "app.services.creator_direction_snapshot.serialize_private_snapshot",
+            side_effect=lambda direction, *, source: {
+                "direction": direction.name,
+                "source": source,
+            },
+        ),
+        patch(
+            "app.services.creator_direction_receipts.stamp_private_receipt",
+            side_effect=lambda snapshot, _direction: snapshot,
+        ),
+        patch("app.tasks.content_plan_build.regenerate_content_plan") as task,
+    ):
+        task.delay = MagicMock()
+        response = client.post(f"/content-plans/{plan.id}/regenerate")
+
+    assert response.status_code == 200
+    assert plan.creator_direction_snapshot == {
+        "direction": "account",
+        "source": "plan_regenerate",
+    }
+    assert thread.creator_direction_snapshot == {
+        "direction": "project",
+        "source": "plan_regenerate",
+    }
+
+
 def test_regenerate_409_when_already_generating(client: TestClient) -> None:
     user = _fake_user()
     plan = _plan_mock(user.id, status="generating")
