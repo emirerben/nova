@@ -1291,6 +1291,10 @@ export interface CreatorAgentMixedMediaTimingProfile {
   image_hold: "very_fast" | "standard";
   video_hold: "longer" | "standard";
   boundary_style: "cut" | "crossfade";
+  image_hold_s?: number | null;
+  image_grouping?: "scattered" | "runs";
+  sequence_grouping?: "none" | "sport_context";
+  sequence_group_order?: Array<"football" | "basketball" | "beach_volleyball" | "tennis" | "track_and_field">;
 }
 
 export interface MontageCadenceConstraint {
@@ -1318,6 +1322,11 @@ export interface CreatorAgentPlanPreview {
   /** Optional on newer creator-agent responses. Older APIs omit this block. */
   edit_plan?: {
     strategy?: {
+      execution_contract?: "guided_voiceover_v1" | null;
+      media_scope?: "all" | "selected" | null;
+      participant_labels?: "none" | "single_subject";
+      score_labels?: boolean;
+      sport_labels?: boolean;
       optional_treatments?: Array<"overlays" | "sfx" | "transitions" | "looks">;
       target_duration_s?: number;
       montage_cadence?: MontageCadenceConstraint | null;
@@ -3374,6 +3383,15 @@ export interface EditProposalSnapshot {
   fast_cuts?: EditProposalFastCut[] | null;
   mixed_media_timing?: CreatorAgentMixedMediaTimingProfile | null;
   montage_cadence?: MontageCadenceConstraint | null;
+  media_scope?: "all" | "selected" | null;
+  selected_media_ids?: string[] | null;
+  narration?: {
+    gcs_path: string;
+    generation: string;
+    duration_s: number;
+    language: string;
+    words: Array<{ text: string; start_s: number; end_s: number; confidence: number }>;
+  } | null;
 }
 
 export interface EditProposal {

@@ -15,6 +15,8 @@ from app.schemas.edit_proposal import (
     MediaRef,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
+    NarrationTrack,
+    NarrationWord,
     StoryBeat,
     media_context_group,
 )
@@ -191,6 +193,142 @@ def test_fast_montage_snapshot_uses_server_requested_duration(monkeypatch) -> No
 
     assert snapshot.duration_s == 3
     assert sum(cut.output_duration_s for cut in snapshot.fast_cuts or []) == pytest.approx(3)
+
+
+def test_narrated_replan_propagates_pinned_context_and_skips_capacity_clamp(monkeypatch) -> None:
+    narration = NarrationTrack(
+        gcs_path="voiceover/take.m4a",
+        generation="7",
+        duration_s=44.688,
+        words=[
+            NarrationWord(text="Open", start_s=0.0, end_s=0.4, confidence=0.99),
+            NarrationWord(text="strong", start_s=0.4, end_s=0.9, confidence=0.98),
+        ],
+    )
+    source = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell the story",
+        pace="balanced",
+        duration_s=46,
+        title="Creator title",
+        media_scope="selected",
+        selected_media_ids=["video", "photo"],
+        narration=narration,
+        media=[
+            MediaRef(
+                lane="clip",
+                media_id="video",
+                gcs_path="users/test/video.mp4",
+                generation="1",
+                kind="video",
+                duration_s=50,
+            ),
+            MediaRef(
+                lane="asset",
+                media_id="photo",
+                gcs_path="users/test/photo.jpg",
+                generation="1",
+                kind="image",
+            ),
+        ],
+        story_beats=[
+            StoryBeat(beat_id="beat-1", topic="Opening", media_ids=["video"], duration_s=12)
+        ],
+    )
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, _client) -> None:  # noqa: ANN001
+            pass
+
+        def run(self, input_value, ctx=None) -> EditProposalAgentOutput:  # noqa: ANN001, ARG002
+            captured["input"] = input_value
+            return EditProposalAgentOutput(
+                title="Replanned title",
+                duration_s=46,
+                story_beats=[],
+                fast_cuts=[
+                    FastMontageCut(
+                        cut_id="video-cut",
+                        media_id="video",
+                        source_start_s=0,
+                        source_end_s=43.9,
+                        output_duration_s=43.9,
+                        role="hook",
+                    ),
+                    FastMontageCut(
+                        cut_id="photo-cut",
+                        media_id="photo",
+                        source_start_s=0,
+                        source_end_s=0.8,
+                        output_duration_s=0.8,
+                        role="payoff",
+                    ),
+                ],
+            )
+
+    monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", FakeAgent)
+
+    planned = edit_direction_planner.plan_direction_snapshot(
+        source,
+        direction="fast_montage",
+        goal="Move through the strongest moments",
+        pace="fast",
+        duration_s=60,
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast", video_hold="longer", boundary_style="cut"
+        ),
+    )
+
+    agent_input = captured["input"]
+    assert agent_input.target_duration_s == 60
+    assert agent_input.media_scope == source.media_scope
+    assert agent_input.selected_media_ids == source.selected_media_ids
+    assert agent_input.narration_duration_s == pytest.approx(narration.duration_s)
+    assert agent_input.narration_words == [word.model_dump(mode="json") for word in narration.words]
+    assert planned.narration == source.narration
+    assert planned.media_scope == source.media_scope
+    assert planned.selected_media_ids == source.selected_media_ids
+    assert sum(cut.output_duration_s for cut in planned.fast_cuts or []) == pytest.approx(44.7)
+
+
+def test_narrated_replan_fails_closed_when_agent_fails(monkeypatch) -> None:
+    narration = NarrationTrack(
+        gcs_path="voiceover/take.m4a",
+        generation="7",
+        duration_s=44.688,
+    )
+    source = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell the story",
+        pace="balanced",
+        duration_s=46,
+        title="Creator title",
+        narration=narration,
+        media=[
+            MediaRef(
+                lane="clip",
+                media_id="video",
+                gcs_path="users/test/video.mp4",
+                generation="1",
+                kind="video",
+                duration_s=50,
+            )
+        ],
+        story_beats=[
+            StoryBeat(beat_id="beat-1", topic="Opening", media_ids=["video"], duration_s=12)
+        ],
+    )
+    monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", FailingAgent)
+
+    with pytest.raises(TerminalError, match="provider returned invalid fast-cut arithmetic"):
+        edit_direction_planner.plan_direction_snapshot(
+            source,
+            direction="fast_montage",
+            goal="Move through the strongest moments",
+            pace="fast",
+            duration_s=60,
+        )
 
 
 def test_fast_montage_uses_analyzed_deterministic_fallback_on_terminal_schema(

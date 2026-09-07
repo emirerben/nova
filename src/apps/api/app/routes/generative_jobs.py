@@ -1519,6 +1519,114 @@ async def _persist_media_overlay_preview_backfill(
     return retry_after_unlock
 
 
+def _guided_text_state_for_response(
+    job: Job, variant: dict
+) -> tuple[list[dict], list[dict], dict | None] | None:
+    """Expose the guided v2 text union and its renderer label lane.
+
+    Guided narration labels are compiled in a server-derived lane, but the
+    existing editor only reads ``variant.text_elements``. Build that public
+    union from the canonical revision and de-duplicate by ID so a worker that
+    also persisted the renderer lane cannot surface or submit a label twice.
+    """
+
+    if variant.get("resolved_archetype") != "guided_story":
+        return None
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not getattr(_settings, "guided_story_editor_v2_enabled", False) and not isinstance(
+        variant.get("guided_edit_revision"), dict
+    ):
+        return None
+    revision = _guided_v2_revision(job, variant)
+    if revision is None:
+        return None
+
+    execution_plan = (job.assembly_plan or {}).get("guided_story_execution_plan")
+    approved_labels = (
+        list(execution_plan.get("narration_label_text_elements") or [])
+        if isinstance(execution_plan, dict)
+        else []
+    )
+    approved_label_ids = {
+        str(row.get("id")) for row in approved_labels if isinstance(row, dict) and row.get("id")
+    }
+    tombstoned_ids = {
+        str(row.get("record_id"))
+        for row in revision.get("tombstones") or []
+        if isinstance(row, dict) and row.get("record_id")
+    }
+
+    rows: list[dict] = []
+    seen_ids: set[str] = set()
+
+    def add(row: object) -> None:
+        if not isinstance(row, dict) or row.get("removed") is True:
+            return
+        row_id = row.get("id")
+        if not isinstance(row_id, str) or not row_id or row_id in seen_ids:
+            return
+        seen_ids.add(row_id)
+        rows.append(dict(row))
+
+    # The compiler is the single source of truth for source-bound PLAYER timing
+    # after a clip reorder/trim. Reuse its read projection so the editor sees
+    # the same label coordinates the worker will burn; the fallback below keeps
+    # older partially persisted jobs readable if their approval payload is no
+    # longer complete enough to compile.
+    guided_snapshot = (job.assembly_plan or {}).get("guided_edit")
+    runtime: dict[str, Any] | None = None
+    if isinstance(execution_plan, dict) and isinstance(guided_snapshot, dict):
+        try:
+            from app.pipeline.guided_story import compile_guided_runtime_plan  # noqa: PLC0415
+
+            runtime = compile_guided_runtime_plan(execution_plan, guided_snapshot, revision)
+        except (KeyError, TypeError, ValueError):
+            runtime = None
+    if runtime is not None:
+        for row in runtime.get("text_elements") or []:
+            add(row)
+        for row in runtime.get("narration_label_text_elements") or []:
+            add(row)
+        labels = [
+            row
+            for row in rows
+            if row.get("id") in approved_label_ids
+            or (row.get("source_params") or {}).get("narration_label_kind")
+        ]
+        receipt = (
+            execution_plan.get("narration_label_receipt")
+            if isinstance(execution_plan.get("narration_label_receipt"), dict)
+            else None
+        )
+        return rows, labels, receipt
+
+    for row in revision.get("text_elements") or []:
+        add(row)
+    # A revision written before the narration-label lane existed is still
+    # valid. Backfill only untombstoned approved labels from the immutable plan;
+    # this keeps old revisions readable without resurrecting an explicit delete.
+    for row in approved_labels:
+        if isinstance(row, dict) and str(row.get("id") or "") not in tombstoned_ids:
+            add(row)
+    for row in variant.get("narration_label_text_elements") or []:
+        if isinstance(row, dict) and str(row.get("id") or "") not in tombstoned_ids:
+            add(row)
+
+    labels = [row for row in rows if row.get("id") in approved_label_ids]
+    if not approved_label_ids:
+        labels = [
+            row for row in rows if (row.get("source_params") or {}).get("narration_label_kind")
+        ]
+    receipt = (
+        execution_plan.get("narration_label_receipt")
+        if isinstance(execution_plan, dict)
+        and isinstance(execution_plan.get("narration_label_receipt"), dict)
+        else None
+    )
+    return rows, labels, receipt
+
+
 def _variants_for_response(job: Job) -> list[dict]:
     """Variants with `output_url` (and `base_video_url`) re-signed fresh on read.
 
@@ -1827,15 +1935,31 @@ def _variants_for_response(job: Job) -> list[dict]:
         # kill switch is on so the FE can populate its timeline editor from the
         # persisted state (both the AI-snapshot and user-authored lists).
         if _TEXT_ELEMENTS_ENABLED:
-            v = {
-                **v,
-                "text_elements": merge_projected_text_elements_for_variant(
-                    v, include_lyric_projection=_LYRICS_EDITOR_ENABLED
-                ),
-                "text_elements_user_edited": v.get("text_elements_user_edited", False),
-                "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
-                "text_elements_materialized_from": v.get("text_elements_materialized_from"),
-            }
+            guided_text_state = _guided_text_state_for_response(job, v)
+            if guided_text_state is not None:
+                text_elements, label_elements, label_receipt = guided_text_state
+                v = {
+                    **v,
+                    # Guided v2's revision is authoritative. It contains the
+                    # editor union, while the renderer still consumes the
+                    # narration labels as a separate lane.
+                    "text_elements": text_elements,
+                    "narration_label_text_elements": label_elements,
+                    "narration_label_receipt": label_receipt,
+                    "text_elements_user_edited": v.get("text_elements_user_edited", False),
+                    "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
+                    "text_elements_materialized_from": v.get("text_elements_materialized_from"),
+                }
+            else:
+                v = {
+                    **v,
+                    "text_elements": merge_projected_text_elements_for_variant(
+                        v, include_lyric_projection=_LYRICS_EDITOR_ENABLED
+                    ),
+                    "text_elements_user_edited": v.get("text_elements_user_edited", False),
+                    "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
+                    "text_elements_materialized_from": v.get("text_elements_materialized_from"),
+                }
         if _LYRICS_EDITOR_ENABLED:
             v = {**v, "lyrics_enabled": _variant_lyrics_enabled(v)}
         v = {**v, "orientation": _variant_orientation(v)}
@@ -7177,6 +7301,26 @@ def _project_guided_revision_lanes(
         projected_values: list[dict[str, Any]] = []
         for value in raw.get(lane) or []:
             if not isinstance(value, dict) or start_field not in value:
+                projected_values.append(value)
+                continue
+            # Captions and narration annotations are authored on the narration
+            # clock. Only PLAYER placeholders are tied to their source moment;
+            # score/topic labels must keep their absolute narration timestamps
+            # when the visual sequence is reordered or trimmed.
+            source_params = value.get("source_params") or {}
+            narration_label_kind = (
+                source_params.get("narration_label_kind")
+                if isinstance(source_params, dict)
+                else None
+            )
+            if (
+                lane == "text_elements"
+                and isinstance(source_params, dict)
+                and (
+                    source_params.get("source") == "caption_cue"
+                    or (narration_label_kind is not None and narration_label_kind != "participant")
+                )
+            ):
                 projected_values.append(value)
                 continue
             # New records are already authored in the submitted revision's

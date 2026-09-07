@@ -53,7 +53,7 @@ kill_timeout = 300
   # worker, five queues, still one task at a time.
   # This -Q list is CI-pinned against app/services/queue_state.py's
   # RENDER_WORKER_QUEUES by tests/test_worker_prewarm_gate.py.
-  worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2"
+  worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,creator-fidelity-v1"
   # 2026-08-02 (render-worker autostop): moves ALL Beat-triggered tasks
   # (sweep_stale_jobs, cleanup_agent_runs, send_daily_digest,
   # cleanup_cancelled_job, and every app.tasks.tiktok.* periodic — see

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import MissingGreenlet
 from starlette.requests import Request
 
+from app.agents._runtime import TerminalError
 from app.agents._schemas.creator_agent import (
     AskUser,
     CreativeStrategy,
@@ -35,13 +36,17 @@ from app.routes.creator_agent import (
     ConfirmBody,
     StartBody,
     TurnBody,
+    _apply_explicit_render_intent,
     _apply_plan_intent,
     _auto_iteration_already_finalized,
     _balanced_integer_duration_s,
     _confirmed_creator_request,
     _creator_speech_cut_source_enabled,
+    _explicit_media_scope,
     _fallback_strategy,
+    _has_explicit_media_scope,
     _next_balanced_integer_duration_s,
+    _pinned_narration_target_duration_s,
     _previous_creator_clip_order,
     _requests_preserved_clip_order,
     _require_feature,
@@ -73,6 +78,142 @@ def _stub_creator_clip_metadata_dispatch(monkeypatch) -> None:
     from app.tasks.creator_clip_metadata import analyze_creator_clip_metadata
 
     monkeypatch.setattr(analyze_creator_clip_metadata, "apply_async", MagicMock())
+
+
+def test_creator_request_contract_promotes_explicit_scope_and_required_intent(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", True, raising=False)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.webm",
+            "generation": "voice-generation-1",
+            "duration_s": 44.7,
+        },
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "photo-1", "kind": "image"},
+        ],
+        guided_capability_enabled=True,
+    )
+    request = (
+        "Use all image and video provided. Transition photos in 0.3 seconds and group them. "
+        "Add a placeholder name to images and videos if focused on a single player. "
+        "Highlight the sports and the score based on the audio."
+    )
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(audio_strategy="voiceover", render_program="native"),
+        request,
+        manifest=manifest,
+    )
+
+    assert _has_explicit_media_scope(request)
+    assert _explicit_media_scope(request) == "all"
+    assert strategy.media_scope == "all"
+    assert strategy.execution_contract == "guided_voiceover_v1"
+    assert strategy.participant_labels == "single_subject"
+    assert strategy.score_labels is True
+    assert strategy.sport_labels is True
+    assert strategy.mixed_media_timing is not None
+    assert strategy.render_program == "guided"
+
+
+def test_explicit_typed_intent_survives_varied_wording_and_negative_scope(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", True, raising=False)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.webm",
+            "generation": "voice-generation-1",
+            "duration_s": 20,
+        },
+        media=[{"media_id": "clip-1", "kind": "video"}],
+        guided_capability_enabled=True,
+    )
+    typed = CreativeStrategy(
+        audio_strategy="voiceover",
+        execution_contract="guided_voiceover_v1",
+        media_scope="all",
+        participant_labels="single_subject",
+        score_labels=True,
+        sport_labels=True,
+        context_label={"kind": "sport"},
+    )
+
+    retained = _apply_explicit_render_intent(typed, "Tüm yüklenen medyayı kullan.", manifest)
+    corrected = _apply_explicit_render_intent(
+        retained,
+        "Don't use all media; use only the selected clips.",
+        manifest,
+        latest_user_message="Don't use all media; use only the selected clips.",
+    )
+
+    assert retained.media_scope == "all"
+    assert retained.participant_labels == "single_subject"
+    assert retained.score_labels is True
+    assert retained.sport_labels is True
+    assert retained.context_label is not None
+    assert corrected.media_scope == "selected"
+    assert _explicit_media_scope("Don't use all media") == "selected"
+
+
+def test_confirmed_creator_request_keeps_the_shared_bound() -> None:
+    first = "a" * 7000
+    second = "b" * 7000
+    events = [
+        SimpleNamespace(sequence=0, role="user", payload={"message": first}),
+        SimpleNamespace(sequence=1, role="user", payload={"message": second}),
+    ]
+
+    request = _confirmed_creator_request(events, "")
+
+    assert len(request) == 12000
+    assert request.startswith(first)
+
+
+def test_guided_brief_seeds_pinned_narration_for_worker_transcription(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", True, raising=False)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.webm",
+            "generation": "voice-generation-1",
+            "duration_s": 12,
+        },
+        media=[{"media_id": "clip-1", "kind": "video"}],
+        guided_capability_enabled=True,
+    )
+    plan = compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            audio_strategy="voiceover",
+            execution_contract="guided_voiceover_v1",
+            media_scope="all",
+        ),
+    )
+    item = SimpleNamespace(
+        edit_proposal=None,
+        voiceover_gcs_path="voiceover-uploads/user/item/voice.webm",
+        voiceover_generation="voice-generation-1",
+        voiceover_duration_s=12,
+    )
+
+    _seed_guided_specialist_brief(
+        item, plan, summary="Use the narration", creator_request="Use all"
+    )
+
+    assert item.edit_proposal["brief"]["narration"] == {
+        "gcs_path": "voiceover-uploads/user/item/voice.webm",
+        "generation": "voice-generation-1",
+        "duration_s": 12.0,
+        "words": [],
+        "language": "",
+    }
 
 
 def _craft_bundle(
@@ -1905,6 +2046,139 @@ def test_truncated_main_creator_fallback_preserves_exact_mixed_media_request(
         "video_hold": "longer",
         "boundary_style": "cut",
     }
+
+
+def test_creator_route_uses_pinned_narration_duration_without_explicit_total(
+    monkeypatch,
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "creator_prompt_fidelity_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.webm",
+            "generation": "voice-generation-1",
+            "duration_s": 44.688,
+        },
+        media=[{"media_id": "clip-1", "kind": "video"}],
+        guided_capability_enabled=True,
+    )
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(audio_strategy="voiceover", target_duration_s=24),
+        "Make a narrated edit with the uploaded voiceover.",
+        manifest=manifest,
+    )
+
+    assert _pinned_narration_target_duration_s(manifest) == 45
+    assert strategy.target_duration_s == 45
+
+    explicit = _apply_explicit_render_intent(
+        strategy,
+        "Make it 12 seconds long.",
+        manifest=manifest,
+    )
+    assert explicit.target_duration_s == 12
+
+
+def test_creator_route_keeps_exact_creator_authored_title_copy(monkeypatch) -> None:
+    manifest = _manifest(monkeypatch)
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        'Use opening title "Sunday finals".',
+        manifest=manifest,
+    )
+
+    assert strategy.opening_title == "Sunday finals"
+
+
+@pytest.mark.asyncio
+async def test_route_fallback_preserves_pinned_voiceover_and_all_media_draft(
+    monkeypatch,
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "creator_prompt_fidelity_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.webm",
+            "generation": "voice-generation-1",
+            "duration_s": 44.688,
+        },
+        media=[
+            {"media_id": f"clip-{index:02d}", "kind": "video", "duration_s": 4}
+            for index in range(20)
+        ]
+        + [{"media_id": f"photo-{index:02d}", "kind": "image"} for index in range(19)],
+        guided_capability_enabled=True,
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    response = SimpleNamespace(status="awaiting_confirmation")
+
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(side_effect=TerminalError("model truncated output")),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message=(
+            "Use all uploaded media. Transition photos in 0.3 seconds and let the videos breathe."
+        ),
+    )
+
+    assert result is response
+    assert session.status == "awaiting_confirmation"
+    assert "completed" not in session.active_plan["summary"].casefold()
+    strategy = session.active_plan["edit_plan"]["strategy"]
+    assert strategy["audio_strategy"] == "voiceover"
+    assert strategy["execution_contract"] == "guided_voiceover_v1"
+    assert strategy["media_scope"] == "all"
+    assert strategy["target_duration_s"] == 45
+    assert strategy.get("opening_title") is None
+    assert strategy.get("intro_hook") is None
+    assert strategy["story_structure"] == []
+    assert len(strategy["selected_media_ids"]) == 39
+    assert strategy["mixed_media_timing"]["image_hold_s"] == pytest.approx(0.3)
 
 
 def test_main_creator_preserves_photo_runs_and_ordered_sport_context(monkeypatch) -> None:

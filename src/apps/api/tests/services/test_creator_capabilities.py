@@ -70,6 +70,98 @@ def test_audio_led_and_voiceover_items_are_native(monkeypatch) -> None:
     assert guided.reason_code == "native_render_required"
 
 
+def test_guided_voiceover_opt_in_preserves_all_media_without_native_cap(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(
+        capabilities.settings, "creator_prompt_fidelity_enabled", True, raising=False
+    )
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.webm",
+            "generation": "voice-generation-1",
+            "duration_s": 44.7,
+        },
+        media=[
+            *[{"media_id": f"clip-{index}", "kind": "video"} for index in range(19)],
+            *[{"media_id": f"photo-{index}", "kind": "image"} for index in range(20)],
+        ],
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_GUIDED_VOICEOVER].available is True
+
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            audio_strategy="voiceover",
+            execution_contract="guided_voiceover_v1",
+            media_scope="all",
+            render_program="native",
+        ),
+    )
+
+    assert plan.strategy.render_program == "guided"
+    assert len(plan.strategy.selected_media_ids) == 39
+    assert plan.strategy.selected_media_ids == [media.media_id for media in manifest.media]
+
+
+def test_guided_voiceover_is_unavailable_without_opt_in_flag(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(
+        capabilities.settings, "creator_prompt_fidelity_enabled", False, raising=False
+    )
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.webm",
+            "generation": "voice-generation-1",
+            "duration_s": 12,
+        },
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_GUIDED_VOICEOVER].available is False
+    with pytest.raises(MixedMediaTimingUnavailableError, match="disabled"):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                audio_strategy="voiceover",
+                execution_contract="guided_voiceover_v1",
+                media_scope="all",
+            ),
+        )
+
+
+def test_guided_voiceover_requires_explicit_execution_contract(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(
+        capabilities.settings, "creator_prompt_fidelity_enabled", True, raising=False
+    )
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.webm",
+            "generation": "voice-generation-1",
+            "duration_s": 12,
+        },
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+
+    with pytest.raises(MixedMediaTimingUnavailableError, match="execution contract"):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                audio_strategy="voiceover",
+                media_scope="all",
+            ),
+        )
+
+
 def test_manifest_reports_setting_and_state_reasons(monkeypatch) -> None:
     monkeypatch.setattr(capabilities.settings, "guided_edit_capability_enabled", False)
     manifest = capabilities.resolve_creator_manifest(item_id="item-1", edit_format="montage")

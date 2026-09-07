@@ -207,3 +207,50 @@ def test_initial_revision_preserves_approved_transition_policy(
 
     assert revision["segments"][0]["transition_after"] == expected
     assert revision["segments"][0]["transition_duration_s"] == expected_duration
+
+
+def test_initial_revision_exposes_narration_labels_in_one_deduplicated_text_union() -> None:
+    shared_label = {
+        "id": "label-player-1",
+        "text": "PLAYER 1",
+        "start_s": 0.5,
+        "end_s": 1.5,
+        "role": "generative_sequence",
+        "position": "custom",
+        "source_params": {"narration_label_kind": "participant"},
+    }
+    revision = guided_editor_revision_from_approval(
+        proposal_version=1,
+        media_digest="a" * 64,
+        snapshot={
+            "media": [
+                {
+                    "media_id": "clip-1",
+                    "lane": "clip",
+                    "gcs_path": "users/u/clip.mp4",
+                    "generation": "1",
+                    "kind": "video",
+                    "duration_s": 8.0,
+                }
+            ]
+        },
+        execution_plan={
+            "story_timeline": [
+                {
+                    "moment_id": "one",
+                    "media_id": "clip-1",
+                    "source_start_s": 0.0,
+                    "source_end_s": 2.0,
+                    "duration_s": 2.0,
+                    "output_start_s": 0.0,
+                    "output_end_s": 2.0,
+                }
+            ],
+            "transition_policy": {"type": "none", "duration_s": 0.0},
+            "text_elements": [shared_label],
+            "narration_label_text_elements": [shared_label],
+            "output_orientation": "portrait",
+        },
+    )
+
+    assert [row["id"] for row in revision["text_elements"]] == ["label-player-1"]

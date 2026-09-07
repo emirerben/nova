@@ -22,6 +22,7 @@ from app.pipeline.guided_story import (
     _render_image_moment,
     _render_moments,
     _render_video_moment,
+    _tag_guided_text_overlays,
     _upload_verified_outputs,
     _verify_receipt,
     compile_execution_plan,
@@ -38,6 +39,7 @@ from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
     MontageTextBinding,
+    NarrationTrack,
     StoryBeat,
     canonical_media_digest,
 )
@@ -230,6 +232,159 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
     first_thought = next(row for row in plan["text_elements"] if row["id"] == "guided-thought-food")
     assert first_thought["start_s"] == 0.0
     assert first_thought["end_s"] == plan["beat_windows"][0]["end_s"]
+
+
+def test_voiceover_compiler_uses_narration_duration_and_caption_words() -> None:
+    raw = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    narration = NarrationTrack(
+        gcs_path="voiceover/a.m4a",
+        generation="99",
+        duration_s=4.7,
+        words=[
+            {"text": "one", "start_s": 0.2, "end_s": 0.6},
+            {"text": "two", "start_s": 1.1, "end_s": 1.5},
+        ],
+    )
+    snapshot = EditProposalSnapshot.model_validate(
+        {
+            **snapshot.model_dump(mode="json"),
+            "duration_s": 5,
+            "narration": narration.model_dump(mode="json"),
+        }
+    )
+    raw = {
+        **raw,
+        "media_digest": canonical_media_digest(snapshot.media, snapshot.narration),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+    }
+
+    plan = compile_execution_plan(raw, track=None)
+
+    assert plan["compiler_version"] == 5
+    assert plan["resolved_duration_s"] == pytest.approx(4.7)
+    assert [
+        row["text"] for row in plan["text_elements"] if row["id"].startswith("narration-caption-")
+    ] == ["one", "two"]
+
+
+def test_narration_label_lane_survives_plan_validation() -> None:
+    raw = _guided_snapshot()
+    plan = compile_execution_plan(raw, track=None)
+    label = TextElement.model_validate(
+        {
+            **plan["text_elements"][0],
+            "id": "player-placeholder-1",
+            "text": "PLAYER",
+            "source_params": {
+                "source": "narration_label",
+                "source_timeline_id": plan["story_timeline"][0]["moment_id"],
+            },
+        }
+    )
+    plan["narration_label_text_elements"] = [label.model_dump(mode="json")]
+    plan["narration_label_receipt"] = {"accepted": ["player-placeholder-1"]}
+
+    validated = validate_execution_plan(plan, raw)
+
+    assert validated["narration_label_text_elements"][0]["id"] == "player-placeholder-1"
+    assert validated["narration_label_receipt"] == {"accepted": ["player-placeholder-1"]}
+
+
+def test_narration_captions_and_labels_use_independent_renderer_streams(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-element narration receipts must survive Skia sequence grouping."""
+    from app.pipeline import text_overlay_skia
+
+    source_elements = [
+        TextElement(
+            id="narration-caption-1",
+            text="spoken",
+            start_s=0.0,
+            end_s=0.5,
+            role="generative_sequence",
+            position="custom",
+            x_frac=0.5,
+            y_frac=0.82,
+            source_params={"source": "caption_cue"},
+        ),
+        TextElement(
+            id="player-label-1",
+            text="PLAYER",
+            start_s=0.0,
+            end_s=0.8,
+            role="generative_sequence",
+            position="custom",
+            x_frac=0.5,
+            y_frac=0.65,
+            source_params={"source": "narration_label"},
+        ),
+    ]
+    compiled = build_overlays_from_text_elements(
+        source_elements,
+        video_duration_s=1.0,
+        independent_box_alignment=True,
+    )
+    tagged = _tag_guided_text_overlays(compiled, source_elements)
+
+    assert [overlay["element_id"] for overlay in tagged] == [
+        "narration-caption-1",
+        "player-label-1",
+    ]
+    assert tagged[0]["role"] == "generative_narration_caption"
+    assert tagged[1]["role"] == "generative_sequence"
+
+    monkeypatch.setattr(
+        text_overlay_skia,
+        "_render_overlay_sequences",
+        lambda overlays, *_args, **_kwargs: [
+            {"element_id": overlay["element_id"], "n_frames": 1} for overlay in overlays
+        ],
+    )
+    monkeypatch.setattr(
+        text_overlay_skia,
+        "_render_sequence_composite",
+        lambda *_args, **_kwargs: {"element_id": "coalesced", "n_frames": 1},
+    )
+    sequences, _ = text_overlay_skia.render_text_overlay_sequences(tagged, str(tmp_path))
+
+    assert [sequence["element_id"] for sequence in sequences] == [
+        "narration-caption-1",
+        "player-label-1",
+    ]
+
+
+def test_edited_narration_caption_rebuilds_stale_karaoke_words_in_its_cue() -> None:
+    source = TextElement(
+        id="narration-caption-1",
+        text="edited caption",
+        start_s=0.2,
+        end_s=0.6,
+        role="generative_sequence",
+        effect="karaoke-line",
+        position="custom",
+        x_frac=0.5,
+        y_frac=0.82,
+        source_params={"source": "caption_cue"},
+        word_timings=[{"text": "old", "start_s": 0.2, "end_s": 0.6, "duration_cs": 40}],
+    )
+
+    overlays = _tag_guided_text_overlays(
+        build_overlays_from_text_elements(
+            [source], video_duration_s=1.0, independent_box_alignment=True
+        ),
+        [source],
+    )
+
+    assert overlays[0]["role"] == "generative_narration_caption"
+    assert overlays[0]["text"] == "edited caption"
+    assert [word["text"] for word in overlays[0]["word_timings"]] == [
+        "edited",
+        "caption",
+    ]
+    assert overlays[0]["word_timings"][0]["start_s"] == 0.2
+    assert overlays[0]["word_timings"][-1]["end_s"] == 0.6
 
 
 def test_fast_montage_compiles_exact_source_windows_and_optional_beats() -> None:
@@ -1367,6 +1522,57 @@ def test_runtime_compiles_approved_unused_image_and_video_sources() -> None:
     assert by_id["added-image"]["image_motion"] is None
     assert by_id["added-video"]["layout"] == "fullscreen"
     assert by_id["added-video"]["image_motion"] is None
+
+
+def test_runtime_revision_preserves_narration_caption_text_and_style_but_pins_timing() -> None:
+    guided = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"]).model_copy(
+        update={
+            "duration_s": 5,
+            "narration": NarrationTrack(
+                gcs_path="voiceover/take.m4a",
+                generation="4",
+                duration_s=4.7,
+                words=[{"text": "spoken", "start_s": 0.2, "end_s": 0.6}],
+            ),
+        }
+    )
+    guided["approved_proposal"] = snapshot.model_dump(mode="json")
+    guided["media_digest"] = canonical_media_digest(snapshot.media, snapshot.narration)
+    canonical = compile_execution_plan(guided, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    caption = next(row for row in revision["text_elements"] if row["id"] == "narration-caption-1")
+    canonical_caption = next(
+        row for row in canonical["text_elements"] if row["id"] == "narration-caption-1"
+    )
+    caption.update(
+        {
+            "text": "edited caption",
+            "color": "#D9FF70",
+            "size_px": 72,
+            "start_s": 1.2,
+            "end_s": 1.8,
+        }
+    )
+    revision["state_hash"] = ""
+
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+
+    runtime_caption = next(
+        row for row in runtime["text_elements"] if row["id"] == "narration-caption-1"
+    )
+    assert runtime_caption["text"] == "edited caption"
+    assert runtime_caption["color"] == "#D9FF70"
+    assert runtime_caption["size_px"] == 72
+    assert runtime_caption["start_s"] == canonical_caption["start_s"]
+    assert runtime_caption["end_s"] == canonical_caption["end_s"]
+    assert runtime_caption["word_timings"] == canonical_caption["word_timings"]
+    assert runtime_caption["source_params"] == canonical_caption["source_params"]
 
 
 def test_runtime_revision_recomputes_server_context_labels_per_segment() -> None:
@@ -3205,3 +3411,39 @@ def test_selected_rotated_video_is_normalized_without_changing_source_receipt(
     # Identity receipt: the untouched download, not the normalized bytes.
     assert receipts[0]["bytes"] == len(source_bytes)
     assert receipts[0]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
+
+
+def test_narrated_fast_montage_does_not_project_advisory_player_names():
+    from app.pipeline.guided_story import _text_elements
+
+    raw = _guided_snapshot(direction="fast_montage")
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    snapshot = snapshot.model_copy(
+        update={
+            "narration": NarrationTrack(
+                gcs_path="voiceover/a.m4a",
+                generation="99",
+                duration_s=4.7,
+                words=[{"text": "Hello", "start_s": 0.1, "end_s": 0.5}],
+            ),
+            "opening_title": None,
+            "montage_text_bindings": [
+                MontageTextBinding(media_id="coast-video", text="Player Emir")
+            ],
+            "fast_cuts": [
+                FastMontageCut(
+                    cut_id="cut-1",
+                    media_id="coast-video",
+                    source_start_s=0,
+                    source_end_s=1,
+                    output_duration_s=1,
+                    role="hook",
+                )
+            ],
+        }
+    )
+    elements = _text_elements(snapshot, [{"start_s": 0, "end_s": 1}], {}, compiler_version=5)
+    assert [row["id"] for row in elements] == ["guided-title", "narration-caption-1"]
+    assert elements[0]["y_frac"] == 0.16
+    assert elements[1]["y_frac"] > 0.7
+    assert "Player Emir" not in [row["text"] for row in elements]

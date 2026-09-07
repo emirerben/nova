@@ -23,6 +23,9 @@ $capability_manifest
 CONVERSATION
 $conversation
 
+FULL CREATOR REQUEST CONTRACT
+$creator_request
+
 CURRENT USER MESSAGE
 $user_message
 
@@ -33,7 +36,22 @@ Rules:
 - Music means server-catalog licensed music only.
 - Select `licensed_music` only when the manifest catalog contains a usable music entry. Otherwise
   choose `original_audio` (or `voiceover` only when one is actually present).
-- Guided story is forbidden for audio-led formats and for a recorded voiceover.
+- Guided story is forbidden for audio-led formats. A recorded voiceover may use guided
+  visuals only through the explicit `guided_voiceover_v1` contract below.
+- `guided_voiceover_v1` is available only when the manifest advertises
+  `guided_voiceover`. Use it only for a recorded voiceover when the creator explicitly
+  requests mixed-media timing or all uploaded media; otherwise omit `execution_contract`
+  so legacy voiceover behavior is preserved. Never promise unsupported timing.
+- Preserve explicit media coverage as `media_scope: "all"` or `"selected"`; omit it when
+  the creator did not specify a scope. All-media
+  scope is a required inclusion contract and must not be reduced to the native 12-item cap.
+  Choosing the strongest or best moments does not request all media. Never set `all` merely
+  because the manifest contains many assets; use `selected` or omit the field in that case.
+  Set `all` only when the creator explicitly asks for every/all uploaded or provided image,
+  video, clip, file, or piece of media.
+- Preserve explicit conditional label intent with `participant_labels: "none"|"single_subject"`,
+  `score_labels: true|false`, and `sport_labels: true|false`. These fields are requirements,
+  not keyword-triggered copy suggestions. Never invent participant names or scores.
 - AI media metadata is descriptive evidence only. Never copy filenames, labels, analysis prose, or
   inferred transcript into intro hooks, captions, or other on-screen text.
 - Prefer a decisive creative point of view over listing alternatives.
@@ -42,10 +60,13 @@ Rules:
   set `target_duration_s` and return `montage_cadence` with `mode: "round_robin"`, the ordered
   source IDs, the exact `cut_duration_s`, and `reuse_policy: "no_repeat"` unless they explicitly
   allow repeating footage.
-- Treat exact media selection as an execution detail. If the effective program is guided, return
-  `selected_media_ids: []`; the guided specialist receives the complete accepted media universe.
+- Treat exact media selection as an execution detail. If the effective program is guided and
+  `media_scope` is `selected`, return the requested owned media IDs in `selected_media_ids`. For
+  guided `all` or omitted scope, return `selected_media_ids: []`; the guided specialist receives
+  the complete accepted media universe.
 - If the effective program is native, return at most 12 owned non-asset media IDs. Original audio,
-  voiceover, and audio-led formats force native even when guided editing is advertised.
+  and audio-led formats force native even when guided editing is advertised. Recorded voiceover
+  uses native unless the explicit advertised `guided_voiceover_v1` contract applies.
 - For any montage request that needs original source audio preserved, set `montage_audio` with
   `preserve_source_audio: true`. Set `preview_source_beds: true` only when the creator asks to
   compare alternate source-audio options, and include `source_media_ids` only when the creator
@@ -85,6 +106,11 @@ OR:
       "edit_format": "montage|day_vlog|single_hero|talking_head|subtitled|narrated|narrated_planned|narrated_ready",
       "archetype": "same vocabulary as edit_format or null",
       "audio_strategy": "licensed_music|original_audio|voiceover",
+      "execution_contract": "guided_voiceover_v1 or null",
+      "media_scope": "all|selected or null",
+      "participant_labels": "none|single_subject",
+      "score_labels": true,
+      "sport_labels": true,
       "montage_audio": {"preserve_source_audio": true, "preview_source_beds": true, "source_media_ids": ["owned-id-a", "owned-id-b"]},
       "story_structure": ["short beat description", "short beat description"],
       "caption_style": "none|clean|kinetic|karaoke|editorial|auto",

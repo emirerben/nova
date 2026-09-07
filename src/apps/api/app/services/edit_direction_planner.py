@@ -745,8 +745,11 @@ def plan_direction_snapshot(
         )
         for ref in source.media
     ]
+    narrated = source.narration is not None
     planning_duration_s = (
-        clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
+        max(3, min(60, int(duration_s)))
+        if narrated and direction == "fast_montage"
+        else clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
         if direction == "fast_montage"
         else max(3, min(60, int(duration_s)))
     )
@@ -761,6 +764,14 @@ def plan_direction_snapshot(
                 goal=goal[:500],
                 pace=pace,
                 target_duration_s=planning_duration_s,
+                media_scope=source.media_scope,
+                selected_media_ids=source.selected_media_ids,
+                narration_duration_s=source.narration.duration_s if source.narration else None,
+                narration_words=(
+                    [word.model_dump(mode="json") for word in source.narration.words]
+                    if source.narration
+                    else []
+                ),
                 mixed_media_timing=mixed_media_timing,
                 montage_audio=montage_audio,
                 montage_cadence=montage_cadence,
@@ -769,7 +780,7 @@ def plan_direction_snapshot(
             ctx=RunContext(job_id=job_id) if job_id else None,
         )
     except TerminalError as exc:
-        if direction == "text_explainer":
+        if narrated or direction == "text_explainer":
             raise
         log.warning(
             "edit_direction_planner.deterministic_fallback",
@@ -830,6 +841,9 @@ def plan_direction_snapshot(
                 else montage_audio
             ),
             "montage_cadence": montage_cadence,
+            "narration": source.narration,
+            "media_scope": source.media_scope,
+            "selected_media_ids": source.selected_media_ids,
         }
     )
     result = EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))

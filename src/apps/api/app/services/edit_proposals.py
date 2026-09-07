@@ -619,8 +619,25 @@ def validate_approved_proposal_media_sync(  # noqa: ANN001
     proposal = parse_edit_proposal(item.edit_proposal)
     assert proposal is not None and proposal.last_approved is not None
     approved = proposal.last_approved
-    if canonical_media_digest(approved.snapshot.media) != approved.media_digest:
+    if (
+        canonical_media_digest(approved.snapshot.media, approved.snapshot.narration)
+        != approved.media_digest
+    ):
         return "proposal_stale", None
+
+    narration = getattr(approved.snapshot, "narration", None)
+    if narration is not None:
+        from app.services.creator_execution_contract import narration_matches_item  # noqa: PLC0415
+        from app.storage import object_metadata  # noqa: PLC0415
+
+        if not narration_matches_item(narration.model_dump(mode="json"), item):
+            return "proposal_stale", None
+        try:
+            audio_metadata = object_metadata(narration.gcs_path)
+        except Exception:  # noqa: BLE001 - never dispatch replacement audio under old approval
+            return "proposal_stale", None
+        if str(audio_metadata.generation) != str(narration.generation):
+            return "proposal_stale", None
 
     clip_by_id = {
         str(a.get("media_id")): a

@@ -1,0 +1,24 @@
+{
+  "agent": "nova.compose.narration_annotations",
+  "prompt_version": "2026-09-07.2",
+  "input": {
+    "creator_request": "Show the score and label the single player in each focused shot.",
+    "words": [
+      {"word_id": "w000000", "text": "Team", "start_s": 0.0, "end_s": 0.2},
+      {"word_id": "w000001", "text": "Juni", "start_s": 0.2, "end_s": 0.4},
+      {"word_id": "w000002", "text": "went", "start_s": 0.4, "end_s": 0.6},
+      {"word_id": "w000003", "text": "1-0", "start_s": 0.6, "end_s": 0.9},
+      {"word_id": "w000004", "text": "up", "start_s": 0.9, "end_s": 1.1}
+    ],
+    "media_analysis": [
+      {"asset_id": "asset-a", "source_instance_id": "source-a", "single_subject": true, "focus_evidence": "one visible participant"}
+    ],
+    "timeline": [
+      {"timeline_id": "shot-a", "asset_id": "asset-a", "source_instance_id": "source-a", "start_s": 0.0, "end_s": 1.5}
+    ],
+    "requirements": {"score_labels": true, "participant_labels": "single_subject"}
+  },
+  "raw_text": "{\"annotations\":[{\"kind\":\"score\",\"start_word_id\":\"w000003\",\"end_word_id\":\"w000003\",\"confidence\":\"high\",\"reason\":\"hybrid score token\"},{\"kind\":\"participant\",\"timeline_id\":\"shot-a\",\"asset_id\":\"asset-a\",\"participant_focus\":\"single_subject\",\"focus_evidence\":\"one visible participant\",\"confidence\":\"high\",\"reason\":\"typed visual evidence\"}]}",
+  "output": {},
+  "meta": {"source": "synthetic-safe-golden", "contract": "hyphenated scores and typed asset-local focus"}
+}

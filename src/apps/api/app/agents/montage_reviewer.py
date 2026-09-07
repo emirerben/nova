@@ -16,7 +16,7 @@ class MontageReviewCutInput(BaseModel):
     media_id: str = Field(min_length=1, max_length=100)
     source_start_s: float = Field(ge=0)
     source_end_s: float = Field(gt=0)
-    output_duration_s: float = Field(ge=0.4, le=3.0)
+    output_duration_s: float = Field(ge=0.1, le=60.0)
 
     @model_validator(mode="after")
     def validate_window(self) -> MontageReviewCutInput:
@@ -31,7 +31,7 @@ class MontageReviewInput(BaseModel):
     file_uri: str = Field(min_length=1)
     source_media_id: str = Field(min_length=1, max_length=100)
     source_duration_s: float = Field(gt=0)
-    creator_request: str = Field(default="", max_length=1000)
+    creator_request: str = Field(default="", max_length=12000)
     proposed_cuts: list[MontageReviewCutInput] = Field(min_length=1, max_length=80)
     candidate_moments: list[dict] = Field(default_factory=list, max_length=10)
 

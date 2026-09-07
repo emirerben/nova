@@ -18,10 +18,12 @@ from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     MAX_EDIT_PROPOSAL_MEDIA,
     FastMontageCut,
+    MediaScope,
     MixedMediaTimingProfile,
     MontageAudioPlan,
     MontageCadenceConstraint,
     MontageTextBinding,
+    canonical_narration_duration_s,
     media_context_group,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -37,7 +39,7 @@ _SENSORY_MODIFIER = re.compile(
 )
 _PERSONAL_PRONOUN = re.compile(r"\b(?:i|we|my|our|us)\b", re.IGNORECASE)
 _UNSUPPORTED_ACTION_LEAD = re.compile(
-    r"^\s*(?:finally,?\s+)?(?:enjoying|discovering|relaxing|exploring|wandering|"
+    r"^\s*(?:finally,?\s+)?(?:enjoying|discovering|relaxing|exploring|"
     r"visiting|tasting|trying)\b",
     re.IGNORECASE,
 )
@@ -230,16 +232,48 @@ class EditProposalAgentInput(BaseModel):
     theme: str = ""
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
     goal: str = ""
-    creator_request: str = Field(default="", max_length=1000)
+    creator_request: str = Field(default="", max_length=12000)
     pace: Literal["relaxed", "balanced", "fast"]
     # No artificial floor — the caller clamps this to what the uploaded
     # footage can actually support before invoking the agent.
     target_duration_s: int = Field(ge=3, le=60)
+    media_scope: MediaScope | None = None
+    selected_media_ids: list[str] | None = Field(default=None, max_length=MAX_EDIT_PROPOSAL_MEDIA)
+    narration_duration_s: float | None = Field(default=None, gt=0)
+    narration_words: list[dict] = Field(default_factory=list, max_length=2000)
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_audio: MontageAudioPlan | None = None
     montage_cadence: MontageCadenceConstraint | None = None
     review_feedback: str = Field(default="", max_length=5000)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
+
+    @model_validator(mode="after")
+    def validate_media_scope(self) -> EditProposalAgentInput:
+        if self.selected_media_ids is not None and len(self.selected_media_ids) != len(
+            set(self.selected_media_ids)
+        ):
+            raise ValueError("selected_media_ids must be unique")
+        known = {media.media_id for media in self.media}
+        if self.selected_media_ids is not None and not set(self.selected_media_ids) <= known:
+            raise ValueError("selected_media_ids must reference available media")
+        if self.narration_duration_s is not None and not math.isfinite(self.narration_duration_s):
+            raise ValueError("narration_duration_s must be finite")
+        return self
+
+
+def _required_media_ids(input: EditProposalAgentInput) -> set[str]:
+    if input.media_scope == "all":
+        return {media.media_id for media in input.media}
+    return set(input.selected_media_ids or ())
+
+
+def _effective_target_duration_s(input: EditProposalAgentInput) -> float:
+    target_s = float(input.narration_duration_s or input.target_duration_s)
+    return (
+        canonical_narration_duration_s(target_s)
+        if input.narration_duration_s is not None
+        else target_s
+    )
 
 
 def _media_energy(media: EditProposalMedia) -> float:
@@ -258,6 +292,10 @@ def shortlist_edit_proposal_media(
 ) -> list[EditProposalMedia]:
     """Select bounded, render-capable evidence while preserving upload diversity."""
 
+    if input.media_scope == "all":
+        # Required coverage is resolved before model selection. Keep every
+        # accepted source available to the prompt and renderer.
+        return list(input.media)
     eligible: list[tuple[int, EditProposalMedia]] = []
     for index, media in enumerate(input.media):
         minimum_video_s = 0.4 if input.direction == "fast_montage" else GUIDED_STORY_MIN_MOMENT_S
@@ -564,7 +602,7 @@ class _RawFastMontageCut(BaseModel):
     # Numeric still holds may be as short as 0.1s. Video minimums are enforced
     # later with the source-aware mixed-media profile; this provider boundary
     # only needs to admit the typed value for normalization.
-    output_duration_s: float = Field(ge=0.1, le=3.0)
+    output_duration_s: float = Field(ge=0.1, le=60.0)
     role: Literal["hook", "build", "payoff"]
     transition: Literal["none"] = "none"
     beat_align: bool = False
@@ -581,6 +619,127 @@ class _RawFastMontageCut(BaseModel):
         return self
 
 
+def _quantize_quick_mixed_cuts_to_frames(
+    raw_cuts: list[dict],
+    input: EditProposalAgentInput,  # noqa: A002
+) -> list[dict]:
+    """Make a typed mixed-media cut list addressable on the 30 fps grid.
+
+    Provider arithmetic often emits a repeating decimal for the video share of
+    a fixed narration. Quantize the output holds before approval, distributing
+    the residual frames across videos with source-duration headroom. Stills
+    retain their requested frame count (0.3s therefore remains exactly 9
+    frames), and every rewritten video end is bounded by the probed full source.
+    """
+
+    if input.narration_duration_s is None or not uses_quick_photo_long_video_timing(
+        input.mixed_media_timing
+    ):
+        return raw_cuts
+    media_by_id = {media.media_id: media for media in input.media}
+    fps = 30
+    target_frames = max(1, int(round(_effective_target_duration_s(input) * fps)))
+    typed: list[_RawFastMontageCut] = []
+    for raw_cut in raw_cuts:
+        try:
+            typed.append(_RawFastMontageCut.model_validate(raw_cut))
+        except Exception as exc:  # noqa: BLE001
+            raise SchemaError(f"edit_proposal: invalid fast cut — {exc}") from exc
+
+    frame_data: list[dict[str, int | float | EditProposalMedia]] = []
+    for cut in typed:
+        media = media_by_id.get(cut.media_id)
+        if media is None:
+            # Alias repair and the normal source identity guard will report the
+            # unknown source. Leave this shape untouched so that path remains
+            # stable for malformed provider responses.
+            return raw_cuts
+        bounds = mixed_media_hold_bounds(media.kind, input.mixed_media_timing)
+        minimum_frames = int(math.ceil(bounds.minimum_s * fps - 1e-6))
+        if media.kind == "video" and float(media.duration_s or 0.0) < bounds.minimum_s:
+            minimum_frames = int(math.ceil(0.1 * fps - 1e-6))
+        if media.kind == "image":
+            maximum_frames = int(math.floor(bounds.maximum_s * fps + 1e-6))
+        else:
+            source_remaining_s = float(media.duration_s or 0.0) - float(cut.source_start_s)
+            # Narration owns the visual budget. Preset video ceilings must not
+            # force source repetition when a longer real window is available.
+            maximum_frames = int(
+                math.floor((source_remaining_s + _FAST_DURATION_EPSILON_S) * fps + 1e-6)
+            )
+        if maximum_frames < minimum_frames:
+            raise SchemaError(
+                "edit_proposal: mixed-media cut cannot fit the source-safe frame bounds"
+            )
+        desired_frames = float(cut.output_duration_s) * fps
+        frame_data.append(
+            {
+                "cut": cut,
+                "frames": max(minimum_frames, min(maximum_frames, int(round(desired_frames)))),
+                "minimum": minimum_frames,
+                "maximum": maximum_frames,
+                "fraction": desired_frames - math.floor(desired_frames),
+                "kind": media.kind,
+            }
+        )
+
+    difference = target_frames - sum(int(row["frames"]) for row in frame_data)
+
+    def adjust(kind: str, direction: int) -> None:
+        nonlocal difference
+        candidates = sorted(
+            (row for row in frame_data if row["kind"] == kind),
+            key=lambda row: (float(row["fraction"]), int(row["frames"])),
+            reverse=direction > 0,
+        )
+        for row in candidates:
+            if difference == 0:
+                return
+            if direction > 0:
+                capacity = int(row["maximum"]) - int(row["frames"])
+                change = min(difference, max(0, capacity))
+            else:
+                capacity = int(row["frames"]) - int(row["minimum"])
+                change = min(-difference, max(0, capacity))
+                change = -change
+            if change:
+                row["frames"] = int(row["frames"]) + change
+                difference -= change
+
+    # Videos absorb the rounding remainder first, so a requested still hold is
+    # never silently changed just to repair provider decimal arithmetic.
+    if difference > 0:
+        adjust("video", 1)
+        adjust("image", 1)
+    elif difference < 0:
+        adjust("video", -1)
+        adjust("image", -1)
+    if difference:
+        raise SchemaError("edit_proposal: mixed-media cuts cannot fit the narration frame budget")
+
+    normalized: list[dict] = []
+    for row in frame_data:
+        cut = row["cut"]
+        frames = int(row["frames"])
+        duration_s = round(frames / fps, 3)
+        media = row["kind"]
+        source_start_s = 0.0 if media == "image" else round(float(cut.source_start_s), 3)
+        source_end_s = round(source_start_s + duration_s, 3)
+        if media == "video":
+            source_duration_s = float(media_by_id[cut.media_id].duration_s or 0.0)
+            if source_end_s > source_duration_s + _FAST_DURATION_EPSILON_S:
+                raise SchemaError("edit_proposal: mixed-media cut exceeds the full source duration")
+        normalized.append(
+            {
+                **cut.model_dump(),
+                "source_start_s": source_start_s,
+                "source_end_s": source_end_s,
+                "output_duration_s": duration_s,
+            }
+        )
+    return normalized
+
+
 def _strict_fast_cut(raw_cut: _RawFastMontageCut, **updates) -> FastMontageCut:  # noqa: ANN003
     try:
         return FastMontageCut.model_validate({**raw_cut.model_dump(), **updates})
@@ -592,6 +751,7 @@ def _compile_fast_cuts(
     raw_cuts: list,
     *,
     split_limit_s: float = 1.2,
+    narrated: bool = False,
 ) -> tuple[list[FastMontageCut], set[str], float]:
     """Compile a narrow provider timing violation into the persisted cut schema.
 
@@ -607,6 +767,10 @@ def _compile_fast_cuts(
     if len({cut.cut_id for cut in relaxed}) != len(relaxed):
         raise SchemaError("edit_proposal: fast cut ids must be unique")
     raw_total_s = sum(cut.output_duration_s for cut in relaxed)
+    if narrated:
+        return [_strict_fast_cut(cut) for cut in relaxed], set(), raw_total_s
+    if any(cut.output_duration_s > 3.0 for cut in relaxed):
+        raise SchemaError("edit_proposal: non-narrated fast cuts must not exceed 3 seconds")
     if all(cut.output_duration_s <= split_limit_s for cut in relaxed):
         return [_strict_fast_cut(cut) for cut in relaxed], set(), raw_total_s
 
@@ -693,7 +857,7 @@ def _normalize_fast_montage_duration(
     ):
         raise SchemaError("edit_proposal: fast montage duration must be finite and numeric")
     declared_duration_s = float(declared_duration)
-    target_duration_s = float(input.target_duration_s)
+    target_duration_s = _effective_target_duration_s(input)
     target_delta_s = target_duration_s - declared_duration_s
     quick_mixed_timing = uses_quick_photo_long_video_timing(input.mixed_media_timing)
     if not quick_mixed_timing and abs(target_delta_s) > _FAST_DURATION_RECONCILE_TOLERANCE_S:
@@ -703,6 +867,8 @@ def _normalize_fast_montage_duration(
     if not isinstance(raw_cuts, list) or not raw_cuts:
         # Let the normal output model retain its established missing/shape error.
         return payload, set()
+    raw_cuts = _quantize_quick_mixed_cuts_to_frames(raw_cuts, input)
+    payload["fast_cuts"] = raw_cuts
     split_limit_s = (
         input.montage_cadence.cut_duration_s
         if input.montage_cadence is not None
@@ -710,7 +876,9 @@ def _normalize_fast_montage_duration(
         if quick_mixed_timing
         else 1.2
     )
-    cuts, repaired_cut_ids, raw_total_s = _compile_fast_cuts(raw_cuts, split_limit_s=split_limit_s)
+    cuts, repaired_cut_ids, raw_total_s = _compile_fast_cuts(
+        raw_cuts, split_limit_s=split_limit_s, narrated=input.narration_duration_s is not None
+    )
 
     # Reconcile against the actual cut total. Do not reject a fixable provider
     # arithmetic error merely because its declared total disagrees: each cut is
@@ -830,7 +998,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.5.5",
+        prompt_version="1.7.1",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -904,6 +1072,20 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "choose the strongest analyzed non-overlapping windows and preserve the exact "
                 "target duration."
             )
+        narration_note = ""
+        if input.narration_duration_s is not None:
+            narration_note = (
+                "RECORDED VOICEOVER CONTRACT: preserve this pinned narration for the full visual "
+                f"timeline ({input.narration_duration_s:.3f}s). The proposal duration remains the "
+                f"integer UI value {input.target_duration_s}, but all visual timing and fast-cut "
+                "arithmetic must total the narration duration exactly. Use these "
+                "server-transcribed words as the semantic grouping spine; do not use "
+                "voiceover_script or invent speech. Video windows may exceed the default "
+                "3-second montage ceiling up to their actual source duration; preserve longer "
+                "coherent action instead of repeating clips to fill the recording. "
+                "The explicit photo duration still applies exactly. Transcript: "
+                f"{json.dumps(input.narration_words, ensure_ascii=False)}"
+            )
         review_note = ""
         if input.review_feedback.strip():
             review_note = (
@@ -913,29 +1095,38 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "requested source coverage, text, audio intent, and exact target duration. "
                 f"{input.review_feedback.strip()}"
             )
+        required_media_ids = _required_media_ids(input)
         source_floor = (
-            len(input.montage_cadence.source_media_ids)
-            if input.montage_cadence is not None
-            else minimum_required_sources(
-                len(prompt_media),
-                target_duration_s=input.target_duration_s,
-                media=prompt_media,
-                mixed_media_timing=input.mixed_media_timing,
+            len(required_media_ids)
+            if required_media_ids
+            else (
+                len(input.montage_cadence.source_media_ids)
+                if input.montage_cadence is not None
+                else minimum_required_sources(
+                    len(prompt_media),
+                    target_duration_s=input.target_duration_s,
+                    media=prompt_media,
+                    mixed_media_timing=input.mixed_media_timing,
+                )
             )
         )
         source_floor_note = (
             "SCHEMA SOURCE FLOOR: This response must reference at least "
             f"{source_floor} distinct AVAILABLE MEDIA aliases across story_beats or fast_cuts. "
-            "Count them before returning JSON."
+            "Count them before returning JSON. A fullscreen story beat may list multiple "
+            "distinct aliases: if the required source count exceeds your beat count, assign "
+            "multiple sources to some beats. Reusing one alias does not increase coverage."
         )
         if uses_quick_photo_long_video_timing(input.mixed_media_timing):
             source_floor_note += (
                 " This floor is capped by the target duration and the profile's minimum holds; "
                 "do not force more sources than can fit."
             )
-        if source_floor == len(prompt_media) and prompt_media:
+        if required_media_ids:
             source_floor_note += " Reference every alias at least once: " + ", ".join(
-                media.media_id for media in prompt_media
+                id_to_alias[media.media_id]
+                for media in input.media
+                if media.media_id in required_media_ids
             )
             source_floor_note += "."
         return load_prompt(
@@ -945,13 +1136,14 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             direction=input.direction,
             goal=input.goal[:500]
             or "Make the uploaded material feel intentional and worth sharing.",
-            creator_request=input.creator_request[:1000],
+            creator_request=input.creator_request[:12000],
             pace=input.pace,
             target_duration_s=str(input.target_duration_s),
             fast_timing_note=fast_timing_note,
             mixed_timing_note=mixed_timing_note,
             montage_note=montage_note,
             review_note=review_note,
+            narration_note=narration_note,
             footage_note=footage_note,
             media_json=json.dumps([row.model_dump() for row in prompt_media], ensure_ascii=False),
             source_floor_note=source_floor_note,
@@ -1059,7 +1251,10 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                             cut.output_duration_s >= bounds.minimum_s - _FAST_DURATION_EPSILON_S
                             if source_allows_longer
                             else cut.output_duration_s >= 0.1 - _FAST_DURATION_EPSILON_S
-                        ) and (cut.output_duration_s <= bounds.maximum_s + _FAST_DURATION_EPSILON_S)
+                        ) and (
+                            input.narration_duration_s is not None
+                            or cut.output_duration_s <= bounds.maximum_s + _FAST_DURATION_EPSILON_S
+                        )
                     if not valid_timing:
                         raise SchemaError(
                             "edit_proposal: mixed-media timing profile was not honored"
@@ -1093,16 +1288,23 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                     f"edit_proposal: fast montage selected {len(cut_sources)} distinct sources; "
                     f"need at least {minimum}"
                 )
-            if abs(total_cut_duration - output.duration_s) > _FAST_CUT_TOTAL_TOLERANCE_S:
+            if (
+                abs(total_cut_duration - _effective_target_duration_s(input))
+                > _FAST_CUT_TOTAL_TOLERANCE_S
+            ):
                 raise SchemaError(
                     "edit_proposal: fast cut durations do not fit the declared duration"
                 )
         else:
-            minimum = minimum_required_sources(
-                len(input.media),
-                target_duration_s=input.target_duration_s,
-                media=input.media,
-                mixed_media_timing=input.mixed_media_timing,
+            minimum = (
+                len(_required_media_ids(input))
+                if _required_media_ids(input)
+                else minimum_required_sources(
+                    len(input.media),
+                    target_duration_s=input.target_duration_s,
+                    media=input.media,
+                    mixed_media_timing=input.mixed_media_timing,
+                )
             )
             if len(used) < minimum:
                 raise SchemaError(
@@ -1123,6 +1325,9 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         # Fast montage proposals intentionally leave ``story_beats`` empty;
         # their source-of-truth is the ordered cut list.
         variety_ids = cut_sources if input.direction == "fast_montage" and cuts else used
+        required_ids = _required_media_ids(input)
+        if required_ids and not required_ids <= variety_ids:
+            raise SchemaError("edit_proposal: requested media coverage was dropped")
         used_kinds = {media.kind for media in input.media if media.media_id in variety_ids}
         if len(available_kinds) > 1 and used_kinds != available_kinds:
             raise SchemaError("edit_proposal: story must use both photos and videos")
@@ -1155,7 +1360,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 raise SchemaError(
                     "edit_proposal: draft thought invents an unsupported personal experience"
                 )
-        if abs(output.duration_s - input.target_duration_s) > 5:
+        if abs(output.duration_s - _effective_target_duration_s(input)) > 5:
             raise SchemaError("edit_proposal: duration is too far from the creator's target")
         if input.direction != "fast_montage":
             beat_duration = sum(beat.duration_s for beat in output.story_beats)

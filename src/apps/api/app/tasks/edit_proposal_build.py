@@ -34,6 +34,7 @@ from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
+    NarrationTrack,
     ProposalFailure,
     StoryBeat,
     canonical_media_digest,
@@ -68,6 +69,66 @@ _TASK_LIMITS = {
 _CLIP_ANALYSIS_CONCURRENCY = 3
 _MONTAGE_REVIEW_CONCURRENCY = 3
 _MONTAGE_REVIEW_KEEP_THRESHOLD = 6.0
+
+
+def _item_narration_identity(item: PlanItem, brief) -> NarrationTrack | None:  # noqa: ANN001
+    """Read the server-pinned recording identity without consulting script text."""
+
+    seeded = brief.narration
+    if seeded is None or getattr(item, "audio_mode", None) != "voiceover":
+        return None
+    item_identity = (
+        str(getattr(item, "voiceover_gcs_path", "") or ""),
+        str(getattr(item, "voiceover_generation", "") or ""),
+        float(getattr(item, "voiceover_duration_s", 0) or 0),
+    )
+    seeded_identity = (seeded.gcs_path, seeded.generation, float(seeded.duration_s))
+    if (
+        item_identity[0] != seeded_identity[0]
+        or item_identity[1] != seeded_identity[1]
+        or abs(item_identity[2] - seeded_identity[2]) > 0.001
+    ):
+        raise RuntimeError("the pinned voiceover identity changed before proposal planning")
+    return seeded.model_copy(update={"words": []})
+
+
+def _transcribe_pinned_narration(narration: NarrationTrack) -> NarrationTrack:
+    """Transcribe the exact approved object generation used by the render."""
+
+    from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
+    from app.storage import download_generation_to_file, object_metadata  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory(prefix="edit-proposal-voiceover-") as tmpdir:
+        try:
+            metadata = object_metadata(narration.gcs_path)
+            if str(metadata.generation) != narration.generation:
+                raise ValueError("voiceover generation changed")
+            suffix = Path(narration.gcs_path).suffix.lower() or ".m4a"
+            local = os.path.join(tmpdir, f"voiceover{suffix}")
+            download_generation_to_file(
+                narration.gcs_path,
+                local,
+                generation=narration.generation,
+            )
+            transcript = transcribe_whisper_cached(local)
+        except Exception as exc:  # noqa: BLE001 — exact audio identity is required
+            raise RuntimeError("the pinned voiceover could not be transcribed") from exc
+    return NarrationTrack.model_validate(
+        {
+            **narration.model_dump(mode="json"),
+            "words": [
+                {
+                    "text": word.text,
+                    "start_s": word.start_s,
+                    "end_s": word.end_s,
+                    "confidence": word.confidence,
+                }
+                for word in transcript.words
+                if str(word.text or "").strip()
+            ],
+            "language": str(getattr(transcript, "language", "") or ""),
+        }
+    )
 
 
 def _locked_item(
@@ -764,7 +825,7 @@ def _review_authored_montage(
                         file_uri=uploaded.uri,
                         source_media_id=source_id,
                         source_duration_s=float(ref.duration_s or 0.0),
-                        creator_request=creator_request[:1000],
+                        creator_request=creator_request[:12000],
                         proposed_cuts=[
                             MontageReviewCutInput(
                                 cut_id=cut.cut_id,
@@ -1253,6 +1314,14 @@ def _run_draft_attempt(
                 item.edit_proposal = proposal.model_dump(mode="json")
                 db.commit()
 
+        narration = _item_narration_identity(item, brief)
+        if narration is not None:
+            # The proposal task owns the transcript that reaches approval. It
+            # must come from the exact pinned recording, never from the
+            # creator's script or a provider-authored plan field.
+            narration = _transcribe_pinned_narration(narration)
+            brief = brief.model_copy(update={"narration": narration})
+
         # Pool/clip media analysis (_analyze_clip_assignment -> analyze_pool_video /
         # analyze_pool_image) runs a raw Gemini call outside the Agent framework, so
         # it never produces an agent_run row — any failure here is otherwise
@@ -1385,10 +1454,15 @@ def _run_draft_attempt(
                     )
                     db.commit()
             return
-        target_duration_s = cadence_target_s or adapt_target_duration_s(
-            brief.duration_s,
-            feasible_duration_s,
-            allow_source_reuse=allow_cadence_reuse,
+        target_duration_s = (
+            int(round(narration.duration_s))
+            if narration is not None
+            else cadence_target_s
+            or adapt_target_duration_s(
+                brief.duration_s,
+                feasible_duration_s,
+                allow_source_reuse=allow_cadence_reuse,
+            )
         )
         if brief.direction == "fast_montage":
             try:
@@ -1421,7 +1495,7 @@ def _run_draft_attempt(
                         )
                         db.commit()
                 return
-        digest = canonical_media_digest(media)
+        digest = canonical_media_digest(media, narration)
 
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)
@@ -1464,7 +1538,7 @@ def _run_draft_attempt(
             assert owner_id is not None
             fresh_pool = _pool_refs(db, item, owner_id)
             fresh_media = clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths]
-            if canonical_media_digest(fresh_media) != digest:
+            if canonical_media_digest(fresh_media, narration) != digest:
                 _fail(
                     item,
                     current,
@@ -1502,6 +1576,7 @@ def _run_draft_attempt(
                     "proposal_version": current.proposal_version + 1,
                     "status": "drafting",
                     "media_digest": digest,
+                    "brief": brief,
                     "failure": None,
                 }
             )
@@ -1537,6 +1612,14 @@ def _run_draft_attempt(
                     creator_request=brief.creator_request,
                     pace=brief.pace,
                     target_duration_s=target_duration_s,
+                    media_scope=brief.media_scope,
+                    selected_media_ids=brief.selected_media_ids,
+                    narration_duration_s=(narration.duration_s if narration else None),
+                    narration_words=(
+                        [word.model_dump(mode="json") for word in narration.words]
+                        if narration
+                        else []
+                    ),
                     mixed_media_timing=brief.mixed_media_timing,
                     montage_audio=brief.montage_audio,
                     montage_cadence=brief.montage_cadence,
@@ -1571,6 +1654,14 @@ def _run_draft_attempt(
                             creator_request=brief.creator_request,
                             pace=brief.pace,
                             target_duration_s=target_duration_s,
+                            media_scope=brief.media_scope,
+                            selected_media_ids=brief.selected_media_ids,
+                            narration_duration_s=(narration.duration_s if narration else None),
+                            narration_words=(
+                                [word.model_dump(mode="json") for word in narration.words]
+                                if narration
+                                else []
+                            ),
                             mixed_media_timing=brief.mixed_media_timing,
                             montage_audio=brief.montage_audio,
                             montage_cadence=brief.montage_cadence,
@@ -1644,7 +1735,7 @@ def _run_draft_attempt(
             direction=brief.direction,
             goal=brief.goal,
             pace=brief.pace,
-            duration_s=output.duration_s if output is not None else target_duration_s,
+            duration_s=target_duration_s,
             # A confirmed Main Creator title is immutable and beats any
             # specialist/copy-writer title for every render.
             title=brief.opening_title or (output.title if output is not None else "A few moments"),
@@ -1678,6 +1769,10 @@ def _run_draft_attempt(
                 else fallback_cuts
             ),
             mixed_media_timing=brief.mixed_media_timing,
+            media_scope=brief.media_scope,
+            selected_media_ids=brief.selected_media_ids
+            or ([ref.media_id for ref in media] if brief.media_scope == "all" else None),
+            narration=narration,
             montage_text_bindings=(
                 getattr(output, "montage_text_bindings", [])
                 if output is not None and getattr(output, "montage_text_bindings", [])

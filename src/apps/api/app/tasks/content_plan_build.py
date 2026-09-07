@@ -549,6 +549,13 @@ def _guided_render_queue(
 ) -> str:
     """Route new guided timing snapshots only to current-version workers."""
 
+    from app.services.creator_execution_contract import (  # noqa: PLC0415
+        CREATOR_FIDELITY_QUEUE,
+        requests_guided_voiceover,
+    )
+
+    if requests_guided_voiceover(creator_strategy):
+        return CREATOR_FIDELITY_QUEUE
     if creator_strategy:
         from app.services.edit_proposal_limits import (  # noqa: PLC0415
             CREATOR_RENDER_CONTRACT_QUEUE,
@@ -1039,6 +1046,44 @@ def _dispatch_item_render(
         has_voiceover=(audio_mode == "voiceover" and bool(item.voiceover_gcs_path)),
     )
 
+    from app.services.creator_execution_contract import (  # noqa: PLC0415
+        GUIDED_VOICEOVER_CONTRACT,
+        execution_identity,
+        narration_matches_item,
+        requests_guided_voiceover,
+    )
+
+    guided_voiceover = requests_guided_voiceover(creator_strategy)
+    creator_identity = None
+    if guided_voiceover:
+        if not settings.creator_prompt_fidelity_enabled or bypass_guided_edit_gate:
+            return DispatchResult("proposal_replan_required")
+        if not creator_guided_attempt_id:
+            return DispatchResult("proposal_stale")
+        guided_applicable = True
+        matching_sessions = (
+            session.execute(
+                select(CreatorAgentSession).where(
+                    CreatorAgentSession.plan_item_id == item.id,
+                    CreatorAgentSession.creator_id == plan.user_id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        matching_plans = [
+            row.active_plan
+            for row in matching_sessions
+            if isinstance(row.active_plan, dict)
+            and row.active_plan.get("guided_generation_attempt_id") == creator_guided_attempt_id
+        ]
+        if len(matching_plans) != 1:
+            return DispatchResult("proposal_stale")
+        try:
+            creator_identity = execution_identity(matching_plans[0], creator_strategy)
+        except ValueError:
+            return DispatchResult("proposal_stale")
+
     creator_attempt_proposal = None
     if creator_guided_attempt_id is not None:
         from app.schemas.edit_proposal import parse_edit_proposal  # noqa: PLC0415
@@ -1111,7 +1156,7 @@ def _dispatch_item_render(
             # A fast montage without typed cuts is never renderable, regardless
             # of guided-edit rollout flags. Falling through here revives the
             # exact legacy long-section compiler bug this contract closes.
-            if proposal_error == "proposal_replan_required":
+            if proposal_error == "proposal_replan_required" or guided_voiceover:
                 return DispatchResult(proposal_error)
             if (
                 settings.guided_edit_enforcement_enabled
@@ -1119,6 +1164,12 @@ def _dispatch_item_render(
             ):
                 return DispatchResult(proposal_error)
             approved_proposal = None
+
+    if guided_voiceover:
+        if approved_proposal is None or not narration_matches_item(
+            approved_proposal["snapshot"].get("narration"), item
+        ):
+            return DispatchResult("proposal_stale")
 
     content_plan_id = plan.id
     plan_item_id = item.id
@@ -1349,7 +1400,7 @@ def _dispatch_item_render(
             smart_captions=smart_context,
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
-            creator_request=str(creator_request or "")[:1000],
+            creator_request=str(creator_request or "")[:12000],
         )
         # Pin one immutable identity for this Creator-confirmed render before
         # the worker is queued.  Native variants historically received no
@@ -1399,6 +1450,9 @@ def _dispatch_item_render(
                 for ref in approved_proposal["snapshot"]["media"]
             ],
         }
+        if guided_voiceover:
+            snapshot["guided_edit"]["execution_contract"] = GUIDED_VOICEOVER_CONTRACT
+            snapshot["guided_edit"]["creator_execution_identity"] = creator_identity
         # Preserve only the typed contextual-label intent on the immutable
         # guided snapshot. Label text is never copied from Creator JSON; the
         # worker resolves it later from the approved clip metadata.

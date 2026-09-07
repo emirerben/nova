@@ -44,6 +44,34 @@ def test_media_and_catalog_contracts_reject_storage_capabilities() -> None:
         CreatorCatalogRef(catalog_id="https://example.test/music/1", kind="music")
 
 
+def test_narration_identity_is_validated_and_part_of_manifest_hash() -> None:
+    from app.agents._schemas.creator_agent import CreatorNarrationIdentity, ResolvedCreatorManifest
+
+    narration = CreatorNarrationIdentity(
+        gcs_path="voiceover-uploads/user/item/voice.webm",
+        generation="generation-1",
+        duration_s=19.5,
+    )
+    manifest = ResolvedCreatorManifest(
+        item_id="item-1",
+        edit_format="montage",
+        render_program="native",
+        has_voiceover=True,
+        narration=narration,
+        context_hash="a" * 64,
+        manifest_hash="0" * 64,
+    )
+    changed = manifest.model_copy(
+        update={"narration": narration.model_copy(update={"generation": "generation-2"})}
+    )
+
+    assert canonical_manifest_hash(manifest) != canonical_manifest_hash(changed)
+    with pytest.raises(ValidationError):
+        CreatorNarrationIdentity(
+            gcs_path="gs://bucket/voice.webm", generation="generation-1", duration_s=1
+        )
+
+
 def test_agent_output_is_discriminated_and_strict() -> None:
     result = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(
         {"kind": "ask_user", "question": "Which cut?", "reason_code": "ambiguous_goal"}

@@ -1143,3 +1143,111 @@ def test_generate_item_kill_switch_falls_back_to_task(
     _reset_async_pool()
     resp = client.post(f"/plan-items/{item_id}/generate", headers=_auth(user_id))
     assert resp.status_code == 409
+
+
+def _seed_guided_voiceover_contract(*, images_only: bool = False):
+    from app.agents._schemas.creator_agent import canonical_context_hash
+    from app.schemas.edit_proposal import NarrationTrack, parse_edit_proposal
+
+    user_id, item_id = _seed_item()
+    path = f"users/{user_id}/plan/{item_id}/source.{'jpg' if images_only else 'mp4'}"
+    if images_only:
+        _approve_asset_proposal(user_id, item_id, path=path, generation="42")
+    else:
+        _approve_clip_proposal(item_id, path=path)
+    audio_path = f"voiceover-uploads/direct/{user_id}/{uuid.uuid4()}/voice.mp3"
+    with sync_session() as session:
+        item = session.get(PlanItem, item_id)
+        item.audio_mode = "voiceover"
+        item.edit_format = "narrated_planned"
+        item.voiceover_gcs_path = audio_path
+        item.voiceover_generation = "84"
+        item.voiceover_duration_s = 44.7
+        proposal = parse_edit_proposal(item.edit_proposal)
+        narration = NarrationTrack(gcs_path=audio_path, generation="84", duration_s=44.7)
+        proposal.draft.narration = narration
+        proposal.last_approved.snapshot.narration = narration
+        proposal.media_digest = canonical_media_digest(proposal.draft.media, narration)
+        proposal.last_approved.media_digest = proposal.media_digest
+        item.edit_proposal = proposal.model_dump(mode="json")
+        strategy = {
+            "execution_contract": "guided_voiceover_v1",
+            "render_program": "guided",
+            "audio_strategy": "voiceover",
+            "selected_media_ids": [proposal.draft.media[0].media_id],
+        }
+        edit_plan = {"strategy": strategy, "manifest_hash": "m" * 64, "context_hash": "c" * 64}
+        active_plan = {
+            "edit_plan": edit_plan,
+            "plan_hash": canonical_context_hash(edit_plan),
+            "guided_generation_attempt_id": proposal.generation_attempt_id,
+        }
+        session.add(
+            CreatorAgentSession(
+                creator_id=user_id,
+                plan_item_id=item_id,
+                status="executing",
+                active_plan=active_plan,
+            )
+        )
+        session.commit()
+        attempt = proposal.generation_attempt_id
+
+    def metadata(object_path):
+        return ObjectMetadata(
+            path=object_path,
+            generation="84" if object_path == audio_path else "42",
+            etag=None,
+            size=100,
+            content_type="audio/mpeg"
+            if object_path == audio_path
+            else "image/jpeg"
+            if images_only
+            else "video/mp4",
+        )
+
+    return item_id, strategy, attempt, metadata
+
+
+@pytest.mark.parametrize("images_only", [False, True])
+def test_guided_voiceover_dispatch_pins_confirmed_identity_and_audio(monkeypatch, images_only):
+    monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", True)
+    item_id, strategy, attempt, metadata = _seed_guided_voiceover_contract(images_only=images_only)
+    with patch("app.storage.object_metadata", side_effect=metadata), patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(
+            str(item_id),
+            creator_strategy=strategy,
+            creator_guided_attempt_id=attempt,
+        )
+    assert result.outcome == "dispatched"
+    job = _jobs_for(item_id)[0]
+    guided = job.assembly_plan["guided_edit"]
+    assert guided["execution_contract"] == "guided_voiceover_v1"
+    assert guided["approved_proposal"]["narration"]["generation"] == "84"
+    assert guided["creator_execution_identity"]["edit_plan"]["strategy"] == strategy
+    assert enqueue.call_args.kwargs["queue"] == "creator-fidelity-v1"
+
+
+@pytest.mark.parametrize("drift", ["audio", "strategy", "attempt", "flag", "bypass"])
+def test_guided_voiceover_dispatch_rejects_stale_or_disabled_contract(monkeypatch, drift):
+    monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", drift != "flag")
+    item_id, strategy, attempt, metadata = _seed_guided_voiceover_contract()
+    if drift == "audio":
+        with sync_session() as session:
+            item = session.get(PlanItem, item_id)
+            item.voiceover_generation = "85"
+            session.commit()
+    elif drift == "strategy":
+        strategy = {**strategy, "selected_media_ids": ["different-source"]}
+    elif drift == "attempt":
+        attempt = str(uuid.uuid4())
+    with patch("app.storage.object_metadata", side_effect=metadata), patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(
+            str(item_id),
+            creator_strategy=strategy,
+            creator_guided_attempt_id=attempt,
+            bypass_guided_edit_gate=drift == "bypass",
+        )
+    assert result.outcome in {"proposal_stale", "proposal_replan_required"}
+    enqueue.assert_not_called()
+    assert not _jobs_for(item_id)

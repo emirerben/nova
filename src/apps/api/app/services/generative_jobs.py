@@ -100,7 +100,7 @@ _MAX_TIKTOK_SUMMARY_CHARS = 1200
 
 # Storage-side cap for the confirmed Main Creator direction. This is persisted
 # on the Job so retries and editor re-renders retain the same user intent.
-_MAX_CREATOR_REQUEST_CHARS = 1000
+_MAX_CREATOR_REQUEST_CHARS = 12000
 
 # Filming-guide caps — mirror the schema-side constants so the storage layer
 # independently enforces them without importing the schema.

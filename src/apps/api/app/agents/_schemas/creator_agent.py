@@ -38,6 +38,7 @@ from app.schemas.edit_proposal import (
 )
 
 CREATOR_AGENT_SCHEMA_VERSION = 1
+CREATOR_REQUEST_MAX_CHARS = 12_000
 MAX_CREATOR_COMMANDS = 4
 MAX_CREATOR_MEDIA_REFS = 50
 MAX_CREATOR_CATALOG_REFS = 50
@@ -112,6 +113,32 @@ class CreatorMediaRef(_CreatorModel):
         return _opaque_id(value, field_name="media_id")
 
 
+class CreatorNarrationIdentity(_CreatorModel):
+    """Server-pinned identity for a recorded voiceover source.
+
+    The path is intentionally carried only in the server-resolved manifest so
+    confirmation and execution can fence the exact object.  Main Creator
+    prompt rendering redacts it before the manifest is shown to the model.
+    """
+
+    gcs_path: str = Field(min_length=1, max_length=512)
+    generation: str = Field(min_length=1, max_length=160)
+    duration_s: float = Field(gt=0.0, le=600.0)
+
+    @field_validator("gcs_path")
+    @classmethod
+    def _validate_gcs_path(cls, value: str) -> str:
+        value = value.strip()
+        if not value or "://" in value or value.startswith(("/", "gs:", "s3:")):
+            raise ValueError("gcs_path must be a relative server storage path")
+        return value
+
+    @field_validator("generation")
+    @classmethod
+    def _validate_generation(cls, value: str) -> str:
+        return _opaque_id(value, field_name="generation")
+
+
 class CreatorCatalogRef(_CreatorModel):
     """An opaque identity from a server-owned catalog."""
 
@@ -173,8 +200,9 @@ class CreatorEditSnapshot(_CreatorModel):
 class ResolvedCreatorManifest(_CreatorModel):
     """Server-resolved, descriptive context for one creator-agent turn.
 
-    This model intentionally contains no executable operation.  In particular,
-    it has no storage paths, URLs, or callable route information.
+    This model intentionally contains no executable operation.  Its optional
+    narration field carries only the server-pinned source identity needed for
+    confirmation and worker fences; it has no callable route information.
     """
 
     schema_version: Literal[1] = CREATOR_AGENT_SCHEMA_VERSION
@@ -182,6 +210,7 @@ class ResolvedCreatorManifest(_CreatorModel):
     edit_format: EditFormat
     render_program: RenderProgram
     has_voiceover: bool = False
+    narration: CreatorNarrationIdentity | None = None
     current_edit: CreatorEditSnapshot | None = None
     media: list[CreatorMediaRef] = Field(default_factory=list, max_length=MAX_CREATOR_MEDIA_REFS)
     catalog: list[CreatorCatalogRef] = Field(
@@ -206,6 +235,9 @@ class ResolvedCreatorManifest(_CreatorModel):
 CreativeDirection = Literal["guided_story", "fast_montage", "text_explainer", "native"]
 CreativePace = Literal["relaxed", "balanced", "fast"]
 AudioStrategy = Literal["licensed_music", "original_audio", "voiceover"]
+ExecutionContract = Literal["guided_voiceover_v1"]
+MediaScope = Literal["all", "selected"]
+ParticipantLabels = Literal["none", "single_subject"]
 CaptionStyle = Literal["none", "clean", "kinetic", "karaoke", "editorial", "auto"]
 OptionalTreatment = Literal["overlays", "sfx", "transitions", "looks"]
 ContextLabelKind = Literal["sport"]
@@ -240,6 +272,11 @@ class CreativeStrategy(_CreatorModel):
     edit_format: EditFormat = "montage"
     archetype: EditFormat | None = None
     audio_strategy: AudioStrategy = "licensed_music"
+    execution_contract: ExecutionContract | None = None
+    media_scope: MediaScope | None = None
+    participant_labels: ParticipantLabels = "none"
+    score_labels: bool = False
+    sport_labels: bool = False
     story_structure: list[str] = Field(default_factory=list, max_length=8)
     caption_style: CaptionStyle = "auto"
     intro_hook: str | None = Field(
@@ -1055,6 +1092,7 @@ __all__ = [
     "CreatorEditPlan",
     "CreatorLimits",
     "CreatorMediaRef",
+    "CreatorNarrationIdentity",
     "CreatorSfxIntent",
     "ContextLabelIntent",
     "CreatorRevisionProposal",
@@ -1068,6 +1106,10 @@ __all__ = [
     "CreatorWorkspaceRelevanceDecision",
     "CreatorWorkspaceRelevanceProposal",
     "CreativeStrategy",
+    "CREATOR_REQUEST_MAX_CHARS",
+    "ExecutionContract",
+    "MediaScope",
+    "ParticipantLabels",
     "LicensedSfxIntent",
     "SfxIntent",
     "MixedMediaTimingProfile",

@@ -18,6 +18,7 @@ from app.agents._schemas.creator_agent import (
     CreatorEditSnapshot,
     CreatorLimits,
     CreatorMediaRef,
+    CreatorNarrationIdentity,
     DispatchRenderCommand,
     DraftGuidedProposalCommand,
     ResolvedCreatorManifest,
@@ -27,6 +28,7 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents._schemas.creator_policy import (
     CAPABILITY_DRAFT_GUIDED_PROPOSAL,
+    CAPABILITY_GUIDED_VOICEOVER,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
@@ -157,6 +159,7 @@ def resolve_creator_manifest(
     has_ready_variant: bool = False,
     limits: CreatorLimits | None = None,
     guided_capability_enabled: bool | None = None,
+    narration: CreatorNarrationIdentity | Mapping[str, Any] | None = None,
 ) -> ResolvedCreatorManifest:
     """Resolve a descriptive v1 manifest from server state and policy.
 
@@ -167,6 +170,15 @@ def resolve_creator_manifest(
 
     resolved_media = _as_media_refs(media)
     resolved_catalog = _as_catalog_refs(catalog)
+    resolved_narration = (
+        None
+        if narration is None
+        else (
+            narration
+            if isinstance(narration, CreatorNarrationIdentity)
+            else CreatorNarrationIdentity.model_validate(narration)
+        )
+    )
     resolved_edit = (
         None
         if current_edit is None
@@ -191,8 +203,16 @@ def resolve_creator_manifest(
         else guided_capability_enabled
     )
     guided_executable = guided_enabled and guided_applicable_now
+    guided_voiceover_executable = (
+        getattr(settings, "creator_prompt_fidelity_enabled", False)
+        and has_voiceover
+        and resolved_narration is not None
+        and guided_enabled
+        and has_media
+    )
     has_dispatchable_media = has_native_media or (
-        render_program == "guided" and guided_executable and has_media
+        (render_program == "guided" and guided_executable and has_media)
+        or guided_voiceover_executable
     )
 
     if not guided_enabled:
@@ -255,6 +275,31 @@ def resolve_creator_manifest(
                 "automatic speech cuts are disabled by the server",
             )
         ),
+        CAPABILITY_GUIDED_VOICEOVER: (
+            _available()
+            if (guided_voiceover_executable)
+            else _unavailable(
+                "disabled_by_setting",
+                "guided voiceover is disabled by the server",
+            )
+            if not getattr(settings, "creator_prompt_fidelity_enabled", False)
+            else _unavailable(
+                "narration_identity_missing",
+                "a recorded voiceover generation and duration are required",
+            )
+            if has_voiceover and resolved_narration is None
+            else _unavailable(
+                "requires_voiceover",
+                "guided voiceover requires a recorded voiceover",
+            )
+            if not has_voiceover
+            else _unavailable(
+                "disabled_by_setting",
+                "guided editing is disabled by the server",
+            )
+            if not guided_enabled
+            else _unavailable("no_media", "attach source media before guided voiceover")
+        ),
     }
 
     for capability_name, setting_name in _FEATURE_SETTINGS.items():
@@ -281,6 +326,7 @@ def resolve_creator_manifest(
         "edit_format": normalized_format,
         "render_program": render_program,
         "has_voiceover": has_voiceover,
+        "narration": resolved_narration,
         "current_edit": resolved_edit,
         # Duration is asynchronous analysis evidence, not source identity. A
         # probe finishing while the creator reviews a plan must not invalidate
@@ -299,6 +345,7 @@ def resolve_creator_manifest(
         edit_format=normalized_format,
         render_program=render_program,
         has_voiceover=has_voiceover,
+        narration=resolved_narration,
         current_edit=resolved_edit,
         media=resolved_media,
         catalog=resolved_catalog,
@@ -393,7 +440,11 @@ def compile_strategy_to_plan(
             "selected_media_ids": (
                 selected_media_ids
                 if effective_program == "native"
-                else [media.media_id for media in manifest.media]
+                else (
+                    [media.media_id for media in manifest.media]
+                    if strategy.media_scope != "selected"
+                    else selected_media_ids
+                )
             ),
             "optional_treatments": available_treatments,
         }
@@ -471,6 +522,7 @@ __all__ = [
     "CAPABILITY_DISPATCH_RENDER",
     "CAPABILITY_CAPTION_STYLE",
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
+    "CAPABILITY_GUIDED_VOICEOVER",
     "CAPABILITY_GUIDED_STORY",
     "CAPABILITY_NATIVE_RENDER",
     "CAPABILITY_SELECT_READY_VARIANT",

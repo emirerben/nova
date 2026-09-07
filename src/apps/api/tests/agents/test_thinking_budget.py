@@ -78,6 +78,13 @@ def test_gemini_3_thinking_level_and_declared_model_reach_sdk(capturing_client):
     assert str(thinking.thinking_level).endswith("HIGH")
 
 
+def test_main_creator_uses_bounded_low_thinking_and_output_budget() -> None:
+    from app.agents.main_creator import MainCreatorAgent
+
+    assert MainCreatorAgent.spec.thinking_level == "low"
+    assert MainCreatorAgent.max_output_tokens == 4096
+
+
 def test_per_agent_timeout_is_enforced(capturing_client, monkeypatch):
     def slow_generate(**kwargs):  # noqa: ARG001
         time.sleep(0.2)

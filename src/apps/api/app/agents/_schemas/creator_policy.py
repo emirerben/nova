@@ -10,6 +10,18 @@ from app.schemas.edit_proposal import MontageAudioPlan
 
 MAX_MAIN_CREATOR_SELECTED_MEDIA = 12
 CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
+CAPABILITY_GUIDED_VOICEOVER = "guided_voiceover"
+GUIDED_VOICEOVER_EXECUTION_CONTRACT = "guided_voiceover_v1"
+
+
+def _requires_guided_voiceover(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> bool:
+    return bool(
+        manifest.has_voiceover
+        and strategy.execution_contract == GUIDED_VOICEOVER_EXECUTION_CONTRACT
+        and (strategy.mixed_media_timing is not None or strategy.media_scope == "all")
+    )
 
 
 class MixedMediaTimingUnavailableError(ValueError):
@@ -43,6 +55,44 @@ def effective_render_program(
     )
     montage_cadence_requires_guided = strategy.montage_cadence is not None
     guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
+    guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
+    guided_voiceover_requested = _requires_guided_voiceover(manifest, strategy)
+    if (
+        manifest.has_voiceover
+        and (strategy.mixed_media_timing is not None or strategy.media_scope == "all")
+        and not guided_voiceover_requested
+        and not (
+            guided_voiceover is not None and guided_voiceover.reason_code == "disabled_by_setting"
+        )
+    ):
+        raise MixedMediaTimingUnavailableError(
+            "explicit mixed-media timing or all-media scope with a recorded voiceover "
+            "requires the guided_voiceover_v1 execution contract"
+        )
+    if strategy.execution_contract is not None and not guided_voiceover_requested:
+        raise MixedMediaTimingUnavailableError(
+            "guided_voiceover_v1 requires a recorded voiceover and explicit mixed-media timing "
+            "or all-media scope"
+        )
+    if guided_voiceover_requested:
+        if manifest.narration is None:
+            raise MixedMediaTimingUnavailableError(
+                "guided voiceover requires a pinned narration identity"
+            )
+        if not (guided_voiceover and guided_voiceover.available):
+            reason = (
+                guided_voiceover.reason
+                if guided_voiceover is not None
+                else "guided voiceover capability is not advertised"
+            )
+            raise MixedMediaTimingUnavailableError(reason)
+        return "guided"
+    if strategy.media_scope == "all":
+        if not (guided and guided.available):
+            raise MixedMediaTimingUnavailableError(
+                "all-media scope requires the guided proposal capability"
+            )
+        return "guided"
     if montage_cadence_requires_guided:
         if manifest.has_voiceover or strategy.audio_strategy == "voiceover":
             raise MontageCadenceUnavailableError(
@@ -64,11 +114,11 @@ def effective_render_program(
     )
     if native_required:
         return "native"
-    media_kinds = {media.kind for media in manifest.media}
     # Native montage only receives attached clips. A per-kind timing request
     # needs the guided specialist so pool photos are selected and compiled too.
     mixed_media_timing_requires_specialist = bool(
-        strategy.mixed_media_timing is not None and {"image", "video"}.issubset(media_kinds)
+        strategy.mixed_media_timing is not None
+        and {"image", "video"}.issubset({media.kind for media in manifest.media})
     )
     if (mixed_media_timing_requires_specialist or montage_audio_requires_guided) and not (
         guided and guided.available
@@ -182,6 +232,8 @@ def normalize_creator_strategy_media(
 __all__ = [
     "MAX_MAIN_CREATOR_SELECTED_MEDIA",
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
+    "CAPABILITY_GUIDED_VOICEOVER",
+    "GUIDED_VOICEOVER_EXECUTION_CONTRACT",
     "MixedMediaTimingUnavailableError",
     "MontageCadenceUnavailableError",
     "effective_render_program",

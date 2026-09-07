@@ -557,8 +557,10 @@ async def test_reconcile_expires_a_succeeded_but_stalled_guided_attempt(monkeypa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("has_narration", [False, True])
 async def test_reconcile_does_not_expire_a_creator_task_still_waiting_in_queue(
     monkeypatch,
+    has_narration,
 ) -> None:
     attempt_id = str(uuid.uuid4())
     session = _session(
@@ -573,6 +575,11 @@ async def test_reconcile_does_not_expire_a_creator_task_still_waiting_in_queue(
             generation_attempt_id=attempt_id,
             status="analyzing",
             approval_mode="auto",
+            brief={
+                "narration": {"gcs_path": "voiceover/a.m4a", "generation": "99", "duration_s": 4.7}
+            }
+            if has_narration
+            else {},
         ).model_dump(mode="json"),
     )
     receipt = SimpleNamespace(
@@ -599,6 +606,11 @@ async def test_reconcile_does_not_expire_a_creator_task_still_waiting_in_queue(
     assert receipt.status == "succeeded"
     append.assert_not_awaited()
     runtime.assert_called_once()
+    from app.config import settings
+
+    assert runtime.call_args.kwargs["queue_name"] == (
+        "creator-fidelity-v1" if has_narration else settings.pool_asset_analysis_queue
+    )
 
 
 @pytest.mark.asyncio

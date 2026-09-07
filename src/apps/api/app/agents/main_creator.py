@@ -8,6 +8,7 @@ the only code allowed to turn that strategy into typed product operations.
 from __future__ import annotations
 
 import json
+import re
 from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
     CREATOR_AGENT_OUTPUT_ADAPTER,
+    CREATOR_REQUEST_MAX_CHARS,
     CreatorAgentOutput,
     ProposeStrategy,
     ResolvedCreatorManifest,
@@ -29,13 +31,14 @@ from app.schemas.edit_proposal import (
     rejects_round_robin_cadence,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-06-v15-creator-direction"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-07-v18"
 
 
 class MainCreatorInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    user_message: str = Field(min_length=1, max_length=2000)
+    user_message: str = Field(min_length=1, max_length=CREATOR_REQUEST_MAX_CHARS)
+    creator_request: str = Field(default="", max_length=CREATOR_REQUEST_MAX_CHARS)
     creator_context: str = Field(default="", max_length=4000)
     creator_direction: str = Field(default="", max_length=4000)
     item_context: str = Field(default="", max_length=4000)
@@ -60,26 +63,34 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         max_attempts=2,
         backoff_s=(2.0,),
         timeout_s=35.0,
-        thinking_level="medium",
+        # Reserve output capacity for the full source manifest.
+        thinking_level="low",
         sensitive_io=True,
     )
     Input = MainCreatorInput
     Output = MainCreatorOutput
     response_json = True
-    max_output_tokens = 3000
+    max_output_tokens = 4096
 
     def required_fields(self) -> list[str]:
         return ["action"]
 
     def render_prompt(self, input: MainCreatorInput) -> str:  # noqa: A002
+        # Storage identity is needed for the confirmation/execution fence but
+        # is not useful creative context and must not be shown to the model.
+        prompt_manifest = input.capability_manifest.model_dump_json(
+            exclude_none=True,
+            exclude={"narration": True},
+        )
         return load_prompt(
             "main_creator",
             creator_context=input.creator_context or "(not available)",
             creator_direction=input.creator_direction or "(none)",
             item_context=input.item_context or "(not available)",
             media_context=json.dumps(input.media_context, ensure_ascii=False),
-            capability_manifest=input.capability_manifest.model_dump_json(exclude_none=True),
+            capability_manifest=prompt_manifest,
             conversation=json.dumps(input.conversation, ensure_ascii=False),
+            creator_request=input.creator_request or input.user_message,
             user_message=input.user_message,
         )
 
@@ -104,10 +115,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     for turn in input.conversation
                     if isinstance(turn, dict) and turn.get("role") == "user"
                 ]
-                timing = recognize_mixed_media_timing(
-                    "\n".join([*user_messages, input.user_message])
-                )
-                combined_request = "\n".join([*user_messages, input.user_message])
+                request_contract = input.creator_request or input.user_message
+                timing = recognize_mixed_media_timing("\n".join([*user_messages, request_contract]))
+                combined_request = "\n".join([*user_messages, request_contract])
                 latest_cut_s = recognize_round_robin_cadence(input.user_message)
                 cadence_cut_s = (
                     None
@@ -133,6 +143,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     update={
                         "mixed_media_timing": timing,
                         "montage_cadence": cadence,
+                        "media_scope": _explicit_media_scope_from_request(combined_request),
                     }
                 )
                 action = action.model_copy(
@@ -184,3 +195,30 @@ __all__ = [
     "MainCreatorOutput",
     "_repair_action_envelope",
 ]
+
+
+def _explicit_media_scope_from_request(request: str) -> str | None:
+    """Keep the model from turning ordinary editorial selection into all-media scope."""
+
+    normalized = " ".join(str(request or "").casefold().split())
+    if re.search(
+        r"\b(?:do not|don't|dont|never|without|no)\b.{0,40}"
+        r"\b(?:use|include|keep|select)\b.{0,20}\b(?:all|everything|every)\b"
+        r"|\b(?:all|everything|every)\b.{0,20}\b(?:not|excluded|omit)\b",
+        normalized,
+    ):
+        return "selected"
+    if re.search(
+        r"\b(?:all|every|each)\s+(?:the\s+)?(?:images?|photos?|videos?|clips?|media|footage)\b"
+        r"|\buse\s+(?:all|everything)\b"
+        r"|\b(?:all|every)\s+(?:uploaded|provided)\s+(?:media|files?|images?|photos?|videos?)\b",
+        normalized,
+    ):
+        return "all"
+    if re.search(
+        r"\b(?:only|just)\s+(?:the\s+)?(?:selected|specified|chosen|listed)\b"
+        r"|\bselected\s+(?:media|files?|clips?)\b",
+        normalized,
+    ):
+        return "selected"
+    return None

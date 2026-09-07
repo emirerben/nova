@@ -1596,6 +1596,78 @@ def test_guided_story_errors_keep_stable_public_failure_code() -> None:
     assert gb._classify_error(error) == "guided_story_music_missing"
 
 
+def test_guided_fast_reburn_uses_one_editable_label_union_for_rename_delete_and_captions(
+    monkeypatch,
+) -> None:
+    from app.agents._schemas import text_element as text_element_schema
+    from app.pipeline import generative_overlays
+
+    def coerce(rows):
+        return [
+            SimpleNamespace(
+                id=row["id"],
+                text=row["text"],
+                start_s=row["start_s"],
+                end_s=row["end_s"],
+                role=row.get("role"),
+                source_params=row.get("source_params") or {},
+            )
+            for row in rows
+        ]
+
+    monkeypatch.setattr(text_element_schema, "coerce_text_elements", coerce)
+    monkeypatch.setattr(
+        generative_overlays,
+        "build_overlays_from_text_elements",
+        lambda elements, **_kwargs: [
+            {
+                "text": element.text,
+                "start_s": element.start_s,
+                "end_s": element.end_s,
+            }
+            for element in elements
+        ],
+    )
+
+    caption = {
+        "id": "caption-1",
+        "text": "Edited caption",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "role": "generative_sequence",
+        "source_params": {"source": "caption_cue"},
+    }
+    renamed = {
+        "id": "player-1",
+        "text": "CAPTAIN 1",
+        "start_s": 0.5,
+        "end_s": 1.5,
+        "role": "generative_sequence",
+        "source_params": {"narration_label_kind": "participant"},
+    }
+    stale_renderer_label = {**renamed, "text": "PLAYER 1"}
+
+    edited = {
+        "resolved_archetype": "guided_story",
+        "text_elements_user_edited": True,
+        "text_elements": [caption, renamed],
+        "narration_label_text_elements": [stale_renderer_label],
+    }
+    burn_dicts = gb._text_element_burn_dicts(edited)
+
+    assert [(row["element_id"], row["text"]) for row in burn_dicts] == [
+        ("caption-1", "Edited caption"),
+        ("player-1", "CAPTAIN 1"),
+    ]
+    assert len({row["element_id"] for row in burn_dicts}) == len(burn_dicts)
+
+    deleted = {
+        **edited,
+        "text_elements": [caption],
+    }
+    assert gb._guided_text_editor_elements(deleted) == [caption]
+
+
 def test_guided_revision_invalid_music_id_fails_before_lookup_or_render(monkeypatch) -> None:
     from app.pipeline import guided_story
 
@@ -1734,7 +1806,7 @@ def test_concurrent_first_delivery_uses_one_pinned_execution_plan(monkeypatch) -
     monkeypatch.setattr(
         guided_story := __import__("app.pipeline.guided_story", fromlist=["guided_story"]),
         "validate_guided_snapshot",
-        lambda _raw: (3, "b" * 64, SimpleNamespace()),
+        lambda _raw: (3, "b" * 64, SimpleNamespace(narration=None)),
     )
     monkeypatch.setattr(guided_story, "matcher_clip_metas", lambda _snapshot: [])
     monkeypatch.setattr(guided_story, "validate_execution_plan", lambda plan, _raw: plan)

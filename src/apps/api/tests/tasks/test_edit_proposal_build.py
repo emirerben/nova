@@ -20,6 +20,7 @@ from app.schemas.edit_proposal import (
     MediaRef,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
+    NarrationTrack,
     ProposalBrief,
     canonical_media_digest,
     parse_edit_proposal,
@@ -54,6 +55,54 @@ _PROD_CLIP_ASSIGNMENT = json.loads(
 # future version bump. The rotation-staleness tests below build their own
 # explicitly-versioned copies instead of relying on this module-level value.
 _PROD_CLIP_ASSIGNMENT["analysis"]["analysis_version"] = ANALYSIS_VERSION
+
+
+def test_item_narration_identity_requires_the_seeded_voiceover_contract() -> None:
+    narration = NarrationTrack(
+        gcs_path="voiceover/a.m4a",
+        generation="7",
+        duration_s=4.7,
+    )
+    brief = ProposalBrief(narration=narration)
+    item = SimpleNamespace(
+        audio_mode="voiceover",
+        voiceover_gcs_path=narration.gcs_path,
+        voiceover_generation=narration.generation,
+        voiceover_duration_s=narration.duration_s,
+    )
+
+    assert proposal_build._item_narration_identity(item, brief) == narration.model_copy(
+        update={"words": []}
+    )
+    assert proposal_build._item_narration_identity(item, ProposalBrief()) is None
+    item.voiceover_generation = "8"
+    with pytest.raises(RuntimeError, match="identity changed"):
+        proposal_build._item_narration_identity(item, brief)
+
+
+def test_pinned_narration_transcription_revalidates_typed_words(monkeypatch) -> None:
+    narration = NarrationTrack(
+        gcs_path="voiceover/a.m4a",
+        generation="7",
+        duration_s=2.0,
+    )
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(generation="7"),
+    )
+    monkeypatch.setattr("app.storage.download_generation_to_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "app.pipeline.transcribe.transcribe_whisper_cached",
+        lambda _path: SimpleNamespace(
+            words=[SimpleNamespace(text="hello", start_s=0.0, end_s=0.6, confidence=0.9)],
+            language="en",
+        ),
+    )
+
+    result = proposal_build._transcribe_pinned_narration(narration)
+
+    assert result.words[0].text == "hello"
+    assert result.language == "en"
 
 
 def test_clip_analysis_uses_three_workers_and_preserves_assignment_order(monkeypatch) -> None:

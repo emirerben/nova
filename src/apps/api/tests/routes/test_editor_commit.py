@@ -826,6 +826,95 @@ def test_guided_v2_initial_revision_projects_the_real_immutable_snapshot_shape()
     assert [segment["media_id"] for segment in revision["segments"]] == ["selected"]
 
 
+def test_guided_response_text_union_deduplicates_renderer_label_lane(monkeypatch) -> None:
+    from app.config import settings
+
+    player = {
+        "id": "player-1",
+        "text": "PLAYER 1",
+        "start_s": 0.5,
+        "end_s": 1.5,
+        "role": "generative_sequence",
+        "source_params": {"narration_label_kind": "participant"},
+    }
+    removed = {
+        "id": "player-removed",
+        "text": "PLAYER 2",
+        "start_s": 2.0,
+        "end_s": 3.0,
+        "role": "generative_sequence",
+        "source_params": {"narration_label_kind": "participant"},
+    }
+    revision = {
+        "text_elements": [player],
+        "tombstones": [{"lane": "text_elements", "record_id": "player-removed", "record": removed}],
+    }
+    job = types.SimpleNamespace(
+        assembly_plan={
+            "guided_story_execution_plan": {
+                "narration_label_text_elements": [player, removed],
+                "narration_label_receipt": {"version": 1},
+            }
+        }
+    )
+    variant = {
+        "resolved_archetype": "guided_story",
+        "guided_edit_revision": revision,
+        "narration_label_text_elements": [player, removed],
+    }
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: revision)
+
+    state = gj._guided_text_state_for_response(job, variant)
+
+    assert state is not None
+    text_elements, label_elements, receipt = state
+    assert [row["id"] for row in text_elements] == ["player-1"]
+    assert [row["id"] for row in label_elements] == ["player-1"]
+    assert receipt == {"version": 1}
+
+
+def test_guided_response_uses_compiled_source_bound_player_timing(monkeypatch) -> None:
+    from app.config import settings
+
+    revision = {"text_elements": [], "tombstones": []}
+    player = {
+        "id": "player-1",
+        "text": "PLAYER 1",
+        "start_s": 2.5,
+        "end_s": 3.5,
+        "role": "generative_sequence",
+        "source_params": {"narration_label_kind": "participant"},
+    }
+    job = types.SimpleNamespace(
+        assembly_plan={
+            "guided_edit": {},
+            "guided_story_execution_plan": {
+                "narration_label_text_elements": [player],
+                "narration_label_receipt": {"version": 1},
+            },
+        }
+    )
+    variant = {"resolved_archetype": "guided_story", "guided_edit_revision": revision}
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: revision)
+    monkeypatch.setattr(
+        "app.pipeline.guided_story.compile_guided_runtime_plan",
+        lambda *_args: {
+            "text_elements": [],
+            "narration_label_text_elements": [player],
+        },
+    )
+
+    state = gj._guided_text_state_for_response(job, variant)
+
+    assert state is not None
+    text_elements, label_elements, _receipt = state
+    assert text_elements == [player]
+    assert label_elements == [player]
+    assert label_elements[0]["start_s"] == 2.5
+
+
 def test_guided_v2_capabilities_keep_legacy_lane_booleans_and_honest_reasons(
     monkeypatch,
 ) -> None:
@@ -6236,6 +6325,75 @@ def test_guided_lane_projection_creates_tombstone_when_anchored_interval_is_dele
             },
         }
     ]
+
+
+def test_guided_lane_projection_keeps_absolute_narration_labels_and_moves_players():
+    old_segments = [
+        {
+            "segment_id": "first",
+            "media_id": "m1",
+            "source_start_s": 0.0,
+            "source_end_s": 2.0,
+            "duration_s": 2.0,
+            "output_start_s": 0.0,
+            "output_end_s": 2.0,
+        },
+        {
+            "segment_id": "second",
+            "media_id": "m2",
+            "source_start_s": 0.0,
+            "source_end_s": 2.0,
+            "duration_s": 2.0,
+            "output_start_s": 2.0,
+            "output_end_s": 4.0,
+        },
+    ]
+    new_segments = [
+        {**old_segments[1], "output_start_s": 0.0, "output_end_s": 2.0},
+        {**old_segments[0], "output_start_s": 2.0, "output_end_s": 4.0},
+    ]
+    raw = {
+        "text_elements": [
+            {
+                "id": "player",
+                "start_s": 0.5,
+                "end_s": 1.5,
+                "source_params": {"narration_label_kind": "participant"},
+            },
+            {
+                "id": "score",
+                "start_s": 0.25,
+                "end_s": 0.75,
+                "source_params": {"narration_label_kind": "score"},
+            },
+            {
+                "id": "topic",
+                "start_s": 2.25,
+                "end_s": 2.75,
+                "source_params": {"narration_label_kind": "topic"},
+            },
+            {
+                "id": "caption",
+                "start_s": 1.25,
+                "end_s": 1.75,
+                "source_params": {"source": "caption_cue"},
+            },
+        ],
+        "media_overlays": [],
+        "visual_blocks": [],
+    }
+
+    gj._project_guided_revision_lanes(
+        raw,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+
+    by_id = {row["id"]: row for row in raw["text_elements"]}
+    assert (by_id["player"]["start_s"], by_id["player"]["end_s"]) == (2.5, 3.5)
+    assert (by_id["score"]["start_s"], by_id["score"]["end_s"]) == (0.25, 0.75)
+    assert (by_id["topic"]["start_s"], by_id["topic"]["end_s"]) == (2.25, 2.75)
+    assert (by_id["caption"]["start_s"], by_id["caption"]["end_s"]) == (1.25, 1.75)
 
 
 def test_guided_lane_projection_preserves_new_output_clock_records_and_drops_partial_removals():

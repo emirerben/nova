@@ -5,6 +5,7 @@ import pytest
 from app.agents._schemas.creator_agent import (
     CapabilityAvailability,
     CreatorMediaRef,
+    CreatorNarrationIdentity,
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
@@ -89,8 +90,13 @@ def test_guided_main_creator_output_drops_opaque_media_list() -> None:
 def test_main_creator_prompt_explains_guided_media_and_music_contracts() -> None:
     prompt = MainCreatorAgent(None).render_prompt(_input())  # type: ignore[arg-type]
 
-    assert "guided, return\n  `selected_media_ids: []`" in prompt
+    assert "guided `all` or omitted scope, return `selected_media_ids: []`;" in prompt
     assert "only when the manifest catalog contains a usable music entry" in prompt
+    assert (
+        "uses native unless the explicit advertised `guided_voiceover_v1` contract applies"
+        in prompt
+    )
+    assert "voiceover, and audio-led formats force native" not in prompt
 
 
 def test_main_creator_prompt_receives_pinned_account_direction() -> None:
@@ -99,6 +105,27 @@ def test_main_creator_prompt_receives_pinned_account_direction() -> None:
     prompt = MainCreatorAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
 
     assert "Never use drop shadows" in prompt
+
+
+def test_main_creator_prompt_carries_full_request_but_redacts_narration_identity() -> None:
+    narration = CreatorNarrationIdentity(
+        gcs_path="voiceover-uploads/user/item/voice.webm",
+        generation="voice-generation-1",
+        duration_s=44.7,
+    )
+    manifest = _manifest().model_copy(update={"has_voiceover": True, "narration": narration})
+    request = "Use all uploaded media. " + ("preserve this instruction " * 200)
+    agent_input = MainCreatorInput(
+        user_message="Make it work.",
+        creator_request=request,
+        capability_manifest=manifest,
+    )
+
+    prompt = MainCreatorAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert request in prompt
+    assert narration.gcs_path not in prompt
+    assert narration.generation not in prompt
 
 
 def test_main_creator_recognizes_mixed_media_timing_request() -> None:
@@ -122,6 +149,42 @@ def test_main_creator_recognizes_mixed_media_timing_request() -> None:
         "video_hold": "longer",
         "boundary_style": "cut",
     }
+
+
+@pytest.mark.parametrize(
+    ("request_text", "expected_scope"),
+    [
+        ("Create an edit of the best moments.", None),
+        ("Use all uploaded media.", "all"),
+        ("Don't use all media; use only the selected clips.", "selected"),
+    ],
+)
+def test_main_creator_normalizes_media_scope_against_actual_request(
+    request_text: str, expected_scope: str | None
+) -> None:
+    agent_input = _input().model_copy(update={"user_message": request_text})
+    raw = json.dumps(
+        {
+            "action": {
+                "kind": "propose_strategy",
+                "strategy": {
+                    "direction": "native",
+                    "edit_format": "montage",
+                    "audio_strategy": "licensed_music",
+                    "media_scope": "all",
+                    "render_program": "native",
+                    "selected_media_ids": [agent_input.capability_manifest.media[0].media_id],
+                    "rationale": "Use the strongest moments.",
+                },
+                "summary": "A focused edit.",
+            }
+        }
+    )
+
+    output = MainCreatorAgent(None).parse(raw, agent_input)  # type: ignore[arg-type]
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.media_scope == expected_scope
 
 
 def test_main_creator_recovers_explicit_one_second_alternation() -> None:

@@ -27,6 +27,7 @@ from sqlalchemy.orm import selectinload
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalError
 from app.agents._schemas.creator_agent import (
+    CREATOR_REQUEST_MAX_CHARS,
     ApplySpeechCutCommand,
     AskUser,
     ContextLabelIntent,
@@ -40,6 +41,8 @@ from app.agents._schemas.creator_agent import (
     normalize_creator_text_color,
 )
 from app.agents._schemas.creator_policy import (
+    CAPABILITY_GUIDED_VOICEOVER,
+    GUIDED_VOICEOVER_EXECUTION_CONTRACT,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
@@ -101,6 +104,7 @@ from app.services.creator_sessions import (
     append_event,
     compile_active_plan,
     creator_context,
+    creator_narration_identity,
     reconcile_render_state,
     resolve_item_creator_context,
     rollout_eligible,
@@ -134,7 +138,7 @@ class _StrictBody(BaseModel):
 
 
 class StartBody(_StrictBody):
-    message: str = Field(min_length=1, max_length=2000)
+    message: str = Field(min_length=1, max_length=CREATOR_REQUEST_MAX_CHARS)
     client_event_id: str = Field(min_length=1, max_length=128)
 
     @field_validator("message")
@@ -373,7 +377,10 @@ async def _response(db: AsyncSession, session: CreatorAgentSession) -> CreatorSe
 
 def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
     return [
-        {"role": event.role, "content": str((event.payload or {}).get("message") or "")[:1000]}
+        {
+            "role": event.role,
+            "content": str((event.payload or {}).get("message") or "")[:CREATOR_REQUEST_MAX_CHARS],
+        }
         for event in sorted(events, key=lambda value: value.sequence)[-20:]
         if (event.payload or {}).get("message")
     ]
@@ -389,7 +396,61 @@ def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message:
     ]
     if current_message.strip() and (not messages or messages[-1] != current_message.strip()):
         messages.append(current_message.strip())
-    return "\n".join(messages)[:1000]
+    return "\n".join(messages)[:CREATOR_REQUEST_MAX_CHARS]
+
+
+def _explicit_media_scope(request: str) -> Literal["all", "selected"]:
+    """Resolve only an explicit all-media request; preserve the legacy default."""
+
+    normalized = " ".join(str(request or "").casefold().split())
+    if re.search(
+        r"\b(?:do not|don't|dont|never|without|no)\b.{0,40}"
+        r"\b(?:use|include|keep|select)\b.{0,20}\b(?:all|everything|every)\b"
+        r"|\b(?:all|everything|every)\b.{0,20}\b(?:not|excluded|omit)\b",
+        normalized,
+    ):
+        return "selected"
+    if re.search(
+        r"\b(?:all|every|each)\s+(?:the\s+)?(?:images?|photos?|videos?|clips?|media|footage)\b"
+        r"|\buse\s+(?:all|everything)\b"
+        r"|\b(?:all|every)\s+(?:uploaded|provided)\s+(?:media|files?|images?|photos?|videos?)\b",
+        normalized,
+    ):
+        return "all"
+    if re.search(
+        r"\b(?:only|just)\s+(?:the\s+)?(?:selected|specified|chosen|listed)\b"
+        r"|\bselected\s+(?:media|files?|clips?)\b",
+        normalized,
+    ):
+        return "selected"
+    return "selected"
+
+
+def _has_explicit_media_scope(request: str) -> bool:
+    normalized = " ".join(str(request or "").casefold().split())
+    return bool(
+        re.search(
+            r"\b(?:all|every|each)\s+(?:the\s+)?(?:images?|photos?|videos?|clips?|media|footage)\b"
+            r"|\buse\s+(?:all|everything)\b"
+            r"|\b(?:all|every)\s+(?:uploaded|provided)\s+(?:media|files?|images?|photos?|videos?)\b"
+            r"|\b(?:do not|don't|dont|never|without|no)\b.{0,40}"
+            r"\b(?:use|include|keep|select)\b.{0,20}\b(?:all|everything|every)\b"
+            r"|\b(?:all|everything|every)\b.{0,20}\b(?:not|excluded|omit)\b"
+            r"|\b(?:only|just)\s+(?:the\s+)?(?:selected|specified|chosen|listed)\b"
+            r"|\bselected\s+(?:media|files?|clips?)\b",
+            normalized,
+        )
+    )
+
+
+def _explicit_guided_voiceover_request(request: str, manifest: Any) -> bool:
+    return bool(
+        manifest.has_voiceover
+        and (
+            recognize_mixed_media_timing(request) is not None
+            or _explicit_media_scope(request) == "all"
+        )
+    )
 
 
 def _explicit_sfx_name(creator_request: str, *, manifest: Any | None = None) -> str | None:
@@ -475,6 +536,7 @@ def _apply_explicit_render_intent(
     strategy: CreativeStrategy,
     creator_request: str,
     manifest: Any | None = None,
+    latest_user_message: str = "",
 ) -> CreativeStrategy:
     """Promote explicit creator wording into the typed render contract.
 
@@ -495,10 +557,35 @@ def _apply_explicit_render_intent(
         "opening_title": None,
         "font_family": None,
         "text_color": None,
-        "context_label": None,
+        # A model-authored label is only retained when the typed companion
+        # flag records the same intent.  This keeps an unrelated request from
+        # inheriting a stale context label while allowing multilingual or
+        # otherwise non-regex wording to survive the boundary.
+        "context_label": strategy.context_label if strategy.sport_labels else None,
         "image_layout": None,
         "licensed_sfx": None,
+        "execution_contract": strategy.execution_contract,
+        "media_scope": (
+            _explicit_media_scope(creator_request)
+            if _has_explicit_media_scope(creator_request)
+            else strategy.media_scope
+        ),
+        "participant_labels": strategy.participant_labels,
+        "score_labels": strategy.score_labels,
+        "sport_labels": strategy.sport_labels,
     }
+
+    latest = " ".join(str(latest_user_message or "").casefold().split())
+    combined = " ".join(request.casefold().split())
+    latest_negates = lambda *terms: bool(  # noqa: E731
+        re.search(
+            r"\b(?:do not|don't|dont|never|without|no)\b.{0,60}\b(?:"
+            + "|".join(re.escape(term) for term in terms)
+            + r")\b",
+            latest,
+            re.IGNORECASE,
+        )
+    )
 
     # A named SFX is a required request, never an optional treatment. Resolve
     # names only by exact case-insensitive match against the server manifest;
@@ -600,7 +687,7 @@ def _apply_explicit_render_intent(
     sport_label_requested = bool(
         re.search(
             r"\b(?:name|label|text)\s+(?:of\s+)?(?:the\s+)?sports?\b"
-            r"|\b(?:label|identify|show|display|add)\b.{0,80}\b(?:each\s+)?sports?\b"
+            r"|\b(?:label|identify|show|display|add|highlight)\b.{0,80}\b(?:each\s+)?sports?\b"
             r"|\bsports?\b.{0,80}\b(?:bottom\s+right|bottom-right)\b",
             request,
             re.IGNORECASE,
@@ -614,6 +701,35 @@ def _apply_explicit_render_intent(
             size="small",
             per_clip=True,
         )
+        updates["sport_labels"] = True
+
+    participant_label_requested = bool(
+        re.search(
+            r"\b(?:placeholder|temporary|player|participant)\s+(?:name|label)s?\b"
+            r"|\bname\s+(?:each|every|the)\s+(?:player|participant)\b",
+            combined,
+            re.IGNORECASE,
+        )
+    )
+    if participant_label_requested:
+        updates["participant_labels"] = "single_subject"
+    if latest_negates("player", "participant", "placeholder", "name"):
+        updates["participant_labels"] = "none"
+    score_requested = bool(
+        re.search(
+            r"\b(?:add|show|include|highlight|display|use)\b.{0,80}\bscore(?:s)?\b"
+            r"|\bscore(?:s)?\b.{0,80}\b(?:audio|spoken|mentioned|narration|voiceover)\b",
+            combined,
+            re.IGNORECASE,
+        )
+    )
+    if score_requested and not latest_negates("score", "scores"):
+        updates["score_labels"] = True
+    if latest_negates("score", "scores"):
+        updates["score_labels"] = False
+    if latest_negates("sport", "sports"):
+        updates["sport_labels"] = False
+        updates["context_label"] = None
 
     updates["image_layout"] = recognize_image_layout(request)
 
@@ -668,6 +784,13 @@ def _apply_explicit_render_intent(
                 boundary_style="cut",
             )
     updates["mixed_media_timing"] = mixed_media_timing
+    if latest and _has_explicit_media_scope(latest):
+        updates["media_scope"] = _explicit_media_scope(latest)
+    if manifest is not None and _explicit_guided_voiceover_request(creator_request, manifest):
+        guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
+        if guided_voiceover is not None and guided_voiceover.available:
+            updates["execution_contract"] = GUIDED_VOICEOVER_EXECUTION_CONTRACT
+            updates["render_program"] = "guided"
     if mixed_media_timing is not None:
         # A rapid still sequence among longer video moments is an exact-cut
         # montage contract. Keep the guided render program (so pool photos are
@@ -684,6 +807,8 @@ def _apply_explicit_render_intent(
         updates["pacing"] = "balanced"
 
     target_duration_s = recognize_total_duration_s(request)
+    if target_duration_s is None and manifest is not None:
+        target_duration_s = _pinned_narration_target_duration_s(manifest)
     if target_duration_s is not None:
         updates["target_duration_s"] = target_duration_s
     return CreativeStrategy.model_validate({**strategy.model_dump(mode="json"), **updates})
@@ -1075,29 +1200,81 @@ def _resolved_cadence_for_turn(
     )
 
 
+MAIN_CREATOR_FALLBACK_SUMMARY = (
+    "The planner response was incomplete; review this draft before confirming."
+)
+
+
+def _pinned_narration_target_duration_s(manifest: Any) -> int | None:
+    narration = getattr(manifest, "narration", None)
+    if not getattr(manifest, "has_voiceover", False) or narration is None:
+        return None
+    duration_s = int(round(float(narration.duration_s)))
+    max_duration_s = int(getattr(getattr(manifest, "limits", None), "max_output_duration_s", 60))
+    return max(3, min(max_duration_s, duration_s))
+
+
 def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStrategy:
+    """Build a compiler-safe draft from pinned state and explicit request facts only."""
+
     current_format = manifest.edit_format
     current_available = manifest.capabilities.get(f"edit_format:{current_format}")
     safe_format = current_format if current_available and current_available.available else "montage"
+    mixed_media_timing = recognize_mixed_media_timing(user_message)
+    media_scope = (
+        _explicit_media_scope(user_message) if _has_explicit_media_scope(user_message) else None
+    )
+    guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
+    guided_draft = manifest.capabilities.get("draft_guided_proposal")
+    uses_guided_voiceover = bool(
+        manifest.has_voiceover
+        and getattr(manifest, "narration", None) is not None
+        and (mixed_media_timing is not None or media_scope == "all")
+        and guided_voiceover is not None
+        and guided_voiceover.available
+    )
+    render_program = manifest.render_program
+    if uses_guided_voiceover or (media_scope == "all" and guided_draft and guided_draft.available):
+        render_program = "guided"
+
+    if manifest.has_voiceover:
+        audio_strategy = "voiceover"
+    else:
+        audio_strategy = (
+            "licensed_music"
+            if any(ref.kind == "music" for ref in getattr(manifest, "catalog", []))
+            else "original_audio"
+        )
+
+    requested_duration_s = recognize_total_duration_s(user_message)
+    if requested_duration_s is None:
+        requested_duration_s = _pinned_narration_target_duration_s(manifest)
+    max_duration_s = int(getattr(getattr(manifest, "limits", None), "max_output_duration_s", 60))
+    target_duration_s = max(3, min(max_duration_s, requested_duration_s or 24))
+
     return CreativeStrategy(
-        direction="fast_montage" if manifest.render_program == "guided" else "native",
+        direction="fast_montage" if render_program == "guided" else "native",
         edit_format=safe_format,
-        audio_strategy="licensed_music",
+        audio_strategy=audio_strategy,
+        execution_contract=(GUIDED_VOICEOVER_EXECUTION_CONTRACT if uses_guided_voiceover else None),
+        media_scope=media_scope,
         pacing="balanced",
-        render_program=manifest.render_program,
-        mixed_media_timing=recognize_mixed_media_timing(user_message),
+        target_duration_s=target_duration_s,
+        render_program=render_program,
+        mixed_media_timing=mixed_media_timing,
         selected_media_ids=(
             []
-            if manifest.render_program == "guided"
+            if render_program == "guided"
             else [
                 media.media_id
                 for media in manifest.media
                 if not media.media_id.startswith("asset-")
             ][:MAX_MAIN_CREATOR_SELECTED_MEDIA]
         ),
+        # A failed planner must not fabricate title, hook, or story copy.
         rationale=(
-            "Build a clear opening, keep only the strongest moments, "
-            "and preserve a natural short-form rhythm."
+            "Planner response incomplete. Preserve the recorded voiceover and "
+            "explicit media request for creator review."
         ),
     )
 
@@ -1196,6 +1373,41 @@ async def _run_planning_turn(
     if isinstance(thread_row, dict):
         direction_prompt = str(thread_row.get("prompt_block") or "")[:4000]
     creator_request = _confirmed_creator_request(session.events, user_message)
+    explicit_guided_voiceover = _explicit_guided_voiceover_request(creator_request, manifest)
+    if explicit_guided_voiceover:
+        guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
+        if guided_voiceover is None or not guided_voiceover.available:
+            locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+            if locked.revision != expected_revision:
+                raise HTTPException(status_code=409, detail="Creator session changed")
+            locked.status = "briefing"
+            reason = (
+                guided_voiceover.reason
+                if guided_voiceover is not None
+                else "guided voiceover is unavailable"
+            )
+            await append_event(
+                db,
+                locked,
+                event_type="assistant_question",
+                role="assistant",
+                payload={
+                    "message": (
+                        "I can't preserve that explicit photo/video timing or all-media request "
+                        "with the current recorded-voiceover capability. "
+                        "You can remove the explicit timing or all-media requirement and use "
+                        "the current narrated edit behavior."
+                    ),
+                    "reason_code": "guided_voiceover_unavailable",
+                    "unmet_instruction": "guided voiceover with explicit visual coverage/timing",
+                    "detail": reason,
+                    "options": [
+                        "Use the current narrated edit behavior",
+                        "Remove the explicit timing or all-media requirement",
+                    ],
+                },
+            )
+            return await _response(db, locked)
     latest_cut_s = recognize_round_robin_cadence(user_message)
     current_rejects_cadence = rejects_round_robin_cadence(user_message)
     cadence_cancelled = current_rejects_cadence or (
@@ -1283,6 +1495,7 @@ async def _run_planning_turn(
         return await _response(db, locked)
     agent_input = MainCreatorInput(
         user_message=user_message,
+        creator_request=creator_request,
         creator_context=creator_summary,
         creator_direction=direction_prompt,
         item_context=item_summary,
@@ -1308,7 +1521,7 @@ async def _run_planning_turn(
         action = ProposeStrategy(
             kind="propose_strategy",
             strategy=_fallback_strategy(manifest, user_message=creator_request),
-            summary="A focused, fast-moving edit built from your strongest footage.",
+            summary=MAIN_CREATOR_FALLBACK_SUMMARY,
         )
 
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
@@ -1506,6 +1719,7 @@ async def _run_planning_turn(
                 strategy,
                 creator_request,
                 manifest=planning_manifest,
+                latest_user_message=user_message,
             )
             try:
                 strategy = normalize_creator_strategy_media(
@@ -1644,7 +1858,7 @@ async def _run_planning_turn(
                 locked,
                 manifest=manifest,
                 strategy=strategy,
-                summary="A safe, focused edit from your strongest footage.",
+                summary=MAIN_CREATOR_FALLBACK_SUMMARY,
                 creator_request=creator_request,
             )
         locked.manifest_hash = manifest.manifest_hash
@@ -2028,27 +2242,52 @@ def _seed_guided_specialist_brief(
                 ]
             }
         )
+    brief_values: dict[str, Any] = {
+        "direction": direction,
+        "goal": goal,
+        "pace": plan.strategy.pacing,
+        "duration_s": plan.strategy.target_duration_s,
+        "creator_request": creator_request,
+        "opening_title": plan.strategy.opening_title,
+        "font_family": plan.strategy.font_family,
+        "text_color": plan.strategy.text_color,
+        "image_layout": plan.strategy.image_layout,
+        "licensed_sfx": plan.strategy.licensed_sfx,
+        "mixed_media_timing": plan.strategy.mixed_media_timing,
+        "montage_audio": specialist_audio,
+        "montage_cadence": specialist_cadence,
+        "output_orientation": (
+            "portrait" if plan.strategy.mixed_media_timing is not None else None
+        ),
+    }
+    # These fields are optional on the worker-owned proposal contract. Passing
+    # them by field name keeps this route compatible with legacy snapshots
+    # while allowing the shared typed intent to reach the specialist.
+    narration_identity = creator_narration_identity(item)
+    optional_values = {
+        "execution_contract": plan.strategy.execution_contract,
+        "media_scope": plan.strategy.media_scope if plan.strategy.media_scope == "all" else None,
+        "participant_labels": plan.strategy.participant_labels,
+        "score_labels": plan.strategy.score_labels,
+        "sport_labels": plan.strategy.sport_labels,
+        "narration": (
+            {**narration_identity.model_dump(mode="json"), "words": []}
+            if narration_identity is not None
+            else None
+        ),
+    }
+    brief_fields = getattr(ProposalBrief, "model_fields", {})
+    brief_values.update(
+        {
+            key: value
+            for key, value in optional_values.items()
+            if key in brief_fields and value is not None and value is not False and value != "none"
+        }
+    )
     save_edit_conversation_turn(
         item,
         expected_version=expected_version,
-        brief=ProposalBrief(
-            direction=direction,
-            goal=goal,
-            pace=plan.strategy.pacing,
-            duration_s=plan.strategy.target_duration_s,
-            creator_request=creator_request,
-            opening_title=plan.strategy.opening_title,
-            font_family=plan.strategy.font_family,
-            text_color=plan.strategy.text_color,
-            image_layout=plan.strategy.image_layout,
-            licensed_sfx=plan.strategy.licensed_sfx,
-            mixed_media_timing=plan.strategy.mixed_media_timing,
-            montage_audio=specialist_audio,
-            montage_cadence=specialist_cadence,
-            output_orientation=(
-                "portrait" if plan.strategy.mixed_media_timing is not None else None
-            ),
-        ),
+        brief=ProposalBrief(**brief_values),
         user_message=creator_request or "Use the confirmed Main Creator direction.",
         agent_reply=summary or plan.strategy.rationale or "Build this direction.",
         suggestions=[],
@@ -2315,7 +2554,7 @@ async def confirm_creator_plan_controller(
                 item,
                 edit_plan,
                 summary=str(active.get("summary") or ""),
-                creator_request=str(active.get("creator_request") or "")[:1000],
+                creator_request=str(active.get("creator_request") or ""),
             )
             # Mint the immutable guided execution identity before publishing
             # any background work. A process crash after enqueue can then
@@ -2436,6 +2675,7 @@ async def confirm_creator_plan_controller(
                 user,
                 db,
                 generation_attempt_id=guided_generation_attempt_id,
+                creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
             )
             if result is None:
                 raise RuntimeError("guided auto design was not applicable")
@@ -2501,7 +2741,7 @@ async def confirm_creator_plan_controller(
                 int(plan_row.ownership_epoch or 0),
                 creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
                 creator_clip_order=preserved_clip_order,
-                creator_request=str(active.get("creator_request") or "")[:1000],
+                creator_request=str(active.get("creator_request") or ""),
                 speech_cleanup_analysis_id=(
                     str(body.speech_cleanup_analysis_id)
                     if body.speech_cleanup_analysis_id is not None

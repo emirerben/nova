@@ -48,6 +48,11 @@ from app.agents.narrated_storyboard import (
     NarratedStoryboardInput,
     NarratedStoryboardOutput,
 )
+from app.agents.narration_annotations import (
+    NarrationAnnotationInput,
+    NarrationAnnotationOutput,
+)
+from app.agents.narration_focus import NarrationFocusInput, NarrationFocusOutput
 from app.agents.overlay_examples import load_overlay_examples
 from app.agents.overlay_format_matcher import (
     _ANCHORS,
@@ -2334,6 +2339,119 @@ def check_narrated_storyboard(
     return failures
 
 
+def check_narration_annotations(
+    output: NarrationAnnotationOutput,
+    input: NarrationAnnotationInput,  # noqa: A002
+) -> list[str]:
+    """Keep semantic annotations inside the supplied transcript and IDs."""
+
+    failures: list[str] = []
+    known_words = {str(word.get("word_id")) for word in input.words}
+    word_index = {str(word.get("word_id")): index for index, word in enumerate(input.words)}
+    known_timeline = {str(row.get("timeline_id")) for row in input.timeline}
+    known_assets = {str(row.get("asset_id")) for row in input.media_analysis}
+    number_words = {
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+        "nil",
+    }
+
+    for index, annotation in enumerate(output.annotations):
+        if annotation.start_word_id is not None and annotation.start_word_id not in known_words:
+            failures.append(f"annotation {index}: unknown start_word_id")
+            continue
+        if annotation.end_word_id is not None and annotation.end_word_id not in known_words:
+            failures.append(f"annotation {index}: unknown end_word_id")
+            continue
+        if annotation.timeline_id is not None and annotation.timeline_id not in known_timeline:
+            failures.append(f"annotation {index}: unknown timeline_id")
+        if annotation.asset_id is not None and annotation.asset_id not in known_assets:
+            failures.append(f"annotation {index}: unknown asset_id")
+        if (
+            annotation.start_word_id is not None
+            and annotation.end_word_id is not None
+            and word_index[annotation.end_word_id] < word_index[annotation.start_word_id]
+        ):
+            failures.append(f"annotation {index}: reversed transcript span")
+            continue
+        if annotation.kind in {"score", "topic"} and (
+            annotation.start_word_id is None or annotation.end_word_id is None
+        ):
+            failures.append(f"annotation {index}: {annotation.kind} has no complete word span")
+            continue
+        if annotation.kind == "participant" and not (annotation.timeline_id or annotation.asset_id):
+            failures.append(f"annotation {index}: participant has no source identity")
+
+        if annotation.kind == "score" and annotation.start_word_id and annotation.end_word_id:
+            start = word_index[annotation.start_word_id]
+            end = word_index[annotation.end_word_id] + 1
+            tokens = [
+                re.sub(r"[^a-z0-9-]", "", str(word.get("text") or "").casefold())
+                for word in input.words[start:end]
+            ]
+            compact_score = any(re.fullmatch(r"\d{1,3}-\d{1,3}", token) for token in tokens)
+            numeric = [token for token in tokens if token.isdigit() or token in number_words]
+            if not compact_score and len(numeric) < 2:
+                failures.append(f"annotation {index}: score is not grounded in two spoken numbers")
+        if annotation.kind == "topic" and annotation.text:
+            start = word_index.get(annotation.start_word_id or "")
+            end = word_index.get(annotation.end_word_id or "")
+            if start is not None and end is not None:
+                span = " ".join(
+                    str(word.get("text") or "") for word in input.words[start : end + 1]
+                )
+                if " ".join(annotation.text.casefold().split()) not in " ".join(
+                    re.sub(r"[^\w\s-]", "", span.casefold()).split()
+                ):
+                    failures.append(f"annotation {index}: topic text is not in its word span")
+    return failures
+
+
+def check_narration_focus(
+    output: NarrationFocusOutput,
+    input: NarrationFocusInput,  # noqa: A002
+) -> list[str]:
+    """Ensure visual focus claims cite only frames in the pinned window."""
+
+    failures: list[str] = []
+    known_frames = {frame.sample_id for frame in input.frame_samples}
+    if not set(output.evidence_frame_ids).issubset(known_frames):
+        failures.append("focus references an unknown sample frame")
+    if output.focus == "single_subject" and output.primary_subject_count != 1:
+        failures.append("single-subject focus does not report primary count 1")
+    if output.focus == "group" and (output.primary_subject_count or 0) < 2:
+        failures.append("group focus does not report primary count >= 2")
+    if output.focus != "unknown" and not output.evidence_frame_ids:
+        failures.append("typed focus has no supporting sample frame")
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -2450,6 +2568,10 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_scene_matcher(output, input)
     if agent_name == "nova.compose.narrated_storyboard":
         return check_narrated_storyboard(output, input)
+    if agent_name == "nova.compose.narration_annotations":
+        return check_narration_annotations(output, input)
+    if agent_name == "nova.compose.narration_focus":
+        return check_narration_focus(output, input)
     if agent_name == "nova.compose.sequence_emphasis":
         return check_sequence_emphasis(output, input)
     if agent_name == "nova.compose.sequence_quote":

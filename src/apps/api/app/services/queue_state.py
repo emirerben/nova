@@ -102,7 +102,14 @@ _QUEUE_SCAN_CAP = 100
 # tests/test_worker_prewarm_gate.py pins both this set against the worker
 # line AND the light line's disjointness from it.
 RENDER_WORKER_QUEUES: frozenset[str] = frozenset(
-    {"celery", "plan-jobs", "overlay-jobs", "creator-guided-jobs", "creator-render-v2"}
+    {
+        "celery",
+        "plan-jobs",
+        "overlay-jobs",
+        "creator-guided-jobs",
+        "creator-render-v2",
+        "creator-fidelity-v1",
+    }
 )
 
 RuntimeStateLiteral = Literal["active", "reserved", "not_found", "unknown"]
