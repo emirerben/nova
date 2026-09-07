@@ -1638,3 +1638,103 @@ async def test_cleanup_action_is_revision_fenced_before_analysis_or_job_work(
     assert exc_info.value.detail == "Creation thread changed"
     db.get.assert_not_awaited()
     controller.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preflight_mode", ["off", "shadow", "enforce"])
+async def test_stamped_required_v1_without_analysis_row_projects_nothing(
+    monkeypatch: pytest.MonkeyPatch, preflight_mode: str
+) -> None:
+    """A stamped required_v1 Job with no analysis row must never surface a card.
+
+    ``applicable`` has two routes: the rollout cohort, and a Job already stamped
+    ``required_v1``. The second route carries no analysis, so the card renders
+    its "Checking for filler sounds…" spinner with nothing able to resolve it —
+    and while the rollout percent is 0 no row can be minted at all, so the
+    spinner is permanent and replaces the confirm/retry CTA.
+
+    The carve-out that suppresses this used to be keyed on the global mode, so
+    merely flipping to ``enforce`` (even at percent 0, which changes nothing
+    else) stranded every legacy required_v1 Job. It is keyed on cohort
+    membership instead: an item genuinely in the cohort still gets its card.
+    """
+
+    owner_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    plan_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+
+    item = SimpleNamespace(
+        id=item_id,
+        content_plan_id=plan_id,
+        current_job_id=job_id,
+        edit_format="subtitled",
+        audio_mode="original",
+        clip_gcs_paths=["users/u/a.mp4"],
+        clip_assignments=[{"gcs_path": "users/u/a.mp4", "media_id": "m0"}],
+        voiceover_gcs_path=None,
+        speech_cleanup_enabled=True,
+        speech_cleanup_notice=None,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=owner_id, ownership_epoch=0)
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=owner_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
+        # The unrecoverable shape: a FAILED job still holds the confirmation
+        # artifact, so the spinner would replace the retry affordance.
+        status="variants_failed",
+        current_phase=None,
+        failure_reason="speech_cleanup_failed",
+        assembly_plan={"speech_cleanup_contract": "required_v1", "variants": []},
+    )
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=owner_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=None,
+        active_job_id=job_id,
+        status="active",
+        revision=3,
+        state={"media_count": 1},
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+    db = Mock(spec=AsyncSession)
+
+    async def get(model: object, _identifier: object, **_kwargs: object) -> object | None:
+        return {PlanItem: item, ContentPlan: plan, Job: job}.get(model)
+
+    count_result = Mock()
+    count_result.scalar_one.return_value = 0
+    events_result = Mock()
+    events_result.scalars.return_value.all.return_value = []
+    db.get = AsyncMock(side_effect=get)
+    db.execute = AsyncMock(side_effect=[count_result, events_result])
+
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", preflight_mode)
+    # Percent 0 is the production value: no analysis row can exist.
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 0)
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            source=SimpleNamespace(source_policy_fingerprint="private-fingerprint"),
+            reason=None,
+            video_present=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.current_analysis_async",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr("app.routes.generative_jobs._variants_for_response", lambda _job: [])
+
+    response = await routes._response(db, thread)
+
+    assert response.speech_cleanup is None, (
+        f"mode={preflight_mode} at percent 0 surfaced an unresolvable card: "
+        f"{response.speech_cleanup}"
+    )

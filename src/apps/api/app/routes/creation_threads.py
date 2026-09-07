@@ -2060,13 +2060,20 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
             )
             if (
                 stamped_required_job
-                and not cleanup_enforced
+                and not in_cohort
                 and (speech_cleanup is None or speech_cleanup.get("outcome") is None)
             ):
-                # The rollback carve-out exists only for an authoritative
-                # generation-bound receipt. If the current analysis/source no
-                # longer matches that Job, do not surface a new decision card
-                # while global enforcement is disabled.
+                # The carve-out exists only for an authoritative generation-bound
+                # receipt. If the current analysis/source no longer matches that
+                # Job, do not surface a decision card that nothing can resolve.
+                #
+                # Keyed on in_cohort, NOT on the global mode. A stamped Job whose
+                # analysis row is gone projects applicable=true with a null
+                # analysis, which the card renders as a spinner that never
+                # resolves -- and no row can even be minted while the rollout
+                # percent is 0, so enforcing globally must not by itself strand
+                # every legacy required_v1 Job. An item genuinely in the cohort
+                # still gets its card through in_cohort.
                 speech_cleanup = None
     return CreationThreadOut(
         id=str(thread.id),

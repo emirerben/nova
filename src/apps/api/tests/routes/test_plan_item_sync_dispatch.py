@@ -1251,3 +1251,53 @@ def test_guided_voiceover_dispatch_rejects_stale_or_disabled_contract(monkeypatc
     assert result.outcome in {"proposal_stale", "proposal_replan_required"}
     enqueue.assert_not_called()
     assert not _jobs_for(item_id)
+
+
+def test_enforce_mode_generate_conflicts_instead_of_500(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    """Enforce mode must not 500 the item-page render.
+
+    ``dispatch_item_render_for`` fails a render closed with
+    ``speech_cleanup_analysis_conflict`` when the source is in the preflight
+    cohort but no cleanup decision was supplied. The chat flow always supplies
+    one; this route has no cleanup affordance, so the outcome reaches
+    ``_respond_to_dispatch_result``. Before the handler existed it fell into the
+    unknown-outcome branch and raised 500 "Generation failed unexpectedly",
+    which would have hit every in-cohort item-page render the moment the
+    rollout flipped to enforce.
+    """
+
+    user_id, item_id = _seed_item()
+    clip_path = f"users/{user_id}/plan/{item_id}/a.mp4"
+    with sync_session() as session:
+        item = session.get(PlanItem, item_id)
+        assert item is not None
+        # Mirror the shape a chat-registered talking-to-camera clip has in
+        # production: verified generation, probed duration, audible.
+        item.edit_format = "subtitled"
+        item.audio_mode = "original"
+        item.clip_assignments = [
+            {
+                "gcs_path": clip_path,
+                "shot_id": None,
+                "media_id": "clip-1",
+                "kind": "video",
+                "has_audio": True,
+                "duration_s": 10.0,
+                "storage_generation": "1788766791716035",
+                "manifest_identity": "assignment:clip-1",
+            }
+        ]
+        item.clip_gcs_paths = [clip_path]
+        session.commit()
+
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+
+    response = client.post(f"/plan-items/{item_id}/generate", headers=_auth(user_id))
+
+    assert response.status_code == 409, response.text
+    assert "speech_cleanup_analysis_conflict" in response.text
+    # No Job may be minted for a render the creator never consented to.
+    assert _jobs_for(item_id) == []

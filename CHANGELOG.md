@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.71.0.0] — 2026-09-07
+
+### Fixed
+- **Turning on automatic speech cleanup can no longer strand an existing project.** Projects whose current render was already marked for cleanup keep their normal confirm and retry buttons instead of showing a "Checking for filler sounds…" spinner that never finishes.
+- **Creating a video from the item page explains itself instead of failing.** When a project still needs a speech-cleanup choice, the page now says to make that choice in chat rather than returning an unexplained error.
+
 ## [0.70.1.0] — 2026-09-07
 
 ### Fixed
