@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { AgentApprovalCard } from "@/components/chat/AgentApprovalCard";
 import { Button } from "@/components/ui/button";
 import type { EditorSuggestion, SuggestionCategory } from "@/lib/plan-api";
 import type {
@@ -140,7 +141,7 @@ export default function DirectorSuggestions({
   canRestoreOriginalTiming?: boolean;
   onRestoreOriginalTiming?: () => void;
 }) {
-  const firstSuggestionRef = useRef<HTMLElement>(null);
+  const firstSuggestionRef = useRef<HTMLDivElement>(null);
   const firstSuggestionId = suggestions[0]?.id ?? null;
 
   useEffect(() => {
@@ -248,26 +249,50 @@ export default function DirectorSuggestions({
       )}
 
       {suggestions.map((suggestion, index) => (
-        <article
+        <AgentApprovalCard
           key={suggestion.id}
           ref={index === 0 ? firstSuggestionRef : undefined}
-          className="rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_1px_2px_rgba(12,12,14,0.04)]"
+          density="compact"
+          badge={
+            <div className="flex items-center justify-between gap-3">
+              <span className="rounded-full bg-lime-100 px-2 py-1 text-[10px] font-semibold text-lime-800">
+                {CATEGORY_LABEL[suggestion.category]}
+              </span>
+              <span className="text-[11px] tabular-nums text-[#71717a]">
+                {formatTimeRange(suggestion.start_s, suggestion.end_s)}
+              </span>
+            </div>
+          }
+          title={<h4>{suggestion.title}</h4>}
+          description={suggestion.rationale}
+          actions={
+            <>
+              <Button
+                type="button"
+                variant="default"
+                onClick={() => onAccept(suggestion)}
+                disabled={generation !== null || serverRendering}
+                className="h-auto min-h-11 flex-1 rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-[#0c0c0e] hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              >
+                {suggestion.apply_mode === "omni_async"
+                  ? "Generate & add"
+                  : suggestion.apply_mode === "server_async"
+                    ? "Apply & rebuild"
+                    : "Accept"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                aria-label={`Dismiss ${suggestion.title}`}
+                onClick={() => onDismiss(suggestion)}
+                className="h-auto min-h-11 rounded-lg px-3 text-[12px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              >
+                Dismiss
+              </Button>
+            </>
+          }
         >
-          <div className="flex items-center justify-between gap-3">
-            <span className="rounded-full bg-lime-100 px-2 py-1 text-[10px] font-semibold text-lime-800">
-              {CATEGORY_LABEL[suggestion.category]}
-            </span>
-            <span className="text-[11px] tabular-nums text-[#71717a]">
-              {formatTimeRange(suggestion.start_s, suggestion.end_s)}
-            </span>
-          </div>
-          <h4 className="mt-2 text-[13px] font-semibold text-[#0c0c0e]">
-            {suggestion.title}
-          </h4>
-          <p className="mt-1 text-[12px] leading-4 text-[#52525b]">
-            {suggestion.rationale}
-          </p>
-          <p className="mt-1.5 text-[11px] leading-4 text-[#71717a]">
+          <p className="text-[11px] leading-4 text-[#71717a]">
             {suggestion.expected_benefit}
           </p>
           <div className="mt-2 rounded-lg bg-zinc-50 px-2.5 py-2">
@@ -278,31 +303,7 @@ export default function DirectorSuggestions({
               <p key={label} className="mt-1 text-[11px] leading-4 text-[#3f3f46]">{label}</p>
             ))}
           </div>
-          <div className="mt-3 flex items-center gap-2">
-            <Button
-              type="button"
-              variant="default"
-              onClick={() => onAccept(suggestion)}
-              disabled={generation !== null || serverRendering}
-              className="h-auto min-h-11 flex-1 rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-[#0c0c0e] hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-            >
-              {suggestion.apply_mode === "omni_async"
-                ? "Generate & add"
-                : suggestion.apply_mode === "server_async"
-                  ? "Apply & rebuild"
-                  : "Accept"}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              aria-label={`Dismiss ${suggestion.title}`}
-              onClick={() => onDismiss(suggestion)}
-              className="h-auto min-h-11 rounded-lg px-3 text-[12px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-            >
-              Dismiss
-            </Button>
-          </div>
-        </article>
+        </AgentApprovalCard>
       ))}
 
       {appliedReceipts.length > 0 && (

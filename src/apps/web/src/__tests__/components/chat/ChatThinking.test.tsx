@@ -16,12 +16,17 @@ describe("ChatThinking", () => {
     jest.useRealTimers();
   });
 
-  it("keeps the first 1.5 seconds quiet but accessible", () => {
+  it("shows an immediate accessible shimmer before progressive copy", () => {
     render(<ChatThinking />);
     expect(screen.queryByText("Reading your direction…")).not.toBeInTheDocument();
-    expect(screen.getByText("Kria is thinking")).toBeInTheDocument();
+    const initialStatus = screen.getByText("Kria is thinking");
+    expect(initialStatus).toHaveClass("motion-safe:animate-chat-thinking");
+    expect(screen.getByRole("status")).toHaveTextContent("Kria is thinking");
     act(() => { now = 1500; jest.advanceTimersByTime(1500); });
-    expect(screen.getByText("Reading your direction…")).toBeInTheDocument();
+    const specificStatus = screen.getByText("Reading your direction…");
+    expect(specificStatus).not.toBe(initialStatus);
+    expect(specificStatus).toHaveClass("motion-safe:animate-chat-thinking");
+    expect(screen.getByRole("status")).toHaveTextContent("Reading your direction…");
   });
 
   it.each([
@@ -34,12 +39,31 @@ describe("ChatThinking", () => {
     render(<ChatThinking />);
     act(() => { now = elapsed; jest.advanceTimersByTime(elapsed); });
     expect(screen.getByText(copy)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(copy);
   });
 
-  it("marks the thinking dots as reduced-motion safe", () => {
+  it("marks the shimmer as reduced-motion safe", () => {
     render(<ChatThinking />);
-    const dots = document.querySelectorAll("[aria-hidden='true']");
-    expect(dots).toHaveLength(3);
-    dots.forEach((dot) => expect(dot).toHaveClass("motion-reduce:animate-none"));
+    expect(screen.getByText("Kria is thinking")).toHaveClass(
+      "motion-reduce:animate-chat-fade-in",
+      "motion-reduce:text-muted-foreground",
+    );
+  });
+
+  it("renders nothing and schedules no timers while inactive", () => {
+    const { container } = render(<ChatThinking active={false} />);
+    expect(container).toBeEmptyDOMElement();
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it("reveals an optional stop action at its configured threshold and cleans up", () => {
+    const onStop = jest.fn();
+    const { unmount } = render(<ChatThinking onStop={onStop} stopAfterMs={5000} />);
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    act(() => { now = 5000; jest.advanceTimersByTime(5000); });
+    screen.getByRole("button", { name: "Stop" }).click();
+    expect(onStop).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

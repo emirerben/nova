@@ -70,6 +70,18 @@ const config: Config = {
           "0%": { opacity: "0", transform: "translateY(8px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        "chat-message-in": {
+          "0%": { opacity: "0", transform: "translateY(4px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "chat-status-in": {
+          "0%": { opacity: "0.35" },
+          "100%": { opacity: "1" },
+        },
+        "chat-fade-in": {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
         shimmer: {
           "0%": { backgroundPosition: "-200% 0" },
           "100%": { backgroundPosition: "200% 0" },
@@ -85,6 +97,9 @@ const config: Config = {
       },
       animation: {
         "fade-up": "fade-up 0.35s ease-out both",
+        "chat-message-in": "chat-message-in 180ms cubic-bezier(0.23, 1, 0.32, 1) both",
+        "chat-thinking": "chat-status-in 160ms cubic-bezier(0.23, 1, 0.32, 1) both, shimmer 2.2s ease-in-out infinite",
+        "chat-fade-in": "chat-fade-in 120ms cubic-bezier(0.23, 1, 0.32, 1) both",
         shimmer: "shimmer 2.2s ease-in-out infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",

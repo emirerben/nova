@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import CopilotDrawer from "@/app/plan/items/[id]/_editor/CopilotDrawer";
 import type { CopilotMessage } from "@/lib/edit-copilot/useEditCopilot";
 
@@ -36,6 +36,35 @@ describe("CopilotDrawer layout modes", () => {
 
     rerender(<CopilotDrawer {...baseProps} layoutMode="light" />);
     expect(screen.getByTestId("copilot-light")).toBeInTheDocument();
+  });
+
+  it("edits a queued follow-up only after explicit submission", () => {
+    render(
+      <CopilotDrawer
+        {...baseProps}
+        layoutMode="full"
+        sending
+        queued={{ id: "queued-1", text: "Make the ending faster" }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Make the ending faster" }));
+    const composer = screen.getByLabelText("Tell Kria what to change");
+    expect(composer).toHaveValue("Make the ending faster");
+    fireEvent.change(composer, { target: { value: "Make the ending much faster" } });
+    expect(baseProps.onEditQueued).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
+    expect(baseProps.onEditQueued).toHaveBeenCalledWith("Make the ending much faster");
+  });
+
+  it("reveals Stop after the delay and forwards the explicit action", () => {
+    jest.useFakeTimers();
+    render(<CopilotDrawer {...baseProps} layoutMode="full" sending />);
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    act(() => jest.advanceTimersByTime(5_000));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(baseProps.onStop).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
   });
 });
 

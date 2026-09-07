@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChatBubble } from "./ChatBubble";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 
 export const WAIT_LADDER_MS = {
   QUIET: 1500,
@@ -11,52 +11,80 @@ export const WAIT_LADDER_MS = {
 } as const;
 
 /**
- * Progressive-disclosure "thinking" indicator, rendered inside a
- * shared assistant `ChatBubble` so it sits in the thread like any other
- * turn.
- *
- * The first 1.5 seconds intentionally stay quiet: a generic status line has
- * no useful meaning during the normal request latency. Copy becomes specific
- * to the work as the wait grows, and only the 20s tier says it is taking
- * longer than usual. `onStop` is intentionally omitted — no cancel affordance
- * on this surface yet.
+ * Progressive status adapted from AICSS Thinking State.
+ * Source: https://www.aicss.dev/components/thinking-state (MIT, AICSS 2026).
+ * Only operational status is shown; internal reasoning is never exposed.
  */
 export function ChatThinking({
   active = true,
+  elapsedMs,
+  initialLabel = "Kria is thinking",
   label = "Reading your direction…",
+  specificLabel = "Shaping the edit around your clips…",
+  longLabel = "Still working — your direction is saved.",
+  onStop,
+  stopAfterMs = 5000,
+  stopLabel = "Stop",
+  className,
 }: {
   active?: boolean;
+  /** Deterministic elapsed time for visual fixtures and tests. */
+  elapsedMs?: number;
+  initialLabel?: string;
   label?: string;
+  specificLabel?: string;
+  longLabel?: string;
+  onStop?: () => void;
+  stopAfterMs?: number;
+  stopLabel?: string;
+  className?: string;
 }) {
-  const [elapsed, setElapsed] = useState(0);
+  const [measuredElapsed, setMeasuredElapsed] = useState(0);
+  const hasStopAction = onStop !== undefined;
   useEffect(() => {
-    if (!active) {
-      setElapsed(0);
+    if (!active || elapsedMs !== undefined) {
+      setMeasuredElapsed(0);
       return;
     }
-    const started = Date.now();
-    const id = window.setInterval(() => setElapsed(Date.now() - started), 250);
-    return () => window.clearInterval(id);
-  }, [active]);
+    setMeasuredElapsed(0);
+    const thresholds = [
+      WAIT_LADDER_MS.QUIET,
+      WAIT_LADDER_MS.SPECIFIC,
+      WAIT_LADDER_MS.LONG,
+      ...(hasStopAction ? [stopAfterMs] : []),
+    ].filter((threshold, index, values) => threshold >= 0 && values.indexOf(threshold) === index);
+    const timers = thresholds.map((threshold) =>
+      window.setTimeout(() => setMeasuredElapsed(threshold), threshold),
+    );
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [active, elapsedMs, hasStopAction, stopAfterMs]);
+
+  if (!active) return null;
+  const elapsed = elapsedMs ?? measuredElapsed;
 
   const text = elapsed >= WAIT_LADDER_MS.LONG
-    ? "Still working — your direction is saved."
+    ? longLabel
     : elapsed >= WAIT_LADDER_MS.SPECIFIC
-      ? "Shaping the edit around your clips…"
+      ? specificLabel
       : elapsed >= WAIT_LADDER_MS.QUIET
         ? label
-        : null;
+        : initialLabel;
 
   return (
-    <ChatBubble role="assistant">
-      <div role="status" aria-live="polite" className="space-y-2">
-        <div className="flex items-center gap-1.5">
-          <Skeleton aria-hidden className="h-1.5 w-1.5 rounded-full motion-reduce:animate-none" />
-          <Skeleton aria-hidden className="h-1.5 w-1.5 rounded-full motion-reduce:animate-none" />
-          <Skeleton aria-hidden className="h-1.5 w-1.5 rounded-full motion-reduce:animate-none" />
-          {text ? <span className="ml-1">{text}</span> : <span className="sr-only">Kria is thinking</span>}
-        </div>
-      </div>
-    </ChatBubble>
+    <div className={cn("mr-auto flex min-h-8 items-center gap-2 text-sm", className)}>
+      <span role="status" aria-live="polite">
+        <span
+          key={text}
+          className="bg-gradient-to-r from-muted-foreground via-foreground to-muted-foreground bg-[length:200%_100%] bg-clip-text text-transparent motion-safe:animate-chat-thinking motion-reduce:animate-chat-fade-in motion-reduce:bg-none motion-reduce:text-muted-foreground"
+        >
+          {text}
+        </span>
+      </span>
+      {onStop && elapsed >= stopAfterMs ? (
+        <Button type="button" variant="ghost" size="sm" onClick={onStop} className="min-h-11 px-3">
+          {stopLabel}
+        </Button>
+      ) : null}
+    </div>
   );
 }

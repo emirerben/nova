@@ -15,9 +15,12 @@
  */
 
 import { useRef, useState } from "react";
-import { ArrowUp, X } from "lucide-react";
+import { X } from "lucide-react";
+import { AgentApprovalCard } from "@/components/chat/AgentApprovalCard";
+import { AgentComposer } from "@/components/chat/AgentComposer";
+import { ChatMessage } from "@/components/chat/ChatMessage";
+import { ChatThinking } from "@/components/chat/ChatThinking";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   contestConformance,
   planItemAdvisorTurn,
@@ -139,36 +142,41 @@ export default function AskKriaPanel({ item, mode, onClose, onItemChanged }: Ask
 
       {/* Prior-utterance pull-quote (editorial pattern — one quote, accent border) */}
       {lastUser && (
-        <p className="mt-3 border-l-2 border-primary pl-3 text-sm italic text-muted-foreground line-clamp-3">
+        <ChatMessage key={`user-${lastUser.content}`} role="user" presentation="editorial" className="mt-3 line-clamp-3">
           {lastUser.content}
-        </p>
+        </ChatMessage>
       )}
 
       {/* Agent reply — capped at text-xl: a sub-surface, never the page title. */}
-      <p className="mt-3 max-w-prose text-xl leading-snug text-foreground" aria-live="polite">
+      <ChatMessage key={`agent-${lastAgent?.content ?? "empty"}`} role="assistant" presentation="editorial" className="mt-3" aria-live="polite">
         {lastAgent?.content}
-      </p>
+      </ChatMessage>
 
       {thinking && (
-        <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-ping" />
-          Thinking it through…
-        </p>
+        <ChatThinking
+          className="mt-2"
+          initialLabel="Thinking it through…"
+          label="Reading your clip context…"
+          specificLabel="Checking the filming plan against your clips…"
+          longLabel="Still thinking through your clips…"
+        />
       )}
 
       {error && (
-        <div className="mt-2 rounded border border-border bg-background px-3 py-2 text-sm text-foreground">
+        <div role="alert" className="mt-2 rounded border border-border bg-background px-3 py-2 text-sm text-foreground">
           {error}
         </div>
       )}
 
       {/* Re-read offer (the recourse with teeth) */}
       {suggestedNote && noteTargetPath && (
-        <div className="mt-3 rounded-lg border border-border bg-muted p-3">
-          <p className="text-sm text-foreground">
-            Re-read the clip with this context? <em>&ldquo;{suggestedNote}&rdquo;</em>
-          </p>
-          <div className="mt-2 flex gap-1">
+        <AgentApprovalCard
+          density="compact"
+          className="mt-3"
+          title="Re-read the clip with this context?"
+          description={<em>&ldquo;{suggestedNote}&rdquo;</em>}
+          actions={
+            <>
             <Button
               type="button"
               variant="ghost"
@@ -186,8 +194,9 @@ export default function AskKriaPanel({ item, mode, onClose, onItemChanged }: Ask
             >
               No thanks
             </Button>
-          </div>
-        </div>
+            </>
+          }
+        />
       )}
 
       {/* Suggestion chips */}
@@ -202,34 +211,17 @@ export default function AskKriaPanel({ item, mode, onClose, onItemChanged }: Ask
       )}
 
       {/* Input — part of the panel, never viewport-sticky */}
-      <form
-        className="mt-3 flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send(input);
-        }}
-      >
-        <label className="sr-only" htmlFor="ask-kria-input">
-          Tell Kria about your clips
-        </label>
-        <Input
-          id="ask-kria-input"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Tell Kria about your clips…"
-          disabled={thinking}
-          className="rounded-full"
-        />
-        <Button
-          type="submit"
-          size="icon"
-          disabled={thinking || !input.trim()}
-          aria-label="Send"
-          className="shrink-0 rounded-full"
-        >
-          <ArrowUp className="h-4 w-4" />
-        </Button>
-      </form>
+      <AgentComposer
+        className="mt-3"
+        value={input}
+        onValueChange={setInput}
+        onSubmit={() => void send(input)}
+        disabled={thinking}
+        multiline={false}
+        placeholder="Tell Kria about your clips…"
+        inputLabel="Tell Kria about your clips"
+        submitLabel="Send"
+      />
     </div>
   );
 }
