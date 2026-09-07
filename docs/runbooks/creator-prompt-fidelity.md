@@ -54,6 +54,15 @@ Preserve the user's requested outcome when reporting an unavailable capability;
 ask for a compatible alternative instead of silently substituting a house style.
 Add conflict and negative-instruction fixtures alongside each new capability.
 
+For an invalid specialist draft on the mixed-media voiceover path, initial
+planning and direction replanning use the same source-bounded recovery allocator.
+It keeps the canonical narration frame budget and required all/selected media;
+real video windows may exceed the music montage's three-second ceiling. Exact
+photo holds stay fixed, and insufficient footage fails rather than shortening
+the recording or dropping required sources. The compiler validates recovery
+before approval. `tests/services/test_narrated_fallback.py` covers this boundary,
+including the 39-source shape and a selected-media subset.
+
 ## Rollout
 
 Deploy workers that consume `creator-fidelity-v1` before enabling the capability
