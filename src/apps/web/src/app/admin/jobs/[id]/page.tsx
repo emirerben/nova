@@ -21,8 +21,10 @@ import { JsonTreeView } from "@/components/JsonTreeView";
 import {
   adminCancelJob,
   adminGetJobDebug,
+  adminGetKriaTrace,
   type JobDebugResponse,
   type JobRuntimePayload,
+  type KriaTraceResponse,
   type PipelineTraceEvent,
 } from "@/lib/admin-jobs-api";
 import {
@@ -56,13 +58,14 @@ const CANCELLABLE_STATUSES: ReadonlySet<string> = new Set([
 // you opened it to watch one specific job.
 const RUNTIME_POLL_MS = 5_000;
 
-type Tab = "agents" | "timeline" | "recipe" | "trace" | "raw";
+type Tab = "agents" | "timeline" | "recipe" | "trace" | "kria" | "raw";
 
 const TAB_LABEL: Record<Tab, string> = {
   agents: "Agents",
   timeline: "Timeline",
   recipe: "Recipe",
   trace: "Pipeline Trace",
+  kria: "Kria Turn",
   raw: "Raw Job",
 };
 
@@ -88,6 +91,10 @@ export default function JobDebugPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("agents");
+  const [kriaTrace, setKriaTrace] = useState<KriaTraceResponse | null>(null);
+  const [kriaTraceLoading, setKriaTraceLoading] = useState(false);
+  const [kriaTraceError, setKriaTraceError] = useState<string | null>(null);
+  const [kriaTraceReload, setKriaTraceReload] = useState(0);
 
   const refetch = (): Promise<void> =>
     adminGetJobDebug(id)
@@ -144,6 +151,29 @@ export default function JobDebugPage({
     };
   }, [id, status]);
 
+  useEffect(() => {
+    if (tab !== "kria" || !data?.kria_turn_id) return;
+    let cancelled = false;
+    setKriaTraceLoading(true);
+    setKriaTraceError(null);
+    adminGetKriaTrace(data.kria_turn_id)
+      .then((trace) => {
+        if (!cancelled) setKriaTrace(trace);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) {
+          setKriaTrace(null);
+          setKriaTraceError(err.message || "Kria trace could not load.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setKriaTraceLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.kria_turn_id, kriaTraceReload, tab]);
+
   return (
     <main className="min-h-screen bg-black text-white px-4 py-10">
       <div className="max-w-7xl mx-auto">
@@ -187,6 +217,7 @@ export default function JobDebugPage({
                   assemblyPlan={data.job.assembly_plan}
                 />
               )}
+              {tab === "kria" && <KriaTraceTab turnId={data.kria_turn_id ?? null} data={kriaTrace} loading={kriaTraceLoading} error={kriaTraceError} onRetry={() => setKriaTraceReload((value) => value + 1)} />}
               {tab === "raw" && <RawTab data={data} />}
             </div>
           </>
@@ -757,6 +788,46 @@ function RawTab({ data }: { data: JobDebugResponse }): JSX.Element {
         Full debug payload (Job + template + music + agent_runs)
       </div>
       <JsonTreeView value={data} defaultDepth={1} />
+    </div>
+  );
+}
+
+function KriaTraceTab({ turnId, data, loading, error, onRetry }: { turnId: string | null; data: KriaTraceResponse | null; loading: boolean; error: string | null; onRetry: () => void }): JSX.Element {
+  if (!turnId) {
+    return (
+      <div className="rounded border border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500">
+        This Job was not dispatched by a runtime-v2 Kria turn.
+      </div>
+    );
+  }
+  if (loading) {
+    return <div className="rounded border border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500" role="status">Loading redacted Kria trace…</div>;
+  }
+  if (error || !data) {
+    return <div className="flex items-center justify-between gap-3 rounded border border-red-900/70 bg-red-950/30 px-4 py-3 text-sm text-red-200" role="alert"><span>{error || "Kria trace could not load."}</span><button type="button" className="min-h-11 rounded border border-zinc-700 px-3 text-zinc-100 hover:bg-zinc-900" onClick={onRetry}>Retry</button></div>;
+  }
+  const alerts = data.alerts;
+  const actions = data.recovery_actions;
+  return (
+    <div className="space-y-4">
+      {(alerts.length > 0 || actions.length > 0) && (
+        <div className="grid gap-3 md:grid-cols-2">
+          <section className="rounded border border-red-900/70 bg-red-950/30 px-4 py-3">
+            <h2 className="text-sm font-medium text-red-200">Alerts ({alerts.length})</h2>
+            <JsonTreeView value={alerts} defaultDepth={2} />
+          </section>
+          <section className="rounded border border-zinc-700 bg-zinc-950 px-4 py-3">
+            <h2 className="text-sm font-medium text-zinc-200">Safe recovery</h2>
+            <JsonTreeView value={actions} defaultDepth={2} />
+          </section>
+        </div>
+      )}
+      <section className="rounded border border-zinc-800 bg-zinc-950 px-4 py-3">
+        <div className="mb-2 text-xs uppercase tracking-wider text-zinc-500">
+          Redacted thread → turn → approval → execution → Job chain
+        </div>
+        <JsonTreeView value={data} defaultDepth={2} />
+      </section>
     </div>
   );
 }

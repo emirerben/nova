@@ -34,16 +34,18 @@ import { ChatArtifactCard } from "@/components/chat/ChatArtifactCard";
 import { BeamLoader } from "@/components/progress";
 import { VoiceRecorder } from "@/app/generative/VoiceRecorder";
 import {
-  applyCreationAction, creationFormat, creationFormatLabel, creationJobFailed,
+  applyCreationAction, cancelKriaTurn, creationFormat, creationFormatLabel, creationJobFailed,
   creationJobPartial, creationJobReady, creationJobSettled, creationPlanningFailed, creationThreadMediaCount, createCreationThread,
-  CreationThreadError, deleteCreationThread, getCreationCapabilities, listCreationThreads, refreshCreationThread,
+  CreationThreadError, decideKriaApproval, deleteCreationThread, getCreationCapabilities,
+  getKriaApproval, getKriaDelta, getKriaDraft, listCreationThreads, refreshCreationThread,
   creationClipLimit, sendCreationMessage, threadMessages, uploadCreationMedia,
   creationSpeechCleanupActionId, creationThreadInProgress, creationThreadNeedsPolling,
   creationThreadPreparing, creationThreadProgressKey,
+  creationGenerationArtifactKey,
   isCreationSpeechCleanupStaleConflict,
   isCreationThreadRevisionConflict,
   creationVariantPlayable, latestCreationDirection,
-  renameCreationThread,
+  renameCreationThread, sendKriaTurn, undoKriaDraft,
   type CreationFormat, type CreationSpeechCleanupChoice, type CreationThread,
 } from "@/lib/creation-thread-api";
 import { cn } from "@/lib/cn";
@@ -416,6 +418,8 @@ export default function ChatCreationWorkspace({
   const [galleryLoadError, setGalleryLoadError] = useState<string | null>(null);
   const [galleryRetryCursor, setGalleryRetryCursor] = useState<string | null>(null);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
+  const [hasNewUpdate, setHasNewUpdate] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
   const [initialLoading, setInitialLoading] = useState(true);
   const [speechCleanupPendingAction, setSpeechCleanupPendingAction] = useState<SpeechCleanupPendingAction>(null);
   const [availableFormats, setAvailableFormats] = useState<CreationFormat[]>(["montage", "narrated_planned", "subtitled"]);
@@ -431,6 +435,10 @@ export default function ChatCreationWorkspace({
   const desktopSidebarRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const atLiveEdgeRef = useRef(true);
+  const lastRenderedMessageRef = useRef<string | null>(null);
+  const lastRenderedThreadRef = useRef<string | null>(null);
   const queuedMessageRef = useRef<{ threadId: string; message: string } | null>(null);
   const preparedRevisionRef = useRef<string | null>(null);
   const activeThreadIdRef = useRef<string | null>(null);
@@ -507,6 +515,40 @@ export default function ChatCreationWorkspace({
       if (detailRequestRef.current?.controller === controller) detailRequestRef.current = null;
     }
   }, []);
+
+  const waitForKriaTurn = useCallback(async (
+    sourceThread: CreationThread,
+    turnId: string,
+  ) => {
+    let cursor = sourceThread.events.reduce(
+      (latest, event) => Math.max(latest, event.sequence),
+      -1,
+    );
+    const terminalEvents = new Set([
+      "assistant_response",
+      "assistant_question",
+      "assistant_error",
+      "draft_applied",
+      "approval_requested",
+    ]);
+    for (let attempt = 0; attempt < 13; attempt += 1) {
+      const delta = await getKriaDelta(sourceThread.id, cursor, 100);
+      cursor = delta.next_after_sequence;
+      const settled = delta.events.some((event) =>
+        terminalEvents.has(event.event_type)
+        && event.payload?.turn_id === turnId,
+      );
+      if (settled) {
+        const { next, requestSequence } = await refreshThreadProjection(sourceThread.id);
+        acceptThreadResponse(sourceThread.id, next, requestSequence);
+        return true;
+      }
+      if (activeThreadIdRef.current !== sourceThread.id) return false;
+      const delayMs = Math.min(2_500, 1_000 + (attempt * 500));
+      await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+    }
+    return false;
+  }, [acceptThreadResponse, refreshThreadProjection]);
 
   // Every async mutation gets a sequence at request start. A poll or refresh
   // that began later must be allowed to win even if an older send/action is
@@ -841,6 +883,42 @@ export default function ChatCreationWorkspace({
   const hasReady = Boolean(thread && creationJobReady(thread) && !speechCleanupOutcomeFailed);
   const isPartial = Boolean(thread && creationJobPartial(thread));
   const eventMessages = useMemo(() => thread ? threadMessages(thread) : [], [thread]);
+  const pendingRuntimeApprovalIds = useMemo(() => {
+    const pending = new Set<string>();
+    for (const event of [...(thread?.events ?? [])].sort((left, right) => left.sequence - right.sequence)) {
+      const approvalId = typeof event.payload?.approval_id === "string"
+        ? event.payload.approval_id
+        : null;
+      if (!approvalId) continue;
+      if (event.event_type === "approval_requested") pending.add(approvalId);
+      if (["approval_approved", "approval_denied", "approval_cancelled", "approval_expired"].includes(event.event_type)) {
+        pending.delete(approvalId);
+      }
+    }
+    return pending;
+  }, [thread?.events]);
+  const queuedRuntimeTurn = useMemo(() => {
+    const queued = new Map<string, string>();
+    for (const event of [...(thread?.events ?? [])].sort((left, right) => left.sequence - right.sequence)) {
+      const turnId = typeof event.payload?.turn_id === "string" ? event.payload.turn_id : null;
+      if (!turnId) continue;
+      if (
+        event.role === "user"
+        && event.event_type === "user_message"
+        && event.payload?.turn_status === "queued"
+        && event.content
+      ) queued.set(turnId, event.content);
+      if ([
+        "assistant_response", "assistant_question", "assistant_error", "draft_applied",
+        "approval_requested", "turn_cancelled",
+      ].includes(event.event_type)) queued.delete(turnId);
+    }
+    const latest = [...queued.entries()].at(-1);
+    return latest ? { turnId: latest[0], message: latest[1] } : null;
+  }, [thread?.events]);
+  const latestRuntimeDraftId = useMemo(() => [...eventMessages]
+    .reverse()
+    .find((message) => message.artifact === "draft")?.id ?? null, [eventMessages]);
   const eventSequenceById = useMemo(
     () => new Map((thread?.events ?? []).map((event) => [event.id, event.sequence])),
     [thread?.events],
@@ -866,14 +944,17 @@ export default function ChatCreationWorkspace({
   const variantStillRendering = Boolean(thread?.job?.variants.some((variant) => variant.render_status === "rendering"));
   const messages = useMemo(() => {
     if (!thread) return eventMessages;
-    let lifecycleMessageId: string | null = null;
-    const rows = eventMessages.map((message) => {
+    const lifecycleMessageId = [...eventMessages].reverse().find((message) =>
+      ["progress", "result", "failure"].includes(String(message.artifact)),
+    )?.id ?? null;
+    const rows = eventMessages.flatMap((message) => {
       if (!["progress", "result", "failure"].includes(String(message.artifact))) return message;
-      lifecycleMessageId = message.id;
-      return { ...message, artifact: undefined };
+      return message.id === lifecycleMessageId ? { ...message, artifact: undefined } : [];
     });
     const synthetic = (artifact: NonNullable<(typeof eventMessages)[number]["artifact"]>, suffix: string) => ({
-      id: `${thread.id}:${suffix}`,
+      id: ["progress", "result", "failure"].includes(artifact)
+        ? `${thread.id}:generation:${creationGenerationArtifactKey(thread)}`
+        : `${thread.id}:${suffix}`,
       role: "assistant" as const,
       content: "",
       eventType: `state_${suffix}`,
@@ -908,7 +989,12 @@ export default function ChatCreationWorkspace({
         ? rows.findIndex((message) => message.id === lifecycleMessageId)
         : -1;
       if (lifecycleIndex >= 0) {
-        rows[lifecycleIndex] = { ...rows[lifecycleIndex], artifact: lifecycleArtifact };
+        rows[lifecycleIndex] = {
+          ...rows[lifecycleIndex],
+          id: `${thread.id}:generation:${creationGenerationArtifactKey(thread)}`,
+          content: "",
+          artifact: lifecycleArtifact,
+        };
       } else {
         insertAfter(lifecycleAnchor, synthetic(lifecycleArtifact, "lifecycle"));
       }
@@ -926,12 +1012,44 @@ export default function ChatCreationWorkspace({
       ? `${creationFormatLabel(format)} · ${clipCount} ${clipCount === 1 ? "clip" : "clips"}`
       : "Start with a format, then tell me what you’re imagining";
 
-  useEffect(() => {
+  const scrollToLiveEdge = useCallback(() => {
     const transcript = transcriptRef.current;
     if (!transcript) return;
     latestMessageRef.current?.scrollIntoView?.({ block: "end" });
     transcript.scrollTop = transcript.scrollHeight;
-  }, [hasReady, lastMessageId, thinking, thread?.id, variantStillRendering]);
+    atLiveEdgeRef.current = true;
+    setHasNewUpdate(false);
+  }, []);
+
+  const focusComposerAfterAction = useCallback(() => {
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    const changed = lastRenderedMessageRef.current !== lastMessageId;
+    const switchedThread = lastRenderedThreadRef.current !== (thread?.id ?? null);
+    if (atLiveEdgeRef.current || switchedThread) scrollToLiveEdge();
+    else if (changed) setHasNewUpdate(true);
+    if (changed && lastMessageId) {
+      const latest = messages.at(-1);
+      setAnnouncement(latest?.artifact === "result"
+        ? "Your cut is ready."
+        : latest?.artifact === "progress" ? "Render progress updated."
+          : latest?.artifact === "approval" ? "Approval required."
+            : latest?.role === "user" ? "Your message was added."
+              : "Kria replied.");
+    }
+    lastRenderedMessageRef.current = lastMessageId ?? null;
+    lastRenderedThreadRef.current = thread?.id ?? null;
+  }, [hasReady, lastMessageId, messages, scrollToLiveEdge, thread?.id, thinking, variantStillRendering]);
+
+  const onTranscriptScroll = useCallback(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    const atEdge = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 80;
+    atLiveEdgeRef.current = atEdge;
+    if (atEdge) setHasNewUpdate(false);
+  }, []);
 
   async function selectFormat(value: CreationFormat) {
     if (productionPreview || !thread || busy || (format && !formatPickerOpen) || !availableFormats.includes(value)) return;
@@ -1044,7 +1162,26 @@ export default function ChatCreationWorkspace({
 
   const submitMessage = useCallback(async (sourceThread: CreationThread, message: string) => {
     setInput(""); setThinking(true); setError(null);
-    try { await requestThreadResponse(sourceThread.id, () => sendCreationMessage(sourceThread, message)); }
+    try {
+      if (sourceThread.runtime_version === 2) {
+        const accepted = await sendKriaTurn(sourceThread, message);
+        if (accepted.status === "queued") {
+          const { next, requestSequence } = await refreshThreadProjection(sourceThread.id);
+          acceptThreadResponse(sourceThread.id, next, requestSequence);
+          setError("I queued that behind the current edit. You can keep using this project while it finishes.");
+          return;
+        }
+        const settled = await waitForKriaTurn(sourceThread, accepted.turn_id);
+        if (!settled && activeThreadIdRef.current === sourceThread.id) {
+          setError("Kria is still working on that. Your request is saved and this chat will keep its place.");
+        }
+      } else {
+        await requestThreadResponse(
+          sourceThread.id,
+          () => sendCreationMessage(sourceThread, message),
+        );
+      }
+    }
     catch (cause) {
       setInput(message);
       if (isCreationThreadRevisionConflict(cause)) {
@@ -1062,7 +1199,7 @@ export default function ChatCreationWorkspace({
       }
     }
     finally { setThinking(false); }
-  }, [acceptThreadResponse, refreshThreadProjection, requestThreadResponse]);
+  }, [acceptThreadResponse, refreshThreadProjection, requestThreadResponse, waitForKriaTurn]);
 
   async function send() {
     const message = input.trim();
@@ -1100,6 +1237,81 @@ export default function ChatCreationWorkspace({
     try { await requestThreadResponse(sourceThread.id, () => applyCreationAction(sourceThread, action, payload)); }
     catch { setError("I couldn’t start that render. Your project is safe—adjust the direction or try again."); }
     finally { setBusy(false); }
+  }
+
+  async function decideRuntimeApproval(
+    approvalId: string,
+    decision: "approve" | "deny",
+  ) {
+    if (productionPreview || !thread || thread.runtime_version !== 2 || busy) return;
+    const sourceThread = thread;
+    setBusy(true); setError(null);
+    try {
+      const approval = await getKriaApproval(sourceThread.id, approvalId);
+      await decideKriaApproval(
+        sourceThread.id,
+        approval,
+        decision,
+        sourceThread.revision,
+      );
+      const { next, requestSequence } = await refreshThreadProjection(sourceThread.id);
+      acceptThreadResponse(sourceThread.id, next, requestSequence);
+    } catch (cause) {
+      if (cause instanceof CreationThreadError && cause.problem?.recovery === "refresh_replan") {
+        const { next, requestSequence } = await refreshThreadProjection(sourceThread.id);
+        acceptThreadResponse(sourceThread.id, next, requestSequence);
+      }
+      setError(cause instanceof Error
+        ? cause.message
+        : "I couldn’t record that decision. Your draft is still safe.");
+    } finally {
+      setBusy(false);
+      focusComposerAfterAction();
+    }
+  }
+
+  async function undoRuntimeDraft() {
+    if (productionPreview || !thread || thread.runtime_version !== 2 || busy) return;
+    const sourceThread = thread;
+    setBusy(true); setError(null);
+    try {
+      const draft = await getKriaDraft(sourceThread.id);
+      if (!draft.can_undo) {
+        setError("There isn’t an earlier draft to restore yet.");
+        return;
+      }
+      await undoKriaDraft(sourceThread.id, draft.draft_revision);
+      const { next, requestSequence } = await refreshThreadProjection(sourceThread.id);
+      acceptThreadResponse(sourceThread.id, next, requestSequence);
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "I couldn’t undo that draft. Refresh the project and try again.");
+    } finally {
+      setBusy(false);
+      focusComposerAfterAction();
+    }
+  }
+
+  async function cancelQueuedRuntimeTurn(restore: boolean) {
+    if (!thread || thread.runtime_version !== 2 || !queuedRuntimeTurn || busy) return;
+    const sourceThread = thread;
+    setBusy(true); setError(null);
+    try {
+      await cancelKriaTurn(sourceThread.id, queuedRuntimeTurn.turnId, sourceThread.revision);
+      const { next, requestSequence } = await refreshThreadProjection(sourceThread.id);
+      acceptThreadResponse(sourceThread.id, next, requestSequence);
+      if (restore) {
+        setInput(queuedRuntimeTurn.message);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "I couldn’t change the queued request. Refresh and try again.");
+    } finally {
+      setBusy(false);
+      focusComposerAfterAction();
+    }
   }
 
   function beginRename(project: CreationThread) {
@@ -1337,9 +1549,7 @@ export default function ChatCreationWorkspace({
   const editorUrl = !productionPreview && thread?.active_plan_item_id
     ? `/plan/items/${thread.active_plan_item_id}/edit?embedded=1${selectedReadyVariant?.variant_id ? `&variant=${selectedReadyVariant.variant_id}` : ""}`
     : null;
-  const directionDescription = typeof thread?.state.intent === "string" && thread.state.intent
-    ? thread.state.intent
-    : "I’ll find the strongest opening and shape your footage into a concise first cut.";
+  const directionDescription = "Kria will use the proposed direction to make a new cut. Rendering starts only after you approve.";
   const cleanupCard = speechCleanup?.applicable ? (
     <SpeechCleanupDecisionCard
       cleanup={speechCleanup}
@@ -1511,87 +1721,40 @@ export default function ChatCreationWorkspace({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-	          <Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
-	        </div>
-	      </header>
-	      <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="creation-live-announcer">{liveAnnouncement}</p>
-	      <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="off" tabIndex={0} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
+          <Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
+        </div>
+      </header>
+      <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="creation-live-announcer">{announcement}</p>
+      <p className="sr-only" role="status" aria-atomic="true" data-testid="speech-cleanup-live-announcer">{liveAnnouncement}</p>
+      <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="off" tabIndex={0} onScroll={onTranscriptScroll} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
         {!thread && !error ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
         {!thread && error ? <ChatArtifactCard title="Creation chat couldn’t load" description="Your projects are safe. Check your connection, then try again."><Button type="button" variant="outline" disabled={initialLoading} onClick={() => void load()}><RefreshCw /> {initialLoading ? "Retrying…" : "Retry"}</Button></ChatArtifactCard> : null}
-        {messages.map((message, index) => (
-          <div
-            key={message.id}
-            ref={index === messages.length - 1 ? latestMessageRef : undefined}
-            className="space-y-3"
-          >
+        {messages.map((message, index) => {
+          const approvalId = typeof message.payload?.approval_id === "string"
+            ? message.payload.approval_id
+            : null;
+          const changes = Array.isArray(message.payload?.changes)
+            ? message.payload.changes.filter((value): value is string => typeof value === "string")
+            : [];
+          return <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className="space-y-3">
             {message.content ? <ChatMessage role={message.role} animate={index === messages.length - 1}>{message.content}</ChatMessage> : null}
+            {queuedRuntimeTurn && message.payload?.turn_id === queuedRuntimeTurn.turnId ? <ChatArtifactCard badge={<Badge variant="outline">After this render</Badge>} title="One follow-up is queued" description="Kria saved this request and will pick it up when the current work settles."><div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button type="button" variant="outline" className="min-h-11" disabled={productionPreview || busy} onClick={() => void cancelQueuedRuntimeTurn(false)}>Cancel request</Button><Button type="button" variant="outline" className="min-h-11" disabled={productionPreview || busy} onClick={() => void cancelQueuedRuntimeTurn(true)}>Change request</Button></div></ChatArtifactCard> : null}
+            {message.artifact === "draft" && message.id === latestRuntimeDraftId ? <ChatArtifactCard badge={<Badge variant="secondary">Draft saved</Badge>} title="Your edit is ready to review" description={changes.length > 0 ? changes.join(" · ") : "Kria applied the direction as a reversible draft."}><Button type="button" variant="outline" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void undoRuntimeDraft()}><RefreshCw /> Undo draft</Button></ChatArtifactCard> : null}
+            {message.artifact === "approval" && approvalId && pendingRuntimeApprovalIds.has(approvalId) ? <AgentApprovalCard badge={<Badge variant="secondary">Approval required</Badge>} title="Start this render?" description={`${String(message.payload?.consequence_summary ?? "Render the saved draft.")}${message.payload?.cost_summary ? ` ${String(message.payload.cost_summary)}.` : ""}`} actions={<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button type="button" variant="outline" className="min-h-11" disabled={productionPreview || busy} onClick={() => void decideRuntimeApproval(approvalId, "deny")}>Not yet</Button><Button type="button" className="min-h-11" disabled={productionPreview || busy} onClick={() => void decideRuntimeApproval(approvalId, "approve")}><Sparkles />{busy ? "Recording approval…" : "Approve and render"}</Button></div>} /> : null}
             {message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}
             {message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}
             {message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}
-            {(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady))
-              && canConfirmDirection && !speechCleanupOutcomeFailed
-              ? (cleanupCard ?? defaultConfirmationCard)
-              : null}
-            {message.artifact === "revision" && hasReady ? (
-              <AgentApprovalCard
-                badge={<Badge variant="secondary">Revision ready</Badge>}
-                title="Apply this direction?"
-                description="This creates a new generation from the finished cut."
-                actions={<Button
-                  type="button"
-                  className="min-h-11 w-full"
-                  disabled={productionPreview || busy}
-                  onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}
-                >
-                  <RefreshCw /> Create revision
-                </Button>}
-              />
-            ) : null}
-            {message.artifact === "progress"
-              && thread?.active_job_id
-              && !creationJobFailed(thread)
-              && !speechCleanupOutcomeFailed
-              ? <RenderStatusCard thread={thread} />
-              : null}
-            {message.artifact === "failure"
-              && thread
-              && (speechCleanupOutcomeFailed
-                || ((creationJobFailed(thread) || planningFailed)
-                  && (!hasPendingConfirmation || planningFailed)))
-              ? speechCleanupOutcomeFailed
-                ? cleanupCard
-                : (
-                  <FailureStatusCard
-                    thread={thread}
-                    busy={busy}
-                    readOnly={productionPreview}
-                    planningFailure={planningFailed}
-                    onRetry={creationJobFailed(thread) ? () => void confirm("retry") : undefined}
-                    onAdjust={() => setInput(latestCreationDirection(thread) || "Try a different opening and keep the pacing quick.")}
-                  />
-                )
-              : null}
-            {message.artifact === "result" && thread && hasReady ? (
-              <ReadyStatusCard
-                thread={thread}
-                isPartial={isPartial}
-                selectedReadyVariant={selectedReadyVariant}
-                selectedFailedVariant={selectedFailedVariant}
-                busy={busy}
-                readOnly={productionPreview}
-                onSelectVariant={(id) => void selectVariant(id)}
-                onOpenEditor={() => {
-                  setEditorOpen(true);
-                  setMobileTab("editor");
-                }}
-                onRetryVariant={(id) => void confirm("retry", { variant_id: id })}
-              />
-            ) : null}
-          </div>
-        ))}
+            {(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection && !speechCleanupOutcomeFailed ? (cleanupCard ?? defaultConfirmationCard) : null}
+            {message.artifact === "revision" && hasReady ? <AgentApprovalCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut." actions={<Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button>} /> : null}
+            {message.artifact === "progress" && thread?.active_job_id && !creationJobFailed(thread) && !speechCleanupOutcomeFailed ? <RenderStatusCard thread={thread} /> : null}
+            {message.artifact === "failure" && thread && (speechCleanupOutcomeFailed || ((creationJobFailed(thread) || planningFailed) && (!hasPendingConfirmation || planningFailed))) ? (speechCleanupOutcomeFailed ? cleanupCard : <FailureStatusCard thread={thread} busy={busy} readOnly={productionPreview} planningFailure={planningFailed} onRetry={creationJobFailed(thread) && thread.runtime_version !== 2 ? () => void confirm("retry") : undefined} onAdjust={() => setInput(latestCreationDirection(thread) || "Try a different opening and keep the pacing quick.")} />) : null}
+            {message.artifact === "result" && thread && hasReady ? <ReadyStatusCard thread={thread} isPartial={isPartial} selectedReadyVariant={selectedReadyVariant} selectedFailedVariant={selectedFailedVariant} busy={busy} readOnly={productionPreview} onSelectVariant={(id) => void selectVariant(id)} onOpenEditor={() => { setEditorOpen(true); setMobileTab("editor"); }} onRetryVariant={(id) => void confirm("retry", { variant_id: id })} /> : null}
+          </div>;
+        })}
         {thinking ? <ChatThinking /> : null}
       </div></div>
-      <div className="shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"><AgentComposer className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview} submitDisabled={thinking || !thread} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
+      {hasNewUpdate ? <div className="flex shrink-0 justify-center border-t bg-background/95 px-3 py-2"><Button type="button" variant="secondary" className="min-h-11" onClick={scrollToLiveEdge}>New update</Button></div> : null}
+      <div className={cn("shrink-0 bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4", !hasNewUpdate && "border-t")}><AgentComposer ref={composerRef} className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview} submitDisabled={thinking || !thread} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
     </section>
     {projectDialogs}
     </>

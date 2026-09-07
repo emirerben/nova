@@ -52,6 +52,7 @@ from app.database import get_db
 from app.limiter import limiter
 from app.models import (
     ContentPlan,
+    CreationThread,
     CreatorAgentEvent,
     CreatorAgentExecution,
     CreatorAgentSession,
@@ -263,6 +264,22 @@ async def _owned_context(
     )
     if item is None or item.content_plan_id != plan.id:
         raise HTTPException(status_code=404, detail="Plan item not found")
+    runtime_v2_thread_id = (
+        await db.execute(
+            select(CreationThread.id)
+            .where(
+                CreationThread.creator_id == user_id,
+                CreationThread.active_plan_item_id == iid,
+                CreationThread.runtime_version == 2,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if runtime_v2_thread_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This project is controlled by the new Kria runtime.",
+        )
     return item, plan, persona
 
 

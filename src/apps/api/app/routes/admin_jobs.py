@@ -28,7 +28,15 @@ from sqlalchemy.orm import defer
 from app import storage
 from app.agents._runtime import SUCCESS_OUTCOMES
 from app.database import get_db
-from app.models import AgentRun, Job, JobClip, MusicTrack, TikTokPublication, VideoTemplate
+from app.models import (
+    AgentRun,
+    CreatorAgentExecution,
+    Job,
+    JobClip,
+    MusicTrack,
+    TikTokPublication,
+    VideoTemplate,
+)
 from app.routes._admin_schemas import (
     AgentRunPayload,
     AgentRunSummaryPayload,
@@ -221,6 +229,8 @@ class JobDebugResponse(BaseModel):
     # Scalar-only correlation. The underlying preflight snapshot remains private:
     # no media path, generation, fingerprint, words, or cut intervals are exposed.
     speech_cleanup_preflight: dict[str, Any] | None = None
+    # Scalar-only correlation for lazy loading from /admin/kria/trace.
+    kria_turn_id: str | None = None
 
 
 class CancelJobResponse(BaseModel):
@@ -688,6 +698,28 @@ async def get_job_debug(
     )
 
     runtime = _resolve_runtime(job)
+    kria_execution = None
+    if getattr(job, "content_plan_item_id", None) is not None:
+        kria_execution = (
+            (
+                await db.execute(
+                    select(CreatorAgentExecution)
+                    .where(
+                        CreatorAgentExecution.target_job_id == job.id,
+                        CreatorAgentExecution.turn_id.is_not(None),
+                    )
+                    .order_by(CreatorAgentExecution.created_at.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+    kria_turn_id = (
+        str(kria_execution.turn_id)
+        if kria_execution is not None and kria_execution.turn_id is not None
+        else None
+    )
 
     return JobDebugResponse(
         job=job_payload,
@@ -723,6 +755,7 @@ async def get_job_debug(
         runtime=runtime,
         render_summary=build_render_summary(job, runs),
         speech_cleanup_preflight=project_admin_speech_cleanup_trace(job.assembly_plan),
+        kria_turn_id=kria_turn_id,
         render_timing=_render_timing_breakdown(job, runs),
     )
 

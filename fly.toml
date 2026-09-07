@@ -69,7 +69,7 @@ kill_timeout = 300
   # drives the every-5-min stale-job sweeper and the render-worker lifecycle
   # backstop. Beat does NOT de-duplicate across replicas, so `light` MUST
   # stay at exactly one machine (`fly scale count light=1`).
-  light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance -B"
+  light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance,agent-control -B"
   # Image/video metadata analysis is network-bound but downloads media, so it
   # must not share the 1GB maintenance VM or wait behind long render jobs.
   autoplace = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q autoplace-jobs"

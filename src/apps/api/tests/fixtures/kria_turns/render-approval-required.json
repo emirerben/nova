@@ -1,0 +1,35 @@
+{
+  "fixture_id": "render-approval-required",
+  "scenario": "approval",
+  "user_message": "Render the tighter matcha launch cut.",
+  "snapshot": {
+    "edit_format": "montage",
+    "draft_id": "draft-matcha-7",
+    "draft_revision": 7,
+    "media_labels": ["whisking close-up", "packing orders"],
+    "editorial_decision": "Open on the whisking close-up, then cut directly to packing orders."
+  },
+  "plan": {
+    "schema_version": 2,
+    "mode": "act",
+    "turn_value": "action",
+    "evidence_ids": ["snapshot:draft:7"],
+    "intents": [
+      {
+        "intent_id": "inspect-project",
+        "tool_name": "project.inspect",
+        "tool_version": 1,
+        "arguments": {},
+        "depends_on": []
+      },
+      {
+        "intent_id": "request-render",
+        "tool_name": "render.request",
+        "tool_version": 1,
+        "arguments": {},
+        "depends_on": ["inspect-project"]
+      }
+    ]
+  },
+  "expected_message": "The tighter cut is ready to render. Approve it to start one render."
+}
