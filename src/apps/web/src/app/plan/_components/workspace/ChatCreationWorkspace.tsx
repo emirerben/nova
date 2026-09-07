@@ -6,7 +6,7 @@ import { useSession, signOut } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Check, Download, Film, FolderOpen, Menu, MoreHorizontal, PanelLeftClose,
-  PanelLeftOpen, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, WifiOff,
+  PanelLeftOpen, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, UserRound, WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -25,8 +25,8 @@ import {
   DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -1717,8 +1717,20 @@ export default function ChatCreationWorkspace({
         })}
       </nav>
       <div className="mt-auto border-t pt-4">
-        <p className="truncate text-sm font-medium">{accountName}</p>
-        <div className="mt-2 flex items-center gap-1"><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={openGallery}>My videos</Button>{CREATOR_MEMORY_ENABLED ? <><span className="text-muted-foreground">·</span><Button type="button" variant="ghost" asChild className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8"><Link href="/plan/profile">Personalization</Link></Button></> : null}<span className="text-muted-foreground">·</span><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={() => void signOut({ callbackUrl: "/" })}>Sign out</Button></div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="ghost" size="icon" className="size-11 rounded-full md:size-9" aria-label="Account menu">
+              <UserRound aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" className="w-44">
+            <DropdownMenuLabel className="truncate text-[11px] font-normal text-muted-foreground">{accountName}</DropdownMenuLabel>
+            <DropdownMenuItem onSelect={openGallery}>My videos</DropdownMenuItem>
+            {CREATOR_MEMORY_ENABLED ? <DropdownMenuItem asChild><Link href="/plan/profile">Personalization</Link></DropdownMenuItem> : null}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => void signOut({ callbackUrl: "/" })}>Sign out</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </aside>
   );

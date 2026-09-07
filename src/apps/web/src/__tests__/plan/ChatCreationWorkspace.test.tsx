@@ -211,6 +211,22 @@ describe("ChatCreationWorkspace", () => {
     expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
   });
 
+  it("opens profile and memory from the sidebar account icon", async () => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+
+    await screen.findByRole("heading", { name: "Untitled video" });
+    expect(screen.queryByText("Test creator")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Account menu" }));
+
+    expect(screen.getByText("Test creator")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Personalization" })).toHaveAttribute(
+      "href",
+      "/plan/profile",
+    );
+  });
+
   it("uses runtime-v2 turn transport and hydrates the semantic reply", async () => {
     const user = userEvent.setup();
     const runtimeThread = {
