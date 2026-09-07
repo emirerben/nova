@@ -2288,12 +2288,6 @@ async def create_thread(
             **({"title_source": "first_prompt"} if body.message else {}),
         },
     )
-    from app.services.creator_direction_receipts import stamp_private_receipt  # noqa: PLC0415
-    from app.services.creator_direction_snapshot import (  # noqa: PLC0415
-        resolve_snapshot_for_dispatch,
-        serialize_private_snapshot,
-    )
-
     db.add(thread)
     await db.flush()
     if body.runtime_version == 2:
@@ -2304,11 +2298,6 @@ async def create_thread(
         db.add(session)
         await db.flush()
         thread.active_creator_agent_session_id = session.id
-    resolved_direction = await resolve_snapshot_for_dispatch(db, user.id, thread_id=thread.id)
-    thread.creator_direction_snapshot = stamp_private_receipt(
-        serialize_private_snapshot(resolved_direction, source="creation_thread"),
-        resolved_direction,
-    )
     await _append(
         db,
         thread,
@@ -2332,6 +2321,17 @@ async def create_thread(
             role="user",
             content=body.message,
         )
+    from app.services.creator_direction_receipts import stamp_private_receipt  # noqa: PLC0415
+    from app.services.creator_direction_snapshot import (  # noqa: PLC0415
+        resolve_snapshot_for_dispatch,
+        serialize_private_snapshot,
+    )
+
+    resolved_direction = await resolve_snapshot_for_dispatch(db, user.id, thread_id=thread.id)
+    thread.creator_direction_snapshot = stamp_private_receipt(
+        serialize_private_snapshot(resolved_direction, source="creation_thread"),
+        resolved_direction,
+    )
     await db.commit()
     await db.refresh(thread)
     return await _response(db, thread)
@@ -2538,6 +2538,13 @@ async def message_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
+    # Explicit creator-memory admission uses the account mutation boundary.
+    # Keep the global lock order user -> thread, matching project overrides,
+    # so a concurrent override cannot deadlock with a durable chat instruction.
+    if isinstance(db, AsyncSession):
+        user_row = await db.get(type(user), user.id, with_for_update=True)
+        if user_row is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
     thread = await _load(thread_id, user, db, lock=True)
     _require_runtime_v1_mutation(thread)
     if thread.status != "active":
@@ -3256,6 +3263,25 @@ async def action_thread(
                             status_code=409,
                             detail="speech_cleanup_choice_required",
                         )
+        if body.action in {"generate", "confirm_generation"}:
+            from app.services.creator_direction_receipts import (  # noqa: PLC0415
+                stamp_private_receipt,
+            )
+            from app.services.creator_direction_snapshot import (  # noqa: PLC0415
+                resolve_snapshot_for_dispatch,
+                serialize_private_snapshot,
+            )
+
+            current_direction = await resolve_snapshot_for_dispatch(
+                db, user.id, thread_id=thread.id
+            )
+            thread.creator_direction_snapshot = stamp_private_receipt(
+                serialize_private_snapshot(
+                    current_direction,
+                    source="creation_thread_generation",
+                ),
+                current_direction,
+            )
         confirmation = creator_agent.ConfirmBody(
             session_id=session.id,
             expected_revision=int(payload.get("session_revision", session.revision)),

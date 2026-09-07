@@ -3111,6 +3111,20 @@ async def test_confirm_dispatch_links_authoritative_job(monkeypatch: pytest.Monk
     monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
     confirm = AsyncMock(return_value=result)
     monkeypatch.setattr(routes.creator_agent, "confirm_creator_plan_controller", confirm)
+    direction = SimpleNamespace(name="current")
+    resolve_direction = AsyncMock(return_value=direction)
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.resolve_snapshot_for_dispatch",
+        resolve_direction,
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.serialize_private_snapshot",
+        lambda value, *, source: {"direction": value.name, "source": source},
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_receipts.stamp_private_receipt",
+        lambda snapshot, _direction: snapshot,
+    )
     output = await routes.action_thread(
         _request(),
         str(thread.id),
@@ -3125,6 +3139,11 @@ async def test_confirm_dispatch_links_authoritative_job(monkeypatch: pytest.Monk
     )
     assert output is thread
     assert thread.active_job_id == job_id
+    assert thread.creator_direction_snapshot == {
+        "direction": "current",
+        "source": "creation_thread_generation",
+    }
+    resolve_direction.assert_awaited_once_with(db, user.id, thread_id=thread.id)
     confirm.assert_awaited_once()
 
 
@@ -3164,6 +3183,18 @@ async def test_confirm_generation_syncs_the_projection_after_controller_commit(
     monkeypatch.setattr(
         "app.routes.creation_threads.creator_agent.confirm_creator_plan_controller",
         AsyncMock(return_value=result),
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.resolve_snapshot_for_dispatch",
+        AsyncMock(return_value=SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.serialize_private_snapshot",
+        lambda _direction, *, source: {"source": source},
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_receipts.stamp_private_receipt",
+        lambda snapshot, _direction: snapshot,
     )
 
     await action_thread(

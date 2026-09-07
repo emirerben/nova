@@ -471,11 +471,45 @@ async def undo_memory(
 ) -> dict[str, Any]:
     _mutation_gate()
     try:
+        original = (
+            await db.execute(
+                select(CreatorMemoryOperation).where(
+                    CreatorMemoryOperation.id == operation_id,
+                    CreatorMemoryOperation.user_id == user.id,
+                )
+            )
+        ).scalar_one_or_none()
         op = await service.undo(
             db, user.id, operation_id, body.expected_revision, body.idempotency_key
         )
+        receipt = (op.prior_state or {}).get("_receipt")
+        if not isinstance(receipt, dict):
+            receipt = None
+        if (
+            original is not None
+            and original.operation_kind
+            in {
+                "set_override",
+                "delete_override",
+            }
+            and receipt is None
+        ):
+            prior = original.prior_state or {}
+            thread_value = (
+                (prior.get("_result") or {}).get("thread_id")
+                if original.operation_kind == "set_override"
+                and isinstance(prior.get("_result"), dict)
+                else prior.get("thread_id")
+            )
+            try:
+                thread_id = uuid.UUID(str(thread_value))
+            except (TypeError, ValueError):
+                thread_id = None
+            if thread_id is not None:
+                receipt = await _refresh_project_direction(db, user_id=user.id, thread_id=thread_id)
+                op.prior_state = {**(op.prior_state or {}), "_receipt": receipt}
         await db.commit()
-        return _op(op)
+        return {**_op(op), **({"direction_receipt": receipt} if receipt else {})}
     except DirectionError as exc:
         await db.rollback()
         raise _error(exc) from exc
@@ -508,6 +542,8 @@ async def put_override(
             "instruction": row.instruction,
             "structured_value": row.structured_value,
             "revision": row.revision,
+            "operation_id": str(operation.id),
+            "undo_expires_at": operation.undo_expires_at,
             "direction_receipt": receipt,
         }
     except DirectionError as exc:

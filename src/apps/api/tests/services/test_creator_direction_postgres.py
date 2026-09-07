@@ -3,7 +3,7 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import delete, select
@@ -33,6 +33,7 @@ from app.services.creator_direction_snapshot import (
     attach_snapshot,
     typed_overrides_from_container,
 )
+from app.services.creator_memory_learning import enqueue_memory_extraction
 
 
 async def _create_user() -> uuid.UUID:
@@ -599,6 +600,131 @@ async def test_active_memory_limit_rejects_an_extra_rule(monkeypatch):
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_active_memory_limit_applies_when_activating_or_editing_an_inactive_item(
+    monkeypatch,
+):
+    from app.services import creator_direction
+
+    service = CreatorDirectionService()
+    try:
+        user_id = await _create_user()
+    except (OperationalError, OSError) as exc:
+        pytest.skip(f"nova_test Postgres not reachable: {exc!r}")
+    try:
+        monkeypatch.setattr(creator_direction, "MAX_ACTIVE_ITEMS", 1)
+        async with AsyncSessionLocal() as db:
+            await service.create_item(
+                db,
+                user_id,
+                instruction="Keep the pacing calm",
+                category="stories_pacing",
+                enforcement="default",
+                normalized_key=None,
+                structured_value=None,
+                expected_revision=0,
+                idempotency_key="transition-limit-active",
+            )
+            suggestion = await service.create_item(
+                db,
+                user_id,
+                instruction="Use quiet music",
+                category="video_style",
+                enforcement="advisory",
+                normalized_key=None,
+                structured_value=None,
+                expected_revision=1,
+                idempotency_key="transition-limit-suggestion",
+                initial_state="suggested",
+            )
+
+            with pytest.raises(LimitReached, match="too many active"):
+                await service.set_item_state(
+                    db,
+                    user_id,
+                    suggestion.item_id,
+                    state="active",
+                    required_state="suggested",
+                    expected_revision=2,
+                    idempotency_key="transition-limit-accept",
+                )
+            with pytest.raises(LimitReached, match="too many active"):
+                await service.update_item(
+                    db,
+                    user_id,
+                    suggestion.item_id,
+                    instruction="Use very quiet music",
+                    category="video_style",
+                    enforcement="default",
+                    normalized_key=None,
+                    structured_value=None,
+                    expected_revision=2,
+                    idempotency_key="transition-limit-edit",
+                )
+
+            await db.rollback()
+    finally:
+        await _delete_users(user_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_edit_rejects_duplicate_freeform_instruction_before_unique_index():
+    service = CreatorDirectionService()
+    try:
+        user_id = await _create_user()
+    except (OperationalError, OSError) as exc:
+        pytest.skip(f"nova_test Postgres not reachable: {exc!r}")
+    try:
+        async with AsyncSessionLocal() as db:
+            await service.create_item(
+                db,
+                user_id,
+                instruction="Keep the pacing calm",
+                category="stories_pacing",
+                enforcement="default",
+                normalized_key=None,
+                structured_value=None,
+                expected_revision=0,
+                idempotency_key="duplicate-edit-first",
+            )
+            second = await service.create_item(
+                db,
+                user_id,
+                instruction="Use quiet music",
+                category="video_style",
+                enforcement="default",
+                normalized_key=None,
+                structured_value=None,
+                expected_revision=1,
+                idempotency_key="duplicate-edit-second",
+            )
+            second_item_id = second.item_id
+            await db.commit()
+
+            with pytest.raises(
+                DirectionConflict, match="another memory item already uses this instruction"
+            ):
+                await service.update_item(
+                    db,
+                    user_id,
+                    second_item_id,
+                    instruction="Keep the pacing calm",
+                    category="stories_pacing",
+                    enforcement="default",
+                    normalized_key=None,
+                    structured_value=None,
+                    expected_revision=2,
+                    idempotency_key="duplicate-edit-conflict",
+                )
+
+            await db.rollback()
+            second_item = await db.get(CreatorMemoryItem, second_item_id)
+            assert second_item is not None
+            assert second_item.instruction == "Use quiet music"
+    finally:
+        await _delete_users(user_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_project_override_is_owner_scoped_and_upserts_one_key():
     service = CreatorDirectionService()
     try:
@@ -714,6 +840,116 @@ async def test_project_override_is_owner_scoped_and_upserts_one_key():
             ).scalar_one_or_none() is None
     finally:
         await _delete_users(owner_id, stranger_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_project_override_create_update_and_delete_are_undoable():
+    service = CreatorDirectionService()
+    try:
+        user_id = await _create_user()
+    except (OperationalError, OSError) as exc:
+        pytest.skip(f"nova_test Postgres not reachable: {exc!r}")
+    try:
+        async with AsyncSessionLocal() as db:
+            thread = CreationThread(creator_id=user_id)
+            db.add(thread)
+            await db.flush()
+
+            await service.set_override(
+                db,
+                user_id,
+                thread.id,
+                instruction="Use Inter for this project",
+                normalized_key="font_family",
+                structured_value={"font_family": "Inter"},
+                expected_revision=0,
+                idempotency_key="override-undo-create",
+            )
+            create_operation = (
+                await db.execute(
+                    select(CreatorMemoryOperation).where(
+                        CreatorMemoryOperation.user_id == user_id,
+                        CreatorMemoryOperation.idempotency_key == "override-undo-create",
+                    )
+                )
+            ).scalar_one()
+            assert create_operation.undo_expires_at is not None
+            await service.undo(
+                db,
+                user_id,
+                create_operation.id,
+                expected_revision=1,
+                idempotency_key="override-undo-create-apply",
+            )
+            assert (
+                await db.execute(
+                    select(ProjectDirectionOverride).where(
+                        ProjectDirectionOverride.thread_id == thread.id
+                    )
+                )
+            ).scalar_one_or_none() is None
+
+            created = await service.set_override(
+                db,
+                user_id,
+                thread.id,
+                instruction="Use Inter for this project",
+                normalized_key="font_family",
+                structured_value={"font_family": "Inter"},
+                expected_revision=2,
+                idempotency_key="override-undo-recreate",
+            )
+            await service.set_override(
+                db,
+                user_id,
+                thread.id,
+                instruction="Use Playfair for this project",
+                normalized_key="font_family",
+                structured_value={"font_family": "Playfair Display"},
+                expected_revision=3,
+                idempotency_key="override-undo-update",
+            )
+            update_operation = (
+                await db.execute(
+                    select(CreatorMemoryOperation).where(
+                        CreatorMemoryOperation.user_id == user_id,
+                        CreatorMemoryOperation.idempotency_key == "override-undo-update",
+                    )
+                )
+            ).scalar_one()
+            await service.undo(
+                db,
+                user_id,
+                update_operation.id,
+                expected_revision=4,
+                idempotency_key="override-undo-update-apply",
+            )
+            restored = await db.get(ProjectDirectionOverride, created.id)
+            assert restored is not None
+            assert restored.structured_value == {"font_family": "Inter"}
+
+            deleted = await service.delete_override(
+                db,
+                user_id,
+                thread.id,
+                "font_family",
+                expected_revision=5,
+                idempotency_key="override-undo-delete",
+            )
+            assert deleted.undo_expires_at is not None
+            await service.undo(
+                db,
+                user_id,
+                deleted.id,
+                expected_revision=6,
+                idempotency_key="override-undo-delete-apply",
+            )
+            restored = await db.get(ProjectDirectionOverride, created.id)
+            assert restored is not None
+            assert restored.structured_value == {"font_family": "Inter"}
+            await db.commit()
+    finally:
+        await _delete_users(user_id)
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -860,6 +1096,117 @@ async def test_outbox_failure_retries_then_moves_to_dead_letter(monkeypatch):
             assert retry_row.result_code == "RuntimeError"
             assert dead_row is not None and dead_row.status == "dead"
             assert dead_row.result_code == "RuntimeError"
+    finally:
+        await _delete_users(user_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_explicit_outbox_uses_local_fallback_when_provider_fails_with_existing_memory(
+    monkeypatch,
+):
+    from app.tasks import creator_memory as creator_memory_task
+
+    try:
+        user_id = await _create_user()
+    except (OperationalError, OSError) as exc:
+        pytest.skip(f"nova_test Postgres not reachable: {exc!r}")
+    try:
+        async with AsyncSessionLocal() as db:
+            await CreatorDirectionService().create_item(
+                db,
+                user_id,
+                instruction="Keep the pacing calm",
+                category="stories_pacing",
+                enforcement="default",
+                normalized_key=None,
+                structured_value=None,
+                expected_revision=0,
+                idempotency_key="provider-fallback-existing",
+            )
+            outbox = CreatorMemoryOutbox(
+                user_id=user_id,
+                source_message="Never add shadows",
+                status="leased",
+                attempts=1,
+            )
+            db.add(outbox)
+            await db.commit()
+            outbox_id = outbox.id
+
+        monkeypatch.setattr(creator_memory_task.settings, "creator_memory_enabled", True)
+        monkeypatch.setattr(
+            creator_memory_task,
+            "_extract_typed_direction",
+            MagicMock(side_effect=RuntimeError("provider unavailable")),
+        )
+        assert (
+            await asyncio.to_thread(creator_memory_task.process_outbox, str(outbox_id))
+            == "create_item"
+        )
+
+        async with AsyncSessionLocal() as db:
+            processed = await db.get(CreatorMemoryOutbox, outbox_id)
+            assert processed is not None and processed.status == "succeeded"
+            learned = (
+                await db.execute(
+                    select(CreatorMemoryItem).where(
+                        CreatorMemoryItem.user_id == user_id,
+                        CreatorMemoryItem.normalized_key == "shadow_enabled",
+                    )
+                )
+            ).scalar_one()
+            assert learned.structured_value == {"shadow_enabled": False}
+    finally:
+        await _delete_users(user_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_stateful_explicit_outbox_retries_when_provider_fails(monkeypatch):
+    from app.tasks import creator_memory as creator_memory_task
+
+    try:
+        user_id = await _create_user()
+    except (OperationalError, OSError) as exc:
+        pytest.skip(f"nova_test Postgres not reachable: {exc!r}")
+    try:
+        async with AsyncSessionLocal() as db:
+            await CreatorDirectionService().create_item(
+                db,
+                user_id,
+                instruction="Always use short captions",
+                category="video_style",
+                enforcement="constraint",
+                normalized_key=None,
+                structured_value=None,
+                expected_revision=0,
+                idempotency_key="stateful-provider-existing",
+            )
+            outbox = CreatorMemoryOutbox(
+                user_id=user_id,
+                source_message="From now on, forget my caption preference",
+                status="leased",
+                attempts=1,
+            )
+            db.add(outbox)
+            await db.commit()
+            outbox_id = outbox.id
+
+        monkeypatch.setattr(creator_memory_task.settings, "creator_memory_enabled", True)
+        monkeypatch.setattr(
+            creator_memory_task,
+            "_extract_typed_direction",
+            MagicMock(side_effect=RuntimeError("provider unavailable")),
+        )
+        assert (
+            await asyncio.to_thread(creator_memory_task.process_outbox, str(outbox_id))
+            == "extraction_failed"
+        )
+
+        async with AsyncSessionLocal() as db:
+            pending = await db.get(CreatorMemoryOutbox, outbox_id)
+            assert pending is not None and pending.status == "pending"
+            snapshot = await CreatorDirectionResolver().snapshot(db, user_id)
+            assert [row["instruction"] for row in snapshot.items] == ["Always use short captions"]
     finally:
         await _delete_users(user_id)
 
@@ -1065,6 +1412,139 @@ async def test_explicit_project_learning_appends_one_undo_receipt(monkeypatch):
             assert receipts[0].payload["memory_revision"] == 1
             assert receipts[0].payload["operation_id"]
             assert receipts[0].payload["undo_expires_at"]
+    finally:
+        await _delete_users(user_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_explicit_event_is_applied_before_the_first_project_snapshot(monkeypatch):
+    from app.services import creator_memory_learning
+
+    try:
+        user_id = await _create_user()
+    except (OperationalError, OSError) as exc:
+        pytest.skip(f"nova_test Postgres not reachable: {exc!r}")
+    try:
+        monkeypatch.setattr(creator_memory_learning.settings, "creator_memory_enabled", True)
+        async with AsyncSessionLocal() as db:
+            thread = CreationThread(creator_id=user_id)
+            db.add(thread)
+            await db.flush()
+            event = CreationThreadEvent(
+                thread=thread,
+                sequence=0,
+                revision=0,
+                role="user",
+                event_type="user_message",
+                content="Never add shadows",
+            )
+            db.add(event)
+            await db.flush()
+
+            outbox = await enqueue_memory_extraction(db, event)
+            assert outbox is not None and outbox.status == "succeeded"
+            snapshot = await CreatorDirectionResolver().snapshot(db, user_id, thread_id=thread.id)
+            assert snapshot.typed_overrides == {"shadow_enabled": False}
+
+            receipts = list(
+                (
+                    await db.execute(
+                        select(CreationThreadEvent).where(
+                            CreationThreadEvent.thread_id == thread.id,
+                            CreationThreadEvent.event_type == "memory_updated",
+                        )
+                    )
+                ).scalars()
+            )
+            assert len(receipts) == 1
+            await db.commit()
+    finally:
+        await _delete_users(user_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_stateful_explicit_event_waits_for_the_extractor(monkeypatch):
+    from app.services import creator_memory_learning
+
+    try:
+        user_id = await _create_user()
+    except (OperationalError, OSError) as exc:
+        pytest.skip(f"nova_test Postgres not reachable: {exc!r}")
+    try:
+        monkeypatch.setattr(creator_memory_learning.settings, "creator_memory_enabled", True)
+        async with AsyncSessionLocal() as db:
+            await CreatorDirectionService().create_item(
+                db,
+                user_id,
+                instruction="Always use short captions",
+                category="video_style",
+                enforcement="constraint",
+                normalized_key=None,
+                structured_value=None,
+                expected_revision=0,
+                idempotency_key="stateful-existing",
+            )
+            thread = CreationThread(creator_id=user_id)
+            db.add(thread)
+            await db.flush()
+            event = CreationThreadEvent(
+                thread=thread,
+                sequence=0,
+                revision=0,
+                role="user",
+                event_type="user_message",
+                content="From now on, forget my caption preference",
+            )
+            db.add(event)
+            await db.flush()
+
+            outbox = await enqueue_memory_extraction(db, event)
+            assert outbox is not None and outbox.status == "pending"
+            snapshot = await CreatorDirectionResolver().snapshot(db, user_id)
+            assert [row["instruction"] for row in snapshot.items] == ["Always use short captions"]
+            await db.commit()
+    finally:
+        await _delete_users(user_id)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_paused_explicit_event_is_terminal_and_cannot_apply_after_resume(monkeypatch):
+    from app.services import creator_memory_learning
+
+    try:
+        user_id = await _create_user()
+    except (OperationalError, OSError) as exc:
+        pytest.skip(f"nova_test Postgres not reachable: {exc!r}")
+    try:
+        monkeypatch.setattr(creator_memory_learning.settings, "creator_memory_enabled", True)
+        async with AsyncSessionLocal() as db:
+            owner = await db.get(User, user_id, with_for_update=True)
+            assert owner is not None
+            owner.creator_memory_enabled = False
+            thread = CreationThread(creator_id=user_id)
+            db.add(thread)
+            await db.flush()
+            event = CreationThreadEvent(
+                thread=thread,
+                sequence=0,
+                revision=0,
+                role="user",
+                event_type="user_message",
+                content="Never add shadows",
+            )
+            db.add(event)
+            await db.flush()
+
+            outbox = await enqueue_memory_extraction(db, event)
+            assert outbox is not None
+            assert outbox.status == "succeeded"
+            assert outbox.result_code == "paused"
+            owner.creator_memory_enabled = True
+            await db.commit()
+
+        async with AsyncSessionLocal() as db:
+            snapshot = await CreatorDirectionResolver().snapshot(db, user_id)
+            assert snapshot.items == ()
     finally:
         await _delete_users(user_id)
 

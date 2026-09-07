@@ -144,6 +144,7 @@ def test_project_override_success_returns_canonical_operation_revision() -> None
     operation = SimpleNamespace(
         id=uuid.uuid4(),
         resulting_revision=7,
+        undo_expires_at=datetime.now(UTC) + timedelta(minutes=10),
         prior_state={"_receipt": {"enabled": True, "applied_count": 1}},
     )
     execute_result = MagicMock()
@@ -168,6 +169,75 @@ def test_project_override_success_returns_canonical_operation_revision() -> None
 
     assert response.status_code == 200
     assert response.json()["revision"] == 7
+    assert response.json()["operation_id"] == str(operation.id)
+    assert response.json()["undo_expires_at"] is not None
+
+
+def test_project_override_undo_refreshes_the_effective_project_receipt() -> None:
+    thread_id = uuid.uuid4()
+    operation_id = uuid.uuid4()
+    original = SimpleNamespace(
+        operation_kind="set_override",
+        prior_state={"_result": {"thread_id": str(thread_id)}},
+    )
+    undone = SimpleNamespace(
+        id=uuid.uuid4(),
+        item_id=None,
+        resulting_revision=8,
+        undo_expires_at=None,
+        prior_state={},
+    )
+    db = AsyncMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = original
+    db.execute.return_value = execute_result
+    user = _override_user_and_db(db)
+    refresh = AsyncMock(return_value={"enabled": True, "applied_count": 0})
+    with (
+        patch("app.routes.memory.settings.creator_memory_enabled", True),
+        patch("app.routes.memory.service.undo", AsyncMock(return_value=undone)),
+        patch("app.routes.memory._refresh_project_direction", refresh),
+    ):
+        response = client.post(
+            f"/me/memory/operations/{operation_id}/undo",
+            json={"expected_revision": 7, "idempotency_key": "undo-project-override"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["direction_receipt"] == {"enabled": True, "applied_count": 0}
+    refresh.assert_awaited_once_with(db, user_id=user.id, thread_id=thread_id)
+
+
+def test_project_override_undo_replay_returns_the_original_receipt_without_refresh() -> None:
+    operation_id = uuid.uuid4()
+    original = SimpleNamespace(operation_kind="set_override", prior_state={})
+    stored_receipt = {"enabled": True, "applied_count": 0, "memory_revision": 8}
+    undone = SimpleNamespace(
+        id=uuid.uuid4(),
+        item_id=None,
+        resulting_revision=8,
+        undo_expires_at=None,
+        prior_state={"operation_id": str(operation_id), "_receipt": stored_receipt},
+    )
+    db = AsyncMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = original
+    db.execute.return_value = execute_result
+    _override_user_and_db(db)
+    refresh = AsyncMock()
+    with (
+        patch("app.routes.memory.settings.creator_memory_enabled", True),
+        patch("app.routes.memory.service.undo", AsyncMock(return_value=undone)),
+        patch("app.routes.memory._refresh_project_direction", refresh),
+    ):
+        response = client.post(
+            f"/me/memory/operations/{operation_id}/undo",
+            json={"expected_revision": 7, "idempotency_key": "undo-project-override"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["direction_receipt"] == stored_receipt
+    refresh.assert_not_awaited()
 
 
 def test_memory_item_update_does_not_forward_compatibility_metadata() -> None:
