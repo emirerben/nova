@@ -670,14 +670,13 @@ def test_reaper_no_variant_reconciliation_when_assembly_plan_is_none():
 
 def _patch_sync_session_for_reconcile(candidate_rows):
     """Model ID discovery, one locked re-read, and an update per candidate."""
+    # (job_id, assembly_plan[, updated_at][, pipeline_trace][, status]) — the
+    # locked re-read selects status too, so a job already sitting in a failed
+    # status is never promoted INTO the ready bucket.
+    _DEFAULTS = (datetime.now(UTC) - timedelta(minutes=61), [], "variants_ready")
     normalized_rows = []
     for row in candidate_rows:
-        if len(row) == 2:
-            normalized_rows.append((*row, datetime.now(UTC) - timedelta(minutes=61), []))
-        elif len(row) == 3:
-            normalized_rows.append((*row, []))
-        else:
-            normalized_rows.append(row)
+        normalized_rows.append(tuple(row) + _DEFAULTS[len(row) - 2 :])
     locked_rows = iter(normalized_rows)
     session = MagicMock()
 
@@ -743,6 +742,163 @@ class TestFinalizeStuckVariant:
 
 
 class TestReconcileStuckVariants:
+    def test_malformed_object_variants_is_never_iterated_as_keys(self):
+        """A JSON-object `variants` must not be rewritten into a list of its keys.
+
+        Postgres jsonpath runs in lax mode, so `$.variants[*]` auto-wraps a
+        non-array: a legacy or corrupt row whose `variants` is an OBJECT matches
+        the discovery predicate. Without a list guard the loop iterates the
+        dict's KEYS and persists `variants = ["render_status", ...]`, destroying
+        the plan. The sweep spent months dead on a malformed jsonpath, so this
+        shape was unreachable; fixing the path makes it live again.
+        """
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        jid = _uuid.uuid4()
+        plan = {"variants": {"render_status": "rendering", "editor_render_attempt": {}}}
+        patch_ctx, session = _patch_sync_session_for_reconcile([(jid, deepcopy(plan))])
+        with patch_ctx:
+            assert reconcile_stuck_variants(_make_celery_with_inspect(), live=set()) == 0
+
+        assert not [
+            call
+            for call in session.execute.call_args_list
+            if getattr(call.args[0], "is_update", False)
+        ]
+
+    def test_kill_switch_disables_the_sweep_without_touching_the_db(self, monkeypatch):
+        """`reconcile_stuck_variants_enabled=False` must halt before any query.
+
+        This sweep writes user-visible state, so prod needs a lever that is not
+        a code revert. Returning 0 before `sync_session` is what makes the flag
+        a real halt rather than a filter.
+        """
+        import uuid as _uuid
+
+        from app.tasks import reaper
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        monkeypatch.setattr(reaper.settings, "reconcile_stuck_variants_enabled", False)
+        plan = {"variants": [{"variant_id": "song_text", "render_status": "rendering"}]}
+        patch_ctx, session = _patch_sync_session_for_reconcile([(_uuid.uuid4(), plan)])
+        with patch_ctx:
+            assert reconcile_stuck_variants(_make_celery_with_inspect(), live=set()) == 0
+
+        session.execute.assert_not_called()
+
+    def test_dead_replacement_render_is_failed_not_served_as_ready(self):
+        """A dead swap-song/retext render must never present the PRE-EDIT video.
+
+        Only editor Saves take a generation-stamped lease; every other
+        re-render dispatcher calls `stamp_variant_attempt`, which bumps
+        `render_started_at` and leaves the previous `video_path` in place. The
+        sweep used to flip exactly those to `ready`, reporting the old video as
+        the finished edit.
+        """
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        jid = _uuid.uuid4()
+        plan = {
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "rendering",
+                    "video_path": "g/pre-edit.mp4",
+                    "render_finished_at": "2026-09-01T10:00:00Z",
+                    "render_started_at": "2026-09-01T11:00:00Z",
+                }
+            ]
+        }
+        patch_ctx, session = _patch_sync_session_for_reconcile([(jid, deepcopy(plan))])
+        with patch_ctx:
+            assert reconcile_stuck_variants(_make_celery_with_inspect(), live=set()) == 1
+
+        stmt = session.execute.call_args_list[2].args[0]
+        params = stmt.compile().params
+        assembly = next(v for v in params.values() if isinstance(v, dict))
+        variant = assembly["variants"][0]
+        assert variant["render_status"] == "failed"
+        assert variant["error_class"] == "render_worker_lost"
+        # The last-good artifact is retained so the tile stays playable.
+        assert variant["video_path"] == "g/pre-edit.mp4"
+        # Any failed variant must move the parent out of a ready status, or the
+        # retry route 409s on a tile the UI still offers a Retry button for.
+        assert "variants_ready_partial" in {str(v) for v in params.values()}
+
+    def test_already_failed_job_is_never_promoted_into_the_ready_bucket(self):
+        """The status write must not move a job OUT of the failed bucket.
+
+        Discovery only excludes the worker-owned non-terminal statuses and
+        `cancelled`, so a job at `variants_failed`/`processing_failed` is
+        eligible. Writing `variants_ready_partial` unguarded would flip
+        `_derived_status` from failed to ready for the user.
+        """
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        plan = {
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "rendering",
+                    "video_path": "g/pre-edit.mp4",
+                    "render_finished_at": "2026-09-01T10:00:00Z",
+                    "render_started_at": "2026-09-01T11:00:00Z",
+                }
+            ]
+        }
+        row = (
+            _uuid.uuid4(),
+            deepcopy(plan),
+            datetime.now(UTC) - timedelta(minutes=61),
+            [],
+            "variants_failed",
+        )
+        patch_ctx, session = _patch_sync_session_for_reconcile([row])
+        with patch_ctx:
+            assert reconcile_stuck_variants(_make_celery_with_inspect(), live=set()) == 1
+
+        params = session.execute.call_args_list[2].args[0].compile().params
+        assert "variants_ready_partial" not in {str(v) for v in params.values()}
+
+    def test_legacy_status_drift_still_flips_to_ready(self):
+        """A stuck variant with no dispatch after its render keeps the old cure.
+
+        `render_started_at` absent means nothing was dispatched over this
+        video_path — it IS the current artifact, and "ready" is correct. This is
+        the case the ready-flip was written for; the fix must not swallow it.
+        """
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        jid = _uuid.uuid4()
+        plan = {
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "rendering",
+                    "video_path": "g/current.mp4",
+                }
+            ]
+        }
+        patch_ctx, session = _patch_sync_session_for_reconcile([(jid, deepcopy(plan))])
+        with patch_ctx:
+            assert reconcile_stuck_variants(_make_celery_with_inspect(), live=set()) == 1
+
+        stmt = session.execute.call_args_list[2].args[0]
+        params = stmt.compile().params
+        assembly = next(v for v in params.values() if isinstance(v, dict))
+        assert assembly["variants"][0]["render_status"] == "ready"
+        assert assembly["variants"][0]["ok"] is True
+        # Nothing failed, so the parent status must not move.
+        assert "variants_ready_partial" not in {str(v) for v in params.values()}
+
     def test_no_op_when_inspect_fails(self):
         from app.tasks.reaper import reconcile_stuck_variants
 
@@ -1200,3 +1356,29 @@ class TestQueuedJobSafeUnderStoppedRenderWorker:
         with patch_ctx:
             reap_orphans(app)
         session.execute.assert_called_once()
+
+
+def test_orphan_reap_survives_object_shaped_variants():
+    """`reap_orphans` selects on status+age only, so an object `variants` reaches
+    the loop directly — it does not need the lax-mode `$.variants[*]` auto-wrap
+    that makes the reconcile path reachable. Without the list guard, `v.get(...)`
+    on a dict KEY (a str) raises AttributeError and aborts the sweep for every
+    remaining candidate.
+    """
+    import uuid as _uuid
+
+    from app.tasks.reaper import reap_orphans
+
+    app = _make_celery_with_inspect(active={}, reserved={})
+    plan = {"variants": {"render_status": "rendering", "editor_render_attempt": {}}}
+    patch_ctx, session = _patch_sync_session(reaped_rows=[(_uuid.uuid4(), deepcopy(plan))])
+    with patch_ctx:
+        assert reap_orphans(app) == 1  # must not raise AttributeError
+
+    for call in session.execute.call_args_list:
+        stmt = call.args[0]
+        if not getattr(stmt, "is_update", False):
+            continue
+        written = stmt.compile().params.get("assembly_plan")
+        if isinstance(written, dict):
+            assert written.get("variants") == plan["variants"]

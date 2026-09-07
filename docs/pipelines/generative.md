@@ -252,6 +252,19 @@ save (`render=False`) must NOT call either helper. `mark_started` is unchanged
 and still refuses to move `started_at` — it models worker pickup of one
 orchestrator run, so a Celery redelivery can't restart a clock mid-render.
 
+**Second consumer: the stuck-variant reaper (v0.69.1.0).** These two timestamps
+are no longer only a UI clock. `_replacement_render_in_flight` in
+`tasks/reaper.py` compares `render_started_at` against `render_finished_at` to
+decide whether a stuck variant's `video_path` is the current artifact or a
+pre-edit leftover, because only editor Saves take a generation-stamped lease
+(`_stamp_editor_render_attempt`) while swap-song, retext, caption reburn and
+style change go through `stamp_variant_attempt` and leave the old `video_path`
+in place. A dispatcher that marks a variant `rendering` without stamping the
+clock therefore makes the reaper report a dead re-render as `ready` and serve
+the PRE-EDIT video as the finished edit. That raises the stakes on the AST
+guards below, and the frozen wire format (naive-UTC isoformat + `"Z"`) is now
+load-bearing: the reaper orders the two fields lexicographically.
+
 **Frontend contract** — a re-render does NOT move `job.status` off
 `variants_ready`, so "terminal status wins" is the wrong poll predicate:
 
@@ -530,6 +543,30 @@ TypeError on the new kwarg → the failure is ACKED
 The variant sits "rendering" until the 60-min reaper (`tasks/reaper.py`)
 converts it to a failed badge; the user recovers by re-tapping Apply. See
 agents/DECISIONS.md (2026-07-11) for the reusable rule.
+
+**That recovery only actually worked from v0.69.1.0.** `reconcile_stuck_variants`
+was a silent no-op in production from #962 onward: its editor-lease jsonpath used
+`&&` with a bare accessor, Postgres parses jsonpath at execution time, and
+`worker_ready` swallowed the resulting `ProgrammingError` as non-fatal — so the
+tile really did poll forever. Two behaviors changed with the repair, both
+user-visible:
+
+- Failing any variant now moves the parent job to `variants_ready_partial`
+  (guarded to `done` / `variants_ready`, so an already-failed job is never
+  promoted back into the ready bucket). Before, that promotion fired only for
+  editor-lease renders, so a swept caption or swap-song variant went `failed`
+  under a `variants_ready` parent and `_prepare_partial_variant_retry` 409'd on
+  the Retry button the UI was still showing.
+- A dead re-render is no longer flipped to `ready` on the strength of a stale
+  `video_path` (see the render-attempt clock section above).
+
+Kill switch: `RECONCILE_STUCK_VARIANTS_ENABLED` (default `true`) — the sweep
+writes user-visible state, so it can be halted without a code revert via
+`fly secrets set RECONCILE_STUCK_VARIANTS_ENABLED=false --app nova-video` plus a
+worker restart. Migration 0099 backs the reactivated query with a sparse partial
+index whose predicate must stay byte-identical to `_STUCK_VARIANT_JSONPATH`.
+Full incident: agents/DECISIONS.md "Stuck-variant reaper: a jsonpath that never
+parsed".
 
 ### Subtitled text lane (`SUBTITLED_TEXT_LANE_ENABLED`)
 

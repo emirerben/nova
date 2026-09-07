@@ -8,6 +8,60 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Stuck-variant reaper reactivation — deferrals (from /ship review, 2026-09-07)
+
+### Broker inspect runs inside the row lock
+**What:** `_editor_render_task_is_absent` (reaper.py) issues up to 4 fleet
+broadcasts at `_INSPECT_TIMEOUT_S = 5` per stuck variant — ~20s — while the
+transaction still holds `SELECT ... FOR UPDATE` on a user-visible `jobs` row. A
+concurrent creator save on that row blocks for the duration, and `sweep_stale_jobs`
+only budgets `soft_time_limit=60`. Unreachable until v0.69.1.0 fixed the jsonpath.
+**Fix:** hoist the probe outside the lock (read, commit, probe, re-acquire and
+revalidate `render_generation_id`), or reuse one fleet snapshot per sweep the way
+`sweep_stale_jobs` already does for `live`.
+**Priority:** P1
+
+### Unrepairable rows starve the LIMIT 50 head
+**What:** discovery is `ORDER BY updated_at ASC LIMIT 50`, but a candidate that
+produces no write never moves its `updated_at`, so it occupies the head of every
+later batch. 50 such rows silently re-kill the sweep — with no Postgres error
+this time. Reachable shapes: an object-shaped `variants`, and a matching-generation
+`editor_render_attempt` whose `lease_expires_at_epoch_s` is missing/malformed.
+**Fix:** keyset-page discovery over `(updated_at, id)` within a sweep, or stamp a
+scanned marker on examined-but-unrepairable rows. Log `examined` vs `fixed` so a
+starved sweep is observable.
+**Priority:** P1
+
+### `render_worker_lost` has no frontend copy
+**What:** the reaper writes `error_class: "render_worker_lost"` and retains the
+last-good `video_path`, but `variantFailureCopy` has no case for it and falls
+through to "The render didn't finish. Retry the render." — which contradicts the
+state actually persisted (the previous video IS still available).
+**Fix:** add a `render_worker_lost` case to `variantFailureCopy` + `ERROR_CLASS_COPY`.
+**Priority:** P2
+
+### Two Kria runtime Postgres tests fail locally on a reused test DB
+**What:** `tests/kria/test_runtime_postgres_integration.py::test_live_planner_strategy_creates_draft_and_separate_pinned_approval`
+and `::test_editor_revision_approval_atomically_stages_exact_job_generation` fail
+with `RuntimeFailure: (409, 'approval_stale', ...)`. Verified pre-existing: they
+fail identically on a clean `origin/main` worktree with no other changes present.
+CI merged #973 green, so the likely cause is leftover rows in a reused local
+`nova_test` rather than a logic bug — the sibling 14 failures in the same modules
+were purely a stale schema (local DB was pinned at 0096, missing 0097/0098).
+**Fix:** confirm against a freshly-created `nova_test`; if it reproduces there,
+it is a real staleness bug in the approval path. Either way give the module
+per-test isolation so a reused DB cannot poison it.
+**Priority:** P2
+
+### `tests/scripts/test_analyze_waka_waka_diff.py` is flaky under load
+**What:** local-only integration test over `~/Downloads/morocco.mp4` +
+`thisismorocco.mp4` (skipped in CI, runs on the maintainer's machine). Identical
+code produced 0, 3 and 6 failures across runs; passes in isolation. Load-sensitive
+ffmpeg analysis with exact-match acceptance assertions.
+**Fix:** loosen the assertions to ranges, or gate the module behind an explicit
+opt-in env var so an unrelated `/ship` run is not blocked by it.
+**Priority:** P3
+
 ## Kria agent platform follow-up — creator preference memory (autoplan CEO review, 2026-09-06)
 
 ### Learn from accepted edits across projects
