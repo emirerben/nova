@@ -175,6 +175,22 @@ describe("ChatCreationWorkspace", () => {
     expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
   });
 
+  it("opens profile and memory from the sidebar account icon", async () => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+
+    await screen.findByRole("heading", { name: "Untitled video" });
+    expect(screen.queryByText("Test creator")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Account menu" }));
+
+    expect(screen.getByText("Test creator")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Personalization" })).toHaveAttribute(
+      "href",
+      "/plan/profile",
+    );
+  });
+
   it("keeps the sidebar toggle left of the title and animates the collapsed spacing", async () => {
     const user = userEvent.setup();
     render(<ChatCreationWorkspace />);
