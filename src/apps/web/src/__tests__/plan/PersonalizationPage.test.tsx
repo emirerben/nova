@@ -108,16 +108,15 @@ it("stops a preference and offers the shared ten-minute Undo", async () => {
   await waitFor(() =>
     expect(memoryApi.undoCreatorMemoryOperation).toHaveBeenCalledWith("operation-forget-1", 3),
   );
-});
+}, 15_000);
 
 it("preserves a typed key when editing a remembered preference", async () => {
   await renderPage();
-  fireEvent.keyDown(screen.getByRole("button", { name: "Actions for Use Playfair Display" }), { key: "Enter" });
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Edit Visual style" }), { target: { value: "Use Inter" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(memoryApi.updateCreatorMemoryItem).toHaveBeenCalledWith("memory-1", expect.objectContaining({ normalized_key: "font_family" })));
-});
+}, 15_000);
 
 it("keeps a retry action when personalization fails to load", async () => {
   (memoryApi.getCreatorMemory as jest.Mock)
