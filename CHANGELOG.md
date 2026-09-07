@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.1.0] — 2026-09-07
+
+### Fixed
+- **Detailed voiceover edits can honor all uploaded media and explicit photo timing.** The opt-in fidelity capability preserves the recording while arranging videos and grouped photos independently, instead of applying talking-head selection and overlay defaults.
+- **Sports, scores and player placeholders follow recorded and visual evidence.** Editable labels remain tied to the appropriate narration time or source shot, and generated montage names no longer duplicate them.
+- **Large captioned edits avoid excessive renderer memory use.** Supported text animations share a composited stream while retaining per-element verification.
+
+### Internal
+- Added immutable approval/media bindings, an isolated compatible-worker queue, an original-input replay driver, and regression/eval coverage. The capability remains disabled by default pending coordinated rollout.
+
 ## [0.69.0.0] — 2026-09-07
 
 ### Added
