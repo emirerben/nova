@@ -2399,5 +2399,7 @@ def test_narrated_proposal_uses_fidelity_worker_queue():
 
     from app.routes import plan_items
 
-    proposal = SimpleNamespace(brief=SimpleNamespace(narration=object()))
+    proposal = SimpleNamespace(
+        brief=SimpleNamespace(narration=object(), mixed_media_timing=None, montage_cadence=None)
+    )
     assert plan_items._proposal_analysis_queue(proposal) == "creator-fidelity-v1"

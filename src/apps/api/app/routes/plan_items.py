@@ -2605,14 +2605,11 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
 def _proposal_analysis_queue(proposal) -> str:  # noqa: ANN001
     """Keep new guided timing contracts away from rolling legacy workers."""
 
-    if getattr(proposal.brief, "narration", None) is not None:
-        from app.services.creator_execution_contract import CREATOR_FIDELITY_QUEUE  # noqa: PLC0415
-
-        return CREATOR_FIDELITY_QUEUE
     return queue_for_guided_contract(
         proposal.brief.mixed_media_timing,
         proposal.brief.montage_cadence,
         default_queue=settings.pool_asset_analysis_queue,
+        has_narration=proposal.brief.narration is not None,
     )
 
 

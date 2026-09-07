@@ -667,6 +667,7 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
                     parsed_proposal.brief.mixed_media_timing,
                     parsed_proposal.brief.montage_cadence,
                     default_queue=settings.pool_asset_analysis_queue,
+                    has_narration=parsed_proposal.brief.narration is not None,
                 )
                 runtime = await asyncio.to_thread(
                     get_task_runtime_state,

@@ -47,8 +47,14 @@ def queue_for_guided_contract(
     montage_cadence: Any,
     *,
     default_queue: str,
+    has_narration: bool = False,
 ) -> str:
     """Fence every new guided timing contract onto current-version workers."""
+
+    if has_narration:
+        from app.services.creator_execution_contract import CREATOR_FIDELITY_QUEUE  # noqa: PLC0415
+
+        return CREATOR_FIDELITY_QUEUE
 
     if montage_cadence is not None:
         return MIXED_MEDIA_CREATOR_QUEUE

@@ -2675,7 +2675,7 @@ async def confirm_creator_plan_controller(
                 user,
                 db,
                 generation_attempt_id=guided_generation_attempt_id,
-                creator_strategy=edit_plan.strategy.model_dump(mode="json"),
+                creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
             )
             if result is None:
                 raise RuntimeError("guided auto design was not applicable")
