@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.schemas.guided_edit_revision import (
+    MAX_GUIDED_EDITOR_TEXT_ELEMENTS,
     GuidedEditorRevision,
     guided_editor_revision_from_approval,
     guided_editor_state_hash,
@@ -52,6 +53,36 @@ def test_normalization_hashes_canonical_revision_and_keeps_unused_source() -> No
     normalized = normalize_guided_editor_revision(_revision())
     assert normalized["state_hash"] == guided_editor_state_hash(normalized)
     assert [source["media_id"] for source in normalized["sources"]] == ["clip-1", "asset-1"]
+
+
+def test_guided_caption_lane_is_bounded_without_the_authored_text_ceiling() -> None:
+    elements = [
+        {"id": f"narration-caption-{index}", "text": "word", "start_s": 0, "end_s": 1}
+        for index in range(MAX_GUIDED_EDITOR_TEXT_ELEMENTS + 1)
+    ]
+    revision = normalize_guided_editor_revision(_revision(text_elements=elements[:-1]))
+    assert revision["text_elements"] == elements[:-1]
+    with pytest.raises(ValueError, match="at most 5000 items"):
+        normalize_guided_editor_revision(_revision(text_elements=elements))
+
+
+def test_caption_deletion_history_has_room_without_expanding_other_lane_history() -> None:
+    def deleted(lane, count):
+        return [
+            {"lane": lane, "record_id": f"deleted-{index}", "record": {"id": f"deleted-{index}"}}
+            for index in range(count)
+        ]
+
+    assert (
+        len(
+            normalize_guided_editor_revision(_revision(tombstones=deleted("text_elements", 300)))[
+                "tombstones"
+            ]
+        )
+        == 300
+    )
+    with pytest.raises(ValueError, match="non-text history exceeds 200"):
+        normalize_guided_editor_revision(_revision(tombstones=deleted("sound_effects", 201)))
 
 
 def test_revision_rejects_source_outside_approved_pool() -> None:

@@ -2,13 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.71.2.0] — 2026-09-08
+## [0.71.3.0] — 2026-09-08
 
 ### Fixed
 - **Adding media to a project no longer fails when another change lands at the same moment.** Two overlapping requests could each wait on the row the other held, and the project page showed an unexplained error. If a collision still happens, the app now reports a plain "try again" conflict instead of a server error.
 
 ### Internal
 - Established one canonical database row-lock order (`app/db_locks.py`) and converted every inverted acquisition in the creation routes, the craft rollback path, and the quality-review tasks. A static AST guard (`tests/routes/test_lock_order.py`) reconstructs each function's lock sequence and fails on any new inversion; seven pre-existing ones are allowlisted with rationale in `docs/runbooks/row-lock-order.md`.
+
+## [0.71.2.0] — 2026-09-08
+
+### Fixed
+- **Narrated edits stay editable when they contain many captions.** The editor now loads and saves the complete generated caption lane, preserves caption timing, and restores deleted captions. Ordinary text edits retain their existing limit, and each Save accepts at most 50 newly authored text elements.
 
 ## [0.71.1.0] — 2026-09-07
 

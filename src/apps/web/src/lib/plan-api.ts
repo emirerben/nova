@@ -2144,6 +2144,8 @@ export type EditorOperationCapability =
  * per-section false gates that tool with its honest `*_reason`.
  */
 export interface EditorCapabilities {
+  /** Total editable text-lane limit, including generated narration captions. */
+  text_elements_max?: number;
   /** Upload protocol selected by the server for this editor session. */
   overlay_upload_mode?: "legacy" | "pool";
   /** V2 guided-story operation gates. Absent on legacy variants. */

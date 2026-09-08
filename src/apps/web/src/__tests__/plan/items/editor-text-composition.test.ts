@@ -1,11 +1,23 @@
 import {
   buildTimedTextSequence,
+  remainingTextCompositionCapacity,
   TEXT_ELEMENTS_API_MAX,
   TEXT_ELEMENT_MAX_CHARS,
   splitTextForTimedSequence,
 } from "@/app/plan/items/[id]/_editor/editor-text-composition";
 
 describe("timed text composition", () => {
+  it("allows a bounded composition alongside a large generated-caption lane", () => {
+    const capacity = remainingTextCompositionCapacity(150, 2000);
+    expect(capacity).toBe(50);
+    expect(buildTimedTextSequence("first\nsecond", 0, 45, .5, capacity)).toHaveLength(2);
+    expect(remainingTextCompositionCapacity(1999, 2000)).toBe(1);
+    expect(remainingTextCompositionCapacity(2000, 2000)).toBe(0);
+    expect(remainingTextCompositionCapacity(45)).toBe(5);
+    expect(remainingTextCompositionCapacity(51)).toBe(0);
+    expect(remainingTextCompositionCapacity(180, 5000, 30)).toBe(20);
+    expect(remainingTextCompositionCapacity(200, 5000, 50)).toBe(0);
+  });
   it("preserves every authored lyric line", () => {
     const lyrics = [
       "Quiero ver la cuarta estrella",
