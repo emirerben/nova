@@ -301,3 +301,69 @@ def enqueue_orchestrator_sync(
         )
         raise
     return task_id
+
+
+def claim_and_enqueue_orchestrator_sync(
+    task: Task,
+    job_id: str | uuid.UUID,
+    *,
+    queue: str | None = None,
+    kwargs: dict[str, Any] | None = None,
+) -> bool:
+    """Publish one still-unowned queued Job and persist its dispatch claim.
+
+    Recovery sweepers may overlap, so the nullable ``celery_task_id`` check
+    must not be a read followed by an unguarded publish.  The conditional
+    UPDATE below owns the Job row until broker publication and the claim commit
+    complete.  A competing sweeper therefore observes the committed task id
+    and skips publication.  If publication raises, rollback releases the claim
+    before the normal queued-only failure recovery runs.
+
+    Broker acceptance and the database commit cannot be made one transaction.
+    If the process dies in that narrow interval, a later sweep may republish;
+    the stable task id and the worker's Job-row claim bound that ambiguity.  A
+    successful sweep, including one whose message waits in the queue, is never
+    republished merely because the Job remains ``queued``.
+    """
+
+    task_id = str(job_id)
+    job_uuid = job_id if isinstance(job_id, uuid.UUID) else uuid.UUID(task_id)
+    from app.database import sync_session  # noqa: PLC0415
+
+    try:
+        with sync_session() as db:
+            claimed = db.execute(
+                update(Job)
+                .where(
+                    Job.id == job_uuid,
+                    Job.status == "queued",
+                    Job.celery_task_id.is_(None),
+                )
+                .values(celery_task_id=task_id)
+                .returning(Job.id)
+            ).scalar_one_or_none()
+            if claimed is None:
+                db.rollback()
+                return False
+
+            opts: dict[str, Any] = {
+                "args": [task_id],
+                "kwargs": kwargs or {},
+                "task_id": task_id,
+            }
+            if queue:
+                opts["queue"] = queue
+            try:
+                task.apply_async(**opts)
+            except Exception:
+                db.rollback()
+                raise
+            db.commit()
+    except Exception as exc:
+        _recover_sync_publish_failure(
+            job_id=job_uuid,
+            task_name=task.name,
+            publish_error=exc,
+        )
+        raise
+    return True

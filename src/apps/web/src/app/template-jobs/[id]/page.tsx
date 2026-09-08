@@ -64,9 +64,11 @@ function ProgressScreen({ job }: { job: TemplateJobStatusResponse | null }) {
   const status = job?.status ?? "queued";
   // Treat "queued" status as 0% — the worker hasn't picked it up yet.
   // Once a phase fires we lean on the phase index for the bar position.
-  const progress = status === "queued" ? 0.02 : phaseProgress(currentPhase);
+  const progress = status === "queued" || status === "importing" ? 0.02 : phaseProgress(currentPhase);
   const label =
-    status === "queued"
+    status === "importing"
+      ? "Securing your upload…"
+      : status === "queued"
       ? PHASE_LABEL.queued
       : humanisePhase(currentPhase);
 

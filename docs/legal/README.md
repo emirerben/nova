@@ -118,6 +118,7 @@ The Privacy Policy (§8) states specific retention windows. As of this PR:
 | Other unattached session uploads | 24h | Purpose-specific prefixes/receipts plus `infra/gcs-lifecycle.json` |
 | Voiceover recordings, temporary music/lyric previews | 24h | `infra/gcs-lifecycle.json` |
 | GCS Whisper transcripts (`transcript-cache/`) | 24h | **This PR** — added to `infra/gcs-lifecycle.json` (was previously unbounded; the cache is content-hash-keyed with no link back to a user, so account deletion can't find and purge it — see below) |
+| Authenticated account-scoped media analysis (may include transcript text + visual descriptions) | 90d | PostgreSQL `media_analysis_cache.expires_at`; rows are creator-scoped and cascade on account deletion. Redis is only a 24h owner-scoped hot copy. Anonymous/synthetic jobs bypass both cache tiers. |
 | Attached footage / rendered output (`users/…`, `generative-jobs/…`) | policy windows, then deletion or latest-final preservation | Generation-pinned retention manifests; newly signed `users/…/generative/…` footage remains a 24h temporary-upload receipt until a Job transaction attaches it |
 | Internal AI processing logs tied to a job | 30 days | Already enforced (`agent_run_retention_days`) |
 

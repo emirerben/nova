@@ -9,6 +9,7 @@ GET  /template-jobs/:id/debug    — admin debug endpoint
 """
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -47,6 +48,8 @@ from app.services.template_validation import (
 )
 
 log = structlog.get_logger()
+
+_TEMPLATE_SUBMISSION_KEY_FIELD = "_template_submission_key"
 
 # Control chars (C0 minus tab, C1, DEL) plus Unicode bidi-overrides and
 # line/paragraph separators. Stripping at the trust boundary keeps weird
@@ -193,6 +196,25 @@ class TemplateJobListResponse(BaseModel):
     total: int
 
 
+def _template_submission_key(
+    req: CreateTemplateJobRequest,
+    *,
+    user_id: uuid.UUID,
+) -> str:
+    """Return a stable owner-bound key for one staged-upload submission."""
+
+    payload = {
+        "user_id": str(user_id),
+        "template_id": req.template_id,
+        "clip_gcs_paths": req.clip_gcs_paths,
+        "clip_durations": req.clip_durations,
+        "selected_platforms": req.selected_platforms,
+        "inputs": req.inputs,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
@@ -218,6 +240,34 @@ async def create_template_job(
     # BEFORE creating a job that would hang for 21 min on the worker before
     # failing. See `validate_clips_processable` for the empirical record.
     staged_paths = [path for path in req.clip_gcs_paths if path.startswith("staging/")]
+    submission_key = (
+        _template_submission_key(req, user_id=current_user.id) if staged_paths else None
+    )
+    if submission_key is not None:
+        existing = (
+            (
+                await db.execute(
+                    select(Job)
+                    .where(
+                        Job.user_id == current_user.id,
+                        Job.job_type == "template",
+                        Job.all_candidates[_TEMPLATE_SUBMISSION_KEY_FIELD].as_string()
+                        == submission_key,
+                    )
+                    .order_by(Job.created_at.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing is not None:
+            return TemplateJobResponse(
+                job_id=str(existing.id),
+                status=existing.status,
+                template_id=str(existing.template_id or req.template_id),
+            )
+
     staged_metadata = await asyncio.gather(
         *(asyncio.to_thread(storage.object_metadata, path) for path in staged_paths)
     )
@@ -248,7 +298,15 @@ async def create_template_job(
         template_id=req.template_id,
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
-        all_candidates={"clip_paths": req.clip_gcs_paths, "inputs": req.inputs},
+        all_candidates={
+            "clip_paths": req.clip_gcs_paths,
+            "inputs": req.inputs,
+            **(
+                {_TEMPLATE_SUBMISSION_KEY_FIELD: submission_key}
+                if submission_key is not None
+                else {}
+            ),
+        },
         assembly_plan=(
             {TEMPLATE_UPLOAD_PROMOTION_FIELD: promotion_journal}
             if promotion_journal is not None
@@ -285,14 +343,16 @@ async def create_template_job(
                 job_id=str(job_id),
                 error_type=type(exc).__name__,
             )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Upload promotion is retrying — check this job again shortly",
-            ) from exc
+            return TemplateJobResponse(
+                job_id=str(job_id),
+                status="importing",
+                template_id=req.template_id,
+            )
         if promotion.state not in {"promoted", "ready"}:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Upload promotion is retrying — check this job again shortly",
+            return TemplateJobResponse(
+                job_id=str(job_id),
+                status="importing",
+                template_id=req.template_id,
             )
         await db.refresh(job)
 

@@ -9,7 +9,7 @@ from sqlalchemy import and_, or_, select
 
 from app.database import sync_session
 from app.models import Job, VideoTemplate
-from app.services.job_dispatch import enqueue_orchestrator_sync
+from app.services.job_dispatch import claim_and_enqueue_orchestrator_sync
 from app.services.template_upload_promotion import (
     TEMPLATE_UPLOAD_PROMOTION_FIELD,
     record_template_upload_promotion_failure,
@@ -69,8 +69,7 @@ def _dispatch_if_ready(job_id: str) -> bool:
         if template_kind == "single_video"
         else orchestrate_template_job
     )
-    enqueue_orchestrator_sync(task, job_id)
-    return True
+    return claim_and_enqueue_orchestrator_sync(task, job_id)
 
 
 def reconcile_template_upload_promotions(*, now: datetime | None = None) -> int:

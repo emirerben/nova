@@ -78,6 +78,16 @@ def _persistent_cache_ttl_days() -> int:
     return max(1, int(settings.media_analysis_cache_ttl_days))
 
 
+def _cacheable_creator_id(creator_id: str | None) -> bool:
+    """Persistent/hot analysis caches require a real, deletable owner."""
+
+    if not creator_id:
+        return False
+    from app.auth import SYNTHETIC_USER_ID  # noqa: PLC0415
+
+    return str(creator_id) != str(SYNTHETIC_USER_ID)
+
+
 def compute_clip_hash(path: str) -> str | None:
     """File fingerprint = sha256(size || head 4MB || tail 4MB).
 
@@ -168,7 +178,7 @@ def _get_redis() -> Any:
 def _get_persistent_payload(clip_hash: str, filter_hint: str, creator_id: str | None) -> str | None:
     """Read the shared PostgreSQL tier. Cache failures are ordinary misses."""
 
-    if not creator_id:
+    if not _cacheable_creator_id(creator_id):
         return None
 
     try:
@@ -241,7 +251,7 @@ def _set_persistent_payload(
 ) -> None:
     """Write the shared PostgreSQL tier best-effort."""
 
-    if not creator_id:
+    if not _cacheable_creator_id(creator_id):
         return
 
     try:
@@ -292,7 +302,7 @@ def get_cached_meta(
     """Return cached ClipMeta or None on miss / Redis failure / corrupt entry."""
     # Analysis payloads can include transcript text. Never create or read the
     # historical cross-user Redis namespace when owner attribution is absent.
-    if not creator_id:
+    if not _cacheable_creator_id(creator_id):
         return None
     key = _cache_key(clip_hash, filter_hint, creator_id)
     raw = None
@@ -331,7 +341,7 @@ def set_cached_meta(
     creator_id: str | None = None,
 ) -> None:
     """Write ClipMeta to cache. Best-effort — failures are logged, not raised."""
-    if not creator_id:
+    if not _cacheable_creator_id(creator_id):
         return
     # Don't poison the cache with degraded fallbacks or synthetic moments —
     # those are job-specific heuristics; a retry might succeed via the real

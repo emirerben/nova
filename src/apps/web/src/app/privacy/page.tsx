@@ -329,7 +329,8 @@ export default function PrivacyPage() {
             <li><strong>Finished videos and poster images</strong> — retained while current or published; otherwise they become eligible for deletion after 365 days of inactivity. Deletion is generation-specific and is rechecked against current project and publication references immediately before it runs.</li>
             <li><strong>Anonymous uploads</strong> (e.g. a not-yet-signed-in trial) — automatically deleted after 30 days; other unattached session uploads are deleted after 24 hours.</li>
             <li><strong>Voiceover recordings and temporary music or lyric previews</strong> — automatically deleted after 24 hours once incorporated into your final video.</li>
-            <li><strong>Speech transcripts</strong> — cached for up to 24 hours to avoid re-processing identical audio.</li>
+            <li><strong>Temporary speech-transcription cache</strong> — cached for up to 24 hours to avoid re-transcribing identical audio.</li>
+            <li><strong>Signed-in, account-scoped media analysis</strong> — structured analysis of footage you attach to your account, which may include transcript text and visual descriptions, is reused for up to 90 days to avoid repeating paid AI processing. It is isolated to your account and deleted when your account is deleted; anonymous jobs are not stored in this analysis cache.</li>
             <li><strong>Internal AI processing logs</strong> tied to a specific job — deleted after 30 days.</li>
           </ul>
           <p>

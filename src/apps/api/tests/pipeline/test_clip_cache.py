@@ -267,6 +267,22 @@ def test_cache_refuses_unattributed_reads_and_writes(fake_redis):
     assert fake_redis.store == {}
 
 
+def test_cache_refuses_shared_synthetic_user_reads_and_writes(fake_redis, monkeypatch):
+    """Anonymous jobs share one synthetic owner, so caching could cross users."""
+
+    from app.auth import SYNTHETIC_USER_ID
+
+    persist = MagicMock()
+    monkeypatch.setattr(clip_cache, "_set_persistent_payload", persist)
+    creator_id = str(SYNTHETIC_USER_ID)
+
+    clip_cache.set_cached_meta("shared-hash", "ball", _meta(), creator_id=creator_id)
+
+    assert clip_cache.get_cached_meta("shared-hash", "ball", creator_id=creator_id) is None
+    assert fake_redis.store == {}
+    persist.assert_not_called()
+
+
 # ── fail-open behavior ───────────────────────────────────────────────────────
 
 

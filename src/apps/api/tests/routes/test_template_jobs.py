@@ -241,7 +241,9 @@ async def test_create_staged_job_commits_recovery_journal_before_first_copy(monk
     template = _make_template(min_clips=1, max_clips=1)
     db = AsyncMock()
     db.add = MagicMock()
-    db.execute = AsyncMock(return_value=MagicMock())
+    no_existing = MagicMock()
+    no_existing.scalars.return_value.first.return_value = None
+    db.execute = AsyncMock(side_effect=[MagicMock(), no_existing])
     events: list[str] = []
 
     async def commit():
@@ -293,6 +295,70 @@ async def test_create_staged_job_commits_recovery_journal_before_first_copy(monk
 
     assert response.status == "queued"
     assert events == ["commit", "copy"]
+
+
+@pytest.mark.asyncio
+async def test_staged_post_retry_returns_same_recoverable_job_id(monkeypatch) -> None:
+    """A lost/failed response cannot mint a second paid render on POST retry."""
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    staged_path = f"staging/{user.id}/batch-a/clip_000.mp4"
+    template = _make_template(min_clips=1, max_clips=1)
+    request = template_jobs.CreateTemplateJobRequest(
+        template_id=template.id,
+        clip_gcs_paths=[staged_path],
+    )
+
+    first_db = AsyncMock()
+    first_db.add = MagicMock()
+    no_existing = MagicMock()
+    no_existing.scalars.return_value.first.return_value = None
+    first_db.execute = AsyncMock(side_effect=[MagicMock(), no_existing])
+    first_db.commit = AsyncMock()
+    first_db.refresh = AsyncMock()
+
+    second_db = AsyncMock()
+    second_db.add = MagicMock()
+    second_db.commit = AsyncMock()
+    second_db.refresh = AsyncMock()
+
+    monkeypatch.setattr(template_jobs, "get_template_or_404", AsyncMock(return_value=template))
+    monkeypatch.setattr(template_jobs, "require_ready", MagicMock())
+    monkeypatch.setattr(template_jobs, "validate_clip_count", MagicMock())
+    monkeypatch.setattr(template_jobs, "validate_clip_total_duration", MagicMock())
+    monkeypatch.setattr(template_jobs, "validate_clips_processable", AsyncMock())
+    object_metadata = MagicMock(return_value=SimpleNamespace(generation="source-generation"))
+    monkeypatch.setattr(template_jobs.storage, "object_metadata", object_metadata)
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.ensure_job_snapshot_async",
+        AsyncMock(return_value={}),
+    )
+    monkeypatch.setattr(
+        template_jobs,
+        "resume_template_upload_promotion",
+        MagicMock(side_effect=RuntimeError("copy interrupted")),
+    )
+    monkeypatch.setattr(
+        template_jobs,
+        "record_template_upload_promotion_failure",
+        MagicMock(return_value="retrying"),
+    )
+
+    first = await template_jobs.create_template_job(request, user, first_db)
+    created = first_db.add.call_args.args[0]
+    assert first.status == "importing"
+    assert first.job_id == str(created.id)
+    assert created.all_candidates[template_jobs._TEMPLATE_SUBMISSION_KEY_FIELD]
+
+    existing_result = MagicMock()
+    existing_result.scalars.return_value.first.return_value = created
+    second_db.execute = AsyncMock(side_effect=[MagicMock(), existing_result])
+
+    second = await template_jobs.create_template_job(request, user, second_db)
+
+    assert second == first
+    second_db.add.assert_not_called()
+    assert object_metadata.call_count == 1
 
 
 @pytest.mark.asyncio

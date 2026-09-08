@@ -55,6 +55,10 @@ def test_purge_expired_ai_caches_is_bounded_and_covers_both_tables() -> None:
     assert "DELETE FROM director_review_cache" in director_sql
     assert "DELETE FROM media_analysis_cache" in media_sql
     assert "expires_at <= now()" in director_sql
+    assert "expires_at <= now()" in media_sql
+    # An unexpired persistent-tier row remains reusable even when it is more
+    # than one day old.  Retention is governed only by its configured expiry.
+    assert "created_at" not in media_sql
     assert "ORDER BY expires_at, id" in director_sql
     assert params == {"batch": _AI_CACHE_DELETE_BATCH}
 

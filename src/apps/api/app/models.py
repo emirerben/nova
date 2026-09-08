@@ -2273,7 +2273,7 @@ class DirectorReviewCache(Base):
 
 
 class MediaAnalysisCache(Base):
-    """Owner-scoped, 24-hour cache for media analysis and transcript output."""
+    """Owner-scoped persistent cache for media analysis and transcript output."""
 
     __tablename__ = "media_analysis_cache"
 

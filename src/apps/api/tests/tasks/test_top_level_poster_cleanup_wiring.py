@@ -264,7 +264,7 @@ def test_template_job_finalizer_retargets_receipts_before_failed_cleanup(monkeyp
         }[remote],
     )
 
-    template_orchestrate._run_template_job(job_id)
+    template_orchestrate._run_template_job(job_id, allow_processing_retry=True)
 
     assert job.status == "template_ready"
     _assert_primary_chain(

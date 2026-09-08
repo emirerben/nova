@@ -720,8 +720,6 @@ def purge_expired_ai_caches() -> dict[str, int]:
     deleted_by_table: dict[str, int] = {}
     for table in ("director_review_cache", "media_analysis_cache"):
         expiry_predicate = "expires_at <= now()"
-        if table == "media_analysis_cache":
-            expiry_predicate += " OR created_at <= now() - interval '1 day'"
         total_deleted = 0
         batches = 0
         while batches < _AI_CACHE_DELETE_MAX_BATCHES:
