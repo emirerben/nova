@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.72.1.0] — 2026-09-08
+## [0.72.2.0] — 2026-09-08
 
 ### Changed
 - **Personalization is now a simpler editable list.** Creators can add a preference directly, edit or remove each remembered instruction, and return to the content plan without navigating category sections or approval, metadata, Undo, and update-notice UI.
