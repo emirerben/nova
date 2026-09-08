@@ -23,6 +23,7 @@ from app.routes.generative_jobs import (
     GenerativeUploadUrlRequest,
     RetextRequest,
     SwapSongRequest,
+    cancel_temporary_upload,
     create_generative_job,
     create_generative_upload_url,
     list_generative_style_sets,
@@ -394,6 +395,154 @@ async def test_direct_image_upload_uses_image_extension_default(monkeypatch):
 
     assert response.kind == "image"
     assert response.gcs_path.endswith("/clip.jpg")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("purpose", "prefix"),
+    [
+        ("analysis_proxy", "analysis-proxy/"),
+        ("cloud_render_source", "cloud-render-source/"),
+    ],
+)
+async def test_mobile_upload_purpose_creates_durable_retention_receipt(
+    monkeypatch, purpose, prefix
+):
+    user = SimpleNamespace(id=uuid.uuid4())
+    stored = []
+
+    def add(row):
+        row.id = uuid.uuid4()
+        stored.append(row)
+
+    db = SimpleNamespace(add=add, commit=AsyncMock(), refresh=AsyncMock())
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.signed_put_url",
+        lambda *_args, **_kwargs: "https://storage.example/signed-put",
+    )
+
+    response = await create_generative_upload_url(
+        _request(),
+        GenerativeUploadUrlRequest(
+            filename="source.mov",
+            content_type="video/quicktime",
+            file_size_bytes=4096,
+            purpose=purpose,
+        ),
+        user,
+        db,
+    )
+
+    assert response.gcs_path.startswith(f"{prefix}{user.id}/")
+    assert response.reservation_id == str(stored[0].id)
+    assert stored[0].object_path == response.gcs_path
+    assert stored[0].purpose == purpose
+    assert response.retention_expires_at == stored[0].retention_expires_at.isoformat()
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_temporary_upload_is_owner_scoped_and_idempotently_deletes(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    reservation_id = uuid.uuid4()
+    row = SimpleNamespace(
+        id=reservation_id,
+        user_id=user.id,
+        object_path=f"analysis-proxy/{user.id}/abc123def456/clip.mp4",
+        status="reserved",
+        cleanup_claimed_at=None,
+        deleted_at=None,
+        delete_attempts=0,
+        last_error=None,
+    )
+    result = SimpleNamespace(scalar_one_or_none=lambda: row)
+    db = SimpleNamespace(execute=AsyncMock(return_value=result), commit=AsyncMock())
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.delete_object_best_effort", lambda _path: True
+    )
+
+    response = await cancel_temporary_upload(str(reservation_id), user, db)
+
+    assert response.status == "deleted"
+    assert row.deleted_at is not None
+    assert db.commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_mobile_upload_rejects_synthetic_user_and_maps_signing_failure(monkeypatch):
+    from app.auth import SYNTHETIC_USER_ID
+
+    signer = MagicMock(return_value="https://storage.example/signed-put")
+    monkeypatch.setattr("app.routes.generative_jobs.storage.signed_put_url", signer)
+    request = GenerativeUploadUrlRequest(
+        filename="source.mov",
+        content_type="video/quicktime",
+        file_size_bytes=4096,
+        purpose="analysis_proxy",
+    )
+    db = SimpleNamespace(add=MagicMock(), commit=AsyncMock(), refresh=AsyncMock())
+
+    with pytest.raises(HTTPException) as raised:
+        await create_generative_upload_url(
+            _request(), request, SimpleNamespace(id=SYNTHETIC_USER_ID), db
+        )
+    assert raised.value.status_code == 401
+    signer.assert_not_called()
+
+    signer.side_effect = RuntimeError("storage unavailable")
+    with pytest.raises(HTTPException) as raised:
+        await create_generative_upload_url(
+            _request(), request, SimpleNamespace(id=uuid.uuid4()), db
+        )
+    assert raised.value.status_code == 503
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cancel_temporary_upload_handles_invalid_missing_deleted_and_storage_failure(
+    monkeypatch,
+):
+    user = SimpleNamespace(id=uuid.uuid4())
+    with pytest.raises(HTTPException) as raised:
+        await cancel_temporary_upload("not-a-uuid", user, SimpleNamespace())
+    assert raised.value.status_code == 400
+
+    missing_result = SimpleNamespace(scalar_one_or_none=lambda: None)
+    missing_db = SimpleNamespace(execute=AsyncMock(return_value=missing_result))
+    with pytest.raises(HTTPException) as raised:
+        await cancel_temporary_upload(str(uuid.uuid4()), user, missing_db)
+    assert raised.value.status_code == 404
+
+    reservation_id = uuid.uuid4()
+    deleted_row = SimpleNamespace(deleted_at=datetime.now(UTC))
+    deleted_db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: deleted_row)),
+        commit=AsyncMock(),
+    )
+    response = await cancel_temporary_upload(str(reservation_id), user, deleted_db)
+    assert response.status == "deleted"
+    deleted_db.commit.assert_not_awaited()
+
+    pending_row = SimpleNamespace(
+        object_path=f"analysis-proxy/{user.id}/abc123def456/clip.mp4",
+        status="reserved",
+        cleanup_claimed_at=None,
+        deleted_at=None,
+        delete_attempts=0,
+        last_error=None,
+    )
+    pending_db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: pending_row)),
+        commit=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.delete_object_best_effort", lambda _path: False
+    )
+    response = await cancel_temporary_upload(str(reservation_id), user, pending_db)
+    assert response.status == "cleanup_pending"
+    assert pending_row.delete_attempts == 1
+    assert pending_row.last_error == "storage_unavailable"
+    assert pending_db.commit.await_count == 2
 
 
 @pytest.mark.parametrize("file_size_bytes", [0, (200 * 1024 * 1024) + 1])

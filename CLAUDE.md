@@ -42,6 +42,7 @@ Rules:
 
 ## Stack
 - Frontend: Next.js (src/apps/web/) — TypeScript, React
+- Native: SwiftUI + AVFoundation (src/apps/ios/) — iOS 18, XcodeGen
 - Backend: Python FastAPI + Celery (src/apps/api/) — video processing pipeline
 - Queue: Redis (job queue for async processing)
 - Storage: GCS or S3 — raw uploads + processed outputs NEVER in git
@@ -62,6 +63,7 @@ Rules:
 - `src/apps/web/src/app/plan/` — canonical chat-first creation workspace; `/plan/new` redirects there, while `/plan/items/*` retains item/editor contracts
 - `src/apps/web/src/app/create/` — redirects to `/plan`; persisted job/editor contracts live in `routes/{me,manual_drafts}.py` (`plans/017-qendresa-creation-flow.md`).
 - `src/apps/api/app/kria/` — runtime-v2 contracts, policy, drafts, and replay; HTTP/task entrypoints are `routes/kria_runtime.py` and `tasks/kria_runtime.py` ([architecture](docs/pipelines/kria-agent-runtime.md); [runbook](docs/runbooks/kria-agent-runtime.md)).
+- `src/apps/ios/` — native client + `KriaMediaEngine`; setup and boundaries: `docs/runbooks/ios-development.md`.
 - `src/apps/api/app/pipeline/music_recipe.py` — beat-snap recipe generator (see `docs/pipelines/music.md`)
 - `src/apps/api/app/tasks/music_orchestrate.py` — Celery tasks: beat analysis + music job orchestration
 - `src/apps/api/app/services/audio_download.py` — yt-dlp audio download + beat detection via FFmpeg
@@ -104,7 +106,7 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 - Frontend lint: `cd src/apps/web && npm run lint`
 - Frontend typecheck: `cd src/apps/web && npx tsc --noEmit`
 - Frontend tests: `cd src/apps/web && npm test` (Jest)
-- Kria runtime gate: `make verify-kria`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
+- Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
 - Pre-PR gate: `bash scripts/preship-check.sh` — scoped ruff on changed files, tsc when web TS changed, drift vs origin/main, VERSION-slot check, CI `[skip-*]` marker list. Run before every PR.
 
 ## Admin API access (for automation / Claude Code)
@@ -134,8 +136,8 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Read agents/DECISIONS.md for why key choices were made
 
 ## Storage retention
-- Per-job GCS objects (`dev-user/*`, `music-jobs/*`, `music-lyrics-previews/*`, `voiceover-uploads/*`, `transcript-cache/*`, `training-exports/*`) are deleted by a bucket lifecycle rule 24h after upload; `jobs/*` and the anonymous `00000000-…0001/*` upload prefix at 30d. Soft delete is OFF on the bucket. Config lives at `infra/gcs-lifecycle.json` (per-prefix table + rationale: `infra/README.md`); apply once with `gsutil lifecycle set infra/gcs-lifecycle.json gs://$STORAGE_BUCKET` (not part of CI deploy).
-- Curated assets (`music/*`, `templates/*`) and extracted job posters (`job-posters/{job_id}/*`, v0.59.1.0) are NOT matched by the rule and persist forever — a thumbnail must outlive its source video's retention window.
+- GCS lifecycle deletes `dev-user/*`, `music-jobs/*`, `music-lyrics-previews/*`, `voiceover-uploads/*`, `transcript-cache/*`, `training-exports/*`, `analysis-proxy/*`, and `cloud-render-source/*` after 24h; `jobs/*` and anonymous `00000000-…0001/*` after 30d. Soft delete is off. Source + apply command: `infra/{gcs-lifecycle.json,README.md}`.
+- Curated `music/*` and `templates/*`, plus `job-posters/{job_id}/*`, persist; posters must outlive their source videos.
 - Signed-URL TTL in `storage.py` is 1 day to match the object lifetime.
 - **`generative-jobs/*` exception:** blobs persist forever but `upload_public_read` signs `output_url` for only 1 day → expired URLs show blank video after 24h. Fix is read-time re-signing via `_variants_for_response` in `routes/generative_jobs.py` (`PLAYBACK_URL_TTL_MIN`). Pinned by `test_variants_for_response_resigns_ready_variant`. See agents/DECISIONS.md "Storage retention incidents" for the full narrative.
 - Authenticated uploads live under `users/{user_id}/`, outside the 24h delete prefixes.

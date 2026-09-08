@@ -35,6 +35,11 @@ per-prefix table CLAUDE.md's "Storage retention" points at; every rule in
 - `music-jobs/*` — final music-sync outputs
 - `music-lyrics-previews/*` — lyric-preview renders
 - `voiceover-uploads/*` — user-recorded voiceover audio
+- `analysis-proxy/*` — native 540p planning proxies; the API also records an
+  exact per-object deadline so cancellation and the five-minute sweeper can
+  delete sooner than the bucket's daily scan
+- `cloud-render-source/*` — originals uploaded only after native cloud-render
+  consent; governed by the same 24-hour server receipt and cleanup sweeper
 - `training-exports/*` — generated edit-training artifact bundles
 - `transcript-cache/*` — cached Whisper transcripts, keyed by content hash (see
   `pipeline/transcribe.py::transcribe_whisper_cached`). Content-hash keying means

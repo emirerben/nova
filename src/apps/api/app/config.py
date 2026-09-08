@@ -78,6 +78,19 @@ class Settings(BaseSettings):
     # Must match INTERNAL_API_KEY in the Next.js environment.
     internal_api_key: str = ""
 
+    # Native mobile authentication.  These are deliberately separate from the
+    # server-to-server key above: mobile access tokens are user credentials and
+    # must never be accepted as the web proxy credential.
+    mobile_jwt_secret: str = ""
+    mobile_access_token_ttl_seconds: int = Field(default=900, ge=60, le=3600)
+    mobile_refresh_token_ttl_days: int = Field(default=30, ge=1, le=365)
+    mobile_link_max_auth_age_seconds: int = Field(default=300, ge=60, le=900)
+    # Temporary native uploads are covered by the bucket's one-day lifecycle
+    # rules; never let a receipt advertise a deadline beyond that backstop.
+    mobile_upload_retention_hours: int = Field(default=24, ge=1, le=24)
+    mobile_google_client_ids: list[str] = []
+    mobile_apple_client_ids: list[str] = []
+
     # HMAC key for pseudonymous creator/plan-item dataset groups. Exports fail
     # closed when unset or too short; it must not reuse an auth credential.
     training_dataset_split_secret: str = ""
