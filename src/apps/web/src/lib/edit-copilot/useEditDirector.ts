@@ -16,7 +16,10 @@ import {
 } from "@/lib/plan-api";
 import type { CopilotOp } from "./ops";
 import type { ApplyCopilotOpsResult, ChangeChip } from "./apply-ops";
-import type { CopilotSnapshot } from "./snapshot";
+import {
+  CopilotSnapshotTooLargeError,
+  type CopilotSnapshot,
+} from "./snapshot";
 import { isFeatureUnavailable } from "./availability";
 
 export interface UseEditDirectorOptions {
@@ -132,8 +135,42 @@ export const DIRECTOR_UNAVAILABLE_MESSAGE =
   "Kria’s review isn’t available right now. Your draft is unchanged.";
 export const DIRECTOR_CAPABILITY_MISMATCH_MESSAGE =
   "Kria’s review is updating. Retry the review shortly.";
+export const DIRECTOR_SNAPSHOT_TOO_LARGE_MESSAGE =
+  "The editor context is too large to review in one request. Your draft is unchanged.";
 const DIRECTOR_REVIEW_DEBOUNCE_MS = 1200;
 const MAX_APPLIED_RECEIPTS = 8;
+
+/**
+ * Editor focus is useful to local UI affordances but is volatile navigation
+ * state, not Director context. Preserve the snapshot's local row identities
+ * and non-enumerable mutation fingerprints while removing it from the wire
+ * payload and revision input.
+ */
+export function stripDirectorEditorFocus(snapshot: CopilotSnapshot): CopilotSnapshot {
+  const withoutFocus = Object.create(
+    Object.getPrototypeOf(snapshot),
+    Object.getOwnPropertyDescriptors(snapshot),
+  ) as CopilotSnapshot;
+  delete withoutFocus.editor_focus;
+  return withoutFocus;
+}
+
+type DirectorSnapshotBuildResult =
+  | { snapshot: CopilotSnapshot; error: null }
+  | { snapshot: null; error: string };
+
+function tryBuildDirectorSnapshot(
+  buildSnapshot: () => CopilotSnapshot,
+): DirectorSnapshotBuildResult {
+  try {
+    return { snapshot: stripDirectorEditorFocus(buildSnapshot()), error: null };
+  } catch (caught) {
+    if (caught instanceof CopilotSnapshotTooLargeError) {
+      return { snapshot: null, error: DIRECTOR_SNAPSHOT_TOO_LARGE_MESSAGE };
+    }
+    throw caught;
+  }
+}
 
 function friendlyDirectorError(caught: unknown): string {
   if (caught instanceof DOMException && caught.name === "AbortError") return "";
@@ -176,7 +213,12 @@ function friendlyOmniError(status: OmniAssetResponse["status"]): string {
 }
 
 export function directorSnapshotRevision(snapshot: CopilotSnapshot): string {
-  const value = JSON.stringify(snapshot);
+  const revisionSnapshot = stripDirectorEditorFocus(snapshot);
+  // Background metadata refreshes do not edit the draft. Keep their status in
+  // the request for honest reasoning, but only changed asset content invalidates
+  // a suggestion or an in-flight generated clip.
+  delete revisionSnapshot.asset_context_status;
+  const value = JSON.stringify(revisionSnapshot);
   let hash = 2166136261;
   for (let i = 0; i < value.length; i += 1) {
     hash ^= value.charCodeAt(i);
@@ -213,6 +255,7 @@ export function useEditDirector(
   // Stays armed across abort/restart cycles until a replacement review either
   // lands or fails. A one-render latch loses refreshes during async hydration.
   const forceRefreshRef = useRef(false);
+  const snapshotBuildErrorRef = useRef<string | null>(null);
   optsRef.current = opts;
   // Unlike history.version, this includes async editor hydration (asset pool,
   // captions, capabilities, overlays). A review started against a partial
@@ -220,16 +263,31 @@ export function useEditDirector(
   const directorEnabled = opts.enabled;
   const canRestoreOriginalTiming = opts.canRestoreOriginalTiming === true;
   const buildSnapshot = opts.buildSnapshot;
-  const currentSnapshotRevision = useMemo(
-    () => directorEnabled ? directorSnapshotRevision(buildSnapshot()) : "",
-    [directorEnabled, buildSnapshot],
-  );
+  const currentSnapshotState = useMemo(() => {
+    if (!directorEnabled) return { revision: "", error: null };
+    const built = tryBuildDirectorSnapshot(buildSnapshot);
+    if (!built.snapshot) {
+      // An oversized draft is a changed revision too. Cancel stale requests
+      // and let restoring even the previous draft restart review normally.
+      return { revision: "context-too-large", error: built.error };
+    }
+    const revision = directorSnapshotRevision(built.snapshot);
+    return { revision, error: null };
+  }, [directorEnabled, buildSnapshot]);
+  const currentSnapshotRevision = currentSnapshotState.revision;
+  const snapshotBuildError = currentSnapshotState.error;
+  snapshotBuildErrorRef.current = snapshotBuildError;
+
+  useEffect(() => {
+    setError((current) => snapshotBuildError ??
+      (current === DIRECTOR_SNAPSHOT_TOO_LARGE_MESSAGE ? null : current));
+  }, [snapshotBuildError]);
 
   useEffect(() => {
     suggestionsRef.current = [];
     setSuggestions([]);
     setAppliedReceipts([]);
-    setError(null);
+    setError(snapshotBuildErrorRef.current);
     setUnavailable(false);
     setModelUsed("");
     setFallbackReason(null);
@@ -308,12 +366,19 @@ export function useEditDirector(
     // Keep a returned review stable while the user works through it. Director
     // suggestions are server-validated into sequentially compatible edit
     // domains, and applyOpsAtomic rejects a card if its own target changed.
+    if (snapshotBuildErrorRef.current) return;
     if (suggestionsRef.current.length > 0 && !forceRefresh) return;
     if (sourceRevisionRef.current === currentSnapshotRevision && !forceRefresh) return;
     const controller = new AbortController();
     let activeRequestId = 0;
     const timer = window.setTimeout(() => {
-      const snapshot = optsRef.current.buildSnapshot();
+      const built = tryBuildDirectorSnapshot(optsRef.current.buildSnapshot);
+      if (!built.snapshot) {
+        forceRefreshRef.current = false;
+        setError(built.error);
+        return;
+      }
+      const snapshot = built.snapshot;
       if (snapshot.allowed_op_families.length === 0) {
         forceRefreshRef.current = false;
         suggestionsRef.current = [];
@@ -337,7 +402,12 @@ export function useEditDirector(
       }, controller.signal)
         .then((response) => {
           if (requestId !== requestIdRef.current) return;
-          const currentRevision = directorSnapshotRevision(optsRef.current.buildSnapshot());
+          const current = tryBuildDirectorSnapshot(optsRef.current.buildSnapshot);
+          if (!current.snapshot) {
+            setError(current.error);
+            return;
+          }
+          const currentRevision = directorSnapshotRevision(current.snapshot);
           if (
             response.snapshot_revision !== revision ||
             currentRevision !== revision
@@ -546,7 +616,12 @@ export function useEditDirector(
         if (!suggestion.omni || generation) return;
         const source = sourceSnapshotRef.current;
         const sourceRevision = sourceRevisionRef.current;
-        if (!source || directorSnapshotRevision(optsRef.current.buildSnapshot()) !== sourceRevision) {
+        const current = tryBuildDirectorSnapshot(optsRef.current.buildSnapshot);
+        if (!current.snapshot) {
+          setError(current.error);
+          return;
+        }
+        if (!source || directorSnapshotRevision(current.snapshot) !== sourceRevision) {
           setError("The draft changed. Kria is refreshing this suggestion.");
           refreshReview();
           return;
@@ -556,20 +631,32 @@ export function useEditDirector(
         const itemId = optsRef.current.itemId;
         const variantId = optsRef.current.variantId;
         let startedAssetId = "";
+        let contextSnapshotError: string | null = null;
         const identityIsCurrent = () =>
           token === generationTokenRef.current &&
           optsRef.current.itemId === itemId &&
           optsRef.current.variantId === variantId;
-        const contextIsCurrent = () =>
-          identityIsCurrent() &&
-          directorSnapshotRevision(optsRef.current.buildSnapshot()) === sourceRevision;
+        const contextIsCurrent = () => {
+          if (!identityIsCurrent()) return false;
+          const currentSnapshot = tryBuildDirectorSnapshot(optsRef.current.buildSnapshot);
+          if (!currentSnapshot.snapshot) {
+            contextSnapshotError = currentSnapshot.error;
+            setError(currentSnapshot.error);
+            return false;
+          }
+          contextSnapshotError = null;
+          return directorSnapshotRevision(currentSnapshot.snapshot) === sourceRevision;
+        };
         const abandonAsset = (assetId = startedAssetId) => {
           if (assetId) {
             void cancelOmniAsset(itemId, variantId, assetId).catch(() => {});
           }
           if (identityIsCurrent()) {
             setGeneration(null);
-            setError("The generated clip is ready, but the draft changed, so Kria didn’t insert it. Review the latest draft and try again.");
+            setError(
+              contextSnapshotError ??
+                "The generated clip is ready, but the draft changed, so Kria didn’t insert it. Review the latest draft and try again.",
+            );
           }
         };
         setError(null);

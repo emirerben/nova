@@ -178,6 +178,22 @@ describe("messagesToCopilotTurns", () => {
 });
 
 describe("outcomeAuthoritativeReply", () => {
+  it.each([
+    ["I cannot change score timing with the available operations.", "I cannot change score timing with the available operations."],
+    ["Done, I changed the scores.", "That kind of edit isn't available for this draft yet."],
+    ["I changed the title but not the timing.", "That kind of edit isn't available for this draft yet."],
+    ["", "That kind of edit isn't available for this draft yet."],
+  ])("keeps an unsupported explanation honest: %s", (modelReply, expected) => {
+    expect(outcomeAuthoritativeReply({
+      modelReply,
+      intent: "reject",
+      needsClarification: false,
+      applied: [],
+      rejected: [],
+      outcome: "unsupported",
+    })).toBe(expected);
+  });
+
   it("uses actual outcomes instead of a model success claim", () => {
     expect(outcomeAuthoritativeReply({
       modelReply: "Done, I changed every caption.",
@@ -595,6 +611,24 @@ describe("useEditCopilot", () => {
     expect(result.current.messages).toEqual([]);
     expect(result.current.restoredInput).toBe("try this");
     expect(result.current.error).toBe("network down");
+  });
+
+  it("restores the request and releases Send when draft context cannot fit", async () => {
+    const buildSnapshot = jest.fn(() => {
+      throw new Error("The editor context is too large to inspect in one request.");
+    });
+    const { result } = renderCopilot({ buildSnapshot });
+
+    await act(async () => {
+      await result.current.send("Keep the scores longer");
+    });
+
+    expect(mockEditCopilotTurn).not.toHaveBeenCalled();
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.restoredInput).toBe("Keep the scores longer");
+    expect(result.current.sending).toBe(false);
+    expect(result.current.unavailable).toBe(false);
+    expect(result.current.error).toBe("The editor context is too large to inspect in one request.");
   });
 
   it("appends rejected outcome suffixes and includes them in later turns", async () => {
