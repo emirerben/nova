@@ -1,0 +1,1891 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-08-v39",
+  "input": {
+    "utterance": "Extend each price label by exactly 1 second without changing its start or any other text.",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "component_context_version": 1,
+      "allowed_op_families": [
+        "text",
+        "overlay"
+      ],
+      "total_duration_s": 45,
+      "slots": [],
+      "text_bars": [
+        {
+          "id": "caption-0",
+          "role": "generative_sequence",
+          "text": "We describe menu item 0.",
+          "start_s": 0.0,
+          "end_s": 0.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 0
+        },
+        {
+          "id": "caption-1",
+          "role": "generative_sequence",
+          "text": "We describe menu item 1.",
+          "start_s": 0.2,
+          "end_s": 0.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 1
+        },
+        {
+          "id": "caption-2",
+          "role": "generative_sequence",
+          "text": "We describe menu item 2.",
+          "start_s": 0.4,
+          "end_s": 0.6000000000000001,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 2
+        },
+        {
+          "id": "caption-3",
+          "role": "generative_sequence",
+          "text": "We describe menu item 3.",
+          "start_s": 0.6000000000000001,
+          "end_s": 0.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 3
+        },
+        {
+          "id": "caption-4",
+          "role": "generative_sequence",
+          "text": "We describe menu item 4.",
+          "start_s": 0.8,
+          "end_s": 1.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 4
+        },
+        {
+          "id": "caption-5",
+          "role": "generative_sequence",
+          "text": "We describe menu item 5.",
+          "start_s": 1.0,
+          "end_s": 1.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 5
+        },
+        {
+          "id": "caption-6",
+          "role": "generative_sequence",
+          "text": "We describe menu item 6.",
+          "start_s": 1.2000000000000002,
+          "end_s": 1.4000000000000001,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 6
+        },
+        {
+          "id": "caption-7",
+          "role": "generative_sequence",
+          "text": "We describe menu item 7.",
+          "start_s": 1.4000000000000001,
+          "end_s": 1.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 7
+        },
+        {
+          "id": "caption-8",
+          "role": "generative_sequence",
+          "text": "We describe menu item 8.",
+          "start_s": 1.6,
+          "end_s": 1.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 8
+        },
+        {
+          "id": "caption-9",
+          "role": "generative_sequence",
+          "text": "We describe menu item 9.",
+          "start_s": 1.8,
+          "end_s": 2.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 9
+        },
+        {
+          "id": "caption-10",
+          "role": "generative_sequence",
+          "text": "We describe menu item 10.",
+          "start_s": 2.0,
+          "end_s": 2.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 10
+        },
+        {
+          "id": "caption-11",
+          "role": "generative_sequence",
+          "text": "We describe menu item 11.",
+          "start_s": 2.2,
+          "end_s": 2.4000000000000004,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 11
+        },
+        {
+          "id": "caption-12",
+          "role": "generative_sequence",
+          "text": "We describe menu item 12.",
+          "start_s": 2.4000000000000004,
+          "end_s": 2.6000000000000005,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 12
+        },
+        {
+          "id": "caption-13",
+          "role": "generative_sequence",
+          "text": "We describe menu item 13.",
+          "start_s": 2.6,
+          "end_s": 2.8000000000000003,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 13
+        },
+        {
+          "id": "caption-14",
+          "role": "generative_sequence",
+          "text": "We describe menu item 14.",
+          "start_s": 2.8000000000000003,
+          "end_s": 3.0000000000000004,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 14
+        },
+        {
+          "id": "caption-15",
+          "role": "generative_sequence",
+          "text": "We describe menu item 15.",
+          "start_s": 3.0,
+          "end_s": 3.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 15
+        },
+        {
+          "id": "caption-16",
+          "role": "generative_sequence",
+          "text": "We describe menu item 16.",
+          "start_s": 3.2,
+          "end_s": 3.4000000000000004,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 16
+        },
+        {
+          "id": "caption-17",
+          "role": "generative_sequence",
+          "text": "We describe menu item 17.",
+          "start_s": 3.4000000000000004,
+          "end_s": 3.6000000000000005,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 17
+        },
+        {
+          "id": "caption-18",
+          "role": "generative_sequence",
+          "text": "We describe menu item 18.",
+          "start_s": 3.6,
+          "end_s": 3.8000000000000003,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 18
+        },
+        {
+          "id": "caption-19",
+          "role": "generative_sequence",
+          "text": "We describe menu item 19.",
+          "start_s": 3.8000000000000003,
+          "end_s": 4.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 19
+        },
+        {
+          "id": "caption-20",
+          "role": "generative_sequence",
+          "text": "We describe menu item 20.",
+          "start_s": 4.0,
+          "end_s": 4.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 20
+        },
+        {
+          "id": "caption-21",
+          "role": "generative_sequence",
+          "text": "We describe menu item 21.",
+          "start_s": 4.2,
+          "end_s": 4.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 21
+        },
+        {
+          "id": "caption-22",
+          "role": "generative_sequence",
+          "text": "We describe menu item 22.",
+          "start_s": 4.4,
+          "end_s": 4.6000000000000005,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 22
+        },
+        {
+          "id": "caption-23",
+          "role": "generative_sequence",
+          "text": "We describe menu item 23.",
+          "start_s": 4.6000000000000005,
+          "end_s": 4.800000000000001,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 23
+        },
+        {
+          "id": "caption-24",
+          "role": "generative_sequence",
+          "text": "We describe menu item 24.",
+          "start_s": 4.800000000000001,
+          "end_s": 5.000000000000001,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 24
+        },
+        {
+          "id": "caption-25",
+          "role": "generative_sequence",
+          "text": "We describe menu item 25.",
+          "start_s": 5.0,
+          "end_s": 5.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 25
+        },
+        {
+          "id": "caption-26",
+          "role": "generative_sequence",
+          "text": "We describe menu item 26.",
+          "start_s": 5.2,
+          "end_s": 5.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 26
+        },
+        {
+          "id": "caption-27",
+          "role": "generative_sequence",
+          "text": "We describe menu item 27.",
+          "start_s": 5.4,
+          "end_s": 5.6000000000000005,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 27
+        },
+        {
+          "id": "caption-28",
+          "role": "generative_sequence",
+          "text": "We describe menu item 28.",
+          "start_s": 5.6000000000000005,
+          "end_s": 5.800000000000001,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 28
+        },
+        {
+          "id": "caption-29",
+          "role": "generative_sequence",
+          "text": "We describe menu item 29.",
+          "start_s": 5.800000000000001,
+          "end_s": 6.000000000000001,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 29
+        },
+        {
+          "id": "caption-30",
+          "role": "generative_sequence",
+          "text": "We describe menu item 30.",
+          "start_s": 6.0,
+          "end_s": 6.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 30
+        },
+        {
+          "id": "caption-31",
+          "role": "generative_sequence",
+          "text": "We describe menu item 31.",
+          "start_s": 6.2,
+          "end_s": 6.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 31
+        },
+        {
+          "id": "caption-32",
+          "role": "generative_sequence",
+          "text": "We describe menu item 32.",
+          "start_s": 6.4,
+          "end_s": 6.6000000000000005,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 32
+        },
+        {
+          "id": "caption-33",
+          "role": "generative_sequence",
+          "text": "We describe menu item 33.",
+          "start_s": 6.6000000000000005,
+          "end_s": 6.800000000000001,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 33
+        },
+        {
+          "id": "caption-34",
+          "role": "generative_sequence",
+          "text": "We describe menu item 34.",
+          "start_s": 6.800000000000001,
+          "end_s": 7.000000000000001,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 34
+        },
+        {
+          "id": "caption-35",
+          "role": "generative_sequence",
+          "text": "We describe menu item 35.",
+          "start_s": 7.0,
+          "end_s": 7.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 35
+        },
+        {
+          "id": "caption-36",
+          "role": "generative_sequence",
+          "text": "We describe menu item 36.",
+          "start_s": 7.2,
+          "end_s": 7.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 36
+        },
+        {
+          "id": "caption-37",
+          "role": "generative_sequence",
+          "text": "We describe menu item 37.",
+          "start_s": 7.4,
+          "end_s": 7.6000000000000005,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 37
+        },
+        {
+          "id": "caption-38",
+          "role": "generative_sequence",
+          "text": "We describe menu item 38.",
+          "start_s": 7.6000000000000005,
+          "end_s": 7.800000000000001,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 38
+        },
+        {
+          "id": "caption-39",
+          "role": "generative_sequence",
+          "text": "We describe menu item 39.",
+          "start_s": 7.800000000000001,
+          "end_s": 8.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 39
+        },
+        {
+          "id": "caption-40",
+          "role": "generative_sequence",
+          "text": "We describe menu item 40.",
+          "start_s": 8.0,
+          "end_s": 8.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 40
+        },
+        {
+          "id": "caption-41",
+          "role": "generative_sequence",
+          "text": "We describe menu item 41.",
+          "start_s": 8.200000000000001,
+          "end_s": 8.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 41
+        },
+        {
+          "id": "caption-42",
+          "role": "generative_sequence",
+          "text": "We describe menu item 42.",
+          "start_s": 8.4,
+          "end_s": 8.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 42
+        },
+        {
+          "id": "caption-43",
+          "role": "generative_sequence",
+          "text": "We describe menu item 43.",
+          "start_s": 8.6,
+          "end_s": 8.799999999999999,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 43
+        },
+        {
+          "id": "caption-44",
+          "role": "generative_sequence",
+          "text": "We describe menu item 44.",
+          "start_s": 8.8,
+          "end_s": 9.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 44
+        },
+        {
+          "id": "caption-45",
+          "role": "generative_sequence",
+          "text": "We describe menu item 45.",
+          "start_s": 9.0,
+          "end_s": 9.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 45
+        },
+        {
+          "id": "caption-46",
+          "role": "generative_sequence",
+          "text": "We describe menu item 46.",
+          "start_s": 9.200000000000001,
+          "end_s": 9.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 46
+        },
+        {
+          "id": "caption-47",
+          "role": "generative_sequence",
+          "text": "We describe menu item 47.",
+          "start_s": 9.4,
+          "end_s": 9.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 47
+        },
+        {
+          "id": "caption-48",
+          "role": "generative_sequence",
+          "text": "We describe menu item 48.",
+          "start_s": 9.600000000000001,
+          "end_s": 9.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 48
+        },
+        {
+          "id": "caption-49",
+          "role": "generative_sequence",
+          "text": "We describe menu item 49.",
+          "start_s": 9.8,
+          "end_s": 10.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 49
+        },
+        {
+          "id": "caption-50",
+          "role": "generative_sequence",
+          "text": "We describe menu item 50.",
+          "start_s": 10.0,
+          "end_s": 10.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 50
+        },
+        {
+          "id": "caption-51",
+          "role": "generative_sequence",
+          "text": "We describe menu item 51.",
+          "start_s": 10.200000000000001,
+          "end_s": 10.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 51
+        },
+        {
+          "id": "caption-52",
+          "role": "generative_sequence",
+          "text": "We describe menu item 52.",
+          "start_s": 10.4,
+          "end_s": 10.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 52
+        },
+        {
+          "id": "caption-53",
+          "role": "generative_sequence",
+          "text": "We describe menu item 53.",
+          "start_s": 10.600000000000001,
+          "end_s": 10.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 53
+        },
+        {
+          "id": "caption-54",
+          "role": "generative_sequence",
+          "text": "We describe menu item 54.",
+          "start_s": 10.8,
+          "end_s": 11.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 54
+        },
+        {
+          "id": "caption-55",
+          "role": "generative_sequence",
+          "text": "We describe menu item 55.",
+          "start_s": 11.0,
+          "end_s": 11.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 55
+        },
+        {
+          "id": "caption-56",
+          "role": "generative_sequence",
+          "text": "We describe menu item 56.",
+          "start_s": 11.200000000000001,
+          "end_s": 11.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 56
+        },
+        {
+          "id": "caption-57",
+          "role": "generative_sequence",
+          "text": "We describe menu item 57.",
+          "start_s": 11.4,
+          "end_s": 11.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 57
+        },
+        {
+          "id": "caption-58",
+          "role": "generative_sequence",
+          "text": "We describe menu item 58.",
+          "start_s": 11.600000000000001,
+          "end_s": 11.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 58
+        },
+        {
+          "id": "caption-59",
+          "role": "generative_sequence",
+          "text": "We describe menu item 59.",
+          "start_s": 11.8,
+          "end_s": 12.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 59
+        },
+        {
+          "id": "caption-60",
+          "role": "generative_sequence",
+          "text": "We describe menu item 60.",
+          "start_s": 12.0,
+          "end_s": 12.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 60
+        },
+        {
+          "id": "caption-61",
+          "role": "generative_sequence",
+          "text": "We describe menu item 61.",
+          "start_s": 12.200000000000001,
+          "end_s": 12.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 61
+        },
+        {
+          "id": "caption-62",
+          "role": "generative_sequence",
+          "text": "We describe menu item 62.",
+          "start_s": 12.4,
+          "end_s": 12.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 62
+        },
+        {
+          "id": "caption-63",
+          "role": "generative_sequence",
+          "text": "We describe menu item 63.",
+          "start_s": 12.600000000000001,
+          "end_s": 12.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 63
+        },
+        {
+          "id": "caption-64",
+          "role": "generative_sequence",
+          "text": "We describe menu item 64.",
+          "start_s": 12.8,
+          "end_s": 13.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 64
+        },
+        {
+          "id": "caption-65",
+          "role": "generative_sequence",
+          "text": "We describe menu item 65.",
+          "start_s": 13.0,
+          "end_s": 13.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 65
+        },
+        {
+          "id": "caption-66",
+          "role": "generative_sequence",
+          "text": "We describe menu item 66.",
+          "start_s": 13.200000000000001,
+          "end_s": 13.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 66
+        },
+        {
+          "id": "caption-67",
+          "role": "generative_sequence",
+          "text": "We describe menu item 67.",
+          "start_s": 13.4,
+          "end_s": 13.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 67
+        },
+        {
+          "id": "caption-68",
+          "role": "generative_sequence",
+          "text": "We describe menu item 68.",
+          "start_s": 13.600000000000001,
+          "end_s": 13.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 68
+        },
+        {
+          "id": "caption-69",
+          "role": "generative_sequence",
+          "text": "We describe menu item 69.",
+          "start_s": 13.8,
+          "end_s": 14.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 69
+        },
+        {
+          "id": "caption-70",
+          "role": "generative_sequence",
+          "text": "We describe menu item 70.",
+          "start_s": 14.0,
+          "end_s": 14.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 70
+        },
+        {
+          "id": "caption-71",
+          "role": "generative_sequence",
+          "text": "We describe menu item 71.",
+          "start_s": 14.200000000000001,
+          "end_s": 14.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 71
+        },
+        {
+          "id": "caption-72",
+          "role": "generative_sequence",
+          "text": "We describe menu item 72.",
+          "start_s": 14.4,
+          "end_s": 14.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 72
+        },
+        {
+          "id": "caption-73",
+          "role": "generative_sequence",
+          "text": "We describe menu item 73.",
+          "start_s": 14.600000000000001,
+          "end_s": 14.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 73
+        },
+        {
+          "id": "caption-74",
+          "role": "generative_sequence",
+          "text": "We describe menu item 74.",
+          "start_s": 14.8,
+          "end_s": 15.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 74
+        },
+        {
+          "id": "caption-75",
+          "role": "generative_sequence",
+          "text": "We describe menu item 75.",
+          "start_s": 15.0,
+          "end_s": 15.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 75
+        },
+        {
+          "id": "caption-76",
+          "role": "generative_sequence",
+          "text": "We describe menu item 76.",
+          "start_s": 15.200000000000001,
+          "end_s": 15.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 76
+        },
+        {
+          "id": "caption-77",
+          "role": "generative_sequence",
+          "text": "We describe menu item 77.",
+          "start_s": 15.4,
+          "end_s": 15.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 77
+        },
+        {
+          "id": "caption-78",
+          "role": "generative_sequence",
+          "text": "We describe menu item 78.",
+          "start_s": 15.600000000000001,
+          "end_s": 15.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 78
+        },
+        {
+          "id": "caption-79",
+          "role": "generative_sequence",
+          "text": "We describe menu item 79.",
+          "start_s": 15.8,
+          "end_s": 16.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 79
+        },
+        {
+          "id": "caption-80",
+          "role": "generative_sequence",
+          "text": "We describe menu item 80.",
+          "start_s": 16.0,
+          "end_s": 16.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 80
+        },
+        {
+          "id": "caption-81",
+          "role": "generative_sequence",
+          "text": "We describe menu item 81.",
+          "start_s": 16.2,
+          "end_s": 16.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 81
+        },
+        {
+          "id": "caption-82",
+          "role": "generative_sequence",
+          "text": "We describe menu item 82.",
+          "start_s": 16.400000000000002,
+          "end_s": 16.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 82
+        },
+        {
+          "id": "caption-83",
+          "role": "generative_sequence",
+          "text": "We describe menu item 83.",
+          "start_s": 16.6,
+          "end_s": 16.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 83
+        },
+        {
+          "id": "caption-84",
+          "role": "generative_sequence",
+          "text": "We describe menu item 84.",
+          "start_s": 16.8,
+          "end_s": 17.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 84
+        },
+        {
+          "id": "caption-85",
+          "role": "generative_sequence",
+          "text": "We describe menu item 85.",
+          "start_s": 17.0,
+          "end_s": 17.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 85
+        },
+        {
+          "id": "caption-86",
+          "role": "generative_sequence",
+          "text": "We describe menu item 86.",
+          "start_s": 17.2,
+          "end_s": 17.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 86
+        },
+        {
+          "id": "caption-87",
+          "role": "generative_sequence",
+          "text": "We describe menu item 87.",
+          "start_s": 17.400000000000002,
+          "end_s": 17.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 87
+        },
+        {
+          "id": "caption-88",
+          "role": "generative_sequence",
+          "text": "We describe menu item 88.",
+          "start_s": 17.6,
+          "end_s": 17.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 88
+        },
+        {
+          "id": "caption-89",
+          "role": "generative_sequence",
+          "text": "We describe menu item 89.",
+          "start_s": 17.8,
+          "end_s": 18.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 89
+        },
+        {
+          "id": "caption-90",
+          "role": "generative_sequence",
+          "text": "We describe menu item 90.",
+          "start_s": 18.0,
+          "end_s": 18.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 90
+        },
+        {
+          "id": "caption-91",
+          "role": "generative_sequence",
+          "text": "We describe menu item 91.",
+          "start_s": 18.2,
+          "end_s": 18.4,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 91
+        },
+        {
+          "id": "caption-92",
+          "role": "generative_sequence",
+          "text": "We describe menu item 92.",
+          "start_s": 18.400000000000002,
+          "end_s": 18.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 92
+        },
+        {
+          "id": "caption-93",
+          "role": "generative_sequence",
+          "text": "We describe menu item 93.",
+          "start_s": 18.6,
+          "end_s": 18.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 93
+        },
+        {
+          "id": "caption-94",
+          "role": "generative_sequence",
+          "text": "We describe menu item 94.",
+          "start_s": 18.8,
+          "end_s": 19.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 94
+        },
+        {
+          "id": "caption-95",
+          "role": "generative_sequence",
+          "text": "We describe menu item 95.",
+          "start_s": 19.0,
+          "end_s": 19.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 95
+        },
+        {
+          "id": "caption-96",
+          "role": "generative_sequence",
+          "text": "We describe menu item 96.",
+          "start_s": 19.200000000000003,
+          "end_s": 19.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 96
+        },
+        {
+          "id": "caption-97",
+          "role": "generative_sequence",
+          "text": "We describe menu item 97.",
+          "start_s": 19.400000000000002,
+          "end_s": 19.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 97
+        },
+        {
+          "id": "caption-98",
+          "role": "generative_sequence",
+          "text": "We describe menu item 98.",
+          "start_s": 19.6,
+          "end_s": 19.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 98
+        },
+        {
+          "id": "caption-99",
+          "role": "generative_sequence",
+          "text": "We describe menu item 99.",
+          "start_s": 19.8,
+          "end_s": 20.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 99
+        },
+        {
+          "id": "caption-100",
+          "role": "generative_sequence",
+          "text": "We describe menu item 100.",
+          "start_s": 20.0,
+          "end_s": 20.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 100
+        },
+        {
+          "id": "caption-101",
+          "role": "generative_sequence",
+          "text": "We describe menu item 101.",
+          "start_s": 20.200000000000003,
+          "end_s": 20.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 101
+        },
+        {
+          "id": "caption-102",
+          "role": "generative_sequence",
+          "text": "We describe menu item 102.",
+          "start_s": 20.400000000000002,
+          "end_s": 20.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 102
+        },
+        {
+          "id": "caption-103",
+          "role": "generative_sequence",
+          "text": "We describe menu item 103.",
+          "start_s": 20.6,
+          "end_s": 20.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 103
+        },
+        {
+          "id": "caption-104",
+          "role": "generative_sequence",
+          "text": "We describe menu item 104.",
+          "start_s": 20.8,
+          "end_s": 21.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 104
+        },
+        {
+          "id": "caption-105",
+          "role": "generative_sequence",
+          "text": "We describe menu item 105.",
+          "start_s": 21.0,
+          "end_s": 21.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 105
+        },
+        {
+          "id": "caption-106",
+          "role": "generative_sequence",
+          "text": "We describe menu item 106.",
+          "start_s": 21.200000000000003,
+          "end_s": 21.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 106
+        },
+        {
+          "id": "caption-107",
+          "role": "generative_sequence",
+          "text": "We describe menu item 107.",
+          "start_s": 21.400000000000002,
+          "end_s": 21.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 107
+        },
+        {
+          "id": "caption-108",
+          "role": "generative_sequence",
+          "text": "We describe menu item 108.",
+          "start_s": 21.6,
+          "end_s": 21.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 108
+        },
+        {
+          "id": "caption-109",
+          "role": "generative_sequence",
+          "text": "We describe menu item 109.",
+          "start_s": 21.8,
+          "end_s": 22.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 109
+        },
+        {
+          "id": "caption-110",
+          "role": "generative_sequence",
+          "text": "We describe menu item 110.",
+          "start_s": 22.0,
+          "end_s": 22.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 110
+        },
+        {
+          "id": "caption-111",
+          "role": "generative_sequence",
+          "text": "We describe menu item 111.",
+          "start_s": 22.200000000000003,
+          "end_s": 22.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 111
+        },
+        {
+          "id": "caption-112",
+          "role": "generative_sequence",
+          "text": "We describe menu item 112.",
+          "start_s": 22.400000000000002,
+          "end_s": 22.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 112
+        },
+        {
+          "id": "caption-113",
+          "role": "generative_sequence",
+          "text": "We describe menu item 113.",
+          "start_s": 22.6,
+          "end_s": 22.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 113
+        },
+        {
+          "id": "caption-114",
+          "role": "generative_sequence",
+          "text": "We describe menu item 114.",
+          "start_s": 22.8,
+          "end_s": 23.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 114
+        },
+        {
+          "id": "caption-115",
+          "role": "generative_sequence",
+          "text": "We describe menu item 115.",
+          "start_s": 23.0,
+          "end_s": 23.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 115
+        },
+        {
+          "id": "caption-116",
+          "role": "generative_sequence",
+          "text": "We describe menu item 116.",
+          "start_s": 23.200000000000003,
+          "end_s": 23.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 116
+        },
+        {
+          "id": "caption-117",
+          "role": "generative_sequence",
+          "text": "We describe menu item 117.",
+          "start_s": 23.400000000000002,
+          "end_s": 23.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 117
+        },
+        {
+          "id": "caption-118",
+          "role": "generative_sequence",
+          "text": "We describe menu item 118.",
+          "start_s": 23.6,
+          "end_s": 23.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 118
+        },
+        {
+          "id": "caption-119",
+          "role": "generative_sequence",
+          "text": "We describe menu item 119.",
+          "start_s": 23.8,
+          "end_s": 24.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 119
+        },
+        {
+          "id": "caption-120",
+          "role": "generative_sequence",
+          "text": "We describe menu item 120.",
+          "start_s": 24.0,
+          "end_s": 24.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 120
+        },
+        {
+          "id": "caption-121",
+          "role": "generative_sequence",
+          "text": "We describe menu item 121.",
+          "start_s": 24.200000000000003,
+          "end_s": 24.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 121
+        },
+        {
+          "id": "caption-122",
+          "role": "generative_sequence",
+          "text": "We describe menu item 122.",
+          "start_s": 24.400000000000002,
+          "end_s": 24.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 122
+        },
+        {
+          "id": "caption-123",
+          "role": "generative_sequence",
+          "text": "We describe menu item 123.",
+          "start_s": 24.6,
+          "end_s": 24.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 123
+        },
+        {
+          "id": "caption-124",
+          "role": "generative_sequence",
+          "text": "We describe menu item 124.",
+          "start_s": 24.8,
+          "end_s": 25.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 124
+        },
+        {
+          "id": "caption-125",
+          "role": "generative_sequence",
+          "text": "We describe menu item 125.",
+          "start_s": 25.0,
+          "end_s": 25.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 125
+        },
+        {
+          "id": "caption-126",
+          "role": "generative_sequence",
+          "text": "We describe menu item 126.",
+          "start_s": 25.200000000000003,
+          "end_s": 25.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 126
+        },
+        {
+          "id": "caption-127",
+          "role": "generative_sequence",
+          "text": "We describe menu item 127.",
+          "start_s": 25.400000000000002,
+          "end_s": 25.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 127
+        },
+        {
+          "id": "caption-128",
+          "role": "generative_sequence",
+          "text": "We describe menu item 128.",
+          "start_s": 25.6,
+          "end_s": 25.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 128
+        },
+        {
+          "id": "caption-129",
+          "role": "generative_sequence",
+          "text": "We describe menu item 129.",
+          "start_s": 25.8,
+          "end_s": 26.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 129
+        },
+        {
+          "id": "caption-130",
+          "role": "generative_sequence",
+          "text": "We describe menu item 130.",
+          "start_s": 26.0,
+          "end_s": 26.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 130
+        },
+        {
+          "id": "caption-131",
+          "role": "generative_sequence",
+          "text": "We describe menu item 131.",
+          "start_s": 26.200000000000003,
+          "end_s": 26.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 131
+        },
+        {
+          "id": "caption-132",
+          "role": "generative_sequence",
+          "text": "We describe menu item 132.",
+          "start_s": 26.400000000000002,
+          "end_s": 26.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 132
+        },
+        {
+          "id": "caption-133",
+          "role": "generative_sequence",
+          "text": "We describe menu item 133.",
+          "start_s": 26.6,
+          "end_s": 26.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 133
+        },
+        {
+          "id": "caption-134",
+          "role": "generative_sequence",
+          "text": "We describe menu item 134.",
+          "start_s": 26.8,
+          "end_s": 27.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 134
+        },
+        {
+          "id": "caption-135",
+          "role": "generative_sequence",
+          "text": "We describe menu item 135.",
+          "start_s": 27.0,
+          "end_s": 27.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 135
+        },
+        {
+          "id": "caption-136",
+          "role": "generative_sequence",
+          "text": "We describe menu item 136.",
+          "start_s": 27.200000000000003,
+          "end_s": 27.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 136
+        },
+        {
+          "id": "caption-137",
+          "role": "generative_sequence",
+          "text": "We describe menu item 137.",
+          "start_s": 27.400000000000002,
+          "end_s": 27.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 137
+        },
+        {
+          "id": "caption-138",
+          "role": "generative_sequence",
+          "text": "We describe menu item 138.",
+          "start_s": 27.6,
+          "end_s": 27.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 138
+        },
+        {
+          "id": "caption-139",
+          "role": "generative_sequence",
+          "text": "We describe menu item 139.",
+          "start_s": 27.8,
+          "end_s": 28.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 139
+        },
+        {
+          "id": "caption-140",
+          "role": "generative_sequence",
+          "text": "We describe menu item 140.",
+          "start_s": 28.0,
+          "end_s": 28.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 140
+        },
+        {
+          "id": "caption-141",
+          "role": "generative_sequence",
+          "text": "We describe menu item 141.",
+          "start_s": 28.200000000000003,
+          "end_s": 28.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 141
+        },
+        {
+          "id": "caption-142",
+          "role": "generative_sequence",
+          "text": "We describe menu item 142.",
+          "start_s": 28.400000000000002,
+          "end_s": 28.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 142
+        },
+        {
+          "id": "caption-143",
+          "role": "generative_sequence",
+          "text": "We describe menu item 143.",
+          "start_s": 28.6,
+          "end_s": 28.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 143
+        },
+        {
+          "id": "caption-144",
+          "role": "generative_sequence",
+          "text": "We describe menu item 144.",
+          "start_s": 28.8,
+          "end_s": 29.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 144
+        },
+        {
+          "id": "caption-145",
+          "role": "generative_sequence",
+          "text": "We describe menu item 145.",
+          "start_s": 29.0,
+          "end_s": 29.2,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 145
+        },
+        {
+          "id": "caption-146",
+          "role": "generative_sequence",
+          "text": "We describe menu item 146.",
+          "start_s": 29.200000000000003,
+          "end_s": 29.400000000000002,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 146
+        },
+        {
+          "id": "caption-147",
+          "role": "generative_sequence",
+          "text": "We describe menu item 147.",
+          "start_s": 29.400000000000002,
+          "end_s": 29.6,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 147
+        },
+        {
+          "id": "caption-148",
+          "role": "generative_sequence",
+          "text": "We describe menu item 148.",
+          "start_s": 29.6,
+          "end_s": 29.8,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 148
+        },
+        {
+          "id": "caption-149",
+          "role": "generative_sequence",
+          "text": "We describe menu item 149.",
+          "start_s": 29.8,
+          "end_s": 30.0,
+          "timing_locked": true,
+          "context": {
+            "source": "caption_cue"
+          },
+          "index": 149
+        },
+        {
+          "id": "price-coffee",
+          "role": "generative_sequence",
+          "text": "£4",
+          "start_s": 3,
+          "end_s": 5,
+          "context": {
+            "semantic_role": "price",
+            "source_text": "Coffee costs four pounds",
+            "group_id": "coffee"
+          },
+          "index": 150
+        },
+        {
+          "id": "price-cake",
+          "role": "generative_sequence",
+          "text": "£6",
+          "start_s": 12,
+          "end_s": 14,
+          "context": {
+            "semantic_role": "price",
+            "source_text": "Cake costs six pounds",
+            "group_id": "cake"
+          },
+          "index": 151
+        },
+        {
+          "id": "topic",
+          "text": "Cafe menu",
+          "start_s": 0,
+          "end_s": 3,
+          "context": {
+            "semantic_role": "topic"
+          },
+          "index": 152
+        }
+      ]
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_text_timing\", \"bar_index\": 150, \"end_s\": 6}, {\"op\": \"set_text_timing\", \"bar_index\": 151, \"end_s\": 15}], \"confidence\": 0.95, \"reply\": \"Extended both price labels by one second, keeping the other text unchanged.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_text_timing",
+        "bar_index": 150,
+        "end_s": 6
+      },
+      {
+        "op": "set_text_timing",
+        "bar_index": 151,
+        "end_s": 15
+      }
+    ],
+    "confidence": 0.95,
+    "reply": "Extended both price labels by one second, keeping the other text unchanged.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "component_prices_selective",
+    "exact_component_ops": [
+      {
+        "op": "set_text_timing",
+        "bar_index": 150,
+        "end_s": 6
+      },
+      {
+        "op": "set_text_timing",
+        "bar_index": 151,
+        "end_s": 15
+      }
+    ]
+  }
+}

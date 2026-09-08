@@ -1,0 +1,273 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-08-v39",
+  "input": {
+    "utterance": "Extend the red car image until 6 seconds.",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "component_context_version": 1,
+      "allowed_op_families": [
+        "text",
+        "overlay"
+      ],
+      "total_duration_s": 45,
+      "slots": [],
+      "text_bars": [
+        {
+          "id": "price-coffee",
+          "role": "generative_sequence",
+          "text": "£4",
+          "start_s": 3,
+          "end_s": 5,
+          "context": {
+            "semantic_role": "price",
+            "source_text": "Coffee costs four pounds",
+            "group_id": "coffee"
+          },
+          "index": 0
+        },
+        {
+          "id": "price-cake",
+          "role": "generative_sequence",
+          "text": "£6",
+          "start_s": 12,
+          "end_s": 14,
+          "context": {
+            "semantic_role": "price",
+            "source_text": "Cake costs six pounds",
+            "group_id": "cake"
+          },
+          "index": 1
+        },
+        {
+          "id": "topic",
+          "text": "Cafe menu",
+          "start_s": 0,
+          "end_s": 3,
+          "context": {
+            "semantic_role": "topic"
+          },
+          "index": 2
+        }
+      ],
+      "overlays": {
+        "cards": [
+          {
+            "index": 0,
+            "id": "image-0",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 1,
+            "id": "image-1",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 2,
+            "id": "image-2",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 3,
+            "id": "image-3",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 4,
+            "id": "image-4",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 5,
+            "id": "image-5",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 6,
+            "id": "image-6",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 7,
+            "id": "image-7",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 8,
+            "id": "image-8",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 9,
+            "id": "image-9",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 10,
+            "id": "image-10",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 11,
+            "id": "image-11",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 12,
+            "id": "image-12",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 13,
+            "id": "image-13",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 14,
+            "id": "image-14",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          },
+          {
+            "index": 15,
+            "id": "image-15",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip"
+          }
+        ],
+        "asset_pool": [],
+        "pending_suggestions": []
+      },
+      "asset_context_status": "unavailable"
+    }
+  },
+  "raw_text": "{\"intent\": \"clarify\", \"ops\": [], \"confidence\": 0.95, \"reply\": \"Which image is the red car? Its visual description is unavailable.\", \"suggestions\": [], \"needs_clarification\": true}",
+  "output": {
+    "intent": "clarify",
+    "ops": [],
+    "confidence": 0.95,
+    "reply": "Which image is the red car? Its visual description is unavailable.",
+    "suggestions": [],
+    "needs_clarification": true
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "component_unknown_image_clarifies",
+    "exact_component_ops": [],
+    "expected_intent": [
+      "clarify",
+      "edit"
+    ],
+    "needs_clarification": true
+  }
+}

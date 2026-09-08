@@ -184,6 +184,108 @@ def test_text_payload_limits_remain_bounded_by_archetype(monkeypatch, archetype,
     assert error.value.status_code == 422
 
 
+def test_guided_timeline_exposes_exact_source_context_without_changing_revision(monkeypatch):
+    job = _narrated_guided_job()
+    approved = job.assembly_plan["guided_edit"]["approved_proposal"]["media"][0]
+    approved.update(source_filename="cafe.mp4", user_context="Introduce the cafe")
+    approved["analysis"] = {
+        "subject": "A coffee cup",
+        "description": "Coffee served beside cake",
+        "on_screen_text": "Coffee £4",
+        "debug_token": "never-expose",
+    }
+    variant = job.assembly_plan["variants"][0]
+    before = copy.deepcopy(gj._guided_v2_revision(job, variant))
+    monkeypatch.setattr(gj, "signed_get_url", lambda *args: "https://example.invalid/preview")
+    projection = gj._guided_v2_timeline_projection(job, variant)
+    context = gj.TimelineResponse.model_validate(projection).clips[0].context
+    assert context == {
+        "label": "cafe.mp4",
+        "user_context": "Introduce the cafe",
+        "subject": "A coffee cup",
+        "description": "Coffee served beside cake",
+        "on_screen_text": "Coffee £4",
+    }
+    assert "never-expose" not in json.dumps(context)
+    assert projection["source_pool"] == before["sources"]
+    assert gj._guided_v2_revision(job, variant) == before
+    assert (
+        gj._guided_source_context(job.assembly_plan, {**before["sources"][0], "generation": "new"})
+        == {}
+    )
+    assert (
+        gj._guided_source_context({"guided_edit": {"approved_proposal": []}}, before["sources"][0])
+        == {}
+    )
+
+
+@pytest.mark.parametrize(
+    "label_kind,label_text", [("score", "1-0"), ("price", "£4"), ("warning", "Hot surface")]
+)
+def test_guided_score_duration_save_leaves_other_text_and_narration_unchanged(
+    monkeypatch, label_kind, label_text
+):
+    from app.config import settings
+    from app.pipeline.guided_story import compile_guided_runtime_plan
+    from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj, "_TEXT_ELEMENTS_ENABLED", True)
+    job = _narrated_guided_job()
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    plan["narration_label_text_elements"] = [
+        {
+            "id": "score-1",
+            "text": label_text,
+            "start_s": 6.0,
+            "end_s": 6.3,
+            "role": "generative_sequence",
+            "position": "middle",
+            "source_params": {"narration_label_kind": label_kind},
+        },
+        {
+            "id": "topic-1",
+            "text": "The final",
+            "start_s": 4.0,
+            "end_s": 7.0,
+            "role": "generative_sequence",
+            "position": "middle",
+            "source_params": {"narration_label_kind": "topic"},
+        },
+    ]
+    variant = job.assembly_plan["variants"][0]
+    assert gj._editor_capabilities(job, variant)["copilot_snapshot_max_bytes"] == (
+        COPILOT_SNAPSHOT_MAX_BYTES
+    )
+    revision = gj._guided_v2_revision(job, variant)
+    before = copy.deepcopy(job.assembly_plan)
+    initial_runtime = compile_guided_runtime_plan(plan, before["guided_edit"], revision)
+    elements = copy.deepcopy(revision["text_elements"])
+    next(row for row in elements if row["id"] == "score-1")["end_s"] = 9.0
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        gj.EditorCommitRequest(
+            base_generation=revision["base_generation"],
+            guided_revision_number=revision["revision_number"],
+            text_elements=elements,
+        ),
+    )
+
+    saved = job.assembly_plan["variants"][0]["guided_edit_revision"]
+    runtime = compile_guided_runtime_plan(plan, before["guided_edit"], saved)
+    labels = {row["id"]: row for row in runtime["narration_label_text_elements"]}
+    initial_labels = {row["id"]: row for row in initial_runtime["narration_label_text_elements"]}
+    assert labels["score-1"] == {**initial_labels["score-1"], "end_s": 9.0}
+    assert labels["topic-1"] == initial_labels["topic-1"]
+    assert runtime["text_elements"] == initial_runtime["text_elements"]
+    assert runtime["narration"] == initial_runtime["narration"]
+    assert runtime["story_timeline"] == initial_runtime["story_timeline"]
+    assert job.assembly_plan["guided_edit"] == before["guided_edit"]
+
+
 def test_guided_text_save_limits_new_ids_but_preserves_and_restores_existing_ids():
     current = _guided_text_revision_fixture()
     captions = [{**_VALID_ELEMENT, "id": f"caption-{i}"} for i in range(300)]
@@ -5182,6 +5284,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "timeline": True,
         "timeline_max_slots": 120,
         "copilot_snapshot_wire_version": 1,
+        "copilot_snapshot_max_bytes": 524288,
         "split_clips": True,
         "mix": True,  # fixture carries mix=0.5
         "sfx": True,
