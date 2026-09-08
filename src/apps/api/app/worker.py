@@ -65,6 +65,7 @@ celery_app = Celery(
         "app.tasks.kria_runtime",
         "app.tasks.creator_memory",
         "app.tasks.speech_cleanup_analysis",
+        "app.tasks.mobile_upload_cleanup",
         # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
         # a full MP4 into the RAM-backed /tmp, which is exactly the workload that
         # OOM'd the 1GB `light`/Beat machine on 2026-08-02. It is dispatched with
@@ -109,6 +110,7 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "tasks.prune_kria_drafts",
     "tasks.execute_kria_approval",
     "tasks.reconcile_speech_cleanup_analyses",
+    "tasks.cleanup_temporary_media_uploads",
 )
 
 celery_app.conf.update(
@@ -204,6 +206,10 @@ celery_app.conf.update(
         },
         "sweep-job-storage-deletions-every-5-min": {
             "task": "tasks.sweep_job_storage_deletions",
+            "schedule": 300.0,
+        },
+        "cleanup-temporary-media-uploads-every-5-min": {
+            "task": "tasks.cleanup_temporary_media_uploads",
             "schedule": 300.0,
         },
         # Daily at 04:00 UTC (low-traffic window). Pruned rows = job-scoped

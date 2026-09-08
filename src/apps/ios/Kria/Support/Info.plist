@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key><string>Kria</string>
+	<key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
+	<key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>KriaAPIBaseURL</key><string>$(API_BASE_URL)</string>
+	<key>KriaGoogleClientID</key><string>$(KRIA_GOOGLE_CLIENT_ID)</string>
+	<key>KriaGoogleRedirectScheme</key><string>$(KRIA_GOOGLE_REDIRECT_SCHEME)</string>
+	<key>CFBundleURLTypes</key>
+	<array><dict><key>CFBundleURLSchemes</key><array><string>$(KRIA_GOOGLE_REDIRECT_SCHEME)</string></array></dict></array>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Fraunces-Bold.ttf</string>
+		<string>Inter-Regular.ttf</string>
+		<string>Inter-Medium.ttf</string>
+		<string>Inter-Bold.ttf</string>
+	</array>
+	<key>UILaunchScreen</key><dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array><string>UIInterfaceOrientationPortrait</string></array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>NSPhotoLibraryAddUsageDescription</key><string>Save finished Kria videos to Photos.</string>
+	<key>NSPhotoLibraryUsageDescription</key><string>Choose footage and save finished videos.</string>
+	<key>NSMicrophoneUsageDescription</key><string>Record narration for your edit.</string>
+	<key>ITSAppUsesNonExemptEncryption</key><false/>
+</dict>
+</plist>

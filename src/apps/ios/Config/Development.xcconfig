@@ -1,0 +1,10 @@
+// Safe local defaults. Secrets belong in the developer's environment, never git.
+API_BASE_URL = http://localhost:8000
+AUTH_MODE = dev
+KRIA_MEDIA_ENGINE = local
+KRIA_GOOGLE_CLIENT_ID =
+KRIA_GOOGLE_REDIRECT_SCHEME = kria-dev-google
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DEBUG DEV_AUTH
+
+// Optional developer-specific API/OAuth values. This file is git-ignored.
+#include? "Local.xcconfig"

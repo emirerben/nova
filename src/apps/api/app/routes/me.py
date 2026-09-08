@@ -39,6 +39,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.kria.recipes import EditRecipeV1, adapt_authoritative_job_snapshot
 from app.models import (
     VIDEO_FEEDBACK_THUMB_SIGNALS,
     ContentPlan,
@@ -1459,6 +1460,31 @@ async def refresh_library_playback_url(
         ) from exc
     response.headers["Cache-Control"] = "no-store"
     return LibraryPlaybackResponse(video_url=video_url)
+
+
+@router.get("/jobs/{job_id}/edit-recipe", response_model=EditRecipeV1)
+async def get_library_edit_recipe(
+    job_id: str,
+    user: CurrentUser,
+    variant_id: str | None = Query(None, max_length=160),
+    db: AsyncSession = Depends(get_db),
+) -> EditRecipeV1:
+    """Project one owned job into the portable native editor contract.
+
+    The adapter exposes opaque asset references only. Internal assembly state
+    and storage object paths never cross this boundary.
+    """
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+
+    job = (
+        await db.execute(select(Job).where(Job.id == jid, Job.user_id == user.id))
+    ).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return adapt_authoritative_job_snapshot(job, variant_id=variant_id)
 
 
 def _job_source_path(path: object, *, user_id: uuid.UUID, job_id: uuid.UUID) -> str | None:
