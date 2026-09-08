@@ -244,7 +244,7 @@ gsutil lifecycle set infra/gcs-lifecycle.json gs://$STORAGE_BUCKET
 python3 scripts/check_gcs_lifecycle_drift.py --bucket "$STORAGE_BUCKET"
 ```
 
-New batch uploads land under `staging/<user>/batch/` and are promoted to an
+New batch uploads land under `staging/<user>/batch-<uuid>/` and are promoted to an
 owned job prefix only after the job row is committed. The Job stores every
 source generation and deterministic destination before the first copy; a
 two-minute maintenance reconciler resumes interrupted copies and publishes any
