@@ -40,6 +40,13 @@ families fail closed only as a last resort. A new frontend never emits sparse
 rows to an older API that did not advertise v1, so deploy the backend first for
 the size fix to take effect.
 
+Text bars also carry bounded, read-only source metadata for semantic targeting.
+Narrated score bars are labeled `narrated_score` or `narration_score` and may
+include primitive provenance parameters. A score-only Copilot request uses
+those labels to retime only the matching generated scores, leaving neighboring
+text bars unchanged; the provenance is descriptive context, not an editable
+field.
+
 Returned instant cards target mutually compatible edit domains. Director keeps
 at most one clip-timeline mutation in a batch because timing, order, removal,
 split, and transition edits can stale one another's slot windows. Omni reviews

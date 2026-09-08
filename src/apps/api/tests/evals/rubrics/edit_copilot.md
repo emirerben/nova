@@ -41,6 +41,9 @@ Score each fixture 1-5:
   full-draft replacement operation for an "every/all" request, including when
   the visible cue list is truncated. `set_clip_duration` shortens a named clip;
   the new trim operations do not replace it.
+- Score-only requests use read-only text provenance: target only bars marked
+  `narrated_score` or `narration_score`, emit one `set_text_timing` per matching
+  generated score, and leave neighboring text bars unchanged.
 - `patch_text_style` is valid under either the `text` or `style` family.
   `handwriting`, `staggered-slice`, `slide-up`, `pop-in`, and `ink-reveal` are
   established supported text effects. Do not reject them merely because an
