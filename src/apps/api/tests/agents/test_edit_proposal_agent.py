@@ -537,6 +537,43 @@ def test_mixed_timing_prompt_uses_target_capacity_source_floor() -> None:
     assert "capped by the target duration" in prompt
 
 
+def test_narrated_mixed_timing_prompt_honors_explicit_photo_hold_and_video_budget() -> None:
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=45,
+        narration_duration_s=44.688,
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast",
+            image_hold_s=0.3,
+            video_hold="longer",
+            boundary_style="cut",
+            image_grouping="runs",
+        ),
+        media=[
+            EditProposalMedia(media_id="video", lane="clip", kind="video", duration_s=13.3),
+            EditProposalMedia(media_id="photo", lane="asset", kind="image"),
+        ],
+    )
+
+    prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert "photos must hold exactly 0.3s" in prompt
+    assert "videos should hold at least 1.5s when the source allows" in prompt
+    assert "may exceed 3s up to the actual source duration" in prompt
+    assert "photos should hold about 0.5-0.8s (prefer 0.65s)" not in prompt
+    assert "videos about 1.5-3.0s (prefer 2.0s when source allows)" not in prompt
+
+
+def test_mixed_timing_prompt_keeps_legacy_rule_without_typed_profile() -> None:
+    prompt = EditProposalAgent(None).render_prompt(_fractional_fast_input())  # type: ignore[arg-type]
+
+    assert (
+        "When MIXED-MEDIA TIMING PROFILE is present, use photos at 0.5-0.8s "
+        "(prefer 0.65s), videos at 1.5-3.0s (prefer 2.0s when the source allows)"
+    ) in prompt
+
+
 def _mixed_timing_payload(*, photo_duration_s: float = 0.6) -> dict:
     long_video_duration_s = round(2.4 - photo_duration_s, 3)
     return {

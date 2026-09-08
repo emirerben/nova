@@ -1219,6 +1219,56 @@ def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
     }
 
 
+def test_initial_narrated_draft_failure_recovers_all_media_with_exact_audio_budget(
+    monkeypatch,
+) -> None:
+    from app.pipeline.guided_story import validate_proposal_timing
+    from tests.services.test_narrated_fallback import _mixed_media, _narration, _timing
+
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch, direction="fast_montage")
+    refs = _mixed_media()
+    clips = [ref for ref in refs if ref.kind == "video"]
+    photos = [ref for ref in refs if ref.kind == "image"]
+    narration = _narration()
+    item.clip_assignments = [{"media_id": ref.media_id, "gcs_path": ref.gcs_path} for ref in clips]
+    item.audio_mode = "voiceover"
+    item.voiceover_gcs_path = narration.gcs_path
+    item.voiceover_generation = narration.generation
+    item.voiceover_duration_s = narration.duration_s
+    item.edit_proposal = _proposal(
+        brief=ProposalBrief(
+            direction="fast_montage",
+            duration_s=45,
+            narration=narration,
+            mixed_media_timing=_timing(),
+            media_scope="all",
+        ),
+        approval_mode="auto",
+    )
+    monkeypatch.setattr(proposal_build, "_pool_refs", lambda *_a, **_kw: photos)
+    monkeypatch.setattr(proposal_build, "_transcribe_pinned_narration", lambda n: n)
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda assignments, *_a, **_kw: list(zip(assignments, clips, strict=True)),
+    )
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted.status == "approved", persisted.failure
+    snapshot = persisted.last_approved.snapshot
+    assert snapshot.narration == narration
+    assert {cut.media_id for cut in snapshot.fast_cuts} == {ref.media_id for ref in refs}
+    assert len(snapshot.fast_cuts) == 39
+    assert sum(round(cut.output_duration_s * 30) for cut in snapshot.fast_cuts) == 1341
+    photo_ids = {ref.media_id for ref in photos}
+    assert all(c.output_duration_s == 0.3 for c in snapshot.fast_cuts if c.media_id in photo_ids)
+    validate_proposal_timing(snapshot)
+
+
 def test_alternating_matches_acceptance_survives_specialist_worker_and_receipt(
     monkeypatch,
 ) -> None:
