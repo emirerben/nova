@@ -12,13 +12,19 @@ from unittest.mock import Mock
 import pytest
 from billiard.exceptions import SoftTimeLimitExceeded
 
-from app.pipeline.speech_cleanup_analysis import SpeechCleanupAnalysisResult
+from app.models import SpeechCleanupAnalysis
+from app.pipeline.speech_cleanup_analysis import (
+    SpeechCleanupAnalysisInput,
+    SpeechCleanupAnalysisResult,
+)
 from app.pipeline.transcribe import TranscribeError
 from app.services.speech_cleanup_preflight import (
     SPEECH_CLEANUP_ENGINE_VERSION,
+    SPEECH_CLEANUP_PAYLOAD_VERSION,
     ClaimedSpeechCleanupAnalysis,
     SpeechCleanupOperationalError,
 )
+from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.tasks import speech_cleanup_analysis as task_module
 
 
@@ -34,7 +40,7 @@ def _work(**overrides) -> task_module._ClaimedWork:
         "window_start_s": 1.25,
         "window_end_s": 3.25,
         "engine_version": SPEECH_CLEANUP_ENGINE_VERSION,
-        "detector_version": "mixed-gap-v1",
+        "detector_version": DETECTOR_VERSION,
     }
     values.update(overrides)
     return task_module._ClaimedWork(**values)
@@ -56,7 +62,7 @@ def _result(*, candidate_count: int = 1) -> SpeechCleanupAnalysisResult:
     return SpeechCleanupAnalysisResult.model_validate(
         {
             "source_fingerprint": "source-fingerprint",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "source_window_start_s": 1.25,
             "source_window_end_s": 3.25,
             "language": "en",
@@ -367,6 +373,38 @@ def test_engine_adapter_maps_transcription_failure_but_reraises_programming_erro
         task_module._run_engine(work, audio_path)
 
 
+@pytest.mark.parametrize("configured_frac", [1.0, 0.55])
+def test_engine_adapter_passes_the_configured_removal_cap(
+    monkeypatch, tmp_path: Path, configured_frac: float
+) -> None:
+    """The preflight worker must analyze under the SAME removal cap the render
+    path uses, or a rollback to a fraction cap would leave the persisted plan
+    disagreeing with what gets rendered."""
+
+    work = _work()
+    audio_path = tmp_path / "audio.wav"
+    _write_pcm_wav(audio_path, work.duration_s)
+    monkeypatch.setattr(
+        task_module.settings,
+        "speech_cleanup_max_removal_frac_required",
+        configured_frac,
+        raising=False,
+    )
+    captured: dict[str, SpeechCleanupAnalysisInput] = {}
+
+    def run_engine(analysis_input: SpeechCleanupAnalysisInput) -> SpeechCleanupAnalysisResult:
+        captured["input"] = analysis_input
+        return _result()
+
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", run_engine)
+
+    task_module._run_engine(work, audio_path)
+
+    assert captured["input"].max_removal_frac_required == pytest.approx(configured_frac)
+    # The clamp policy itself stays a module constant; only the cap is tunable.
+    assert captured["input"].over_budget_policy == "clamp"
+
+
 @pytest.mark.parametrize("candidate_count, expected_status", [(1, "ready"), (0, "no_findings")])
 def test_task_persists_success_state(
     monkeypatch, candidate_count: int, expected_status: str
@@ -497,3 +535,95 @@ def test_reconciler_marks_broker_failure_retryable_and_continues(monkeypatch) ->
         [str(first)],
         [str(second)],
     ]
+
+
+class _ClaimSession:
+    """Minimal row-locked session for the real claim path."""
+
+    def __init__(self, row: SpeechCleanupAnalysis) -> None:
+        self.row = row
+        self.flushed = 0
+        self.committed = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def get(self, _model, identifier, **_kwargs):
+        return self.row if identifier == self.row.id else None
+
+    def flush(self):
+        self.flushed += 1
+
+    def commit(self):
+        self.committed += 1
+
+
+def _queued_row(detector_version: str) -> SpeechCleanupAnalysis:
+    return SpeechCleanupAnalysis(
+        id=uuid.uuid4(),
+        plan_item_id=uuid.uuid4(),
+        source_kind="voiceover",
+        source_media_identity="voiceover-1",
+        source_storage_path="users/u/voiceover.wav",
+        source_generation="1700000000000000",
+        window_start_s=1.25,
+        window_end_s=3.25,
+        source_policy_fingerprint="a" * 64,
+        engine_version=SPEECH_CLEANUP_ENGINE_VERSION,
+        detector_version=detector_version,
+        analysis_payload_version=SPEECH_CLEANUP_PAYLOAD_VERSION,
+        status="queued",
+        attempt_count=0,
+    )
+
+
+def test_claim_restamps_a_pre_deploy_detector_label_onto_the_running_row(monkeypatch) -> None:
+    """A row queued before a detector deploy is analyzed by the deployed code.
+
+    The claimed label is what the persisted plan is stamped with, so it must
+    describe the detector that actually produced that plan — never the version
+    that happened to be current when the row was enqueued.
+    """
+
+    stale = "mixed-gap-v0-test-only"
+    assert stale != DETECTOR_VERSION
+    row = _queued_row(stale)
+    session = _ClaimSession(row)
+    monkeypatch.setattr(task_module, "sync_session", lambda: session)
+
+    work = task_module._claim_work(str(row.id))
+
+    assert work is not None
+    assert row.status == "running"
+    assert row.detector_version == DETECTOR_VERSION
+    assert work.detector_version == DETECTOR_VERSION
+    assert session.committed == 1
+
+
+def test_engine_input_is_stamped_with_the_claimed_detector_label(monkeypatch) -> None:
+    captured: list[SpeechCleanupAnalysisInput] = []
+
+    def run_engine(analysis_input):
+        captured.append(analysis_input)
+        return _result()
+
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", run_engine)
+
+    assert task_module._run_engine(_work(), Path("narration.wav")) is not None
+    assert captured and captured[0].detector_version == DETECTOR_VERSION
+
+
+def test_validate_work_fails_closed_on_a_detector_label_the_engine_will_not_produce() -> None:
+    """Any unclaimed/foreign label must never reach the persisted plan."""
+
+    work = _work(detector_version="mixed-gap-v0-test-only")
+
+    with pytest.raises(SpeechCleanupOperationalError) as raised:
+        task_module._validate_work(work)
+
+    assert raised.value.code == "snapshot_mismatch"
+    assert raised.value.private_detail == "detector_version"
+    assert raised.value.retryable is False

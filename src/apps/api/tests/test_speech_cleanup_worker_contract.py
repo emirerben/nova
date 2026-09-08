@@ -196,6 +196,36 @@ def test_detector_policy_identity_matches_worker_and_ignores_exposure_controls(
     assert preflight.SPEECH_CLEANUP_ENGINE_VERSION in before
 
 
+def test_removal_cap_is_policy_identity_not_an_exposure_control(monkeypatch) -> None:
+    """The 55% rail is gone; the operator switch that restores one must
+    invalidate every analysis produced under the previous value, or a rollback
+    would silently reuse plans built with no fraction cap."""
+
+    from app.config import settings
+    from app.services.plan_item_media import current_detector_policy
+
+    monkeypatch.setattr(settings, "speech_cleanup_max_removal_frac_required", 1.0)
+    uncapped = current_detector_policy()
+    monkeypatch.setattr(settings, "speech_cleanup_max_removal_frac_required", 0.55)
+    rolled_back = current_detector_policy()
+
+    assert "max-removal-frac=1" in uncapped
+    assert "max-removal-frac=0.55" in rolled_back
+    assert uncapped != rolled_back
+
+
+def test_removal_cap_default_leaves_min_output_as_the_only_rail() -> None:
+    """Ship default: no fraction cap. Guards against a silent re-introduction
+    of the 0.55 rail through the settings default."""
+
+    from app.config import Settings
+    from app.pipeline import silence_cut
+
+    assert Settings.model_fields["speech_cleanup_max_removal_frac_required"].default == 1.0
+    assert silence_cut.MAX_REMOVAL_FRAC_REQUIRED == 1.0
+    assert silence_cut.MIN_OUTPUT_S == 3.0
+
+
 def test_rollout_halts_without_worker_canary_and_receipts() -> None:
     """Configuration alone can never authorize a broader production cohort."""
 

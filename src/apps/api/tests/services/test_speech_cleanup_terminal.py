@@ -11,6 +11,7 @@ from app.services.durable_attempt_cleanup import (
     CleanupReceiptLocator,
     remove_cleanup_receipt,
 )
+from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.services.speech_cleanup_terminal import (
     RequiredSpeechOwnershipError,
     classify_required_speech_claim,
@@ -635,7 +636,7 @@ def _resumable_plan(job_id: str, generation: str) -> tuple[dict, dict]:
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": "trace-1",
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "source_tag": "0123456789abcdef",
             "selected_plan": "candidate",
             "candidate_status": "ready",
@@ -660,7 +661,7 @@ def test_resume_classifier_requires_exact_generation_objects_and_context() -> No
         variant_id="subtitled",
         expected_music_track_id=None,
         expected_analysis_view="full_clip",
-        expected_detector_version="mixed-gap-v1",
+        expected_detector_version=DETECTOR_VERSION,
         object_exists=lambda path: checked.append(path) or True,
     )
 
@@ -703,7 +704,7 @@ def test_resume_classifier_rotates_unprovable_stage(mutation, reason) -> None:
         variant_id="subtitled",
         expected_music_track_id=None,
         expected_analysis_view="full_clip",
-        expected_detector_version="mixed-gap-v1",
+        expected_detector_version=DETECTOR_VERSION,
         object_exists=lambda _path: True,
     )
 
@@ -745,7 +746,7 @@ def test_retry_rotation_never_relinquishes_a_fresh_writing_lease() -> None:
         variant_id="subtitled",
         expected_music_track_id=None,
         expected_analysis_view="full_clip",
-        expected_detector_version="mixed-gap-v1",
+        expected_detector_version=DETECTOR_VERSION,
         object_exists=lambda _path: True,
     )
 
