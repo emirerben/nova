@@ -2171,3 +2171,60 @@ reason nobody had seen the detector cut a word. Ask of any constant you are dele
 which failures does it currently absorb, and who catches them afterwards? And a
 validator that checks a derived value is not a check on the input it was derived from —
 `word_intrusion` over reconciled words can never see a cut into an original token.
+
+## [2026-09-08] The motion-preview "flake" reproduced perfectly — an absolute ms budget measures the runner, not the code
+
+`motion-preview-performance.test.ts` failed on main (run 34191496370) and on
+PR #985 (run 34252147237), a diff that touches no motion, CanvasKit or preview
+code. Both reported the same thing:
+
+```
+Expected: <= 1
+Received:    2
+```
+
+It was filed as a flake, and the file already carried the flake fix — a
+`jest.retryTimes(2)` added in v0.55.0.2 (#939) whose comment reasoned that "a
+real regression is deterministic and fails every attempt". The CI log shows why
+that never worked: `RETRY 1` returned 2, `RETRY 2` returned 2, the final attempt
+returned 2. Three independent attempts, identical result. The premise was
+inverted — the failure *was* deterministic, and retrying a deterministic failure
+just pays for it three times inside a 28-minute job.
+
+What the test actually measured: 24 real CanvasKit draws, asserting at most one
+over 50ms. Draw cost turns out to be a fixed function of the animation frame,
+not noise — profiling the same 24 frames four times in a row reproduces the same
+shape every pass (frames 105-115 the most expensive at ~5.4ms, frames 5-25 at
+~4.2ms, the rest 0.2-1.9ms). That whole profile scales with machine speed. On an
+idle M-series Mac the peak is ~5.4ms; under emulated CPU contention the same
+draws take 47-59ms, and the count over 50ms walks 0 → 1 → 3 → 7 as load rises.
+The 50ms line runs straight through the middle of a dense cluster of inherent
+costs, so the assertion resolved to "is this runner slightly faster or slightly
+slower than X" — a hardware speed test wearing a performance-budget costume.
+
+Resolution: measure relative to a calibration workload built from raw CanvasKit
+primitives (no motion-runtime code), drawn on the same machine in the same
+process, and assert on the ratio. Machine speed divides out; a slowdown in our
+drawing code does not. Two refinements came from measurement rather than
+intuition, and one plausible idea died there:
+
+- Interleaving calibration with draws, to make both see identical conditions,
+  made the ratio *worse* (0.400-0.633 vs 0.423-0.517 phased). Rejected.
+- Taking the block with the smallest ratio is biased low — it selects the block
+  whose denominator was most inflated, reading 0.31-0.41 under load against an
+  idle 0.51, which would mask regressions. Minimising draw cost and calibration
+  cost *independently* across 3 blocks removes the bias: interference can only
+  make a sample slower, so each minimum is the least-polluted estimate.
+
+The result is load-invariant. Clean runs measure 0.510-0.518 idle, 0.422-0.589
+at 3x contention, 0.405-0.513 at 10x; doubling the draw cost measures 0.866-1.149
+across all three. The 0.8 ceiling sits in that gap, so the test still fails on
+roughly a 1.55x slowdown — verified by injecting a 2x regression into
+`drawCreatorBlockV2` and confirming it fails at idle and under both load levels,
+while 12 consecutive clean runs across the same conditions all pass.
+
+The general lesson: an absolute wall-clock threshold on a shared runner is a
+measurement of the runner. Retrying does not fix it, because the thing being
+measured is not transient. Normalise against something measured on the same
+machine at the same moment, and pick the threshold from the observed
+distribution instead of from a round number.

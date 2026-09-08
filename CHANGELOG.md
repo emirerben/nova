@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.73.2.0] — 2026-09-08
+## [0.73.3.0] — 2026-09-08
 
 ### Added
 - **The Gallery can warn creators before inactive editing media expires.** The staged retention policy warns ahead of cleanup, preserves referenced work, and keeps the latest final video and poster for the configured long-term window.
@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 ### Internal
 - Paid Google AI calls now pass through an atomic reservation ledger with creator/test/canary attribution, conservative model-aware pricing, unknown-outcome fencing, durable usage records, and shared budget breakers. Director reviews are explicit-only, cached for 90 days, and limited to three paid reviews per creator each day; experimental Omni generation remains lab-only and requires a visible cost confirmation.
 - Added split-account Cloud Billing budgets and Standard Usage reconciliation scaffolding, replay-only routine evals, a capped weekly provider smoke, generation-pinned upload promotion, lifecycle drift detection, and an approval-gated storage-retention manifest. Unattached authenticated generative uploads receive a 24-hour cleanup receipt until a job atomically attaches them. Template upload promotion is journaled before the first copy, POST retries reuse the recoverable job, and reconciliation claims each queued render once. Authenticated media analysis can be reused for 90 days; anonymous jobs bypass the owner cache, and the public retention disclosure covers transcript-bearing analysis. All cloud controls ship dark until the documented rollout steps are completed.
+
+## [0.73.2.0] — 2026-09-08
+
+### Fixed
+- **Creator Block preview performance is measured against the machine, not the clock.** The browser-preview draw budget asserted an absolute millisecond threshold, so a busy shared CI runner failed it on pull requests that touched no motion code at all — and the retry the test carried simply re-measured the same slow machine three times over. Draw cost is now compared against a calibration workload rendered in the same process on the same machine: the reading holds steady from an idle laptop to a ten-times-contended runner, while still failing when preview drawing genuinely gets slower.
 
 ## [0.73.1.0] — 2026-09-08
 
@@ -29,6 +34,7 @@ All notable changes to this project will be documented in this file.
 - `MAX_REMOVAL_FRAC_REQUIRED` 0.55 → 1.0, with the cap surviving as `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` (default 1.0, rollback `=0.55`, api + worker restart). It is part of the source policy fingerprint, so a flip re-analyzes rather than serving stale plans. The auto/legacy `MAX_REMOVAL_FRAC` 0.4 bailout rail is a different rail and is untouched.
 - The `DETECTOR_VERSION` bump reshuffles preflight cohort membership (the mixed-gap shadow/apply salt does not move). Deploy-safety fixes ship with it: policy-stale analyses are superseded and re-queued instead of returning 409 forever, staged renders resume against their own snapshot's label, claimed rows are restamped, the shadow audit accepts both versions, and the render path no longer prefers a bailed-out candidate over a working baseline.
 - `scripts/speech_cleanup_preview.py` renders a local clip through the real analysis boundary so a detector change can be listened to before it ships.
+
 
 ## [0.72.3.0] — 2026-09-08
 
