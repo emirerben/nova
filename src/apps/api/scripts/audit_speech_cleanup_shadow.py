@@ -48,10 +48,15 @@ from app.services.speech_cleanup_identity import (
     speech_cleanup_source_tag,
     validate_clip_source_identity,
 )
+from app.services.speech_cleanup_selection import DETECTOR_VERSION
 
 PROD_BASE_URL = "https://nova-video.fly.dev"
 _MAX_DEBUG_BYTES = 32 * 1024 * 1024
 _SUPPORTED_SCHEMA_VERSION = 1
+# The audit must accept the detector currently deployed AND every earlier one
+# whose receipts are still in the trace, or the first run after a detector bump
+# silently matches nothing and refuses exactly the deploy it exists to verify.
+_SUPPORTED_DETECTOR_VERSIONS = frozenset({"mixed-gap-v1", DETECTOR_VERSION})
 _OPAQUE_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 _SOURCE_TAG_RE = re.compile(r"^[0-9a-f]{16}$")
 _AUDITION_REASONS = frozenset({"bilateral_silence"})
@@ -314,7 +319,7 @@ def _matching_receipts(
             or event.get("event") != "silence_cut_mixed_gap_analysis"
             or data is None
             or data.get("schema_version") != _SUPPORTED_SCHEMA_VERSION
-            or data.get("detector_version") != "mixed-gap-v1"
+            or data.get("detector_version") not in _SUPPORTED_DETECTOR_VERSIONS
             or data.get("analysis_view") not in {"full_clip", "talking_head_spine_capped"}
             or data.get("assignment_status") != "assigned"
             or data.get("candidate_status") != "ready"
