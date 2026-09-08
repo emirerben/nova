@@ -39,6 +39,25 @@ function variant(text_elements: TextElement[]): PlanItemVariant {
 }
 
 describe("editor-bars lyric helpers", () => {
+  it("round-trips guided narration captions through the editable text lane", () => {
+    const elements: TextElement[] = Array.from({ length: 150 }, (_, index) => ({
+      id: `narration-caption-${index}`, text: `word${index}`,
+      start_s: Number((index * .3).toFixed(3)), end_s: Number(((index + 1) * .3).toFixed(3)),
+      role: "generative_sequence", source_params: { source: "caption_cue", key: `${index}` },
+    }));
+    const guided = { ...variant(elements), resolved_archetype: "guided_story" } as PlanItemVariant;
+    const originals = new Map(elements.map((element) => [element.id, element]));
+    const bars = seedBarsFromVariant(guided);
+    expect(bars).toHaveLength(150);
+    expect(barsToTextElements(bars, originals)).toMatchObject(elements.map((element) => ({ ...element })));
+    const saved = barsToTextElements(bars.map((bar, index) => index === 0 ? { ...bar, text: "Corrected" } : bar), originals);
+    expect(saved[0].text).toBe("Corrected");
+    expect(saved.map(({ id, start_s, end_s }) => ({ id, start_s, end_s }))).toEqual(
+      elements.map(({ id, start_s, end_s }) => ({ id, start_s, end_s })),
+    );
+    expect(seedBarsFromVariant({ ...guided, text_elements: saved })).toHaveLength(150);
+    expect(seedBarsFromVariant({ ...guided, resolved_archetype: "narrated" })).toEqual([]);
+  });
   it("can filter lyric projections out while seeding with the frontend flag off", () => {
     expect(seedBarsFromVariant(variant([originalLyric]), { includeLyrics: false })).toEqual([]);
     expect(seedBarsFromVariant(variant([originalLyric]), { includeLyrics: true })).toMatchObject([
