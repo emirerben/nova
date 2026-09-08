@@ -49,6 +49,18 @@ function pluralize(count: number, label: string): string {
   return `${count} ${label}${count === 1 ? "" : "s"}`;
 }
 
+/** Clip-length copy: precise under a minute, readable above it. */
+function formatClipLength(ms: number): string {
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}m ${whole % 60}s`;
+}
+
+function finiteMs(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 function joinList(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? "";
   if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
@@ -62,8 +74,15 @@ function evidenceCopy(cleanup: CreationSpeechCleanupProjection): string {
     .map(([category, count]) => pluralize(count, CATEGORY_LABELS[category] ?? category.replaceAll("_", " ")));
   const durationMs = analysis?.estimated_removed_ms;
   const categoryCopy = joinList(categories);
+  // The removal is capped only by a minimum output length, so the delta alone
+  // can hide a two-thirds cut. State the resulting length in the same breath.
+  const sourceMs = finiteMs(analysis?.source_duration_ms);
+  const resultMs = finiteMs(analysis?.result_duration_ms);
+  const outcomeCopy = sourceMs !== null && sourceMs > 0 && resultMs !== null
+    ? ` — your ${formatClipLength(sourceMs)} clip becomes ${formatClipLength(resultMs)}`
+    : "";
   const durationCopy = typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs > 0
-    ? ` Cleaning them removes about ${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} seconds, and captions stay in sync.`
+    ? ` Cleaning them removes about ${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} seconds${outcomeCopy}, and captions stay in sync.`
     : " Captions stay in sync.";
   if (categoryCopy) return `Kria found ${categoryCopy}.${durationCopy}`;
   return "Kria found speech moments it can clean up while keeping captions in sync.";

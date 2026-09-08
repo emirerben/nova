@@ -378,6 +378,8 @@ function speechCleanupProjection(state: SpeechFixtureState): CreationSpeechClean
       candidate_count: 5,
       category_counts: { filler_sound: 4, long_pause: 1 },
       estimated_removed_ms: 2800,
+      source_duration_ms: 12_000,
+      result_duration_ms: 9_200,
       error: null,
     },
     decision: null,
