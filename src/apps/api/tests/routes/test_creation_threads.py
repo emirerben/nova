@@ -586,7 +586,7 @@ async def test_status_only_message_reconciles_without_becoming_revision_intent(
     session = SimpleNamespace(id=session_id, status="rendering", target_job_id=job_id)
     job = SimpleNamespace(id=job_id, status="processing", current_phase="text_burn")
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, job])
+    db.get = AsyncMock(side_effect=[job, session])
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     import app.routes.creation_threads as routes
@@ -2088,7 +2088,7 @@ async def test_retry_enqueue_failure_preserves_newer_thread_projection() -> None
     )
     db = Mock()
     db.execute = AsyncMock(return_value=query_result)
-    db.get = AsyncMock(side_effect=[session, job])
+    db.get = AsyncMock(side_effect=[job, session])
     db.rollback = AsyncMock()
     db.commit = AsyncMock()
 
@@ -3330,7 +3330,7 @@ async def test_retry_partial_render_dispatches_only_failed_variant(
     )
     item = SimpleNamespace(id=item_id, current_job_id=job_id)
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, session, job, item])
+    db.get = AsyncMock(side_effect=[session, session, item, job])
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     import app.routes.creation_threads as routes
@@ -3416,7 +3416,7 @@ async def test_retry_partial_render_repairs_stale_thread_job_before_dispatch(mon
     item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
     plan = SimpleNamespace(id=plan_id, user_id=user.id, ownership_epoch=0)
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, item, job, plan, session, session, job, item])
+    db.get = AsyncMock(side_effect=[session, item, job, plan, session, session, item, job])
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     import app.routes.creation_threads as routes
@@ -3491,7 +3491,7 @@ async def test_retry_partial_render_rejects_sibling_in_flight(monkeypatch) -> No
     )
     item = SimpleNamespace(id=item_id, current_job_id=job_id)
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, session, job, item])
+    db.get = AsyncMock(side_effect=[session, session, item, job])
     import app.routes.creation_threads as routes
 
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
@@ -3556,7 +3556,7 @@ async def test_retry_partial_render_broker_failure_is_retryable(monkeypatch) -> 
     )
     item = SimpleNamespace(id=item_id, current_job_id=job_id)
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, session, job, item, session, job])
+    db.get = AsyncMock(side_effect=[session, session, item, job, job, session])
     thread_result = Mock()
     thread_result.scalar_one_or_none.return_value = thread
     db.execute = AsyncMock(return_value=thread_result)

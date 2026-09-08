@@ -435,9 +435,19 @@ def claim_exact_review(
 ) -> tuple[Any, str, dict[str, Any]] | None:
     """Claim a pending review only if the Job/variant/generation still match."""
 
+    from app.db_locks import acquire_locked_rows_sync  # noqa: PLC0415
     from app.models import CreatorAgentSession, Job  # noqa: PLC0415
 
-    row = db.get(CreatorAgentSession, uuid.UUID(session_id), with_for_update=True)
+    # Canonical lock order (app/db_locks.CANONICAL_LOCK_ORDER): Job before
+    # CreatorAgentSession.  The Job used to be read unlocked here, but callers
+    # lock it moments later via mark_review_unavailable/persist_review_if_current
+    # -- so the transaction really did take Session before Job.  Claiming both
+    # up front both fixes the order and puts the validation under one fence.
+    _locked = acquire_locked_rows_sync(
+        db, {Job: uuid.UUID(job_id), CreatorAgentSession: uuid.UUID(session_id)}
+    )
+    job = _locked[Job]
+    row = _locked[CreatorAgentSession]
     current = row.last_review if row and isinstance(row.last_review, dict) else {}
     key = review_key(session_id, job_id, variant_id, generation_id)
     if row is None or current.get("review_key") != key:
@@ -446,7 +456,6 @@ def claim_exact_review(
         reclaim_running and current.get("status") == "running"
     ):
         return None
-    job = db.get(Job, uuid.UUID(job_id))
     variants = (job.assembly_plan or {}).get("variants") if job else []
     variant = next(
         (
@@ -496,9 +505,16 @@ def persist_review_if_current(
 ) -> bool:
     """Persist only when the session still owns the exact review target."""
 
+    from app.db_locks import acquire_locked_rows_sync  # noqa: PLC0415
     from app.models import CreatorAgentSession, Job  # noqa: PLC0415
 
-    row = db.get(CreatorAgentSession, uuid.UUID(session_id), with_for_update=True)
+    # Canonical lock order (app/db_locks.CANONICAL_LOCK_ORDER): Job before
+    # CreatorAgentSession.  job_id is a caller argument, so both rows can be
+    # locked up front without reading the session first.
+    _locked = acquire_locked_rows_sync(
+        db, {Job: uuid.UUID(job_id), CreatorAgentSession: uuid.UUID(session_id)}
+    )
+    row = _locked[CreatorAgentSession]
     current = row.last_review if row and isinstance(row.last_review, dict) else {}
     if row is None or current.get("review_key") != review_key(
         session_id, job_id, variant_id, generation_id
@@ -510,7 +526,7 @@ def persist_review_if_current(
         or row.target_generation_id != generation_id
     ):
         return False
-    job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+    job = _locked[Job]
     variants = (job.assembly_plan or {}).get("variants") if job else []
     variant = next(
         (
@@ -712,18 +728,23 @@ def mark_review_unavailable(
     message: str,
     allow_stale_target: bool = False,
 ) -> bool:
+    from app.db_locks import acquire_locked_rows_sync  # noqa: PLC0415
     from app.models import CreatorAgentSession, Job  # noqa: PLC0415
 
-    row = db.get(CreatorAgentSession, uuid.UUID(session_id), with_for_update=True)
+    # Always lock the referenced Job while closing a receipt.  Even the
+    # stale-target/manual-feedback path needs the same row-level fence as the
+    # successful path so a flag-off worker cannot race a new generation.
+    # Canonical lock order (app/db_locks.CANONICAL_LOCK_ORDER): Job first.
+    _locked = acquire_locked_rows_sync(
+        db, {Job: uuid.UUID(job_id), CreatorAgentSession: uuid.UUID(session_id)}
+    )
+    job = _locked[Job]
+    row = _locked[CreatorAgentSession]
     current = row.last_review if row and isinstance(row.last_review, dict) else {}
     if row is None or current.get("review_key") != review_key(
         session_id, job_id, variant_id, generation_id
     ):
         return False
-    # Always lock the referenced Job while closing a receipt.  Even the
-    # stale-target/manual-feedback path needs the same row-level fence as the
-    # successful path so a flag-off worker cannot race a new generation.
-    job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
     if not allow_stale_target:
         variants = (job.assembly_plan or {}).get("variants") if job else []
         variant = next(
