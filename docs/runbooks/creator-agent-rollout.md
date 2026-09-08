@@ -99,9 +99,9 @@ make a backend route safe.
      --max-cost-usd=2 --approve-reservation
    ```
 
-   Run `pytest tests/evals/test_main_creator_evals.py --with-judge` separately
-   in replay mode. The protected paid workflow does not expose a main-creator
-   selector or an Anthropic key.
+   Select `main_creator` in the protected `Agent evals` workflow for the paid
+   provider pass. Run `pytest tests/evals/test_main_creator_evals.py --with-judge`
+   separately in replay mode; the protected workflow has no Anthropic key.
 
 4. **Conversation canary.** Set `MAIN_CREATOR_AGENT_ENABLED=true` and
    `MAIN_CREATOR_AGENT_ROLLOUT_PERCENT=1`, restart API, and verify one internal

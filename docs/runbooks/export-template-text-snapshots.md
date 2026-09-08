@@ -195,8 +195,8 @@ pytest tests/evals/test_template_text_evals.py -v
 # With LLM judge (needs ANTHROPIC_API_KEY):
 pytest tests/evals/test_template_text_evals.py -v --with-judge
 
-# Live Gemini re-run (the paid workflow has no template_text selector, so this
-# local command requires the development ledger and a hard $2 cap):
+# Live Gemini re-run (equivalent to selecting template_text in the protected
+# Agent evals workflow; this local command carries the attribution explicitly):
 NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
 pytest tests/evals/test_template_text_evals.py -v --eval-mode=live \
   --usage-purpose=live_eval --test-run-id=template-text-YYYYMMDD \

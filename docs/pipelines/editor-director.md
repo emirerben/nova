@@ -191,8 +191,8 @@ cd src/apps/api
 pytest tests/evals/test_edit_director_evals.py -v
 ```
 
-Paid live provider gate. The command below carries the required attribution;
-the protected `Agent evals` workflow currently has no dedicated Director selector:
+Paid live provider gate. Select `edit_director` in the protected `Agent evals`
+workflow, or use the equivalent attributed local command:
 
 ```bash
 cd src/apps/api

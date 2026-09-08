@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       agent:
-        description: "Which agent to eval (all / Big-3 / Phase-2 in-pipeline)"
+        description: "Which agent eval target to run"
         required: false
         default: "clip_metadata"
         type: choice
@@ -28,6 +28,9 @@ on:
           - transcript
           - platform_copy
           - audio_template
+          - edit_director
+          - main_creator
+          - template_text
       change_type:
         description: "Why is a paid full eval required?"
         required: true
@@ -141,6 +144,12 @@ jobs:
               echo "path=tests/evals/test_platform_copy_evals.py" >> "$GITHUB_OUTPUT" ;;
             audio_template)
               echo "path=tests/evals/test_audio_template_evals.py" >> "$GITHUB_OUTPUT" ;;
+            edit_director)
+              echo "path=tests/evals/test_edit_director_evals.py" >> "$GITHUB_OUTPUT" ;;
+            main_creator)
+              echo "path=tests/evals/test_main_creator_evals.py" >> "$GITHUB_OUTPUT" ;;
+            template_text)
+              echo "path=tests/evals/test_template_text_evals.py" >> "$GITHUB_OUTPUT" ;;
             *)
               echo "path=tests/evals/" >> "$GITHUB_OUTPUT" ;;
           esac

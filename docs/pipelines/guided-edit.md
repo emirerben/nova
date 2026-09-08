@@ -550,9 +550,12 @@ Run the paid provider pass before changing the prompt:
 NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
 pytest tests/evals/test_edit_proposal_evals.py \
   tests/evals/test_edit_guide_evals.py -v --eval-mode=live \
+  --with-judge \
   --usage-purpose=live_eval --test-run-id=guided-edit-YYYYMMDD \
   --max-cost-usd=2 --approve-reservation
 ```
 
-Run the rubric judge separately in replay mode with `--with-judge`; paid live
-judging is outside the Google reservation ledger.
+These guided tests require semantic judging in live mode, so this command also
+needs `ANTHROPIC_API_KEY`; the Anthropic charge is outside the Google $2
+reservation ledger. The standard protected workflow intentionally has no
+guided selector until it can account for that second provider.
