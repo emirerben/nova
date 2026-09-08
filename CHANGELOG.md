@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.72.1.0] — 2026-09-08
+
+### Fixed
+- **Copilot can now target narrated score labels precisely.** Score provenance travels with the editor snapshot, so requests to retime a score change the intended label without shifting nearby text.
+
 ## [0.72.0.0] — 2026-09-08
 
 ### Added
