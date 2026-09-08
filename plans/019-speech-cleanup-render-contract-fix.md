@@ -2,6 +2,7 @@
 
 **Status:** Implemented locally; production `opt_in` cutover complete; code release and canaries pending.
 **2026-08-31 addendum** (ships v0.59.2.0): over-budget `required_v1` plans now clamp to the explicit-consent budget instead of hard-failing with `unsafe_plan` — see "Addendum 2026-08-31: explicit-consent budget clamp" below. The "40% rail stays unchanged" statement in Outcome now applies only to auto/legacy paths.
+**2026-09-08 addendum**: that explicit-consent budget no longer has a fraction ceiling. `MAX_REMOVAL_FRAC_REQUIRED` went `0.55 → 1.0`, so `MIN_OUTPUT_S` (3.0 s) is the only rail left on a `required_v1` clamp and `clamped=true` now reports that floor. The auto/legacy `MAX_REMOVAL_FRAC = 0.4` bailout rail — a different constant — is still unchanged. Rollback: `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED=0.55`. See plans/021 "Addendum 2026-09-08" and agents/DECISIONS.md (2026-09-08).
 **Target:** `origin/main@e76befe2` (2026-08-25)
 **Incident:** A mobile Talking to camera upload completed storage, probe, transcription,
 music matching, and planning, but both render attempts ended in `variants_failed`
@@ -320,7 +321,9 @@ Canary gates:
 > budget-clamped video and records `silence_cut_clamped`; the typed
 > `speech_cleanup_failed/unsafe_plan` gate applies only with the clamp switched
 > off. The clamp switch is the new first rung of the rollback ladder, before
-> `SPEECH_CLEANUP_MODE=disabled`.
+> `SPEECH_CLEANUP_MODE=disabled`. Since 2026-09-08 a gentler rung sits ahead of
+> both: `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED=0.55` restores the old
+> fraction ceiling while leaving cleanup on.
 
 Use `SPEECH_CLEANUP_MODE=disabled` if the opt-in capability itself must be paused.
 Use `SILENCE_CUT_ENABLED=false` only as the engine emergency switch; an in-flight
@@ -362,6 +365,8 @@ Critical silent gaps after the planned coverage: **0**.
 ## NOT in scope
 
 - Changing `MAX_REMOVAL_FRAC=0.4`; the safety rail prevented an over-aggressive edit.
+  (Still true: the 2026-09-08 cap removal touched only `MAX_REMOVAL_FRAC_REQUIRED`,
+  the separate explicit-consent constant on the `required_v1` clamp path.)
 - Rewriting Whisper, filler detection, silence detection, retake detection, or
   FFmpeg assembly; none caused the contract failure.
 - Making explicit `required_v1` cleanup fail open; that would lie after a creator
@@ -480,7 +485,9 @@ could never succeed because the analysis is content-deterministic.
 Decision (approved by Yasin, option A of the 2026-08-31 investigation): under
 `required_v1`, `build_cut_plan(over_budget_policy="clamp")` now clamps the
 removal set to `min(MAX_REMOVAL_FRAC_REQUIRED·dur, dur − MIN_OUTPUT_S) −
-CLAMP_BUDGET_SLACK_S` (0.55 / 1 ms) — removals kept whole while they fit
+CLAMP_BUDGET_SLACK_S` (0.55 / 1 ms at the time of this addendum; since
+2026-09-08 the fraction is 1.0 and inert, and `protected_total` is subtracted
+from the second leg — see plans/021 "Addendum 2026-09-08") — removals kept whole while they fit
 (edge cuts charged first — hardening 4 below — then largest first),
 non-fitting removals trimmed into the leftover budget (edge-anchored for
 lead/trail cuts, symmetric mid-clip), sub-MIN_CUT_S remainders dropped;

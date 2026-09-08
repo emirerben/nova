@@ -1798,3 +1798,376 @@ Deadlocks are also no longer 500s: `main.transient_db_conflict_handler` maps
 SQLSTATE `40P01`/`40001` to a 409 with `Retry-After: 1`, logging
 `transient_db_conflict` at warning level. A sustained rate of that log line means
 an inversion slipped past the static guard.
+
+## [2026-09-08] ASR token timestamps are not speech truth — mixed-gap-v2 (jobs a75981f8 / d0e284cb)
+
+Two `required_v1` renders that had the mixed-gap-v1 candidate APPLIED still carried
+an audible hesitation: the Turkish clip from the original plans/021 incident
+(`a75981f8`, "the ıı between the 3rd and 4th second") and an English clip
+(`d0e284cb`, a 1.4 s hole at 3–4 s). `build_cut_plan_comparison` over the persisted
+`timed_words` reproduced both persisted plans exactly, so the detector was not flaky —
+its inputs were wrong in a way it structurally could not see.
+
+Every V2 rule windows off whisper-1 token boundaries, and the validator forbids
+cutting into a token. That is sound only if token timestamps are speech truth. Around
+disfluencies they are not, deterministically (3/3 fresh runs per clip):
+
+- TR: the real `ııı` is voiced 7.406–7.978 s; whisper stamped `ııı,` at 8.04–8.26 s,
+  entirely inside FFmpeg silence 7.978–8.293 s. The lexical cut removed silence. The
+  voiced island WAS found by rule 2 and rejected `right_silence_too_short`, because its
+  right flank was measured on the silence CLIPPED at the mis-stamped token start —
+  62 ms of a 315 ms span. In August whisper emitted no token there (V1 missed it); now
+  it emits one 0.6 s late (V2 missed it). Same audio, different failure, same result.
+- EN: `a...` spans 5.48–7.20 s and contains a 1.4 s silence. Rules 2/3 only look
+  BETWEEN tokens; a pause inside a token is invisible, and a fresh run merely moves the
+  pause into `English` — still inside a token.
+
+**Decision:** treat FFmpeg silencedetect as the authority on where a token is NOT. V2
+gets a rule 0 (`_reconcile_words_with_silence`, `silence_cut.py`): a silence span of
+at least 0.6 s (`MAX_PAUSE_S`) that overlaps a token by at least 0.3 s is carved out
+of the token (head/tail trim or split) before rules 1–3 run; remnants under 50 ms are
+absorbed; a token with no remnant is kept untouched. Rule 4 (retake word indices)
+keeps the original list. Everything below is V2-only except the shared
+`_normalize_silences` snap; V1 and the persisted `timed_words` are byte-identical.
+Guard:
+`tests/pipeline/test_silence_cut_asr_timestamp_golden.py`, built from the exact
+persisted words of both rows. Geometry and thresholds: plans/021, addendum 2026-09-08.
+
+Five smaller mechanisms ship with it, each fixing a way the newly exposed dead air
+leaked back into the output:
+
+- **`_interior_soundful_islands` measures a flank on the full silencedetect span only
+  when that side's boundary token is a removable filler** (`filler_lo_boundary` /
+  `filler_hi_boundary`). NOT unconditional — the conditional IS the safety property.
+  Next to a real word the flank stays window-clipped, because whisper stamps real words
+  late too, and the clipped flank is what stops such a word's own vocalization from
+  being scored as a silence-bounded island and cut as an acoustic filler. Next to a
+  filler there is nothing left to protect: rule 1 is removing that token anyway.
+- **`_pause_removals(edges_skip_fillers=True)`** measures `LEAD_KEEP_S`/`TRAIL_KEEP_S`
+  from the first/last token rule 1 will KEEP, and lets an interior pause window meet a
+  filler neighbour at that neighbour's own `PAD_S` instead of `KEPT_GAP_S/2`. A clip
+  opening on a filler otherwise stranded a sliver of silence between the lead trim and
+  the filler's padded cut — too short to hear, too short to earn its own cut, and
+  expensive: at the budget ceiling the micro-gap pass paid for it by evicting the whole
+  lead trim.
+- **`_retreat_from_micro_gap`** pulls one flexible silence carrier back by the missing
+  fraction of a second so a sub-`MIN_KEEP_SEGMENT_S` flash becomes a real keep segment,
+  instead of evicting a cut. Eviction returns the carrier's ENTIRE span to the edit;
+  at the consent budget's ceiling every fitted carrier ends up flush against its
+  neighbour, so eviction there silently undid most of the cleanup the creator asked
+  for. Atomic filler/retake groups and protected spans never retreat, and eviction is
+  still the fallback.
+- **The clamp budget reserves room for protected spans.** Forced/manual spans are exempt
+  from the budget but still shorten the output, so `duration − MIN_OUTPUT_S` now has
+  their merged length subtracted before the clamp. Without it, a fully allocated plan
+  plus a large forced span tripped `MIN_OUTPUT_S` at the very end and collapsed the
+  whole candidate to a no-op.
+- **`_normalize_silences` snaps a span within one 24 fps frame of 0 or `duration_s` to
+  that boundary.** silencedetect measures decoded audio; the container is up to a frame
+  longer (the EN clip's trailing silence ended 20 µs early), and that sliver kept the
+  trailing cut from reaching the end of the clip — enough, once micro-gap hygiene got
+  involved, to strand a quarter second of dead air at the end of the edit. This one is
+  shared input normalization, NOT V2-gated: it leaves both incident clips' V1 baselines
+  where production had them, but a V1 plan whose trailing silence stopped just short of
+  the container can now reach the end.
+
+And one selection change outside the detector: `analyze_speech_cleanup` now prefers the
+V1 baseline when the V2 candidate BAILED OUT and the baseline did not and has cuts.
+Rule 0 exposes more dead air, so more plans hit the bailout policy's rails; without this
+a source whose V1 plan removed a second of silence would have shipped zero cleanup.
+
+Three things worth keeping:
+
+- **Tokens are never dropped, even when wholly inside silence.** The prototype did
+  drop them and it was tempting — it is the cleanest fix for the TR clip. But a token
+  with no voiced remnant is also exactly what a very quiet clip produces for EVERY
+  word, and dropping those turns "cleanup did nothing" into "cleanup deleted the
+  transcript". The filler-gated full-span flank covers the TR case without that
+  failure mode.
+- **Only silence is ever cut through a carve.** Rule 3 intersects with silencedetect,
+  so the worst a bad carve can do is trim audio FFmpeg already called −30 dB silence,
+  leaving `KEPT_GAP_S/2` on each side. The residual risk (review finding) is a soft
+  onset under −30 dB for 0.3 s or more next to a long silence: it gets `trim_head` and
+  loses its quietest fraction. `token_adjustments` in the receipt exists so shadow
+  windows can count those before the canary widens.
+- **A golden built from fabricated words would have passed.** The #960 golden
+  modelled the tokenless gap it was written against; it could not model a token that
+  whisper places on silence, because nobody had seen one yet. The new golden uses the
+  persisted `timed_words` of both rows verbatim, and `scripts/speech_cleanup_preview.py`
+  renders a clip through the real engine so the next detector change can be listened
+  to, not just diffed.
+
+**`DETECTOR_VERSION` → `mixed-gap-v2` — what the bump does, and deliberately does not:**
+
+- `current_detector_policy()` (`services/plan_item_media.py`) folds `DETECTOR_VERSION`
+  into every `source_policy_fingerprint`, and `_source_snapshot_matches` compares it
+  directly. An existing `ready`/`no_findings` `SpeechCleanupAnalysis` row analysed
+  under v1 is therefore never reused: the next preflight for that source supersedes it
+  (`ensure_current_analysis_*`), queues a fresh v2 analysis on the `speech-analysis`
+  worker, and `_clear_item_cleanup_choice` resets `speech_cleanup_enabled`. The creator
+  sees the `SpeechCleanupDecisionCard` again on regenerate and re-consents against the
+  new findings — a consent given to a v1 cut list must not silently authorise a v2 one.
+  Expect one extra analysis per active item the first time each is touched after the
+  deploy, and budget the `speech-analysis` queue accordingly.
+- Already-stamped Jobs are untouched. The Job's private `preflight_snapshot` carries
+  its own `detector_version`, `hydrate_speech_cleanup_snapshot` checks only
+  snapshot-internal consistency, and the render replays the persisted `cut_plan`.
+  In-flight `required_v1` jobs finish under the v1 plan they were consented to — the
+  runbook's immutable-contract promise (`docs/runbooks/chat-speech-cleanup-rollout.md`).
+- A required-speech render that crashed mid-stage resumes iff re-running it would
+  reproduce the same label. `_reserve_required_speech_pending` no longer hands
+  `classify_required_speech_resume` the deployed constant unconditionally: for a
+  preflight Job it passes the accepted snapshot's OWN `detector_version`
+  (`_expected_resume_detector_version`), because that Job applies the snapshot's
+  `cut_plan` and a re-render would stamp the identical label — demanding the deployed
+  constant there would rotate every staged-but-unfinalized generation on the bump and
+  throw away finished, still-correct output. Only a legacy render-time-detector Job (no
+  usable snapshot) is held to the deployed label and rotates with
+  `terminal_context_mismatch`; a malformed snapshot falls back to the same strict
+  behaviour, which is safe because such a render fails closed anyway.
+- A `SpeechCleanupAnalysis` row QUEUED before the deploy is restamped at claim time
+  (`claim_analysis` sets `row.detector_version = DETECTOR_VERSION`): the analysis is
+  performed by the code running now, so persisting its plan under the previous
+  version's name would make every downstream reuse/snapshot check treat a v2 plan as v1
+  evidence. Claim only accepts queued/expired work, so no result is being relabelled.
+  `_validate_work` then fails closed on any surviving mismatch — a row that reaches the
+  engine still carrying another detector's label was not claimed by this code, and a
+  plan must never be published under a name it did not earn.
+- The render-side cut-cache key includes `detector=`, so sibling variants never reuse a
+  v1 plan within one job.
+- **Preflight cohort membership DOES reshuffle** — the earlier draft of this entry said
+  it did not, and that was wrong. Two different buckets are involved and only one of
+  them is salt-based. `select_mixed_gap_mode` buckets on
+  `sha256("mixed-gap-v1:" + rollout_fingerprint)`, and `rollout_fingerprint` is
+  `sha256("speech-cleanup-source-v1:{job_id}:{source_instance_id}")` — no detector
+  version anywhere, salt deliberately left alone, so a source that reaches preflight
+  keeps its shadow/apply assignment. But whether a source reaches preflight at all is
+  decided upstream by `preflight_enabled_for_source` →
+  `stable_preflight_cohort(source_policy_fingerprint)`, and that fingerprint hashes
+  `detector_policy`, which contains `DETECTOR_VERSION`. Bumping it moves essentially
+  every source to a new 0..99 cohort (≈99% of a 2000-source simulation), so at any
+  `SPEECH_CLEANUP_PREFLIGHT_ROLLOUT_PERCENT` under 100 a different population is
+  enrolled after the deploy. Operationally: a canary comparison must not be carried
+  across the bump, the same percentage is not the same creators, and rollout evidence
+  windows must be fresh — the runbook never reuses a window or receipt.
+- `scripts/audit_speech_cleanup_shadow.py` had to learn the new version too
+  (`_SUPPORTED_DETECTOR_VERSIONS = {"mixed-gap-v1", DETECTOR_VERSION}`): it hard-matched
+  the string `mixed-gap-v1`, so the first audit after the bump would have matched zero
+  receipts and refused exactly the deploy it exists to verify. Any future bump must keep
+  the earlier versions in that set for as long as their receipts are still in the trace.
+
+**Known limit these two clips demonstrated — since removed:** better detection did not
+finish the job. Both clips are mostly dead air, and the then-current
+`MAX_REMOVAL_FRAC_REQUIRED = 0.55` capped a `required_v1` clamp. The EN clip is 71%
+silence by silencedetect; the v2 candidate PROPOSED 6.001 s (60% of the runtime) against
+a `clamp_budget_s` of 5.507 s and shipped 5.391 s — the refused 0.61 s was not spread
+thin, the entire interior pause `4.325–4.775` was dropped, leaving roughly 0.8 s of
+continuous dead air audible. TR proposed 7.461 s (75%) and shipped 5.414 s. The entry
+below ("The 55% explicit-consent removal cap is gone") is the product decision that removed that
+ceiling, deliberately as its own change rather than riding along with the detector.
+The triage advice survives the removal, with a different meaning: the next "cleanup left
+a pause" report is still read from the receipt first — `clamped=true` with
+`proposed_removed_s` above `clamp_budget_s`, and the span present in
+`proposed_removals` but missing from `removed`, means the detector found it and the
+budget declined it, and nothing in `silence_cut.py` can fix that. What `clamped=true`
+now reports is the `MIN_OUTPUT_S` 3.0 s floor, not a fraction of the runtime.
+
+**Lesson:** an upstream model's timestamps are a hypothesis, not ground truth; every
+consumer that windows off them needs an independent signal to reconcile against. Any
+future detector change — thresholds included — must bump `DETECTOR_VERSION`, or the
+fingerprint/cache/snapshot machinery keeps serving pre-change plans indefinitely — and
+the bump is never free: audit the everything-keyed-on-the-fingerprint list above,
+because one of those keys decides who is in the rollout at all.
+
+## [2026-09-08] The 55% explicit-consent removal cap is gone — MIN_OUTPUT_S is the only rail (jobs a75981f8 / d0e284cb)
+
+`MAX_REMOVAL_FRAC_REQUIRED` in `app/pipeline/silence_cut.py` goes `0.55 → 1.0`. The
+`over_budget_policy="clamp"` budget is still
+`min(frac × duration, duration − MIN_OUTPUT_S − protected) − CLAMP_BUDGET_SLACK_S`, but
+with `frac = 1.0` the fraction leg can never bind: on a 10 s clip the budget moves from
+5.499 s to 6.999 s, and `MIN_OUTPUT_S` (3.0 s) is the only thing left holding a
+`required_v1` plan back.
+
+**Read this with the entry below it.** Removing the cap is only safe because the two
+speech-safety guards in "Two guards so rule 0 cannot cut real speech" replaced the
+protection this cap was incidentally providing. Do not port the constant change into
+another branch without them.
+
+**Why.** The cap was inherited caution on a path the creator has already consented to.
+`required_v1` only exists because the creator turned Speech cleanup ON for this item;
+the clips that reach it are the filler-heavy, pause-heavy talking-to-camera clips the
+feature was built for, and those are precisely the clips a fraction-of-runtime ceiling
+declines. The mixed-gap-v2 detector (entry above) found the dead air correctly and then
+watched the budget refuse it: the TR clip needed ~65% removal and shipped with a second
+of dead air still in it. A rail that declines the feature's own best case is not a
+safety rail, it is a bug with a constant's name. Yasin's call: take it out.
+
+**Measured on the two incident clips** (`tests/pipeline/test_silence_cut_asr_timestamp_golden.py`,
+fixtures are the exact persisted `timed_words` of both rows):
+
+| Clip | removed before → after | output before → after | `clamped` |
+|---|---|---|---|
+| TR (job a75981f8) | 5.414 s → 6.855 s | 4.586 s → 3.145 s | true → true (now the floor) |
+| EN (job d0e284cb) | 5.391 s → 5.900 s | 4.623 s → 4.114 s | true → false |
+
+The TR clip's last second of dead air — the residual the previous entry's "Known limit"
+paragraph described as unrecoverable by any detector work — is gone. The EN candidate
+proposed 6.001 s all along; the budget went 5.507 s → 7.013 s, so nothing is clamped out
+of it any more, and it ships 5.900 s: the missing 0.102 s is `MIN_KEEP_SPEECH_SEGMENT_S`
+buying a 0.498 s speech fragment up to the shot floor (next entry). TR proposes 7.461 s against a 6.999 s budget
+and still comes back `clamped=true`, which is the reading change that matters
+operationally: **`clamped=true` now means the `MIN_OUTPUT_S`
+floor bound the plan, not a fraction of the runtime.** A receipt showing
+`proposed_removed_s > clamp_budget_s` today is a clip whose removals would have left
+under 3 s of video.
+
+**What still bounds a plan.**
+- `MIN_OUTPUT_S = 3.0` — the hard floor; an edit can never collapse below a usable
+  length, and protected (forced/manual) spans are reserved out of the budget before the
+  clamp so they cannot push it through the floor.
+- `MIN_CLIP_S = 5.0` — clips shorter than this are never cut at all.
+- `MAX_REMOVAL_FRAC = 0.4` — **a different rail, untouched.** It is the
+  `over_budget_policy="bailout"` rail on the auto/legacy path, where nobody consented to
+  anything; do not conflate the two constants because their names rhyme. Nothing in this
+  change touches `legacy_auto` or `off_v1`, which stay byte-identical.
+
+**The operator switch.** `settings.speech_cleanup_max_removal_frac_required`
+(`SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED`, default `1.0`) threads through
+`build_cut_plan` / `build_cut_plan_comparison` as the optional
+`max_removal_frac_required` argument, resolved per call by `_resolve_removal_frac` so
+the module constant stays monkeypatchable. It is passed by BOTH callers that build a
+plan — `tasks/speech_cleanup_analysis.py` (analysis, also exposed on
+`SpeechCleanupAnalysisInput`) and `tasks/generative_build.py` (render) — so an analysis
+and the render that replays it can never disagree about the budget. Rollback:
+
+```bash
+fly secrets set SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED=0.55 --app nova-video
+# + restart api and worker
+```
+
+That restores the previous behaviour exactly: the golden asserts a 0.55 run reproduces
+the plan production actually shipped (`TR_V1_BASELINE_CAPPED_055`).
+
+**The setting is part of the policy fingerprint.** `current_detector_policy()`
+(`services/plan_item_media.py`) now includes `max-removal-frac=<value>`, which is hashed
+into every `source_policy_fingerprint`. Flipping the switch therefore behaves like a
+`DETECTOR_VERSION` bump: existing `ready`/`no_findings` analyses stop matching and are
+re-analysed on the `speech-analysis` queue, consent is re-collected (the creator sees
+`SpeechCleanupDecisionCard` again — a consent given to a 55% cut list must not silently
+authorise a 100% one), and preflight cohort membership reshuffles, so evidence windows
+must not be carried across the flip. That is the point: a budget change IS a plan
+change, and a cached plan built under the other budget is not evidence for this one.
+Stamped Jobs are untouched and finish under the `cut_plan` they were consented to.
+
+**Pins:** `TestOverBudgetClamp` plus `test_operator_switch_restores_a_fraction_cap` and
+`test_min_output_is_the_only_remaining_rail` in `tests/pipeline/test_silence_cut.py`;
+the 0.55-rollback assertion in `tests/pipeline/test_silence_cut_asr_timestamp_golden.py`;
+budget arithmetic in `tests/tasks/test_generative_build_silence_cut.py`.
+Plan context: plans/019 (the clamp itself) and plans/021 (the detector that made the
+ceiling visible).
+
+## [2026-09-08] Two guards so rule 0 cannot cut real speech — the cap was the accidental backstop
+
+Removing the 55% cap (entry above) was safe ONLY because of the two guards in this
+entry. They were added in response to an adversarial review of that removal, and they
+ship with it. Read the two entries as one change: the cap had been silently providing a
+speech-safety property nobody had assigned to it, and taking it out without replacing
+that property would have shipped a detector that cuts words.
+
+**The blocker.** `silencedetect` thresholds on an ABSOLUTE −30 dBFS floor — the pipeline
+already says so itself (`generative_build`: "silencedetect undercounts quiet/lapel
+speech"). On a soft-spoken or lapel-mic take it reports quiet SPEECH as silence. Rule 0
+(`_reconcile_words_with_silence`) exists to carve FFmpeg silence out of a mis-stamped
+ASR token, and it cannot tell that kind of span from a real pause: it carved the quiet
+speech, the carve made it cuttable, and **the validator structurally could not object.**
+`word_intrusion` is checked against the RECONCILED words, so by the time the validator
+runs, the span it should be defending is no longer inside a word. A cut into the
+ORIGINAL token is invisible to every downstream check. The 0.55 cap was what had been
+holding this back, by accident: over-budget eviction dropped rule-0 carves before they
+reached the output.
+
+**Measured on a synthetic soft-spoken fixture** (52.5 s, 10 real 2.2 s words each with a
+1.0 s under-read middle — the shape a lapel mic produces):
+
+| | real-word audio removed | token carves |
+|---|---|---|
+| before the guards, `frac = 0.55` | 1.124 s | — |
+| before the guards, `frac = 1.0` | **7.5 s** | — |
+| after the guards, either frac | **0.000 s** | 0 |
+
+The real pauses between those words are still cut (>20 s saved). The middle row is what
+the cap removal would have shipped.
+
+**Guard 1 — rule 0 carves only a dominated INTERIOR split
+(`TOKEN_SPLIT_VOICE_RATIO = 0.5`, `TOKEN_SPLIT_PIECE_MAX_S = 0.35`,
+`app/pipeline/silence_cut.py`).** A first attempt gated only the split branch on
+the voice ratio; an adversarial re-verification then moved the same under-read
+span from a word's MIDDLE to its ONSET and measured 8.575 s of real-word audio
+destroyed on the guard's own fixture — worse than the 7.5 s it was written to
+prevent — because `trim_head`/`trim_tail` were unchecked, and a seeded sweep
+attributed ~94% of all real-speech loss to those edge trims. So the rule was
+narrowed to the single shape that cannot plausibly be a word: rule 0 now carves ONE interior span per token and only when both remnants are slivers (`TOKEN_SPLIT_PIECE_MAX_S` 0.35 s) totalling at most `TOKEN_SPLIT_VOICE_RATIO` 0.5 of the carve; edge trims are refused outright because a carve at a token boundary is indistinguishable from a quiet onset, and edge trims were measured as ~94% of the real speech an earlier, looser guard still destroyed. A token
+with several quiet patches, a substantial remnant, or a carve at either
+boundary is returned untouched. Measured after: 0.000 s of real-word audio cut
+on every attack geometry (quiet middle, quiet onset, quiet tail, multi-carve
+escape, the 0.05 s sliver discontinuity), and the reviewer's own 2600-layout
+realistic sweep goes from 1126 lossy plans to 0.
+
+Cost, stated plainly: the 41 s reference clip (`clip3`) gains nothing any more —
+its three extra dead-air removals all came from edge trims, so it renders
+exactly as `main` does. Both REPORTED bugs are still fixed: the Turkish
+hesitation (which the filler-gated flank change fixes, not rule 0) and the
+English clip's 1.4 s hole (one legitimate interior split). Cutting a pause is
+worth less than not cutting a word.
+
+**Guard 2 — `MIN_KEEP_SPEECH_SEGMENT_S = 0.6`.** A surviving keep segment that contains
+words and is shorter than this reads as a stutter between two jump cuts, not a shot.
+Micro-gap hygiene widens it by retreating a neighbouring flexible silence carrier
+(`_retreat_from_micro_gap`, `target_gap_s=MIN_KEEP_SPEECH_SEGMENT_S`); it is **never
+absorbed**, because the fragment is audio and may be speech. Protected spans never
+retreat. This fixed a 0.498 s isolated fragment between two jump cuts on the EN clip;
+it costs 0.102 s of removal to buy the fragment up to the floor.
+
+**Shipped numbers, guards in, cap out** — TR is unchanged by the guards; EN gives back
+the 0.102 s guard 2 spends on the fragment:
+
+| Clip | removed | output | shortest keep | `clamped` |
+|---|---|---|---|---|
+| TR (job a75981f8) | 6.855 s | 3.145 s | 0.760 s | true (the `MIN_OUTPUT_S` floor) |
+| EN (job d0e284cb) | 5.900 s | 4.114 s | 0.600 s | false |
+
+**Guard tests:** `TestRuleZeroCannotCutRealSpeech` in
+`tests/pipeline/test_silence_cut_asr_timestamp_golden.py` —
+`test_mumbled_words_are_never_split` (0.000 s of word audio removed, 0 token
+adjustments, real pauses still cut), `test_the_guard_does_not_depend_on_the_removed_fraction_cap`
+(the plan is byte-identical at `frac = 1.0` and `frac = 0.55`, which is the assertion
+that the guard, not the budget, is doing the protecting),
+`test_a_token_stretched_over_a_pause_is_still_split` (the EN `5.48` token must still
+split — the guard must not disarm rule 0), and
+`test_surviving_speech_fragments_clear_the_shot_floor` (every word-bearing keep segment
+clears 0.6 s).
+
+**Three smaller fixes from the same review ship with these.**
+
+- `speech_cleanup_max_removal_frac_required` is `gt=0.0`, not `ge=0.0`. Settings accepted
+  `0`, the engine input rejected it, so `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED=0`
+  booted clean and then failed every analysis at runtime. A config value that validates
+  must be a value the thing it configures accepts.
+- The rollback note says restart **api AND worker**. The policy fingerprint is computed
+  API-side (`current_detector_policy`), so a worker-only restart leaves the API handing
+  out the old fingerprint.
+- The render path (`tasks/generative_build.py`) gained the same "never prefer a bailed-out
+  candidate over a working baseline" guard the preflight engine already had, and
+  `build_cut_plan`'s early-return path no longer drops `max_removal_frac_required`.
+
+**Reverted, deliberately:** a V1 clamp change that reserved protected spans out of the
+budget. V1 compares `total_removed` INCLUDING protected spans, so reserving them
+double-counts. The reservation stays V2-only.
+
+**Lesson:** when you remove a limit, first find out what it was actually doing. The 55%
+cap was documented as a caution rail on removal aggressiveness; what it was ALSO doing
+was evicting every rule-0 carve that a −30 dBFS floor had mislabelled, which is the only
+reason nobody had seen the detector cut a word. Ask of any constant you are deleting:
+which failures does it currently absorb, and who catches them afterwards? And a
+validator that checks a derived value is not a check on the input it was derived from —
+`word_intrusion` over reconciled words can never see a cut into an original token.
