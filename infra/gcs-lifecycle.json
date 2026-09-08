@@ -33,6 +33,20 @@
         "action": { "type": "Delete" },
         "condition": {
           "age": 1,
+          "matchesPrefix": ["analysis-proxy/"]
+        }
+      },
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 1,
+          "matchesPrefix": ["cloud-render-source/"]
+        }
+      },
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 1,
           "matchesPrefix": ["transcript-cache/"]
         }
       },

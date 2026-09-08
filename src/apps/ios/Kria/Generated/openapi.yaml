@@ -1,0 +1,3117 @@
+{
+  "components": {
+    "schemas": {
+      "ApprovalDecisionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_approval_fingerprint": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Expected Approval Fingerprint",
+            "type": "string"
+          },
+          "expected_draft_revision": {
+            "minimum": 0,
+            "title": "Expected Draft Revision",
+            "type": "integer"
+          },
+          "expected_thread_revision": {
+            "minimum": 0,
+            "title": "Expected Thread Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_thread_revision",
+          "expected_draft_revision",
+          "expected_approval_fingerprint"
+        ],
+        "title": "ApprovalDecisionBody",
+        "type": "object"
+      },
+      "ApprovalDecisionOut": {
+        "properties": {
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "render_dispatched": {
+            "default": false,
+            "enum": [
+              false
+            ],
+            "title": "Render Dispatched",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "approved",
+              "denied"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_revision": {
+            "title": "Thread Revision",
+            "type": "integer"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "turn_id",
+          "status",
+          "thread_revision"
+        ],
+        "title": "ApprovalDecisionOut",
+        "type": "object"
+      },
+      "ApprovalSnapshotOut": {
+        "properties": {
+          "approval_fingerprint": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Approval Fingerprint",
+            "type": "string"
+          },
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "consequence_summary": {
+            "title": "Consequence Summary",
+            "type": "string"
+          },
+          "cost_summary": {
+            "default": null,
+            "nullable": true,
+            "title": "Cost Summary",
+            "type": "string"
+          },
+          "draft_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "draft_revision": {
+            "default": null,
+            "nullable": true,
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "expired",
+              "cancelled",
+              "consumed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "turn_id",
+          "status",
+          "consequence_summary",
+          "expires_at",
+          "approval_fingerprint"
+        ],
+        "title": "ApprovalSnapshotOut",
+        "type": "object"
+      },
+      "AssetFingerprint": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm": {
+            "default": "sha256",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Algorithm",
+            "type": "string"
+          },
+          "byte_count": {
+            "minimum": 0,
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "hex": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Hex",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hex",
+          "byte_count"
+        ],
+        "title": "AssetFingerprint",
+        "type": "object"
+      },
+      "AttachBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_event_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Client Event Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "media": {
+            "items": {
+              "$ref": "#/components/schemas/MediaInput"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Media",
+            "type": "array"
+          }
+        },
+        "required": [
+          "media",
+          "client_event_id",
+          "expected_revision"
+        ],
+        "title": "AttachBody",
+        "type": "object"
+      },
+      "AudioMixRecipe": {
+        "additionalProperties": false,
+        "properties": {
+          "duck_original_during_music": {
+            "default": false,
+            "title": "Duck Original During Music",
+            "type": "boolean"
+          },
+          "fade_in": {
+            "default": 0,
+            "maximum": 60,
+            "minimum": 0,
+            "title": "Fade In",
+            "type": "number"
+          },
+          "fade_out": {
+            "default": 0,
+            "maximum": 60,
+            "minimum": 0,
+            "title": "Fade Out",
+            "type": "number"
+          },
+          "music_asset_id": {
+            "default": null,
+            "maxLength": 160,
+            "nullable": true,
+            "title": "Music Asset Id",
+            "type": "string"
+          },
+          "music_volume": {
+            "default": 1,
+            "maximum": 2,
+            "minimum": 0,
+            "title": "Music Volume",
+            "type": "number"
+          },
+          "original_volume": {
+            "default": 1,
+            "maximum": 2,
+            "minimum": 0,
+            "title": "Original Volume",
+            "type": "number"
+          }
+        },
+        "title": "AudioMixRecipe",
+        "type": "object"
+      },
+      "Canvas": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "maximum": 7680,
+            "minimum": 16,
+            "title": "Height",
+            "type": "integer"
+          },
+          "width": {
+            "maximum": 7680,
+            "minimum": 16,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "width",
+          "height"
+        ],
+        "title": "Canvas",
+        "type": "object"
+      },
+      "CreateBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_event_id": {
+            "default": null,
+            "maxLength": 160,
+            "nullable": true,
+            "title": "Client Event Id",
+            "type": "string"
+          },
+          "message": {
+            "default": null,
+            "maxLength": 4000,
+            "nullable": true,
+            "title": "Message",
+            "type": "string"
+          },
+          "runtime_version": {
+            "default": 1,
+            "enum": [
+              1,
+              2
+            ],
+            "title": "Runtime Version",
+            "type": "integer"
+          }
+        },
+        "title": "CreateBody",
+        "type": "object"
+      },
+      "CreationThreadOut": {
+        "properties": {
+          "active_creator_agent_session_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Active Creator Agent Session Id",
+            "type": "string"
+          },
+          "active_job_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Active Job Id",
+            "type": "string"
+          },
+          "active_plan_item_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Active Plan Item Id",
+            "type": "string"
+          },
+          "content_plan_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Content Plan Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "creator_agent": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Creator Agent",
+            "type": "object"
+          },
+          "direction_receipt": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Direction Receipt",
+            "type": "object"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventOut"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Job",
+            "type": "object"
+          },
+          "media_capabilities": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Media Capabilities",
+            "type": "object"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "runtime_version": {
+            "default": 1,
+            "enum": [
+              1,
+              2
+            ],
+            "title": "Runtime Version",
+            "type": "integer"
+          },
+          "speech_cleanup": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Speech Cleanup",
+            "type": "object"
+          },
+          "state": {
+            "additionalProperties": true,
+            "title": "State",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "revision",
+          "state",
+          "events",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "CreationThreadOut",
+        "type": "object"
+      },
+      "DeltaEvent": {
+        "properties": {
+          "content": {
+            "default": null,
+            "nullable": true,
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant",
+              "system"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "sequence",
+          "revision",
+          "role",
+          "event_type",
+          "created_at"
+        ],
+        "title": "DeltaEvent",
+        "type": "object"
+      },
+      "DraftSnapshotOut": {
+        "properties": {
+          "base_generation_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Generation Id",
+            "type": "string"
+          },
+          "base_job_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Base Job Id",
+            "type": "string"
+          },
+          "can_undo": {
+            "title": "Can Undo",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "draft_id": {
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "draft_revision": {
+            "minimum": 0,
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "etag": {
+            "title": "Etag",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "title": "Snapshot",
+            "type": "object"
+          },
+          "snapshot_hash": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Snapshot Hash",
+            "type": "string"
+          },
+          "variant_key": {
+            "title": "Variant Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id",
+          "item_id",
+          "variant_key",
+          "draft_revision",
+          "snapshot_hash",
+          "etag",
+          "snapshot",
+          "can_undo",
+          "created_at"
+        ],
+        "title": "DraftSnapshotOut",
+        "type": "object"
+      },
+      "DraftUndoBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_draft_revision": {
+            "minimum": 0,
+            "title": "Expected Draft Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_draft_revision"
+        ],
+        "title": "DraftUndoBody",
+        "type": "object"
+      },
+      "DraftWriteBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_draft_revision": {
+            "minimum": 0,
+            "title": "Expected Draft Revision",
+            "type": "integer"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "title": "Snapshot",
+            "type": "object"
+          }
+        },
+        "required": [
+          "expected_draft_revision",
+          "snapshot"
+        ],
+        "title": "DraftWriteBody",
+        "type": "object"
+      },
+      "EditRecipeV1": {
+        "additionalProperties": false,
+        "description": "Portable, validated edit description; it contains no storage internals.",
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/MediaAsset"
+            },
+            "maxItems": 100,
+            "title": "Assets",
+            "type": "array"
+          },
+          "audio": {
+            "$ref": "#/components/schemas/AudioMixRecipe"
+          },
+          "canvas": {
+            "$ref": "#/components/schemas/Canvas"
+          },
+          "frame_rate": {
+            "default": 30,
+            "exclusiveMinimum": true,
+            "maximum": 240,
+            "minimum": 0,
+            "title": "Frame Rate",
+            "type": "number"
+          },
+          "renderer_version": {
+            "default": "kria-ios-1",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Renderer Version",
+            "type": "string"
+          },
+          "required_capabilities": {
+            "items": {
+              "enum": [
+                "basicComposition",
+                "animatedText",
+                "crossfade",
+                "audioMix",
+                "variableSpeed",
+                "alphaOverlay",
+                "hevcDecode",
+                "hdr",
+                "local1080Export"
+              ],
+              "type": "string"
+            },
+            "title": "Required Capabilities",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "schema_version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "tracks": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineTrack"
+            },
+            "maxItems": 20,
+            "title": "Tracks",
+            "type": "array"
+          }
+        },
+        "title": "EditRecipeV1",
+        "type": "object"
+      },
+      "EventOut": {
+        "properties": {
+          "content": {
+            "default": null,
+            "nullable": true,
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "sequence",
+          "revision",
+          "role",
+          "event_type",
+          "created_at"
+        ],
+        "title": "EventOut",
+        "type": "object"
+      },
+      "GenerativeUploadUrlRequest": {
+        "properties": {
+          "content_type": {
+            "default": "application/octet-stream",
+            "title": "Content Type",
+            "type": "string"
+          },
+          "file_size_bytes": {
+            "exclusiveMinimum": true,
+            "maximum": 209715200,
+            "minimum": 0,
+            "title": "File Size Bytes",
+            "type": "integer"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "purpose": {
+            "default": null,
+            "enum": [
+              "analysis_proxy",
+              "cloud_render_source"
+            ],
+            "nullable": true,
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "file_size_bytes"
+        ],
+        "title": "GenerativeUploadUrlRequest",
+        "type": "object"
+      },
+      "GenerativeUploadUrlResponse": {
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "gcs_path": {
+            "title": "Gcs Path",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "video",
+              "image",
+              "audio"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "purpose": {
+            "default": null,
+            "enum": [
+              "analysis_proxy",
+              "cloud_render_source"
+            ],
+            "nullable": true,
+            "title": "Purpose",
+            "type": "string"
+          },
+          "reservation_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Reservation Id",
+            "type": "string"
+          },
+          "retention_expires_at": {
+            "default": null,
+            "nullable": true,
+            "title": "Retention Expires At",
+            "type": "string"
+          },
+          "upload_headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Upload Headers",
+            "type": "object"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_url",
+          "gcs_path",
+          "kind",
+          "content_type",
+          "upload_headers"
+        ],
+        "title": "GenerativeUploadUrlResponse",
+        "type": "object"
+      },
+      "KriaProblem": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^[a-z][a-z0-9_]{2,79}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "current_revision": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Current Revision",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "accept",
+              "plan",
+              "policy",
+              "tool",
+              "approval",
+              "dispatch",
+              "observe"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "recovery": {
+            "default": "none",
+            "enum": [
+              "retry",
+              "refresh_replan",
+              "ask_user",
+              "manual",
+              "none"
+            ],
+            "title": "Recovery",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "target": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Target",
+            "type": "object"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "phase",
+          "message",
+          "trace_id"
+        ],
+        "title": "KriaProblem",
+        "type": "object"
+      },
+      "KriaProblemOut": {
+        "properties": {
+          "problem": {
+            "$ref": "#/components/schemas/KriaProblem"
+          }
+        },
+        "required": [
+          "problem"
+        ],
+        "title": "KriaProblemOut",
+        "type": "object"
+      },
+      "LibraryJob": {
+        "properties": {
+          "content_plan_item_id": {
+            "nullable": true,
+            "title": "Content Plan Item Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "download_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Download Url",
+            "type": "string"
+          },
+          "error_class": {
+            "default": null,
+            "nullable": true,
+            "title": "Error Class",
+            "type": "string"
+          },
+          "failure_reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Failure Reason",
+            "type": "string"
+          },
+          "feedback_signal": {
+            "default": null,
+            "nullable": true,
+            "title": "Feedback Signal",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "output_url": {
+            "nullable": true,
+            "title": "Output Url",
+            "type": "string"
+          },
+          "output_variant_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Output Variant Id",
+            "type": "string"
+          },
+          "poster_identity": {
+            "default": null,
+            "nullable": true,
+            "title": "Poster Identity",
+            "type": "string"
+          },
+          "poster_status": {
+            "enum": [
+              "ready",
+              "repairing",
+              "unavailable"
+            ],
+            "title": "Poster Status",
+            "type": "string"
+          },
+          "poster_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Poster Url",
+            "type": "string"
+          },
+          "raw_status": {
+            "title": "Raw Status",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tiktok_publication": {
+            "$ref": "#/components/schemas/LibraryTikTokPublication",
+            "default": null,
+            "nullable": true
+          },
+          "tiktok_publishable": {
+            "default": false,
+            "title": "Tiktok Publishable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "mode",
+          "status",
+          "raw_status",
+          "output_url",
+          "poster_status",
+          "created_at",
+          "content_plan_item_id"
+        ],
+        "title": "LibraryJob",
+        "type": "object"
+      },
+      "LibraryPlaybackResponse": {
+        "properties": {
+          "video_url": {
+            "title": "Video Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_url"
+        ],
+        "title": "LibraryPlaybackResponse",
+        "type": "object"
+      },
+      "LibraryResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryJob"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "next_cursor": {
+            "nullable": true,
+            "title": "Next Cursor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobs",
+          "next_cursor"
+        ],
+        "title": "LibraryResponse",
+        "type": "object"
+      },
+      "LibraryTikTokPublication": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deletion_blocked": {
+            "title": "Deletion Blocked",
+            "type": "boolean"
+          },
+          "delivery_mode": {
+            "title": "Delivery Mode",
+            "type": "string"
+          },
+          "failure_code": {
+            "nullable": true,
+            "title": "Failure Code",
+            "type": "string"
+          },
+          "failure_detail": {
+            "nullable": true,
+            "title": "Failure Detail",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "latest_metrics": {
+            "additionalProperties": true,
+            "nullable": true,
+            "title": "Latest Metrics",
+            "type": "object"
+          },
+          "metrics_synced_at": {
+            "format": "date-time",
+            "nullable": true,
+            "title": "Metrics Synced At",
+            "type": "string"
+          },
+          "processing_status": {
+            "title": "Processing Status",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "variant_id": {
+            "nullable": true,
+            "title": "Variant Id",
+            "type": "string"
+          },
+          "visibility_status": {
+            "title": "Visibility Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "variant_id",
+          "delivery_mode",
+          "processing_status",
+          "visibility_status",
+          "retryable",
+          "deletion_blocked",
+          "failure_code",
+          "failure_detail",
+          "latest_metrics",
+          "metrics_synced_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LibraryTikTokPublication",
+        "type": "object"
+      },
+      "MediaAsset": {
+        "additionalProperties": false,
+        "properties": {
+          "duration": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Duration",
+            "type": "number"
+          },
+          "fingerprint": {
+            "$ref": "#/components/schemas/AssetFingerprint",
+            "default": null,
+            "nullable": true
+          },
+          "frame_rate": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "maximum": 240,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Frame Rate",
+            "type": "number"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "is_proxy_available": {
+            "default": false,
+            "title": "Is Proxy Available",
+            "type": "boolean"
+          },
+          "natural_size": {
+            "$ref": "#/components/schemas/MediaSize",
+            "default": null,
+            "nullable": true
+          },
+          "orientation_degrees": {
+            "default": 0,
+            "maximum": 360,
+            "minimum": -360,
+            "title": "Orientation Degrees",
+            "type": "integer"
+          },
+          "relative_path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Relative Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "relative_path"
+        ],
+        "title": "MediaAsset",
+        "type": "object"
+      },
+      "MediaInput": {
+        "additionalProperties": false,
+        "properties": {
+          "content_type": {
+            "default": null,
+            "maxLength": 100,
+            "nullable": true,
+            "title": "Content Type",
+            "type": "string"
+          },
+          "filename": {
+            "default": null,
+            "maxLength": 240,
+            "nullable": true,
+            "title": "Filename",
+            "type": "string"
+          },
+          "gcs_path": {
+            "default": null,
+            "maxLength": 500,
+            "nullable": true,
+            "title": "Gcs Path",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "video",
+              "image",
+              "audio"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id",
+          "kind"
+        ],
+        "title": "MediaInput",
+        "type": "object"
+      },
+      "MediaSize": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "title": "Height",
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "minimum": 0,
+            "title": "Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "width",
+          "height"
+        ],
+        "title": "MediaSize",
+        "type": "object"
+      },
+      "MediaTransform": {
+        "additionalProperties": false,
+        "properties": {
+          "position_x": {
+            "default": 0,
+            "maximum": 100000,
+            "minimum": -100000,
+            "title": "Position X",
+            "type": "number"
+          },
+          "position_y": {
+            "default": 0,
+            "maximum": 100000,
+            "minimum": -100000,
+            "title": "Position Y",
+            "type": "number"
+          },
+          "rotation_degrees": {
+            "default": 0,
+            "maximum": 3600,
+            "minimum": -3600,
+            "title": "Rotation Degrees",
+            "type": "number"
+          },
+          "scale": {
+            "default": 1,
+            "exclusiveMinimum": true,
+            "maximum": 20,
+            "minimum": 0,
+            "title": "Scale",
+            "type": "number"
+          }
+        },
+        "title": "MediaTransform",
+        "type": "object"
+      },
+      "MobileExchangeRequest": {
+        "properties": {
+          "id_token": {
+            "title": "Id Token",
+            "type": "string"
+          },
+          "nonce": {
+            "title": "Nonce",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "google",
+              "apple"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "id_token",
+          "nonce"
+        ],
+        "title": "MobileExchangeRequest",
+        "type": "object"
+      },
+      "MobileLinkResponse": {
+        "properties": {
+          "linked": {
+            "default": true,
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "linked_providers": {
+            "default": [],
+            "items": {
+              "enum": [
+                "google",
+                "apple"
+              ],
+              "type": "string"
+            },
+            "title": "Linked Providers",
+            "type": "array"
+          }
+        },
+        "title": "MobileLinkResponse",
+        "type": "object"
+      },
+      "MobileRefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh_token"
+        ],
+        "title": "MobileRefreshRequest",
+        "type": "object"
+      },
+      "MobileRevokeResponse": {
+        "properties": {
+          "revoked": {
+            "default": true,
+            "title": "Revoked",
+            "type": "boolean"
+          }
+        },
+        "title": "MobileRevokeResponse",
+        "type": "object"
+      },
+      "MobileSessionOut": {
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "token_type": {
+            "default": "Bearer",
+            "enum": [
+              "Bearer"
+            ],
+            "title": "Token Type",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/MobileUserOut"
+          }
+        },
+        "required": [
+          "access_token",
+          "refresh_token",
+          "expires_in",
+          "user"
+        ],
+        "title": "MobileSessionOut",
+        "type": "object"
+      },
+      "MobileUserOut": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "linked_providers": {
+            "default": [],
+            "items": {
+              "enum": [
+                "google",
+                "apple"
+              ],
+              "type": "string"
+            },
+            "title": "Linked Providers",
+            "type": "array"
+          },
+          "name": {
+            "default": null,
+            "nullable": true,
+            "title": "Name",
+            "type": "string"
+          },
+          "onboarding_status": {
+            "title": "Onboarding Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "onboarding_status"
+        ],
+        "title": "MobileUserOut",
+        "type": "object"
+      },
+      "PersonaResponse": {
+        "properties": {
+          "error_detail": {
+            "nullable": true,
+            "title": "Error Detail",
+            "type": "string"
+          },
+          "generation_started_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Generation Started At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "idea_seeds": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Idea Seeds",
+            "type": "array"
+          },
+          "persona": {
+            "additionalProperties": true,
+            "nullable": true,
+            "title": "Persona",
+            "type": "object"
+          },
+          "persona_status": {
+            "title": "Persona Status",
+            "type": "string"
+          },
+          "questionnaire": {
+            "additionalProperties": true,
+            "nullable": true,
+            "title": "Questionnaire",
+            "type": "object"
+          },
+          "tiktok_profile": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Tiktok Profile",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "persona_status",
+          "questionnaire",
+          "persona",
+          "error_detail"
+        ],
+        "title": "PersonaResponse",
+        "type": "object"
+      },
+      "QuestionnaireBody": {
+        "properties": {
+          "hobbies": {
+            "default": "",
+            "title": "Hobbies",
+            "type": "string"
+          },
+          "location": {
+            "default": "",
+            "title": "Location",
+            "type": "string"
+          },
+          "passions": {
+            "default": "",
+            "title": "Passions",
+            "type": "string"
+          },
+          "school": {
+            "default": "",
+            "title": "School",
+            "type": "string"
+          },
+          "social": {
+            "default": "",
+            "title": "Social",
+            "type": "string"
+          },
+          "tiktok_handle": {
+            "default": "",
+            "title": "Tiktok Handle",
+            "type": "string"
+          },
+          "travels": {
+            "default": "",
+            "title": "Travels",
+            "type": "string"
+          },
+          "work": {
+            "default": "",
+            "title": "Work",
+            "type": "string"
+          }
+        },
+        "title": "QuestionnaireBody",
+        "type": "object"
+      },
+      "SubmitTurnBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_event_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Client Event Id",
+            "type": "string"
+          },
+          "expected_thread_revision": {
+            "minimum": 0,
+            "title": "Expected Thread Revision",
+            "type": "integer"
+          },
+          "message": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "client_event_id",
+          "expected_thread_revision"
+        ],
+        "title": "SubmitTurnBody",
+        "type": "object"
+      },
+      "TemporaryUploadCancellationResponse": {
+        "properties": {
+          "reservation_id": {
+            "title": "Reservation Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "cleanup_pending",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id",
+          "status"
+        ],
+        "title": "TemporaryUploadCancellationResponse",
+        "type": "object"
+      },
+      "TextTreatment": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "default": "center",
+            "enum": [
+              "top",
+              "center",
+              "bottom"
+            ],
+            "title": "Anchor",
+            "type": "string"
+          },
+          "animation": {
+            "default": "fade_scale",
+            "enum": [
+              "none",
+              "fade",
+              "fade_scale"
+            ],
+            "title": "Animation",
+            "type": "string"
+          },
+          "color_rgba": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Color Rgba",
+            "type": "array"
+          },
+          "font_name": {
+            "default": "Helvetica-Bold",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Font Name",
+            "type": "string"
+          },
+          "font_size": {
+            "default": 72,
+            "exclusiveMinimum": true,
+            "maximum": 1000,
+            "minimum": 0,
+            "title": "Font Size",
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TextTreatment",
+        "type": "object"
+      },
+      "ThreadDeltaOut": {
+        "properties": {
+          "after_sequence": {
+            "title": "After Sequence",
+            "type": "integer"
+          },
+          "before_sequence": {
+            "default": null,
+            "nullable": true,
+            "title": "Before Sequence",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/DeltaEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_after_sequence": {
+            "title": "Next After Sequence",
+            "type": "integer"
+          },
+          "previous_before_sequence": {
+            "default": null,
+            "nullable": true,
+            "title": "Previous Before Sequence",
+            "type": "integer"
+          },
+          "runtime_version": {
+            "enum": [
+              2
+            ],
+            "title": "Runtime Version",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "archived",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "thread_revision": {
+            "title": "Thread Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "thread_id",
+          "runtime_version",
+          "status",
+          "thread_revision",
+          "events",
+          "after_sequence",
+          "next_after_sequence",
+          "has_more"
+        ],
+        "title": "ThreadDeltaOut",
+        "type": "object"
+      },
+      "TimelineClip": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "rate": {
+            "exclusiveMinimum": true,
+            "maximum": 20,
+            "minimum": 0,
+            "title": "Rate",
+            "type": "number"
+          },
+          "source_asset_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Source Asset Id",
+            "type": "string"
+          },
+          "source_duration": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Source Duration",
+            "type": "number"
+          },
+          "source_start": {
+            "minimum": 0,
+            "title": "Source Start",
+            "type": "number"
+          },
+          "text": {
+            "$ref": "#/components/schemas/TextTreatment",
+            "default": null,
+            "nullable": true
+          },
+          "timeline_start": {
+            "minimum": 0,
+            "title": "Timeline Start",
+            "type": "number"
+          },
+          "transform": {
+            "$ref": "#/components/schemas/MediaTransform"
+          },
+          "transition": {
+            "$ref": "#/components/schemas/Transition",
+            "default": null,
+            "nullable": true
+          },
+          "volume": {
+            "default": 1,
+            "maximum": 2,
+            "minimum": 0,
+            "title": "Volume",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "source_asset_id",
+          "source_start",
+          "source_duration",
+          "timeline_start",
+          "rate"
+        ],
+        "title": "TimelineClip",
+        "type": "object"
+      },
+      "TimelineTrack": {
+        "additionalProperties": false,
+        "properties": {
+          "clips": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineClip"
+            },
+            "maxItems": 100,
+            "title": "Clips",
+            "type": "array"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "video",
+              "overlay",
+              "audio"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "TimelineTrack",
+        "type": "object"
+      },
+      "Transition": {
+        "additionalProperties": false,
+        "properties": {
+          "duration": {
+            "default": 0.35,
+            "exclusiveMinimum": true,
+            "maximum": 10,
+            "minimum": 0,
+            "title": "Duration",
+            "type": "number"
+          },
+          "kind": {
+            "default": "crossfade",
+            "enum": [
+              "crossfade"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "Transition",
+        "type": "object"
+      },
+      "TurnAccepted": {
+        "properties": {
+          "replayed": {
+            "default": false,
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "queued",
+              "planning",
+              "executing",
+              "awaiting_approval",
+              "observing",
+              "completed",
+              "failed",
+              "cancelled",
+              "superseded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_revision": {
+            "title": "Thread Revision",
+            "type": "integer"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "thread_revision",
+          "status"
+        ],
+        "title": "TurnAccepted",
+        "type": "object"
+      },
+      "TurnCancelBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_thread_revision": {
+            "minimum": 0,
+            "title": "Expected Thread Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_thread_revision"
+        ],
+        "title": "TurnCancelBody",
+        "type": "object"
+      },
+      "TurnCancelled": {
+        "properties": {
+          "approval_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Approval Ids",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_revision": {
+            "title": "Thread Revision",
+            "type": "integer"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "thread_revision",
+          "status"
+        ],
+        "title": "TurnCancelled",
+        "type": "object"
+      },
+      "UploadBody": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/UploadFile"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "UploadBody",
+        "type": "object"
+      },
+      "UploadFile": {
+        "additionalProperties": false,
+        "properties": {
+          "client_upload_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Client Upload Id",
+            "type": "string"
+          },
+          "content_type": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Content Type",
+            "type": "string"
+          },
+          "file_size_bytes": {
+            "exclusiveMinimum": true,
+            "maximum": 4294967296,
+            "minimum": 0,
+            "title": "File Size Bytes",
+            "type": "integer"
+          },
+          "filename": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "content_type",
+          "file_size_bytes",
+          "client_upload_id"
+        ],
+        "title": "UploadFile",
+        "type": "object"
+      },
+      "UploadTarget": {
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "gcs_path": {
+            "title": "Gcs Path",
+            "type": "string"
+          },
+          "media_id": {
+            "title": "Media Id",
+            "type": "string"
+          },
+          "upload_headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Upload Headers",
+            "type": "object"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id",
+          "upload_url",
+          "gcs_path",
+          "content_type",
+          "upload_headers"
+        ],
+        "title": "UploadTarget",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "mobileBearer": {
+        "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Checked native subset; server drafts and render jobs remain authoritative.",
+    "title": "Kria Mobile API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/auth/mobile/exchange": {
+      "post": {
+        "operationId": "exchangeMobileIdentity",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MobileExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileSessionOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        }
+      }
+    },
+    "/auth/mobile/link": {
+      "post": {
+        "operationId": "linkMobileIdentity",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MobileExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileLinkResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/auth/mobile/me": {
+      "get": {
+        "operationId": "getMobileAccount",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileUserOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/auth/mobile/refresh": {
+      "post": {
+        "operationId": "refreshMobileSession",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MobileRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileSessionOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        }
+      }
+    },
+    "/auth/mobile/revoke": {
+      "post": {
+        "operationId": "revokeMobileSession",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MobileRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileRevokeResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        }
+      }
+    },
+    "/creation-threads": {
+      "get": {
+        "operationId": "listCreationThreads",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CreationThreadOut"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createCreationThread",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationThreadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/{thread_id}": {
+      "get": {
+        "operationId": "getCreationThread",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "projection",
+            "required": true,
+            "schema": {
+              "enum": [
+                "full"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationThreadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/creation-threads/{thread_id}/approvals/{approval_id}": {
+      "get": {
+        "operationId": "getCreationApproval",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalSnapshotOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "approval_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/creation-threads/{thread_id}/approvals/{approval_id}/{decision}": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "approval_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "decision",
+          "required": true,
+          "schema": {
+            "enum": [
+              "approve",
+              "deny"
+            ],
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "decideCreationApproval",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalDecisionOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/{thread_id}/delta": {
+      "get": {
+        "operationId": "getCreationThreadDelta",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "default": -1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadDeltaOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/creation-threads/{thread_id}/draft": {
+      "get": {
+        "operationId": "getCreationDraft",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftSnapshotOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "operationId": "updateCreationDraft",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftWriteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftSnapshotOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/{thread_id}/draft/undo": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "undoCreationDraft",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftUndoBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftSnapshotOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/{thread_id}/media": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "attachCreationThreadMedia",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationThreadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/{thread_id}/turns": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "submitCreationTurn",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitTurnBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnAccepted"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/{thread_id}/upload-urls": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reserveCreationThreadUploads",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UploadTarget"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/generative-jobs/upload-url": {
+      "post": {
+        "operationId": "reserveTemporaryUpload",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerativeUploadUrlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerativeUploadUrlResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/generative-jobs/uploads/{reservation_id}": {
+      "delete": {
+        "operationId": "cancelTemporaryUpload",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemporaryUploadCancellationResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "reservation_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/me/jobs": {
+      "get": {
+        "operationId": "listLibraryJobs",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/me/jobs/{job_id}/edit-recipe": {
+      "get": {
+        "operationId": "getEditRecipe",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "variant_id",
+            "required": false,
+            "schema": {
+              "maxLength": 160,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditRecipeV1"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/me/jobs/{job_id}/playback-url": {
+      "get": {
+        "operationId": "refreshPlaybackURL",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPlaybackResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/personas": {
+      "get": {
+        "operationId": "getPersona",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createPersona",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuestionnaireBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://nova-video.fly.dev"
+    }
+  ]
+}

@@ -36,6 +36,10 @@ node_modules
 .turbo/
 out/
 *.tsbuildinfo
+src/apps/ios/.derived-data/
+src/apps/ios/.build/
+src/apps/ios/**/.build/
+src/apps/ios/Kria.xcodeproj/
 
 # OS
 .DS_Store
@@ -69,3 +73,6 @@ supabase/.temp/
 
 # Vercel CLI local cache
 .vercel
+# Developer-specific iOS API/OAuth overrides.
+src/apps/ios/Config/Local.xcconfig
+src/apps/ios/Packages/*/.swiftpm/

@@ -17,6 +17,7 @@ cp .env.example .env    # fill in your values
 ```
 src/apps/web/   — Next.js frontend
 src/apps/api/   — Python FastAPI + Celery
+src/apps/ios/   — native SwiftUI/AVFoundation app (iOS 18; XcodeGen)
 agents/         — agent context (read before working on video processing)
 docs/           — pipeline internals, runbooks, specs, designs (start at docs/pipelines/)
 CLAUDE.md       — working agreements, invariants, key paths, env vars
@@ -24,6 +25,8 @@ DESIGN.md       — design-system tokens, loading rules, anti-slop rules, a11y b
 LICENSES.md     — third-party component and font licenses
 TODOS.md        — deferred work backlog, grouped by the PR that deferred it
 ```
+
+Native setup, build commands, and architecture boundaries are in the [Kria iOS development runbook](docs/runbooks/ios-development.md).
 
 ## Features
 

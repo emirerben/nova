@@ -1,0 +1,76 @@
+{
+  "endpoints": {
+    "/auth/mobile/exchange": {
+      "method": "POST",
+      "request": "MobileExchangeRequest",
+      "response": "MobileSessionOut"
+    },
+    "/auth/mobile/link": {
+      "method": "POST",
+      "request": "MobileExchangeRequest",
+      "response": "MobileLinkResponse"
+    },
+    "/auth/mobile/me": {
+      "method": "GET",
+      "response": "MobileUserOut"
+    },
+    "/auth/mobile/refresh": {
+      "method": "POST",
+      "request": "MobileRefreshRequest",
+      "response": "MobileSessionOut"
+    },
+    "/auth/mobile/revoke": {
+      "method": "POST",
+      "request": "MobileRefreshRequest",
+      "response": "MobileRevokeResponse"
+    }
+  },
+  "models": {
+    "EditRecipeV1": {
+      "assets": "Array<MediaAsset>",
+      "audio": "AudioMixRecipe",
+      "canvas": "Canvas",
+      "frame_rate": "number",
+      "renderer_version": "string",
+      "required_capabilities": "Set<MediaCapability>",
+      "schema_version": 1,
+      "tracks": "Array<TimelineTrack>"
+    },
+    "MobileExchangeRequest": {
+      "id_token": "string",
+      "nonce": "string",
+      "provider": [
+        "google",
+        "apple"
+      ]
+    },
+    "MobileLinkResponse": {
+      "linked": "boolean",
+      "linked_providers": "Array<Provider>"
+    },
+    "MobileRefreshRequest": {
+      "refresh_token": "string"
+    },
+    "MobileRevokeResponse": {
+      "revoked": "boolean"
+    },
+    "MobileSessionOut": {
+      "access_token": "string",
+      "expires_in": "integer",
+      "refresh_token": "string",
+      "token_type": "Bearer",
+      "user": "MobileUserOut"
+    },
+    "MobileUserOut": {
+      "email": "string",
+      "id": "string",
+      "linked_providers": "Array<Provider>",
+      "name": [
+        "string",
+        "null"
+      ],
+      "onboarding_status": "string"
+    }
+  },
+  "schema_version": 1
+}

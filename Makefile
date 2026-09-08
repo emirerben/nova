@@ -1,4 +1,5 @@
 .PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
+        ios-generate ios-build ios-test ios-verify \
         kria-replay verify-kria \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays verify-motion-performance \
@@ -29,6 +30,21 @@ kria-replay:
 
 verify-kria:
 	KRIA_VERIFY_PYTHON="$(abspath $(API_PYTHON))" bash scripts/verify-kria.sh
+
+# ── Native iOS ───────────────────────────────────────────────────────────────
+
+ios-generate:
+	bash scripts/ios/generate-project.sh
+
+ios-build: ios-generate
+	(cd src/apps/ios && xcodebuild -project Kria.xcodeproj -scheme Kria \
+		-skipPackagePluginValidation -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build)
+
+ios-test: ios-generate
+	bash scripts/ios/verify.sh
+
+ios-verify:
+	bash scripts/ios/verify.sh
 
 # ── Local-render parity (runs the prod Dockerfile locally) ────────────────────
 # Usage:

@@ -1,0 +1,6 @@
+// $() preserves the second slash because xcconfig otherwise treats // as a comment.
+API_BASE_URL = https:/$()/staging.usekria.com
+AUTH_MODE = apple
+KRIA_MEDIA_ENGINE = remote
+KRIA_GOOGLE_CLIENT_ID =
+KRIA_GOOGLE_REDIRECT_SCHEME = kria-staging-google
