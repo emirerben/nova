@@ -135,3 +135,29 @@ def test_cleanup_caps_batch_and_ignores_row_changed_after_storage_delete(monkeyp
     assert "pg_advisory_xact_lock" in lock_statement
     assert "FOR UPDATE" in row_statement
     receipt_session.commit.assert_not_called()
+
+
+def test_cleanup_pending_receipt_is_ineligible_until_signed_put_expiry(monkeypatch) -> None:
+    now = datetime(2026, 9, 7, 12, tzinfo=UTC)
+    row = _reservation(now=now)
+    row.status = "cleanup_pending"
+    row.retention_expires_at = now + timedelta(minutes=1)
+    claim_session = MagicMock()
+    candidates = MagicMock()
+    candidates.all.return_value = []
+    locked_rows = MagicMock()
+    locked_rows.scalars.return_value.all.return_value = []
+    claim_session.execute.side_effect = [candidates, locked_rows]
+    monkeypatch.setattr(
+        mobile_upload_cleanup,
+        "sync_session",
+        lambda: nullcontext(claim_session),
+    )
+    delete = MagicMock()
+    monkeypatch.setattr(mobile_upload_cleanup, "delete_object_best_effort", delete)
+
+    assert mobile_upload_cleanup.cleanup_expired_temporary_uploads(now=now) == 0
+
+    discovery_sql = str(claim_session.execute.call_args_list[0].args[0])
+    assert discovery_sql.count("retention_expires_at <=") == 2
+    delete.assert_not_called()

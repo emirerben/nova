@@ -151,7 +151,10 @@ This PR adds:
   `users.id` at the DB level — see the docstring on
   `confirm_account_deletion` for the exact sequence and why), then GCS
   objects under `users/{user_id}/` and `generative-jobs/{job_id}/` are swept
-  asynchronously (`tasks.purge_user_storage`). Two-step confirm — a Fernet
+  asynchronously (`tasks.purge_user_storage`). A durable second verified
+  `users/{user_id}/` sweep runs after the full upload-retention window, when
+  signed-upload capabilities and slow in-flight PUTs have quiesced, preventing
+  late media from surviving the immediate purge. Two-step confirm — a Fernet
   token of the caller's own id, emailed as a code, verified + TTL-checked on
   confirm — so a stray call can't delete an account outright. (`AgentRun`
   rows tied to a job cascade-delete automatically via `ondelete=CASCADE`

@@ -67,6 +67,7 @@ from app.services.content_plan_persona import (
 from app.services.durable_attempt_cleanup import job_render_not_quiescent
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.job_storage_deletion import (
+    ACCOUNT_ERASURE_LATE_UPLOAD_QUIESCENCE,
     ACCOUNT_ERASURE_STORAGE_QUIESCENCE,
     JobStorageManifestError,
     build_account_erasure_manifest_for_job,
@@ -3006,6 +3007,23 @@ async def confirm_account_deletion(
             existing.last_error = None
             existing.completed_at = None
         deletion_outbox_ids.append(existing.id)
+
+    # A signed PUT capability minted just before account deletion remains valid
+    # after the User/TemporaryMediaUpload rows disappear. The immediate prefix
+    # purge below may therefore run before that client finishes uploading and a
+    # late PUT could recreate unowned personal media. Persist a second,
+    # owner-scoped prefix sweep after the maximum render/upload quiescence
+    # window. The Beat-driven outbox keeps retrying storage failures until the
+    # prefix is empty, so this safety net survives process and broker failures.
+    account_prefix_outbox = JobStorageDeletion(
+        id=uuid.uuid4(),
+        job_id=uuid.uuid4(),
+        object_paths=[],
+        object_prefixes=[f"users/{user.id}/"],
+        next_attempt_at=datetime.now(UTC) + ACCOUNT_ERASURE_LATE_UPLOAD_QUIESCENCE,
+    )
+    db.add(account_prefix_outbox)
+    deletion_outbox_ids.append(account_prefix_outbox.id)
 
     # 1. Sever job → plan_item back-refs before the content_plan cascade fires.
     await db.execute(

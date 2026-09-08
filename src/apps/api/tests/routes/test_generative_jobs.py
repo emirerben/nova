@@ -543,14 +543,17 @@ async def test_mobile_upload_purpose_creates_durable_retention_receipt(
 
 
 @pytest.mark.asyncio
-async def test_cancel_temporary_upload_is_owner_scoped_and_idempotently_deletes(monkeypatch):
+async def test_cancel_temporary_upload_waits_until_signed_put_cannot_arrive(monkeypatch):
     user = SimpleNamespace(id=uuid.uuid4())
     reservation_id = uuid.uuid4()
+    created_at = datetime.now(UTC) - timedelta(minutes=2)
     row = SimpleNamespace(
         id=reservation_id,
         user_id=user.id,
         object_path=f"analysis-proxy/{user.id}/abc123def456/clip.mp4",
         status="reserved",
+        created_at=created_at,
+        retention_expires_at=created_at + timedelta(hours=24),
         cleanup_claimed_at=None,
         deleted_at=None,
         delete_attempts=0,
@@ -558,15 +561,18 @@ async def test_cancel_temporary_upload_is_owner_scoped_and_idempotently_deletes(
     )
     result = SimpleNamespace(scalar_one_or_none=lambda: row)
     db = SimpleNamespace(execute=AsyncMock(return_value=result), commit=AsyncMock())
-    monkeypatch.setattr(
-        "app.routes.generative_jobs.storage.delete_object_best_effort", lambda _path: True
-    )
+    delete = MagicMock()
+    monkeypatch.setattr("app.routes.generative_jobs.storage.delete_object_best_effort", delete)
 
     response = await cancel_temporary_upload(str(reservation_id), user, db)
 
-    assert response.status == "deleted"
-    assert row.deleted_at is not None
-    assert db.commit.await_count == 2
+    assert response.status == "cleanup_pending"
+    assert row.status == "cleanup_pending"
+    assert row.cleanup_claimed_at is None
+    assert row.deleted_at is None
+    assert row.retention_expires_at == created_at + timedelta(hours=24)
+    delete.assert_not_called()
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -624,9 +630,12 @@ async def test_cancel_temporary_upload_handles_invalid_missing_deleted_and_stora
     assert response.status == "deleted"
     deleted_db.commit.assert_not_awaited()
 
+    created_at = datetime.now(UTC) - timedelta(minutes=2)
     pending_row = SimpleNamespace(
         object_path=f"analysis-proxy/{user.id}/abc123def456/clip.mp4",
         status="reserved",
+        created_at=created_at,
+        retention_expires_at=created_at + timedelta(hours=24),
         cleanup_claimed_at=None,
         deleted_at=None,
         delete_attempts=0,
@@ -641,9 +650,9 @@ async def test_cancel_temporary_upload_handles_invalid_missing_deleted_and_stora
     )
     response = await cancel_temporary_upload(str(reservation_id), user, pending_db)
     assert response.status == "cleanup_pending"
-    assert pending_row.delete_attempts == 1
-    assert pending_row.last_error == "storage_unavailable"
-    assert pending_db.commit.await_count == 2
+    assert pending_row.delete_attempts == 0
+    assert pending_row.last_error is None
+    assert pending_db.commit.await_count == 1
 
 
 @pytest.mark.parametrize("file_size_bytes", [0, (200 * 1024 * 1024) + 1])

@@ -9585,7 +9585,7 @@ async def cancel_temporary_upload(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> TemporaryUploadCancellationResponse:
-    """Cancel one owned native upload and durably request object cleanup."""
+    """Cancel one owned native upload and durably request post-URL cleanup."""
     try:
         identifier = uuid.UUID(reservation_id)
     except ValueError as exc:
@@ -9610,22 +9610,17 @@ async def cancel_temporary_upload(
             reservation_id=reservation_id,
             status="deleted",
         )
+    # A delete while the signed PUT is still live is not terminal: NotFound can
+    # simply mean the browser has not finished its upload yet. Keep the receipt
+    # nonterminal and let the durable sweeper delete at the original retention
+    # deadline, well after both URL expiry and any slow in-flight PUT.
     row.status = "cleanup_pending"
-    row.cleanup_claimed_at = datetime.now(UTC)
-    await db.commit()
-
-    deleted = await asyncio.to_thread(storage.delete_object_best_effort, row.object_path)
-    if deleted:
-        row.status = "deleted"
-        row.deleted_at = datetime.now(UTC)
-        row.last_error = None
-    else:
-        row.delete_attempts = int(row.delete_attempts or 0) + 1
-        row.last_error = "storage_unavailable"
+    row.cleanup_claimed_at = None
+    row.last_error = None
     await db.commit()
     return TemporaryUploadCancellationResponse(
         reservation_id=reservation_id,
-        status="deleted" if deleted else "cleanup_pending",
+        status="cleanup_pending",
     )
 
 

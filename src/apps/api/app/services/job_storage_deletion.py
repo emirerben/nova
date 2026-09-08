@@ -31,6 +31,11 @@ JOB_STORAGE_EXACT_ATTEMPT_LIMIT = 32
 # Account erasure cannot wait for a live worker, so it externalizes ownership
 # and makes conservative roots due only after this window.
 ACCOUNT_ERASURE_STORAGE_QUIESCENCE = timedelta(minutes=35)
+# A signed PUT can begin just before its 15-minute capability expires and
+# finish after authentication. Keep the account-root safety sweep dormant for
+# a full temporary-upload retention window plus margin, so it catches both a
+# late start and a slow in-flight upload after the User receipt has cascaded.
+ACCOUNT_ERASURE_LATE_UPLOAD_QUIESCENCE = timedelta(hours=25)
 
 ManifestStatus = Literal["completed", "pending", "unavailable"]
 

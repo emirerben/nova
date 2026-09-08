@@ -9,7 +9,8 @@ purge_user_storage           — async GCS walk deleting everything under
                                 dev-user/ and {user_id}/{job_id}/ upload shapes that
                                 predate the users/ prefix — see infra/README.md).
 sweep_job_storage_deletions  — Beat-driven dispatcher that recovers deletion
-                                manifests after broker or worker loss.
+                                manifests after broker or worker loss, including
+                                the delayed account-root sweep for late signed PUTs.
 purge_job_storage             — exact-key cleanup driven by a durable manifest;
                                 failed keys remain persisted for backoff retries.
 
@@ -81,7 +82,7 @@ def cleanup_job_storage_paths(object_paths: list[str]) -> tuple[int, list[str]]:
 
 def cleanup_job_storage_prefixes(object_prefixes: list[str]) -> tuple[int, list[str]]:
     """Delete project/job prefixes and preserve any failed prefix for retry."""
-    from app.storage import delete_prefix_once  # noqa: PLC0415
+    from app.storage import delete_prefix_verified  # noqa: PLC0415
 
     deleted = 0
     failed: list[str] = []
@@ -89,18 +90,23 @@ def cleanup_job_storage_prefixes(object_prefixes: list[str]) -> tuple[int, list[
         if not isinstance(prefix, str) or not prefix.strip():
             continue
         try:
-            deleted += delete_prefix_once(prefix, timeout_s=5.0)
+            result = delete_prefix_verified(prefix, timeout_s=5.0)
+            deleted += result.deleted
+            if result.status != "verified_empty":
+                failed.append(prefix)
         except Exception:  # noqa: BLE001 — caller persists the failed prefix
             failed.append(prefix)
     return deleted, failed
 
 
 def _project_manifest_owner(object_prefixes: list[str]) -> uuid.UUID | None:
-    """Identify a project-deletion manifest from its owner-scoped thread prefix."""
+    """Identify a project/account manifest from an owner-scoped users prefix."""
 
     for prefix in object_prefixes:
         parts = prefix.split("/")
-        if len(parts) >= 4 and parts[0] == "users" and parts[2] == "creation-threads":
+        is_owner_root = len(parts) == 3 and parts[2] == ""
+        is_creation_thread = len(parts) >= 4 and parts[2] == "creation-threads"
+        if parts and parts[0] == "users" and (is_owner_root or is_creation_thread):
             try:
                 return uuid.UUID(parts[1])
             except (TypeError, ValueError):

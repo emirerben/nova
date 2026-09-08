@@ -45,6 +45,7 @@ def cleanup_expired_temporary_uploads(
         ),
         and_(
             TemporaryMediaUpload.status == "cleanup_pending",
+            TemporaryMediaUpload.retention_expires_at <= current,
             or_(
                 TemporaryMediaUpload.cleanup_claimed_at.is_(None),
                 TemporaryMediaUpload.cleanup_claimed_at <= stale_claim,

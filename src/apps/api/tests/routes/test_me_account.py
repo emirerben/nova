@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from cryptography.fernet import Fernet
@@ -183,13 +183,26 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
     assert "personas" in lock_sql[1]
     assert "jobs" in lock_sql[2]
     db.commit.assert_awaited_once()
-    outbox = db.add.call_args.args[0]
+    added_rows = [call.args[0] for call in db.add.call_args_list]
+    outbox = next(row for row in added_rows if getattr(row, "job_id", None) == job.id)
     assert outbox.job_id == job.id
     assert outbox.object_paths["version"] == 2
     assert f"generative-jobs/{job.id}/" in {
         entry["prefix"] for entry in outbox.object_paths["prefixes"]
     }
-    dispatch.assert_awaited_once_with(outbox.id)
+    account_outbox = next(
+        row
+        for row in added_rows
+        if row is not outbox and getattr(row, "object_prefixes", None) == [f"users/{user.id}/"]
+    )
+    assert account_outbox.object_paths == []
+    assert account_outbox.next_attempt_at is not None
+    assert account_outbox.next_attempt_at > datetime.now(UTC) + timedelta(hours=24)
+    assert dispatch.await_count == 2
+    assert {call.args[0] for call in dispatch.await_args_list} == {
+        outbox.id,
+        account_outbox.id,
+    }
     mock_purge.assert_called_once_with(str(user.id), [str(job.id)], [job.raw_storage_path])
 
 
