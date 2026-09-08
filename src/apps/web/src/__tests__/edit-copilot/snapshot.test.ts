@@ -1521,7 +1521,9 @@ describe("complete component context", () => {
       } }),
     ], [], [], capabilities, { overlayCards: [overlay], poolAssets: [asset], videoDurationS: 10 });
     expect(snapshot.text_bars[0].context).toEqual({ semantic_role: "price",
-      source_text: "Coffee costs four pounds", source_timeline_id: "clip-coffee", group_id: "menu-scene" });
+      source_text: "Coffee costs four pounds", source_timeline_id: "clip-coffee", group_id: "menu-scene",
+      provenance: { narration_label_kind: "price", source_text: "Coffee costs four pounds",
+        source_timeline_id: "clip-coffee" } });
     expect(snapshot.overlays?.cards[0].context).toMatchObject({ asset_id: "asset-menu",
       subject: "Cafe menu", user_context: "Use with the price labels",
       on_screen_text: "Coffee £4; cake £6", group_id: "menu-scene" });
