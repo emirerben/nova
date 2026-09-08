@@ -226,13 +226,19 @@ def test_postgres_tier_hit_warms_redis(monkeypatch, fake_redis):
     assert clip_cache._cache_key("shared-hash", "ball", _CREATOR_ID) in fake_redis.store
 
 
-def test_redis_ttl_is_capped_by_the_24_hour_transcript_policy(monkeypatch, fake_redis):
-    monkeypatch.setattr(clip_cache.settings, "media_analysis_cache_ttl_days", 12)
+def test_redis_hot_tier_stays_capped_at_24_hours(monkeypatch, fake_redis):
+    monkeypatch.setattr(clip_cache.settings, "media_analysis_cache_ttl_days", 90)
 
     clip_cache.set_cached_meta("shared-hash", "ball", _meta(), creator_id=_CREATOR_ID)
 
     key = clip_cache._cache_key("shared-hash", "ball", _CREATOR_ID)
     assert fake_redis.ttls[key] == 24 * 60 * 60
+
+
+def test_persistent_tier_honors_90_day_reuse_window(monkeypatch):
+    monkeypatch.setattr(clip_cache.settings, "media_analysis_cache_ttl_days", 90)
+
+    assert clip_cache._persistent_cache_ttl_days() == 90
 
 
 def test_set_writes_postgres_tier_when_redis_is_unavailable(monkeypatch):

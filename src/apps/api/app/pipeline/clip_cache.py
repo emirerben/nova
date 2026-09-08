@@ -66,10 +66,16 @@ _FINGERPRINT_HEAD_BYTES = 4 * 1024 * 1024
 _FINGERPRINT_TAIL_BYTES = 4 * 1024 * 1024
 
 
-def _cache_ttl_s() -> int:
-    """Use the same privacy-capped expiry for Redis and PostgreSQL."""
+def _redis_cache_ttl_s() -> int:
+    """Bound unindexed Redis copies after account deletion."""
 
-    return min(1, max(1, int(settings.media_analysis_cache_ttl_days))) * 24 * 60 * 60
+    return 24 * 60 * 60
+
+
+def _persistent_cache_ttl_days() -> int:
+    """Return the configured owner-scoped PostgreSQL reuse window."""
+
+    return max(1, int(settings.media_analysis_cache_ttl_days))
 
 
 def compute_clip_hash(path: str) -> str | None:
@@ -182,7 +188,6 @@ def _get_persistent_payload(clip_hash: str, filter_hint: str, creator_id: str | 
                       AND prompt_version = :prompt_version
                       AND schema_version = :schema_version
                       AND expires_at > now()
-                      AND created_at > now() - interval '1 day'
                     """
                     ),
                     {
@@ -271,7 +276,7 @@ def _set_persistent_payload(
                     "prompt_version": CLIP_ANALYSIS_PROMPT_VERSION,
                     "schema_version": CACHE_SCHEMA_VERSION,
                     "result_json": encoded,
-                    "ttl_days": _cache_ttl_s() // (24 * 60 * 60),
+                    "ttl_days": _persistent_cache_ttl_days(),
                 },
             )
     except Exception as exc:
@@ -301,7 +306,7 @@ def get_cached_meta(
         raw = _get_persistent_payload(clip_hash, filter_hint, creator_id)
         if raw is not None and r is not None:
             try:
-                r.setex(key, _cache_ttl_s(), raw)
+                r.setex(key, _redis_cache_ttl_s(), raw)
             except Exception as exc:
                 log.warning("clip_cache_set_failed", key=key, error=str(exc))
     if raw is None:
@@ -344,7 +349,7 @@ def set_cached_meta(
     r = _get_redis()
     try:
         if r is not None:
-            r.setex(key, _cache_ttl_s(), encoded)
+            r.setex(key, _redis_cache_ttl_s(), encoded)
     except Exception as exc:
         log.warning("clip_cache_set_failed", key=key, error=str(exc))
     _set_persistent_payload(clip_hash, filter_hint, encoded, creator_id)

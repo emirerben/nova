@@ -153,6 +153,12 @@ returns `ai_cost_control_policy_rejected`; a ledger outage returns retryable
 `503 ai_cost_control_unavailable`; and an uncertain provider outcome returns
 non-retryable `503 ai_provider_outcome_unknown` so clients do not double-spend.
 
+Clip analysis uses a 90-day PostgreSQL reuse tier keyed by creator, source
+fingerprint, analyzer, model, prompt version, schema version, and filter hint.
+The creator foreign key makes durable entries disappear with account deletion.
+Redis is only a 24-hour hot copy: it is deliberately shorter because those keys
+are creator-scoped but not indexed for an immediate owner-wide purge.
+
 Application rollback is flag-first and schema-preserving: disable
 `AI_COST_CONTROL_ENABLED`, `BILLING_RECONCILIATION_ENABLED`, and
 `STORAGE_RETENTION_ENABLED`, then roll the application image back. Once any new
@@ -239,8 +245,13 @@ python3 scripts/check_gcs_lifecycle_drift.py --bucket "$STORAGE_BUCKET"
 ```
 
 New batch uploads land under `staging/<user>/batch/` and are promoted to an
-owned job prefix only after the job row is committed. Authenticated generative
-browser uploads land directly under `users/<user>/generative/`; each retains a
+owned job prefix only after the job row is committed. The Job stores every
+source generation and deterministic destination before the first copy; a
+two-minute maintenance reconciler resumes interrupted copies and publishes any
+promoted-but-undispatched render. Repeatedly unrecoverable promotions become an
+honest failed job at 23 hours, before the one-day staging lifecycle can remove
+their only source. Authenticated generative browser uploads land
+directly under `users/<user>/generative/`; each retains a
 24-hour database cleanup receipt until the Job transaction atomically attaches
 it. Explicit mobile-purpose and synthetic session uploads use 24-hour lifecycle
 prefixes. Account deletion immediately purges owned media and also records a

@@ -117,7 +117,7 @@ The Privacy Policy (§8) states specific retention windows. As of this PR:
 | Anonymous uploads | 30d | Anonymous-user prefix in `infra/gcs-lifecycle.json` |
 | Other unattached session uploads | 24h | Purpose-specific prefixes/receipts plus `infra/gcs-lifecycle.json` |
 | Voiceover recordings, temporary music/lyric previews | 24h | `infra/gcs-lifecycle.json` |
-| Speech transcripts (`transcript-cache/`) | 24h | **This PR** — added to `infra/gcs-lifecycle.json` (was previously unbounded; the cache is content-hash-keyed with no link back to a user, so account deletion can't find and purge it — see below) |
+| GCS Whisper transcripts (`transcript-cache/`) | 24h | **This PR** — added to `infra/gcs-lifecycle.json` (was previously unbounded; the cache is content-hash-keyed with no link back to a user, so account deletion can't find and purge it — see below) |
 | Attached footage / rendered output (`users/…`, `generative-jobs/…`) | policy windows, then deletion or latest-final preservation | Generation-pinned retention manifests; newly signed `users/…/generative/…` footage remains a 24h temporary-upload receipt until a Job transaction attaches it |
 | Internal AI processing logs tied to a job | 30 days | Already enforced (`agent_run_retention_days`) |
 
@@ -230,7 +230,7 @@ discards them with no error at queue time — this is a known repo trap
 - No cookie-consent banner — not required today (strictly-necessary cookies
   only), but must be revisited the moment any analytics or marketing
   cookie is added.
-- `user_id → content_hash` index for transcript-cache is not built; instead
+- `user_id → content_hash` index for the GCS Whisper transcript cache is not built; instead
   we shortened the cache TTL to 24h so orphaned entries age out on their
   own. Revisit if a longer transcript cache TTL becomes worth the
   engineering to do it properly.

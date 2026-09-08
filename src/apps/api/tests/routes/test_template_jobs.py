@@ -2,6 +2,8 @@
 
 import copy
 import uuid
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -14,6 +16,7 @@ from app.main import app
 from app.models import VideoTemplate
 from app.routes import template_jobs
 from app.routes.template_jobs import reroll_template_job
+from app.services import template_upload_promotion
 
 
 @pytest.fixture()
@@ -54,42 +57,68 @@ def _make_template(
     return t
 
 
-@pytest.mark.asyncio
-async def test_staged_clips_promote_exact_generations_into_owned_job_prefix(
-    monkeypatch,
-) -> None:
+def _promotion_job(user_id: uuid.UUID, job_id: uuid.UUID, staged: list[str]):
+    journal = template_upload_promotion.build_template_upload_promotion(
+        staged,
+        user_id=user_id,
+        job_id=job_id,
+        source_generations={path: f"gen-{index}" for index, path in enumerate(staged)},
+    )
+    return SimpleNamespace(
+        id=job_id,
+        user_id=user_id,
+        job_type="template",
+        status="importing",
+        raw_storage_path=staged[0],
+        all_candidates={"clip_paths": staged, "inputs": {"location": "Tokyo"}},
+        assembly_plan={template_upload_promotion.TEMPLATE_UPLOAD_PROMOTION_FIELD: journal},
+        created_at=datetime.now(UTC),
+        failure_reason=None,
+        error_detail=None,
+    )
+
+
+def _promotion_session(monkeypatch, job, *, commit_error: Exception | None = None):
+    db = MagicMock()
+    result = MagicMock()
+    result.scalars.return_value.one_or_none.return_value = job
+    db.execute.return_value = result
+    if commit_error is not None:
+        db.commit.side_effect = commit_error
+
+    @contextmanager
+    def session():
+        yield db
+
+    monkeypatch.setattr(template_upload_promotion, "sync_session", session)
+    return db
+
+
+def test_staged_clip_journal_pins_exact_generations_and_owned_destinations() -> None:
     user_id = uuid.uuid4()
     job_id = uuid.uuid4()
     staged = [
         f"staging/{user_id}/batch-a/clip_000.mp4",
         f"staging/{user_id}/batch-a/clip_001.mov",
     ]
-    copy_calls: list[tuple[str, str, str]] = []
-
-    def copy(src: str, dst: str, *, source_generation: str):
-        copy_calls.append((src, dst, source_generation))
-        return SimpleNamespace(generation=f"dst-{source_generation}")
-
-    monkeypatch.setattr(template_jobs.storage, "copy_object_generation", copy)
-
-    promoted, sources = await template_jobs._promote_staged_template_clips(
+    journal = template_upload_promotion.build_template_upload_promotion(
         staged,
         user_id=user_id,
         job_id=job_id,
         source_generations={staged[0]: "101", staged[1]: "202"},
     )
 
-    assert promoted == [
+    assert [clip["destination_path"] for clip in journal["clips"]] == [
         f"users/{user_id}/jobs/{job_id}/source/clip_000.mp4",
         f"users/{user_id}/jobs/{job_id}/source/clip_001.mov",
     ]
-    assert sources == [(staged[0], "101"), (staged[1], "202")]
-    assert [call[2] for call in copy_calls] == ["101", "202"]
+    assert [clip["source_generation"] for clip in journal["clips"]] == ["101", "202"]
 
 
-@pytest.mark.asyncio
-async def test_failed_staging_promotion_cleans_exact_partial_destination(
+@pytest.mark.parametrize("failure_call", [1, 2])
+def test_staging_promotion_resumes_after_each_interrupted_copy(
     monkeypatch,
+    failure_call: int,
 ) -> None:
     user_id = uuid.uuid4()
     job_id = uuid.uuid4()
@@ -97,35 +126,173 @@ async def test_failed_staging_promotion_cleans_exact_partial_destination(
         f"staging/{user_id}/batch-a/clip_000.mp4",
         f"staging/{user_id}/batch-a/clip_001.mp4",
     ]
-    calls = 0
+    job = _promotion_job(user_id, job_id, staged)
+    db = _promotion_session(monkeypatch, job)
+    calls: list[tuple[str, str, str]] = []
 
-    def copy(_src: str, _dst: str, *, source_generation: str):  # noqa: ARG001
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise RuntimeError("copy failed")
-        return SimpleNamespace(generation="destination-generation")
+    def interrupted_copy(src: str, dst: str, *, source_generation: str):
+        calls.append((src, dst, source_generation))
+        if len(calls) == failure_call:
+            raise RuntimeError("process interrupted")
+        return SimpleNamespace(generation=f"dst-{source_generation}")
 
-    delete = MagicMock(return_value=True)
-    monkeypatch.setattr(template_jobs.storage, "copy_object_generation", copy)
+    delete_source = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        template_upload_promotion.storage,
+        "copy_object_generation",
+        interrupted_copy,
+    )
+    monkeypatch.setattr(
+        template_upload_promotion.storage,
+        "delete_object_generation_best_effort",
+        delete_source,
+    )
+
+    with pytest.raises(RuntimeError, match="process interrupted"):
+        template_upload_promotion.resume_template_upload_promotion(job_id)
+
+    assert job.status == "importing"
+    db.commit.assert_not_called()
+    delete_source.assert_not_called()
+
+    monkeypatch.setattr(
+        template_upload_promotion.storage,
+        "copy_object_generation",
+        lambda _src, _dst, *, source_generation: SimpleNamespace(
+            generation=f"dst-{source_generation}"
+        ),
+    )
+    result = template_upload_promotion.resume_template_upload_promotion(job_id)
+
+    assert result.state == "promoted"
+    assert job.status == "queued"
+    assert job.all_candidates["clip_paths"] == list(result.promoted_paths)
+    assert template_upload_promotion.TEMPLATE_UPLOAD_PROMOTION_FIELD not in (
+        job.assembly_plan or {}
+    )
+    db.commit.assert_called_once()
+    assert delete_source.call_count == 2
+
+
+def test_staging_promotion_resumes_when_copy_succeeded_but_commit_was_lost(monkeypatch) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    staged = [
+        f"staging/{user_id}/batch-a/clip_000.mp4",
+        f"staging/{user_id}/batch-a/clip_001.mp4",
+    ]
+    first_job = _promotion_job(user_id, job_id, staged)
+    _promotion_session(monkeypatch, first_job, commit_error=RuntimeError("commit lost"))
+    copy_object = MagicMock(return_value=SimpleNamespace(generation="durable-generation"))
+    delete_source = MagicMock(return_value=True)
+    monkeypatch.setattr(template_upload_promotion.storage, "copy_object_generation", copy_object)
+    monkeypatch.setattr(
+        template_upload_promotion.storage,
+        "delete_object_generation_best_effort",
+        delete_source,
+    )
+
+    with pytest.raises(RuntimeError, match="commit lost"):
+        template_upload_promotion.resume_template_upload_promotion(job_id)
+    delete_source.assert_not_called()
+
+    # A fresh ORM row represents the rolled-back database state. Re-copying
+    # the deterministic paths is safe because storage treats destination
+    # precondition failure as a lost-response retry.
+    retry_job = _promotion_job(user_id, job_id, staged)
+    retry_db = _promotion_session(monkeypatch, retry_job)
+    result = template_upload_promotion.resume_template_upload_promotion(job_id)
+
+    assert result.state == "promoted"
+    assert retry_job.status == "queued"
+    retry_db.commit.assert_called_once()
+    assert copy_object.call_count == 4
+    assert delete_source.call_count == 2
+
+
+def test_staging_promotion_terminalizes_before_source_lifecycle_expiry(monkeypatch) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    staged = [f"staging/{user_id}/batch-a/clip_000.mp4"]
+    job = _promotion_job(user_id, job_id, staged)
+    now = datetime(2026, 9, 8, 12, tzinfo=UTC)
+    job.created_at = now - timedelta(hours=23, minutes=1)
+    db = _promotion_session(monkeypatch, job)
+
+    state = template_upload_promotion.record_template_upload_promotion_failure(
+        job_id,
+        error_type="NotFound",
+        now=now,
+    )
+
+    assert state == "terminal"
+    assert job.status == "processing_failed"
+    assert job.failure_reason == "upload_promotion_failed"
+    journal = job.assembly_plan[template_upload_promotion.TEMPLATE_UPLOAD_PROMOTION_FIELD]
+    assert journal["attempts"] == 1
+    assert journal["last_error_type"] == "NotFound"
+    db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_staged_job_commits_recovery_journal_before_first_copy(monkeypatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    staged_path = f"staging/{user.id}/batch-a/clip_000.mp4"
+    template = _make_template(min_clips=1, max_clips=1)
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.execute = AsyncMock(return_value=MagicMock())
+    events: list[str] = []
+
+    async def commit():
+        events.append("commit")
+
+    db.commit.side_effect = commit
+    db.refresh = AsyncMock()
+    monkeypatch.setattr(template_jobs, "get_template_or_404", AsyncMock(return_value=template))
+    monkeypatch.setattr(template_jobs, "require_ready", MagicMock())
+    monkeypatch.setattr(template_jobs, "validate_clip_count", MagicMock())
+    monkeypatch.setattr(template_jobs, "validate_clip_total_duration", MagicMock())
+    monkeypatch.setattr(template_jobs, "validate_clips_processable", AsyncMock())
     monkeypatch.setattr(
         template_jobs.storage,
-        "delete_object_generation_best_effort",
-        delete,
+        "object_metadata",
+        MagicMock(return_value=SimpleNamespace(generation="source-generation")),
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.ensure_job_snapshot_async",
+        AsyncMock(return_value={}),
     )
 
-    with pytest.raises(RuntimeError, match="copy failed"):
-        await template_jobs._promote_staged_template_clips(
-            staged,
-            user_id=user_id,
-            job_id=job_id,
-            source_generations={path: "source-generation" for path in staged},
+    def resume(job_id):
+        assert events == ["commit"]
+        job = db.add.call_args.args[0]
+        journal = job.assembly_plan[template_upload_promotion.TEMPLATE_UPLOAD_PROMOTION_FIELD]
+        assert journal["clips"][0]["source_path"] == staged_path
+        assert journal["clips"][0]["source_generation"] == "source-generation"
+        assert journal["clips"][0]["destination_path"].startswith(
+            f"users/{user.id}/jobs/{job_id}/source/"
         )
+        events.append("copy")
+        return SimpleNamespace(state="promoted")
 
-    delete.assert_called_once_with(
-        f"users/{user_id}/jobs/{job_id}/source/clip_000.mp4",
-        generation="destination-generation",
+    monkeypatch.setattr(template_jobs, "resume_template_upload_promotion", resume)
+    monkeypatch.setattr(
+        "app.services.job_dispatch.enqueue_orchestrator",
+        AsyncMock(return_value="task-id"),
     )
+
+    response = await template_jobs.create_template_job(
+        template_jobs.CreateTemplateJobRequest(
+            template_id=template.id,
+            clip_gcs_paths=[staged_path],
+        ),
+        user,
+        db,
+    )
+
+    assert response.status == "queued"
+    assert events == ["commit", "copy"]
 
 
 @pytest.mark.asyncio

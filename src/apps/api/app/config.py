@@ -107,9 +107,10 @@ class Settings(BaseSettings):
     ai_paid_test_attribution_required: bool = True
     edit_director_daily_paid_limit: int = Field(default=3, ge=0, le=20)
     edit_director_cache_ttl_days: int = Field(default=90, ge=1, le=365)
-    # ClipMeta includes speech transcripts. Keep both Redis and PostgreSQL
-    # inside the public 24-hour transcript-cache promise.
-    media_analysis_cache_ttl_days: int = Field(default=1, ge=1, le=365)
+    # Creator-scoped PostgreSQL ClipMeta reuse window. The Redis hot tier stays
+    # capped at 24 hours so account deletion leaves at most a short-lived cache
+    # copy; PostgreSQL rows are removed immediately by the creator FK cascade.
+    media_analysis_cache_ttl_days: int = Field(default=90, ge=1, le=365)
     # Daily comparison of delayed Standard Usage Cost export with Nova's
     # settled reservation ledger. Targets and project attribution stay JSON so
     # both billing accounts can be added without shipping account IDs in git.

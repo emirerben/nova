@@ -68,6 +68,7 @@ celery_app = Celery(
         "app.tasks.mobile_upload_cleanup",
         "app.tasks.storage_retention",
         "app.tasks.billing_reconciliation",
+        "app.tasks.template_upload_promotion",
         # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
         # a full MP4 into the RAM-backed /tmp, which is exactly the workload that
         # OOM'd the 1GB `light`/Beat machine on 2026-08-02. It is dispatched with
@@ -116,6 +117,7 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "tasks.cleanup_temporary_media_uploads",
     "tasks.sweep_storage_retention",
     "tasks.reconcile_ai_billing",
+    "tasks.reconcile_template_upload_promotions",
 )
 
 celery_app.conf.update(
@@ -216,6 +218,10 @@ celery_app.conf.update(
         "cleanup-temporary-media-uploads-every-5-min": {
             "task": "tasks.cleanup_temporary_media_uploads",
             "schedule": 300.0,
+        },
+        "reconcile-template-upload-promotions-every-2-min": {
+            "task": "tasks.reconcile_template_upload_promotions",
+            "schedule": 120.0,
         },
         # Daily at 04:00 UTC (low-traffic window). Pruned rows = job-scoped
         # agent_run entries older than `agent_run_retention_days` (30d

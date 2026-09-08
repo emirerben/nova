@@ -10,7 +10,6 @@ GET  /template-jobs/:id/debug    — admin debug endpoint
 
 import asyncio
 import json
-import os
 import re
 import time
 import uuid
@@ -33,6 +32,12 @@ from app.services.job_storage_paths import (
     project_media_reference_lock_key,
 )
 from app.services.public_assembly_plan import project_public_assembly_plan
+from app.services.template_upload_promotion import (
+    TEMPLATE_UPLOAD_PROMOTION_FIELD,
+    build_template_upload_promotion,
+    record_template_upload_promotion_failure,
+    resume_template_upload_promotion,
+)
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -64,58 +69,6 @@ def _scrub(value: str) -> str:
 
 
 router = APIRouter()
-
-
-async def _promote_staged_template_clips(
-    paths: list[str],
-    *,
-    user_id: uuid.UUID,
-    job_id: uuid.UUID,
-    source_generations: dict[str, str],
-) -> tuple[list[str], list[tuple[str, str]]]:
-    """Copy exact staged generations into the job's durable owned namespace."""
-
-    promoted: list[str] = []
-    staged_sources: list[tuple[str, str]] = []
-    copied_destinations: list[tuple[str, str]] = []
-    expected_prefix = f"staging/{user_id}/"
-    try:
-        for index, path in enumerate(paths):
-            if not path.startswith("staging/"):
-                promoted.append(path)
-                continue
-            if not path.startswith(expected_prefix):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Upload owner mismatch",
-                )
-            source_generation = source_generations.get(path)
-            if source_generation is None:
-                raise RuntimeError("staged upload generation was not captured before validation")
-            extension = os.path.splitext(path)[1].lower()
-            extension = extension if extension in {".mp4", ".mov"} else ".mp4"
-            destination = f"users/{user_id}/jobs/{job_id}/source/clip_{index:03d}{extension}"
-            destination_metadata = await asyncio.to_thread(
-                storage.copy_object_generation,
-                path,
-                destination,
-                source_generation=source_generation,
-            )
-            copied_destinations.append((destination, destination_metadata.generation))
-            promoted.append(destination)
-            staged_sources.append((path, source_generation))
-    except Exception:
-        # Promotion is all-or-nothing from the job's point of view. Remove any
-        # already copied exact generations; if storage is unavailable, the
-        # retention sweep also scans this job-owned prefix as a backstop.
-        for destination, generation in reversed(copied_destinations):
-            await asyncio.to_thread(
-                storage.delete_object_generation_best_effort,
-                destination,
-                generation=generation,
-            )
-        raise
-    return promoted, staged_sources
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -277,14 +230,30 @@ async def create_template_job(
         clip_generations=staged_generations,
     )
 
+    job_id = uuid.uuid4()
+    promotion_journal = (
+        build_template_upload_promotion(
+            req.clip_gcs_paths,
+            user_id=current_user.id,
+            job_id=job_id,
+            source_generations=staged_generations,
+        )
+        if staged_paths
+        else None
+    )
     job = Job(
-        id=uuid.uuid4(),
+        id=job_id,
         user_id=current_user.id,
         job_type="template",
         template_id=req.template_id,
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
         all_candidates={"clip_paths": req.clip_gcs_paths, "inputs": req.inputs},
+        assembly_plan=(
+            {TEMPLATE_UPLOAD_PROMOTION_FIELD: promotion_journal}
+            if promotion_journal is not None
+            else None
+        ),
         status=(
             "importing"
             if any(path.startswith("staging/") for path in req.clip_gcs_paths)
@@ -298,36 +267,36 @@ async def create_template_job(
     await db.commit()
     await db.refresh(job)
 
-    staged_sources: list[tuple[str, str]] = []
     if job.status == "importing":
         try:
-            promoted_paths, staged_sources = await _promote_staged_template_clips(
-                req.clip_gcs_paths,
-                user_id=current_user.id,
-                job_id=job.id,
-                source_generations=staged_generations,
+            promotion = await asyncio.to_thread(
+                resume_template_upload_promotion,
+                job.id,
             )
         except Exception as exc:
-            job.status = "processing_failed"
-            job.failure_reason = "upload_promotion_failed"
-            job.error_detail = "Could not attach the staged upload to this job"
-            await db.commit()
+            await db.rollback()
+            await asyncio.to_thread(
+                record_template_upload_promotion_failure,
+                job_id,
+                error_type=type(exc).__name__,
+            )
+            log.warning(
+                "template_upload_promotion_deferred",
+                job_id=str(job_id),
+                error_type=type(exc).__name__,
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Upload promotion failed — try again",
+                detail="Upload promotion is retrying — check this job again shortly",
             ) from exc
-        job.raw_storage_path = promoted_paths[0]
-        job.all_candidates = {"clip_paths": promoted_paths, "inputs": req.inputs}
-        job.status = "queued"
-        await db.commit()
-        for source_path, generation in staged_sources:
-            await asyncio.to_thread(
-                storage.delete_object_generation_best_effort,
-                source_path,
-                generation=generation,
+        if promotion.state not in {"promoted", "ready"}:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Upload promotion is retrying — check this job again shortly",
             )
+        await db.refresh(job)
 
-    job_id = str(job.id)
+    job_id_str = str(job.id)
 
     # Dispatch on template_kind: single_video templates use a tight-timeout
     # task (240s soft / 300s hard) so a hung run doesn't hold the worker
@@ -349,13 +318,13 @@ async def create_template_job(
 
     log.info(
         "template_job_created",
-        job_id=job_id,
+        job_id=job_id_str,
         template_id=req.template_id,
         template_kind=template_kind,
         clips=len(req.clip_gcs_paths),
         inputs=req.inputs,
     )
-    return TemplateJobResponse(job_id=job_id, status="queued", template_id=req.template_id)
+    return TemplateJobResponse(job_id=job_id_str, status="queued", template_id=req.template_id)
 
 
 @router.get("", response_model=TemplateJobListResponse)
