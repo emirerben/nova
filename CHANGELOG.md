@@ -2,13 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.71.1.0] — 2026-09-07
+## [0.71.3.0] — 2026-09-08
 
 ### Changed
 - **Personalization is now a simpler editable list.** Creators can add a preference directly, edit or remove each remembered instruction, and return to the content plan without navigating category sections or approval, metadata, Undo, and update-notice UI.
 
 ### Fixed
 - **Preference controls remain reliable during errors and overlapping updates.** Failed clears keep their confirmation open, failed toggles do not overwrite newer preferences, rule enforcement survives text edits, and keyboard focus returns to a visible control after a row changes.
+
+## [0.71.1.0] — 2026-09-07
+
+### Fixed
+- **Recorded-voiceover projects can recover when a draft needs replanning.** Recovery preserves every requested source, exact photo timing, and the full narration budget instead of applying music-montage limits. The planner also receives the creator's actual timing instructions.
+- **Projects with saved edit-learning history can be deleted.** Project cleanup now removes dependent records in the correct order without weakening their history protections.
 
 ## [0.71.0.0] — 2026-09-07
 
