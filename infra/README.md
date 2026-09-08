@@ -1,5 +1,9 @@
 # Nova infra
 
+Google Cloud budgets, Standard Usage export datasets, and their rollout order
+live in [`gcp-cost-controls/`](gcp-cost-controls/) and
+[`docs/runbooks/gcp-cost-controls.md`](../docs/runbooks/gcp-cost-controls.md).
+
 ## GCS browser upload CORS (`gcs-cors.json`)
 
 Allows production and local web origins to upload directly to signed GCS URLs.
@@ -32,7 +36,11 @@ per-prefix table CLAUDE.md's "Storage retention" points at; every rule in
 
 **Deleted after 1 day:**
 - `dev-user/*` — raw uploads and rendered clips from anonymous job submissions
-- `music-jobs/*` — final music-sync outputs
+- `staging/*` — unattached uploads awaiting verified database ownership
+- `music-uploads/*` — temporary admin/test source clips
+- `slot-uploads/*` — legacy template-slot uploads
+- `direction-audio/*` — temporary creator-direction recordings
+- `raw-uploads/*`, `uploads/*` — legacy unattached upload namespaces
 - `music-lyrics-previews/*` — lyric-preview renders
 - `voiceover-uploads/*` — user-recorded voiceover audio
 - `analysis-proxy/*` — native 540p planning proxies; the API also records an
@@ -47,13 +55,22 @@ per-prefix table CLAUDE.md's "Storage retention" points at; every rule in
   purge them — the 24h TTL is what actually bounds the exposure.
 
 **Deleted after 30 days:**
-- `jobs/*` — template-mode job inputs and outputs
 - `00000000-0000-0000-0000-000000000001/*` — the anonymous upload prefix
+- `tiktok-publish/*` — bounded delivery snapshots (the task normally deletes sooner)
 
 **Persists forever (not matched by any bucket rule — auth landed, see
 "Re-evaluate when" below; account deletion is the removal path for live assets,
 see `routes/me.py::confirm_account_deletion` + `docs/legal/README.md`):**
-- `users/{user_id}/*` — plan clips, plan-pool footage, activation seed batches
+- `users/{user_id}/*` — attached plan clips, plan-pool footage, activation seed
+  batches. A newly signed `users/{user_id}/generative/*` upload has a database
+  cleanup receipt until the Job transaction consumes it; unattached receipts
+  expire after 24 hours even though this durable prefix has no bucket rule.
+- `auto-music-jobs/*` — includes current and published finals, so deletion is
+  generation-pinned and reference-aware through the database retention manifest
+  rather than an unconditional bucket-age rule
+- `jobs/*`, `music-jobs/*` — template/music inputs and outputs can be current,
+  editable, or published; cleanup is generation-pinned and reference-aware
+  through the database retention manifest
 - `generative-jobs/{job_id}/*` — rendered outputs + preprocessed sources
 - `job-posters/{job_id}/*` — Library tile thumbnails extracted from a job's video
 - `music/*` — admin-curated music track library
@@ -61,14 +78,11 @@ see `routes/me.py::confirm_account_deletion` + `docs/legal/README.md`):**
 
 `job-posters/` is deliberately outside every video prefix (v0.59.1.0). Posters
 used to be written as a sibling of the video (`<source>.poster.jpg`), so they
-inherited the source's rule and a Library tile went blank when the source was
-deleted — 24h for `music-jobs/*`, 30 days for `jobs/*`. A thumbnail has to
-outlive its source, so it lives on a prefix no rule matches. The prefix is
-listed in `JOB_OUTPUT_PREFIXES` (`app/services/job_storage_paths.py`), so
-account deletion still removes a user's posters along with their videos.
-Consequence: a music/template tile can now show a real thumbnail for a source
-MP4 the lifecycle rule already deleted — playback fails cleanly, and the
-retention question is tracked in TODOS.md.
+inherited broad age rules and a Library tile went blank when the source was
+deleted. A thumbnail has to outlive its source, so it lives on a prefix no rule
+matches. The prefix is listed in `JOB_OUTPUT_PREFIXES`
+(`app/services/job_storage_paths.py`), so account deletion and the approved
+manifest still remove it safely.
 
 The application deletes one narrow superseded-asset class inside persistent job
 prefixes: immutable `job-posters/<job-id>/<sha1(source)>.poster.backfill-<uuid>.jpg`
@@ -84,6 +98,7 @@ removes the old object. Do not delete or rewrite these receipts manually. See
 ```bash
 gsutil lifecycle set infra/gcs-lifecycle.json gs://$STORAGE_BUCKET
 gsutil lifecycle get gs://$STORAGE_BUCKET   # verify
+python scripts/check_gcs_lifecycle_drift.py # semantic repo-vs-live check
 ```
 
 This is a one-time operation, run manually after the PR merges. The rule is

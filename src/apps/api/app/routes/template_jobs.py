@@ -10,6 +10,7 @@ GET  /template-jobs/:id/debug    — admin debug endpoint
 
 import asyncio
 import json
+import os
 import re
 import time
 import uuid
@@ -23,6 +24,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import storage
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import AsyncSessionLocal, get_db
 from app.models import Job, VideoTemplate
@@ -62,6 +64,59 @@ def _scrub(value: str) -> str:
 
 
 router = APIRouter()
+
+
+async def _promote_staged_template_clips(
+    paths: list[str],
+    *,
+    user_id: uuid.UUID,
+    job_id: uuid.UUID,
+    source_generations: dict[str, str],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Copy exact staged generations into the job's durable owned namespace."""
+
+    promoted: list[str] = []
+    staged_sources: list[tuple[str, str]] = []
+    copied_destinations: list[tuple[str, str]] = []
+    expected_prefix = f"staging/{user_id}/"
+    try:
+        for index, path in enumerate(paths):
+            if not path.startswith("staging/"):
+                promoted.append(path)
+                continue
+            if not path.startswith(expected_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Upload owner mismatch",
+                )
+            source_generation = source_generations.get(path)
+            if source_generation is None:
+                raise RuntimeError("staged upload generation was not captured before validation")
+            extension = os.path.splitext(path)[1].lower()
+            extension = extension if extension in {".mp4", ".mov"} else ".mp4"
+            destination = f"users/{user_id}/jobs/{job_id}/source/clip_{index:03d}{extension}"
+            destination_metadata = await asyncio.to_thread(
+                storage.copy_object_generation,
+                path,
+                destination,
+                source_generation=source_generation,
+            )
+            copied_destinations.append((destination, destination_metadata.generation))
+            promoted.append(destination)
+            staged_sources.append((path, source_generation))
+    except Exception:
+        # Promotion is all-or-nothing from the job's point of view. Remove any
+        # already copied exact generations; if storage is unavailable, the
+        # retention sweep also scans this job-owned prefix as a backstop.
+        for destination, generation in reversed(copied_destinations):
+            await asyncio.to_thread(
+                storage.delete_object_generation_best_effort,
+                destination,
+                generation=generation,
+            )
+        raise
+    return promoted, staged_sources
+
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -209,16 +264,32 @@ async def create_template_job(
     # HDR uploads longer than the pipeline's empirical 60s cost budget
     # BEFORE creating a job that would hang for 21 min on the worker before
     # failing. See `validate_clips_processable` for the empirical record.
-    await validate_clips_processable(req.clip_gcs_paths)
+    staged_paths = [path for path in req.clip_gcs_paths if path.startswith("staging/")]
+    staged_metadata = await asyncio.gather(
+        *(asyncio.to_thread(storage.object_metadata, path) for path in staged_paths)
+    )
+    staged_generations = {
+        path: metadata.generation
+        for path, metadata in zip(staged_paths, staged_metadata, strict=True)
+    }
+    await validate_clips_processable(
+        req.clip_gcs_paths,
+        clip_generations=staged_generations,
+    )
 
     job = Job(
+        id=uuid.uuid4(),
         user_id=current_user.id,
         job_type="template",
         template_id=req.template_id,
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
         all_candidates={"clip_paths": req.clip_gcs_paths, "inputs": req.inputs},
-        status="queued",
+        status=(
+            "importing"
+            if any(path.startswith("staging/") for path in req.clip_gcs_paths)
+            else "queued"
+        ),
     )
     db.add(job)
     from app.services.creator_direction_snapshot import ensure_job_snapshot_async  # noqa: PLC0415
@@ -226,6 +297,35 @@ async def create_template_job(
     await ensure_job_snapshot_async(db, job, source="template_dispatch")
     await db.commit()
     await db.refresh(job)
+
+    staged_sources: list[tuple[str, str]] = []
+    if job.status == "importing":
+        try:
+            promoted_paths, staged_sources = await _promote_staged_template_clips(
+                req.clip_gcs_paths,
+                user_id=current_user.id,
+                job_id=job.id,
+                source_generations=staged_generations,
+            )
+        except Exception as exc:
+            job.status = "processing_failed"
+            job.failure_reason = "upload_promotion_failed"
+            job.error_detail = "Could not attach the staged upload to this job"
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Upload promotion failed — try again",
+            ) from exc
+        job.raw_storage_path = promoted_paths[0]
+        job.all_candidates = {"clip_paths": promoted_paths, "inputs": req.inputs}
+        job.status = "queued"
+        await db.commit()
+        for source_path, generation in staged_sources:
+            await asyncio.to_thread(
+                storage.delete_object_generation_best_effort,
+                source_path,
+                generation=generation,
+            )
 
     job_id = str(job.id)
 
@@ -341,9 +441,9 @@ async def reroll_template_job(
     # Create new job with same clips and template
     original_candidates = original.all_candidates or {}
     inherited_inputs = original_candidates.get("inputs") or {}
-    from app.services.creator_direction_snapshot import private_snapshot_from
+    from app.services.creator_direction_snapshot import snapshot_from_container
 
-    inherited_direction_snapshot = private_snapshot_from(original.assembly_plan)
+    inherited_direction_snapshot = snapshot_from_container(original.assembly_plan)
 
     new_job = Job(
         user_id=current_user.id,

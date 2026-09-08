@@ -56,6 +56,8 @@ export class PlanApiError extends Error {
   readonly current: number | null;
   readonly requested: number | null;
   readonly remaining: number | null;
+  readonly scope: string | null;
+  readonly resetAt: string | null;
 
   constructor({
     message,
@@ -68,6 +70,8 @@ export class PlanApiError extends Error {
     current = null,
     requested = null,
     remaining = null,
+    scope = null,
+    resetAt = null,
   }: {
     message: string;
     status: number;
@@ -79,6 +83,8 @@ export class PlanApiError extends Error {
     current?: number | null;
     requested?: number | null;
     remaining?: number | null;
+    scope?: string | null;
+    resetAt?: string | null;
   }) {
     super(message);
     this.name = "PlanApiError";
@@ -91,6 +97,8 @@ export class PlanApiError extends Error {
     this.current = current;
     this.requested = requested;
     this.remaining = remaining;
+    this.scope = scope;
+    this.resetAt = resetAt;
   }
 }
 
@@ -156,6 +164,11 @@ export interface PersonaResponse {
   generation_started_at?: string | null;
   /** M1: user-owned idea seeds, persisted at persona scope. */
   idea_seeds?: IdeaSeed[];
+  tiktok_style_analysis_available?: boolean;
+  tiktok_style_analysis_status?: "idle" | "running" | "ready" | "failed";
+  tiktok_style_analyzed_at?: string | null;
+  tiktok_style_analysis_failed_at?: string | null;
+  tiktok_style_analysis_failure_reason?: string | null;
 }
 
 // ── Chat interview ────────────────────────────────────────────────────────────
@@ -239,6 +252,7 @@ export function editCopilotTurn(
   itemId: string,
   variantId: string,
   body: {
+    client_request_id: string;
     message: string;
     turns: EditCopilotTurn[];
     snapshot: CopilotSnapshot;
@@ -313,7 +327,9 @@ export interface EditDirectorSuggestionsResponse {
   snapshot_revision: string;
   requested_model: string;
   model_used: string;
+  /** Legacy response compatibility; runtime Director never falls back. */
   fallback_reason?: string | null;
+  omni_max_cost_per_second_usd?: number | null;
 }
 
 export function editDirectorSuggestions(
@@ -423,6 +439,8 @@ export function startOmniAsset(
     source_end_s?: number | null;
     reference_clip_index?: number | null;
     reference_frame_s?: number | null;
+    estimated_max_cost_usd: number;
+    cost_confirmed: boolean;
   },
 ): Promise<OmniAssetResponse> {
   return request<OmniAssetResponse>(
@@ -504,6 +522,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let current: number | null = null;
     let requested: number | null = null;
     let remaining: number | null = null;
+    let scope: string | null = null;
+    let resetAt: string | null = null;
     try {
       requestId = res.headers.get("x-request-id");
     } catch {
@@ -523,6 +543,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
               current?: number;
               requested?: number;
               remaining?: number;
+              scope?: string;
+              reset_at?: string;
             };
         code?: string;
         retryable?: boolean;
@@ -532,6 +554,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         current?: number;
         requested?: number;
         remaining?: number;
+        scope?: string;
+        reset_at?: string;
       };
       const nested = typeof body?.detail === "object" ? body.detail : null;
       if (typeof body?.detail === "string") detail = body.detail;
@@ -546,6 +570,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (typeof (body?.current ?? nested?.current) === "number") current = body?.current ?? nested?.current ?? null;
       if (typeof (body?.requested ?? nested?.requested) === "number") requested = body?.requested ?? nested?.requested ?? null;
       if (typeof (body?.remaining ?? nested?.remaining) === "number") remaining = body?.remaining ?? nested?.remaining ?? null;
+      if (body?.scope || nested?.scope) scope = body.scope ?? nested?.scope ?? null;
+      if (body?.reset_at || nested?.reset_at) resetAt = body.reset_at ?? nested?.reset_at ?? null;
     } catch {
       // non-JSON error body; keep the generic message
     }
@@ -571,6 +597,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       current,
       requested,
       remaining,
+      scope,
+      resetAt,
     });
   }
   // Successful DELETE endpoints return no JSON body.
@@ -602,6 +630,13 @@ export async function getPersona(): Promise<PersonaResponse | null> {
     if (err instanceof Error && /No persona yet/i.test(err.message)) return null;
     throw err;
   }
+}
+
+/** Explicit consent boundary for bounded public TikTok video-style analysis. */
+export function analyzeTikTokStyle(personaId: string): Promise<{ queued: boolean }> {
+  return request<{ queued: boolean }>(`/personas/${personaId}/analyze-tiktok-style`, {
+    method: "POST",
+  });
 }
 
 /** Hand-edit persona fields (also unblocks onboarding if generation failed). */
@@ -860,11 +895,17 @@ export function reorderItems(planId: string, itemIds: string[]): Promise<Content
 /** Propose an AI expansion for a bare idea (propose-only, never writes DB). */
 export function expandIdea(
   itemId: string,
-  input: { creator_context?: string | null } = {},
+  input: { creator_context?: string | null; client_request_id?: string } = {},
 ): Promise<IdeaExpandProposal> {
   return request<IdeaExpandProposal>(`/plan-items/${itemId}/expand`, {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      ...input,
+      client_request_id:
+        input.client_request_id ??
+        globalThis.crypto?.randomUUID?.() ??
+        `idea-expand-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    }),
   });
 }
 

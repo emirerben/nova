@@ -311,6 +311,13 @@ def test_users_prefix_is_allowlisted() -> None:
 
 def test_owned_direct_generative_prefix_is_allowlisted() -> None:
     user_id = uuid.uuid4()
+    path = f"users/{user_id}/generative/abc123def456/clip.mov"
+    job = build_generative_job(user_id=user_id, clip_paths=[path])
+    assert job.raw_storage_path == path
+
+
+def test_legacy_owned_direct_generative_prefix_remains_readable() -> None:
+    user_id = uuid.uuid4()
     path = f"dev-user/{user_id}/generative/abc123def456/clip.mov"
     job = build_generative_job(user_id=user_id, clip_paths=[path])
     assert job.raw_storage_path == path
@@ -320,7 +327,7 @@ def test_foreign_direct_generative_prefix_is_rejected() -> None:
     with pytest.raises(ValueError, match="owner mismatch"):
         build_generative_job(
             user_id=uuid.uuid4(),
-            clip_paths=[f"dev-user/{uuid.uuid4()}/generative/abc123def456/clip.mov"],
+            clip_paths=[f"users/{uuid.uuid4()}/generative/abc123def456/clip.mov"],
         )
 
 

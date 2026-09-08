@@ -25,9 +25,19 @@ from app.database import get_db
 from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem
 from app.routes import plan_items
-from app.routes._copilot import _honest_outcome
+from app.routes._copilot import CopilotTurnBody, _honest_outcome, _paid_request_id
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "copilot-ops"
+
+
+def test_paid_request_id_uses_client_intent_not_mutable_payload() -> None:
+    job_id = uuid.uuid4()
+    original = CopilotTurnBody(client_request_id="intent-1", message="make it punchier")
+    changed = CopilotTurnBody(client_request_id="intent-1", message="make it slower")
+    distinct = CopilotTurnBody(client_request_id="intent-2", message="make it punchier")
+
+    assert _paid_request_id(original, job_id=job_id) == _paid_request_id(changed, job_id=job_id)
+    assert _paid_request_id(original, job_id=job_id) != _paid_request_id(distinct, job_id=job_id)
 
 
 def test_speech_cut_operation_requires_authoritative_pending_candidate() -> None:

@@ -25,12 +25,9 @@ def _valid_file(i: int = 0) -> dict:
 async def test_batch_presigned_happy_path(client):
     """3 valid files → 3 signed URLs returned."""
     mock_url = "https://storage.googleapis.com/signed-url"
-    mock_path = "00000000/batch-abc/clip_000.mp4"
-
     with patch(
-        "app.routes.presigned.storage.presigned_put_url",
-        return_value=(mock_url, mock_path),
-    ):
+        "app.routes.presigned.storage.signed_put_url_legacy", return_value=mock_url
+    ) as signer:
         res = await client.post(
             "/presigned-urls",
             json={"files": [_valid_file(i) for i in range(3)]},
@@ -40,7 +37,10 @@ async def test_batch_presigned_happy_path(client):
     data = res.json()
     assert len(data["urls"]) == 3
     assert data["urls"][0]["upload_url"] == mock_url
-    assert data["urls"][0]["gcs_path"] == mock_path
+    path = data["urls"][0]["gcs_path"]
+    assert path.startswith("staging/00000000-0000-0000-0000-000000000001/batch-")
+    assert path.endswith("/clip_000.mp4")
+    signer.assert_any_call(path, "video/mp4", 100_000_000)
 
 
 @pytest.mark.asyncio

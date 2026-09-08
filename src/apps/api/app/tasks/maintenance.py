@@ -657,6 +657,102 @@ _AGENT_RUN_DELETE_BATCH = 10_000
 # against runaway loops, not a steady-state expectation.
 _AGENT_RUN_DELETE_MAX_BATCHES = 100
 
+# Both AI response caches have an indexed expires_at column. Keep physical
+# deletion bounded so a long-lived deployment cannot accumulate transcript or
+# review payloads past their advertised retention window, while also avoiding
+# one unbounded DELETE on the maintenance worker.
+_AI_CACHE_DELETE_BATCH = 5_000
+_AI_CACHE_DELETE_MAX_BATCHES = 20
+_AI_CACHE_REDIS_DELETE_BATCH = 500
+_AI_CACHE_REDIS_DELETE_MAX_KEYS = 20_000
+
+
+def _purge_media_analysis_redis() -> int:
+    """Delete transcript-bearing Redis entries in a bounded daily pass.
+
+    New writes self-expire after 24 hours. Deleting the namespace daily also
+    removes pre-policy keys whose original TTL may have been as long as 90
+    days, without relying on a key-format migration to make retained private
+    data merely unreachable.
+    """
+
+    from app.pipeline.clip_cache import _get_redis  # noqa: PLC0415
+
+    client = _get_redis()
+    if client is None:
+        return 0
+    deleted = 0
+    pending: list[bytes | str] = []
+    try:
+        for pattern in ("clip_analysis:*", "media_analysis:*"):
+            for key in client.scan_iter(match=pattern, count=1_000):
+                pending.append(key)
+                if len(pending) >= _AI_CACHE_REDIS_DELETE_BATCH:
+                    deleted += int(client.delete(*pending) or 0)
+                    pending.clear()
+                if deleted + len(pending) >= _AI_CACHE_REDIS_DELETE_MAX_KEYS:
+                    break
+            if deleted + len(pending) >= _AI_CACHE_REDIS_DELETE_MAX_KEYS:
+                break
+        if pending:
+            deleted += int(client.delete(*pending) or 0)
+    except Exception as exc:  # noqa: BLE001 - cache cleanup is best-effort
+        log.warning(
+            "purge_media_analysis_redis_failed",
+            error_class=type(exc).__name__,
+            deleted=deleted,
+        )
+    return deleted
+
+
+@celery_app.task(
+    name="tasks.purge_expired_ai_caches",
+    autoretry_for=(),
+    max_retries=0,
+    soft_time_limit=300,
+    time_limit=360,
+)
+def purge_expired_ai_caches() -> dict[str, int]:
+    """Physically delete expired database rows and transcript Redis entries."""
+
+    from app.database import sync_engine  # noqa: PLC0415
+
+    deleted_by_table: dict[str, int] = {}
+    for table in ("director_review_cache", "media_analysis_cache"):
+        expiry_predicate = "expires_at <= now()"
+        if table == "media_analysis_cache":
+            expiry_predicate += " OR created_at <= now() - interval '1 day'"
+        total_deleted = 0
+        batches = 0
+        while batches < _AI_CACHE_DELETE_MAX_BATCHES:
+            with sync_engine.begin() as conn:
+                result = conn.execute(
+                    text(
+                        f"""
+                        DELETE FROM {table}
+                         WHERE id IN (
+                           SELECT id FROM {table}
+                            WHERE {expiry_predicate}
+                            ORDER BY expires_at, id
+                            LIMIT :batch
+                         )
+                        """  # noqa: S608 - table is selected from the fixed tuple above
+                    ),
+                    {"batch": _AI_CACHE_DELETE_BATCH},
+                )
+                deleted = result.rowcount or 0
+            total_deleted += deleted
+            batches += 1
+            if deleted < _AI_CACHE_DELETE_BATCH:
+                break
+        deleted_by_table[table] = total_deleted
+
+    deleted_by_table["media_analysis_redis"] = _purge_media_analysis_redis()
+
+    if any(deleted_by_table.values()):
+        log.info("purge_expired_ai_caches_done", **deleted_by_table)
+    return deleted_by_table
+
 
 @celery_app.task(
     name="tasks.cleanup_agent_runs",

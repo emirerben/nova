@@ -5,14 +5,15 @@ Nova's editor has two distinct AI paths:
 - `nova.edit.copilot` uses `EDIT_COPILOT_MODEL` with low thinking and a 20-second
   request timeout for responsive chat-to-operation conversion.
 - `nova.edit.director` uses `EDIT_DIRECTOR_MODEL` with high thinking and a
-  single 30-second attempt for proactive editorial review. The suggestion
-  endpoint falls back to one 20-second `EDIT_DIRECTOR_FALLBACK_MODEL` attempt
-  after a timeout, rate limit, unavailable-model error, refusal, or schema
-  failure. If a newer snapshot supersedes the primary request, the API returns
-  a conflict immediately instead of spending the fallback budget on stale work.
+  single 30-second attempt for proactive editorial review. A timeout, rate
+  limit, refusal, unavailable model, or schema failure ends that explicit
+  review; the endpoint never turns one user action into a second paid request.
+  If a newer snapshot supersedes the request, the API returns a conflict
+  immediately instead of spending on stale work. `EDIT_DIRECTOR_EVAL_COMPARISON_MODEL`
+  is used only by the opt-in live quality comparison and is never a runtime fallback.
 
 The fleet-wide `GEMINI_MODEL` no longer rewrites an agent's declared model.
-Agent-run telemetry records requested/effective model, fallback reason, latency,
+Agent-run telemetry records requested/effective model, latency,
 token usage, prompt version, and outcome. Director feedback separately records
 accepted and dismissed suggestion IDs.
 
@@ -52,14 +53,15 @@ split, and transition edits can stale one another's slot windows. Omni reviews
 are homogeneous and contain exactly one asynchronous card; they are never mixed
 with instant cards tied to the same source revision.
 
-The editor requests its initial review after the complete editor snapshot has
-settled, then tracks the full snapshot hash rather than only the undo-history
-revision. This includes asynchronously hydrated captions, capabilities, assets,
-overlays, and effects. Responses are ignored when either the request ID or the
-snapshot hash is stale. The browser aborts and restarts superseded HTTP requests,
-and the API serializes Director runs per job so a newer revision does not fan out
-concurrent Pro calls behind an older request. An explicit Refresh stays armed
-through hydration-driven aborts until a replacement review lands or fails.
+The editor makes no Director request merely because the editor opened or its
+snapshot changed. The creator explicitly selects **Review my edit**. Once that
+action starts, the browser tracks the full snapshot hash rather than only the
+undo-history revision, including asynchronously hydrated captions, capabilities,
+assets, overlays, and effects. Responses are ignored when either the request ID
+or snapshot hash is stale. The browser aborts and restarts only that already
+requested review against the latest hydrated state, and the API serializes runs
+per job so a newer revision does not fan out concurrent Pro calls behind an older
+request. **Review again** deliberately starts a new review.
 
 Instant suggestions contain one or more operations from the normal copilot
 contract. Acceptance validates and stages the complete bundle in memory first.

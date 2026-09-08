@@ -23,6 +23,7 @@ from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
     load_owned_plan_persona_sync,
 )
+from app.services.tiktok_style_observations import effective_persona_style
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -112,6 +113,7 @@ def _run(plan_item_id: str, *, expected_ownership_epoch: int | None = None) -> N
             log.warning("conformance_build.stale_delivery", plan_item_id=plan_item_id)
             return
         content_plan_id = plan.id
+        creator_id = str(plan.user_id)
         ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
         # item_ref above already cached this row unlocked, so without
         # populate_existing the lock serializes but item stays at its
@@ -129,7 +131,13 @@ def _run(plan_item_id: str, *, expected_ownership_epoch: int | None = None) -> N
 
         # instruction_level lives in the owning user's personas.style JSONB.
         # Resolve it via the ContentPlan → Persona join, null-safe, default "full".
-        style = persona.style or {}
+        style = (
+            effective_persona_style(
+                persona.style,
+                profile=getattr(persona, "tiktok_profile", None),
+            )
+            or {}
+        )
         instruction_level = str(style.get("instruction_level", "full") or "full")
         if instruction_level == "none":
             log.debug(
@@ -206,7 +214,10 @@ def _run(plan_item_id: str, *, expected_ownership_epoch: int | None = None) -> N
         from app.pipeline.agents.gemini_analyzer import analyze_clip  # noqa: PLC0415
 
         try:
-            clip_meta = analyze_clip(file_ref, job_id=None)
+            clip_meta = analyze_clip(
+                file_ref,
+                run_context=RunContext(creator_id=creator_id),
+            )
         except (GeminiAnalysisError, GeminiRefusalError, Exception) as exc:  # noqa: BLE001
             log.warning(
                 "conformance_build.clip_metadata_failed",
@@ -251,7 +262,10 @@ def _run(plan_item_id: str, *, expected_ownership_epoch: int | None = None) -> N
     agent = ConformanceFeedbackAgent(default_client())
     output = None
     for attempt in (1, 2):
-        candidate = agent.run(conformance_input, ctx=RunContext(job_id=None))
+        candidate = agent.run(
+            conformance_input,
+            ctx=RunContext(creator_id=creator_id),
+        )
         if _themes_match(candidate.evaluated_theme, theme):
             output = candidate
             break
@@ -357,5 +371,11 @@ def _get_instruction_level(session, item: PlanItem) -> str:
     if plan is None:
         return "full"
     persona = load_owned_plan_persona_sync(session, plan)
-    style = persona.style or {}
+    style = (
+        effective_persona_style(
+            persona.style,
+            profile=getattr(persona, "tiktok_profile", None),
+        )
+        or {}
+    )
     return str(style.get("instruction_level", "full") or "full")

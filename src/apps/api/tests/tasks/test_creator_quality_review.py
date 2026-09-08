@@ -507,6 +507,42 @@ def test_disabled_review_fences_pending_exact_target_to_manual_feedback(monkeypa
     assert db.commits == 1
 
 
+def test_enabled_task_attributes_grader_call_to_exact_creator_review(monkeypatch):
+    captured: dict = {}
+
+    @contextmanager
+    def _trace_context():
+        yield
+
+    monkeypatch.setattr(settings, "main_creator_agent_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_quality_review_enabled", True)
+    monkeypatch.setattr(cqr, "run_quality_review", lambda **kwargs: captured.update(kwargs) or True)
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for",
+        lambda *_args, **_kwargs: _trace_context(),
+    )
+    monkeypatch.setattr(
+        cqr.quality_review_creator_session.request,
+        "delivery_info",
+        {},
+        raising=False,
+    )
+
+    cqr.quality_review_creator_session.run(
+        session_id="session-1",
+        job_id="job-1",
+        variant_id="variant-1",
+        render_generation_id="generation-1",
+    )
+
+    run_context = captured["reviewer"].keywords["run_context"]
+    assert run_context.job_id == "job-1"
+    assert run_context.creator_agent_session_id == "session-1"
+    assert run_context.request_id == (
+        "creator-quality-review:session-1:job-1:variant-1:generation-1"
+    )
+
+
 @pytest.mark.parametrize(
     ("label", "job_overrides", "session_overrides", "target_overrides"),
     [

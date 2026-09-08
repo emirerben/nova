@@ -7,7 +7,8 @@ decision (≥90% agreement, near-zero false-pass/false-reject).
 
 Usage (from src/apps/api/, with DATABASE_URL + GEMINI_API_KEY set):
 
-    python -m scripts.run_grader_calibration [--cost-cap-usd 20] [--limit N] [--dry-run]
+    python -m scripts.run_grader_calibration --test-run-id <id> \
+      --approve-reservation [--cost-cap-usd 2] [--limit N]
 
 `--dry-run` collects + reports the labeled-job set WITHOUT any Gemini spend (no
 grading) — use it to confirm the back-catalog has enough 👍/👎 signal before
@@ -28,8 +29,9 @@ import tempfile
 from pathlib import Path
 
 
-def _build_grade_fn():
+def _build_grade_fn(*, test_run_id: str, cost_cap_usd: float):
     """Closure: job_id → (band_string, grade_cost_usd). Downloads + grades live."""
+    from app.agents._runtime import RunContext
     from app.database import sync_session
     from app.services.video_grader import (
         DEFAULT_VIDEO_MODEL,
@@ -42,8 +44,6 @@ def _build_grade_fn():
         _primary_clip_video_path,
     )
 
-    grader = VideoQualityGrader(RUBRIC_PATH, model=DEFAULT_VIDEO_MODEL)
-
     def grade_fn(job_id: str) -> tuple[str, float]:
         session = sync_session()
         try:
@@ -52,6 +52,18 @@ def _build_grade_fn():
             session.close()
         if not video_gcs_path:
             raise RuntimeError(f"job {job_id} has no ready render")
+        grader = VideoQualityGrader(
+            RUBRIC_PATH,
+            model=DEFAULT_VIDEO_MODEL,
+            run_context=RunContext(
+                job_id=job_id,
+                request_id=f"grader-calibration:{test_run_id}:{job_id}",
+                usage_purpose="live_eval",
+                test_run_id=test_run_id,
+                estimated_max_cost_usd=cost_cap_usd,
+                reservation_approved=True,
+            ),
+        )
         with tempfile.TemporaryDirectory(prefix="calib-") as tmpdir:
             local = str(Path(tmpdir) / "final.mp4")
             download_to_file(video_gcs_path, local)
@@ -71,6 +83,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Hard ceiling on Gemini spend (defaults to the eval suite LIVE_COST_CAP_USD).",
     )
     parser.add_argument("--limit", type=int, default=None, help="Cap the number of jobs graded.")
+    parser.add_argument("--test-run-id", default=None, help="Required paid-run attribution ID.")
+    parser.add_argument(
+        "--approve-reservation",
+        action="store_true",
+        help="Confirm the named run may reserve up to --cost-cap-usd.",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -85,7 +103,11 @@ def main(argv: list[str] | None = None) -> int:
 
             args.cost_cap_usd = LIVE_COST_CAP_USD
         except Exception:  # noqa: BLE001 — conftest import is best-effort
-            args.cost_cap_usd = 20.0
+            args.cost_cap_usd = 2.0
+    if args.cost_cap_usd <= 0 or args.cost_cap_usd > 2.0:
+        parser.error("--cost-cap-usd must be within (0, 2]")
+    if not args.dry_run and (not args.test_run_id or not args.approve_reservation):
+        parser.error("paid runs require --test-run-id and --approve-reservation")
 
     from app.database import sync_session
     from app.services.grader_calibration import (
@@ -118,7 +140,10 @@ def main(argv: list[str] | None = None) -> int:
 
     report = run_shadow_calibration(
         labels=labels,
-        grade_fn=_build_grade_fn(),
+        grade_fn=_build_grade_fn(
+            test_run_id=str(args.test_run_id),
+            cost_cap_usd=float(args.cost_cap_usd),
+        ),
         cost_cap_usd=args.cost_cap_usd,
     )
 

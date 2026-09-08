@@ -223,6 +223,8 @@ def _build_paragraph(text: str, vertices, confidence: float, vision_module):
 
 
 def test_cloud_vision_detect_normalizes_polygon_to_unit_square(fake_cloud_vision_module, tmp_path):
+    from app.services import text_overlay_ocr as mod
+
     fake = fake_cloud_vision_module
 
     # 1080x1920 image with a paragraph at pixels (108, 192) → (972, 384)
@@ -259,11 +261,19 @@ def test_cloud_vision_detect_normalizes_polygon_to_unit_square(fake_cloud_vision
         def __exit__(self_inner, *a):  # noqa: N805
             return False
 
-    with patch("PIL.Image.open", return_value=_FakeOpenCtx()):
+    metered = MagicMock(side_effect=lambda **kwargs: kwargs["operation"]())
+    with (
+        patch("PIL.Image.open", return_value=_FakeOpenCtx()),
+        patch.object(mod, "execute_metered_fixed_cost_google_call", metered),
+    ):
         backend = _make_backend(fake)
         results = backend.detect(str(img_path), frame_t_s=2.5)
 
     assert backend.name == "cloud-vision"
+    request = metered.call_args.kwargs["request"]
+    assert request.provider == "google-cloud-vision"
+    assert request.feature == "text_overlay_ocr"
+    assert request.estimated_cost_usd == pytest.approx(0.0015)
     assert len(results) == 1
     det = results[0]
     assert det.text == "It's not"

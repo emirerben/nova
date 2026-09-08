@@ -96,6 +96,42 @@ class TerminalError(AgentError):
     """Exhausted retries and fallbacks. Caller decides graceful degradation."""
 
 
+class ProviderOutcomeUnknownError(TerminalError):
+    """Provider work may still be running; retrying could double-charge."""
+
+
+class AiBudgetExceededError(TerminalError):
+    """A paid call was rejected before provider contact."""
+
+    def __init__(
+        self,
+        *,
+        scope: str,
+        reset_at: str,
+        cached_behavior_available: bool,
+        reason: str = "ai_budget_exhausted",
+    ) -> None:
+        self.scope = scope
+        self.reset_at = reset_at
+        self.cached_behavior_available = cached_behavior_available
+        self.reason = reason
+        super().__init__(reason)
+
+
+class AiCostControlPolicyError(TerminalError):
+    """Caller attribution or approval is invalid before provider contact."""
+
+    def __init__(self, *, scope: str, reason: str, status_code: int = 422) -> None:
+        self.scope = scope
+        self.reason = reason
+        self.status_code = status_code
+        super().__init__(reason)
+
+
+class CostControlUnavailableError(TerminalError):
+    """The reservation authority was unavailable, so the call failed closed."""
+
+
 # ── Spec + context ────────────────────────────────────────────────────────────
 
 
@@ -156,7 +192,16 @@ class RunContext:
     job_id: str | None = None
     creator_agent_session_id: str | None = None
     request_id: str | None = None
+    # True only for a client-minted intent token. The reservation key then
+    # ignores changed retry payload bytes and fences the original intent.
+    request_id_authoritative: bool = False
     segment_idx: int | None = None
+    creator_id: str | None = None
+    usage_purpose: str | None = None
+    test_run_id: str | None = None
+    estimated_max_cost_usd: float | None = None
+    reservation_approved: bool = False
+    release_canary_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -171,6 +216,11 @@ class ModelInvocation:
     # Effective provider model. Clients populate this when the provider
     # reports an alias/version that differs from the requested model.
     model_used: str | None = None
+    provider_request_id: str | None = None
+    tokens_thoughts: int = 0
+    tokens_cached: int = 0
+    tokens_tool: int = 0
+    token_details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -182,6 +232,18 @@ class _RunStats:
     schema_retries: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    tokens_thoughts: int = 0
+    tokens_cached: int = 0
+    tokens_tool: int = 0
+    token_details: dict[str, Any] = field(default_factory=dict)
+    environment: str | None = None
+    usage_purpose: str | None = None
+    test_run_id: str | None = None
+    provider_request_id: str | None = None
+    price_version: str | None = None
+    reserved_cost_usd: float = 0.0
+    settled_cost_usd: float = 0.0
+    cost_reservation_id: str | None = None
     # Effective model name as reported by the client. When set, it is used for
     # the agent_run log + Langfuse trace while `requested_model` remains the
     # immutable per-agent configuration.
@@ -272,6 +334,24 @@ class Agent(ABC, Generic[InputT, OutputT]):
 
     def media_mime(self, input: InputT) -> str:  # noqa: A002, ARG002
         return "video/mp4"
+
+    def media_duration_s(self, input: InputT) -> float | None:  # noqa: A002
+        """Return the strongest available bound for media-token estimation."""
+
+        segment = getattr(input, "segment", None)
+        if segment is not None:
+            try:
+                return max(0.0, float(segment.end_s) - float(segment.start_s))
+            except (AttributeError, TypeError, ValueError):
+                pass
+        for field_name in ("source_duration_s", "duration_s"):
+            try:
+                value = float(getattr(input, field_name))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return None
 
     def required_fields(self) -> list[str]:
         """Top-level JSON keys that must be present + non-empty for refusal detection."""
@@ -438,6 +518,19 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     error=str(exc),
                     input_dict=input_dump,
                 )
+                # Control-plane exceptions have deliberately fixed,
+                # non-sensitive messages and are part of the HTTP contract.
+                # Rewrapping them would erase 429 budget responses and the
+                # no-overlap fence for provider-unknown outcomes.
+                if isinstance(
+                    exc,
+                    (
+                        AiBudgetExceededError,
+                        ProviderOutcomeUnknownError,
+                        CostControlUnavailableError,
+                    ),
+                ):
+                    raise
                 if self.spec.sensitive_io:
                     raise TerminalError(self._terminal_message("terminal failure")) from exc
                 raise
@@ -475,6 +568,59 @@ class Agent(ABC, Generic[InputT, OutputT]):
 
         for attempt in range(self.spec.max_attempts):
             stats.attempts += 1
+            reservation = None
+            provider_max_output_tokens = self.max_output_tokens
+            if model.startswith("gemini"):
+                from app.services.ai_cost_control import (  # noqa: PLC0415
+                    PaidCallRequest,
+                    effective_max_output_tokens,
+                    estimate_call_cost_usd,
+                    logical_call_id,
+                    mark_paid_call_started,
+                    reserve_paid_call,
+                )
+
+                provider_max_output_tokens = effective_max_output_tokens(self.max_output_tokens)
+                estimated_cost = estimate_call_cost_usd(
+                    model=model,
+                    prompt=prompt,
+                    max_output_tokens=provider_max_output_tokens,
+                    media_mime=mime,
+                    media_duration_s=self.media_duration_s(input),
+                )
+                reservation = reserve_paid_call(
+                    PaidCallRequest(
+                        idempotency_key=logical_call_id(
+                            feature=self.spec.name,
+                            model=model,
+                            prompt=prompt,
+                            ctx=ctx,
+                            attempt=stats.attempts,
+                            media_identity=media,
+                        ),
+                        feature=(
+                            "edit_director"
+                            if self.spec.name == "nova.edit.director"
+                            else self.spec.name
+                        ),
+                        model=model,
+                        estimated_cost_usd=estimated_cost,
+                        ctx=ctx,
+                        cached_behavior_available=bool(
+                            ctx.extra.get("cached_behavior_available", False)
+                        ),
+                    )
+                )
+                stats.environment = reservation.environment if reservation is not None else None
+                stats.usage_purpose = (
+                    reservation.usage_purpose if reservation is not None else ctx.usage_purpose
+                )
+                stats.test_run_id = ctx.test_run_id
+                stats.price_version = reservation.price_version if reservation is not None else None
+                if reservation is not None:
+                    stats.reserved_cost_usd += reservation.estimated_cost_usd
+                    stats.cost_reservation_id = str(reservation.id)
+                mark_paid_call_started(reservation)
             try:
                 inv = self.client.invoke(
                     model=model,
@@ -482,12 +628,20 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     media_uri=media,
                     media_mime=mime,
                     response_json=self.response_json,
-                    max_output_tokens=self.max_output_tokens,
+                    max_output_tokens=provider_max_output_tokens,
                     thinking_budget=self.spec.thinking_budget,
                     thinking_level=self.spec.thinking_level,
                     timeout_s=self.spec.timeout_s,
                 )
+            except ProviderOutcomeUnknownError:
+                from app.services.ai_cost_control import mark_paid_call_unknown  # noqa: PLC0415
+
+                mark_paid_call_unknown(reservation)
+                raise
             except TransientError as exc:
+                from app.services.ai_cost_control import release_paid_call  # noqa: PLC0415
+
+                release_paid_call(reservation)
                 last_transient = exc
                 if attempt >= self.spec.max_attempts - 1:
                     raise
@@ -505,12 +659,50 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 time.sleep(backoff)
                 continue
             except TerminalError:
+                from app.services.ai_cost_control import release_paid_call  # noqa: PLC0415
+
+                release_paid_call(reservation)
                 raise
             except Exception as exc:  # SDK leaks something we didn't classify
+                from app.services.ai_cost_control import mark_paid_call_unknown  # noqa: PLC0415
+
+                mark_paid_call_unknown(reservation)
                 raise TerminalError(self._terminal_message("unclassified", exc)) from exc
+
+            if model.startswith("gemini"):
+                from app.services.ai_cost_control import (  # noqa: PLC0415
+                    PRICE_VERSION,
+                    UsageMeter,
+                    settle_paid_call,
+                )
+
+                metered_cost = settle_paid_call(
+                    reservation,
+                    UsageMeter(
+                        tokens_in=inv.tokens_in,
+                        tokens_out=inv.tokens_out,
+                        tokens_thoughts=inv.tokens_thoughts,
+                        tokens_cached=inv.tokens_cached,
+                        tokens_tool=inv.tokens_tool,
+                        token_details=inv.token_details,
+                        provider_request_id=inv.provider_request_id,
+                        resolved_model=inv.model_used or model,
+                    ),
+                )
+                stats.settled_cost_usd += metered_cost
+                stats.price_version = stats.price_version or PRICE_VERSION
 
             stats.tokens_in += inv.tokens_in
             stats.tokens_out += inv.tokens_out
+            stats.tokens_thoughts += inv.tokens_thoughts
+            stats.tokens_cached += inv.tokens_cached
+            stats.tokens_tool += inv.tokens_tool
+            if inv.token_details:
+                invocations = stats.token_details.setdefault("invocations", [])
+                if isinstance(invocations, list):
+                    invocations.append(inv.token_details)
+            if inv.provider_request_id:
+                stats.provider_request_id = inv.provider_request_id
             if inv.model_used:
                 stats.model_used = inv.model_used
             # Stash the raw response (truncated) so that if `_check_refusal`
@@ -715,9 +907,12 @@ class Agent(ABC, Generic[InputT, OutputT]):
     ) -> None:
         if self.spec.sensitive_io and error is not None:
             error = "sensitive_agent_error"
-        cost_usd = (stats.tokens_in / 1000.0) * self.spec.cost_per_1k_input_usd + (
-            stats.tokens_out / 1000.0
-        ) * self.spec.cost_per_1k_output_usd
+        cost_usd = (
+            stats.settled_cost_usd
+            if stats.price_version is not None
+            else (stats.tokens_in / 1000.0) * self.spec.cost_per_1k_input_usd
+            + (stats.tokens_out / 1000.0) * self.spec.cost_per_1k_output_usd
+        )
         payload = {
             "agent": self.spec.name,
             "prompt_version": self.spec.prompt_version,
@@ -730,6 +925,16 @@ class Agent(ABC, Generic[InputT, OutputT]):
             "schema_retry_count": stats.schema_retries,
             "tokens_in": stats.tokens_in,
             "tokens_out": stats.tokens_out,
+            "tokens_thoughts": stats.tokens_thoughts,
+            "tokens_cached": stats.tokens_cached,
+            "tokens_tool": stats.tokens_tool,
+            "environment": stats.environment,
+            "usage_purpose": stats.usage_purpose,
+            "test_run_id": stats.test_run_id,
+            "provider_request_id": stats.provider_request_id,
+            "price_version": stats.price_version,
+            "reserved_cost_usd": round(stats.reserved_cost_usd, 6),
+            "settled_cost_usd": round(stats.settled_cost_usd, 6),
             "cost_usd": round(cost_usd, 6),
             "latency_ms": latency_ms,
             "job_id": ctx.job_id,
@@ -770,6 +975,18 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 attempts=stats.attempts,
                 tokens_in=stats.tokens_in,
                 tokens_out=stats.tokens_out,
+                tokens_thoughts=stats.tokens_thoughts,
+                tokens_cached=stats.tokens_cached,
+                tokens_tool=stats.tokens_tool,
+                token_details=stats.token_details,
+                environment=stats.environment,
+                usage_purpose=stats.usage_purpose,
+                test_run_id=stats.test_run_id,
+                provider_request_id=stats.provider_request_id,
+                price_version=stats.price_version,
+                reserved_cost_usd=stats.reserved_cost_usd,
+                settled_cost_usd=stats.settled_cost_usd,
+                cost_reservation_id=stats.cost_reservation_id,
                 cost_usd=cost_usd,
                 latency_ms=latency_ms,
                 input_dict=input_dict,

@@ -55,6 +55,80 @@ def _make_template(
 
 
 @pytest.mark.asyncio
+async def test_staged_clips_promote_exact_generations_into_owned_job_prefix(
+    monkeypatch,
+) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    staged = [
+        f"staging/{user_id}/batch-a/clip_000.mp4",
+        f"staging/{user_id}/batch-a/clip_001.mov",
+    ]
+    copy_calls: list[tuple[str, str, str]] = []
+
+    def copy(src: str, dst: str, *, source_generation: str):
+        copy_calls.append((src, dst, source_generation))
+        return SimpleNamespace(generation=f"dst-{source_generation}")
+
+    monkeypatch.setattr(template_jobs.storage, "copy_object_generation", copy)
+
+    promoted, sources = await template_jobs._promote_staged_template_clips(
+        staged,
+        user_id=user_id,
+        job_id=job_id,
+        source_generations={staged[0]: "101", staged[1]: "202"},
+    )
+
+    assert promoted == [
+        f"users/{user_id}/jobs/{job_id}/source/clip_000.mp4",
+        f"users/{user_id}/jobs/{job_id}/source/clip_001.mov",
+    ]
+    assert sources == [(staged[0], "101"), (staged[1], "202")]
+    assert [call[2] for call in copy_calls] == ["101", "202"]
+
+
+@pytest.mark.asyncio
+async def test_failed_staging_promotion_cleans_exact_partial_destination(
+    monkeypatch,
+) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    staged = [
+        f"staging/{user_id}/batch-a/clip_000.mp4",
+        f"staging/{user_id}/batch-a/clip_001.mp4",
+    ]
+    calls = 0
+
+    def copy(_src: str, _dst: str, *, source_generation: str):  # noqa: ARG001
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("copy failed")
+        return SimpleNamespace(generation="destination-generation")
+
+    delete = MagicMock(return_value=True)
+    monkeypatch.setattr(template_jobs.storage, "copy_object_generation", copy)
+    monkeypatch.setattr(
+        template_jobs.storage,
+        "delete_object_generation_best_effort",
+        delete,
+    )
+
+    with pytest.raises(RuntimeError, match="copy failed"):
+        await template_jobs._promote_staged_template_clips(
+            staged,
+            user_id=user_id,
+            job_id=job_id,
+            source_generations={path: "source-generation" for path in staged},
+        )
+
+    delete.assert_called_once_with(
+        f"users/{user_id}/jobs/{job_id}/source/clip_000.mp4",
+        generation="destination-generation",
+    )
+
+
+@pytest.mark.asyncio
 async def test_reroll_rejects_copying_another_users_template_media() -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     original = SimpleNamespace(

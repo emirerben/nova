@@ -20,6 +20,7 @@ from app.config import settings
 from app.database import sync_session
 from app.models import Persona
 from app.services.creator_direction import CreatorDirectionService
+from app.services.tiktok_style_observations import fresh_style_observations
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -44,7 +45,9 @@ def _observed_style_input(tiktok_profile: dict | None):  # noqa: ANN201
     """
     if not tiktok_profile:
         return None
-    observations = tiktok_profile.get("style_observations") or {}
+    observations = fresh_style_observations(tiktok_profile)
+    if observations is None:
+        return None
     aggregate = observations.get("aggregate") or {}
     if not aggregate or not observations.get("videos_seen"):
         return None
@@ -131,6 +134,7 @@ def derive_user_style(self, persona_id: str, force: bool = False) -> None:  # no
         persona_dict = dict(row.persona)
         tiktok_summary = _analysis_summary(row.tiktok_profile)
         observed_style = _observed_style_input(row.tiktok_profile)
+        creator_id = str(row.user_id)
 
     # Build catalog inputs outside the session (pure CPU, no DB).
     try:
@@ -159,7 +163,7 @@ def derive_user_style(self, persona_id: str, force: bool = False) -> None:  # no
             font_vibes=font_vibes,
         )
         agent = StyleDerivationAgent(default_client())
-        output = agent.run(agent_input, ctx=RunContext(job_id=None))
+        output = agent.run(agent_input, ctx=RunContext(creator_id=creator_id))
         derived_style = output.style
     except Exception as exc:  # noqa: BLE001
         log.warning("style_build.agent_failed", persona_id=persona_id, error=str(exc)[:400])
@@ -197,6 +201,13 @@ def derive_user_style(self, persona_id: str, force: bool = False) -> None:  # no
                         "tiktok_official"
                         if (row.tiktok_profile or {}).get("official_analysis")
                         else "persona"
+                    ),
+                    "observed_style_at": (
+                        ((row.tiktok_profile or {}).get("style_observations") or {}).get(
+                            "observed_at"
+                        )
+                        if observed_style is not None
+                        else None
                     ),
                 },
             },

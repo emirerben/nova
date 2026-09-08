@@ -99,6 +99,32 @@ async def test_accepts_10bit_under_60s():
 
 
 @pytest.mark.asyncio
+async def test_staged_preflight_reads_the_captured_generation() -> None:
+    with (
+        patch("app.services.template_validation.signed_get_url") as path_only,
+        patch(
+            "app.services.template_validation.signed_get_url_for_generation",
+            return_value="https://signed.example/clip_007?generation=101",
+        ) as pinned,
+        patch(
+            "app.services.template_validation.probe_video",
+            return_value=_probe(duration_s=24.2, pix_fmt="yuv420p10le"),
+        ),
+    ):
+        await validate_clips_processable(
+            ["staging/user/batch/clip_007.MOV"],
+            clip_generations={"staging/user/batch/clip_007.MOV": "101"},
+        )
+
+    pinned.assert_called_once_with(
+        "staging/user/batch/clip_007.MOV",
+        generation="101",
+        expiration_minutes=5,
+    )
+    path_only.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_accepts_8bit_over_60s():
     """An 8-bit clip of any reasonable duration must pass — 8-bit decode is
     significantly faster than 10-bit and the deployed pipeline can handle it.

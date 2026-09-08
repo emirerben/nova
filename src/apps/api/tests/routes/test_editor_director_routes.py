@@ -15,7 +15,11 @@ from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem
 from app.pipeline.speech_cut_state import make_candidate
 from app.routes import plan_items
-from app.routes._director import DirectorSuggestionsResponse
+from app.routes._director import (
+    DirectorSuggestionsBody,
+    DirectorSuggestionsResponse,
+    _run_director_once,
+)
 from app.routes._omni import OmniAssetResponse
 from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 
@@ -159,6 +163,61 @@ def test_director_response_enforces_zero_to_five_suggestions() -> None:
     overflow["suggestions"] = [*five_suggestions, five_suggestions[0]]
     with pytest.raises(ValidationError):
         DirectorSuggestionsResponse.model_validate(overflow)
+
+
+@pytest.mark.asyncio
+async def test_director_reuses_durable_owner_scoped_cache_without_paid_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cached = MagicMock()
+    cached.response_json = _director_response().model_dump(mode="json")
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = cached
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=query_result)
+    no_client = MagicMock(side_effect=AssertionError("cache hit contacted provider"))
+    monkeypatch.setattr("app.routes._director.default_client", no_client)
+    settings.omni_generated_video_enabled = False
+    body = DirectorSuggestionsBody.model_validate(_director_body())
+    body.snapshot_revision = "revision-from-current-request"
+
+    response = await _run_director_once(
+        body,
+        job_id=uuid.uuid4(),
+        creator_id=uuid.uuid4(),
+        db=db,
+    )
+
+    assert response.snapshot_revision == "revision-from-current-request"
+    assert response.suggestions[0].id == "director-1"
+    no_client.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_director_never_advertises_omni_outside_lab(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cached = MagicMock()
+    cached.response_json = _director_response().model_dump(mode="json")
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = cached
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=query_result)
+    monkeypatch.setattr("app.routes._director.default_client", MagicMock())
+    monkeypatch.setattr("app.routes._director.settings.omni_generated_video_enabled", True)
+    monkeypatch.setattr("app.routes._director.settings.ai_usage_environment", "production")
+    body_data = _director_body()
+    body_data["omni_enabled"] = True
+
+    response = await _run_director_once(
+        DirectorSuggestionsBody.model_validate(body_data),
+        job_id=uuid.uuid4(),
+        creator_id=uuid.uuid4(),
+        db=db,
+    )
+
+    assert response.omni_max_cost_per_second_usd is None
 
 
 def test_director_routes_require_authentication(client: TestClient) -> None:

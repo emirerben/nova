@@ -214,7 +214,10 @@ def _extract_lyrics_with_lrclib_retry(
     for attempt in range(1, _LRCLIB_REFRESH_ATTEMPTS + 1):
         output = LyricsExtractionAgent(model_client=None).run(  # type: ignore[arg-type]
             lyrics_input,
-            ctx=RunContext(job_id=f"track:{track_id}:render-refresh"),
+            ctx=RunContext(
+                job_id=f"track:{track_id}:render-refresh",
+                usage_purpose="optional_background",
+            ),
         )
         last = output
         publishable = not output.is_empty and output.source in PUBLISHABLE_LYRICS_SOURCES

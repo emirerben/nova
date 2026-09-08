@@ -1,6 +1,5 @@
-"""Celery task: vision-analyze a creator's own TikTok videos → StyleObservation aggregate.
+"""Explicitly vision-analyze a creator's TikTok videos → StyleObservation aggregate.
 
-Fire-and-forget from scrape_tiktok_profile (alongside analyze_tiktok_profile).
 Downloads each enriched video MP4 to a TemporaryDirectory, uploads to the Gemini
 File API, runs StyleObservationAgent per video, aggregates deterministically
 (mode + ≥0.5 agreement), and persists to persona.tiktok_profile["style_observations"].
@@ -24,17 +23,19 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
+from sqlalchemy import select
 
 from app.config import settings
 from app.database import sync_session
 from app.models import Persona
+from app.services.tiktok_style_analysis import TIKTOK_STYLE_ANALYSIS_CLAIM_LEASE
+from app.services.tiktok_style_observations import style_observations_are_fresh
 from app.worker import celery_app
 
 log = structlog.get_logger()
 
-_CONCURRENT_DOWNLOADS = 6   # yt-dlp parallelism cap
-_GEMINI_UPLOAD_CAP = 16     # Gemini File API simultaneous uploads
-_MAX_VIDEOS = 30            # max enriched videos to process
+_CONCURRENT_DOWNLOADS = 4  # yt-dlp parallelism cap
+_MAX_VIDEOS = 8  # hard paid-analysis ceiling per explicit review
 _AGREEMENT_THRESHOLD = 0.5  # min fraction agreeing for a field to be emitted
 
 
@@ -72,7 +73,12 @@ def _aggregate_observations(observations: list[dict]) -> dict[str, Any]:
     n_text = len(text_obs)
 
     categorical_fields = [
-        "font_feel", "position", "size_class", "layout", "stroke", "text_anchor",
+        "font_feel",
+        "position",
+        "size_class",
+        "layout",
+        "stroke",
+        "text_anchor",
     ]
     confidence_per_field: dict[str, float] = {}
 
@@ -111,6 +117,26 @@ def _aggregate_observations(observations: list[dict]) -> dict[str, Any]:
     return result
 
 
+def _representative_videos(videos: list[dict], *, limit: int = _MAX_VIDEOS) -> list[dict]:
+    """Choose stable performance quantiles instead of whichever rows arrive first."""
+
+    downloadable = [video for video in videos if video.get("webpage_url")]
+    ranked = sorted(
+        downloadable,
+        key=lambda video: (
+            -float(video.get("view_index") or 0.0),
+            str(video.get("upload_date") or ""),
+            str(video.get("video_id") or video.get("webpage_url") or ""),
+        ),
+    )
+    if len(ranked) <= limit:
+        return ranked
+    # Evenly sample the complete performance distribution, always including
+    # both the strongest and weakest observed videos.
+    indices = [round(index * (len(ranked) - 1) / (limit - 1)) for index in range(limit)]
+    return [ranked[index] for index in indices]
+
+
 # ── Download helper (runs in a thread pool) ───────────────────────────────────
 
 
@@ -143,6 +169,7 @@ def _download_video(webpage_url: str, dest_dir: str) -> str | None:
                 if not info:
                     return None
                 import os  # noqa: PLC0415
+
                 video_id = info.get("id", "video")
                 ext = info.get("ext", "mp4")
                 path = f"{dest_dir}/{video_id}.{ext}"
@@ -155,26 +182,31 @@ def _download_video(webpage_url: str, dest_dir: str) -> str | None:
 # ── Main task ─────────────────────────────────────────────────────────────────
 
 
-@celery_app.task(
-    name="app.tasks.style_vision_build.analyze_tiktok_style",
-    bind=True,
-    max_retries=0,
-    soft_time_limit=1740,
-    time_limit=1800,
-)
-def analyze_tiktok_style(self, persona_id: str, handle: str) -> None:  # noqa: ANN001
+def _run_tiktok_style_analysis(
+    self,
+    persona_id: str,
+    handle: str,
+    *,
+    explicit: bool = False,
+    usage_purpose: str | None = None,
+    test_run_id: str | None = None,
+    estimated_max_cost_usd: float | None = None,
+    reservation_approved: bool = False,
+    release_canary_id: str | None = None,
+) -> str | None:  # noqa: ANN001
     """Download + vision-analyze a creator's TikTok videos → style_observations.
 
     Best-effort: any failure (TikTok blocked, Gemini quota, timeout) logs and returns
     silently. The persona is NEVER marked failed by this task.
 
     time_limit=1800 < worker visibility_timeout (1900s) invariant holds.
-    Dark: gated by settings.tiktok_style_vision_enabled.
+    Dark: gated by settings.tiktok_style_vision_enabled and an explicit request.
     """
-    if not settings.tiktok_style_vision_enabled:
-        return
+    if not settings.tiktok_style_vision_enabled or not explicit:
+        return "not_available"
 
-    from app.agents._runtime import default_client  # noqa: PLC0415
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import RunContext  # noqa: PLC0415
     from app.agents.style_observation import (  # noqa: PLC0415
         StyleObservationAgent,
         StyleObservationInput,
@@ -182,15 +214,24 @@ def analyze_tiktok_style(self, persona_id: str, handle: str) -> None:  # noqa: A
     from app.pipeline.agents.gemini_analyzer import gemini_upload_and_wait  # noqa: PLC0415
     from app.services.tiktok_profile import fetch_profile_enriched  # noqa: PLC0415
 
+    persona_uuid = uuid.UUID(str(persona_id))
+    with sync_session() as session:
+        persona_row = session.get(Persona, persona_uuid)
+        if persona_row is None:
+            return "persona_not_found"
+        if style_observations_are_fresh(persona_row.tiktok_profile, now=datetime.now(UTC)):
+            log.info("style_vision.fresh_cache_hit", persona_id=persona_id)
+            return None
+        creator_id = str(persona_row.user_id)
+
     clean = handle
     profile = fetch_profile_enriched(clean)
     if profile is None:
         log.info("style_vision.no_profile", persona_id=persona_id, handle=clean)
-        return
+        return "profile_unavailable"
 
     videos = profile.get("videos") or []
-    # Filter to videos that have a downloadable URL; skip if enriched fetch lacked URLs.
-    downloadable = [v for v in videos if v.get("webpage_url")][:_MAX_VIDEOS]
+    downloadable = _representative_videos(videos)
     if not downloadable:
         log.info(
             "style_vision.no_downloadable_videos",
@@ -198,7 +239,7 @@ def analyze_tiktok_style(self, persona_id: str, handle: str) -> None:  # noqa: A
             handle=clean,
             total=len(videos),
         )
-        return
+        return "no_public_videos"
 
     log.info(
         "style_vision.start",
@@ -208,18 +249,24 @@ def analyze_tiktok_style(self, persona_id: str, handle: str) -> None:  # noqa: A
     )
 
     agent = StyleObservationAgent(default_client())
+    run_context = RunContext(
+        creator_id=creator_id,
+        request_id=f"style-vision:{persona_id}:{self.request.id}",
+        usage_purpose=usage_purpose,
+        test_run_id=test_run_id,
+        estimated_max_cost_usd=estimated_max_cost_usd,
+        reservation_approved=reservation_approved,
+        release_canary_id=release_canary_id,
+    )
     observations: list[dict] = []
     per_video: list[dict] = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Phase 1: parallel downloads (thread pool, cap=6).
+        # Phase 1: parallel downloads bounded by _CONCURRENT_DOWNLOADS.
         # Submit each video alongside its metadata so we can correlate results.
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=_CONCURRENT_DOWNLOADS
-        ) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_CONCURRENT_DOWNLOADS) as pool:
             future_to_meta = {
-                pool.submit(_download_video, v["webpage_url"], tmpdir): v
-                for v in downloadable
+                pool.submit(_download_video, v["webpage_url"], tmpdir): v for v in downloadable
             }
             paired: list[tuple[dict, str | None]] = []
             for fut, video_meta in future_to_meta.items():
@@ -248,16 +295,19 @@ def analyze_tiktok_style(self, persona_id: str, handle: str) -> None:  # noqa: A
                         file_mime="video/mp4",
                         caption=video_meta.get("caption", ""),
                         view_index=video_meta.get("view_index"),
-                    )
+                    ),
+                    ctx=run_context,
                 )
                 obs_dict = obs.model_dump()
                 observations.append(obs_dict)
-                per_video.append({
-                    "video_id": video_id,
-                    "webpage_url": video_meta.get("webpage_url", ""),
-                    "view_index": video_meta.get("view_index"),
-                    "observation": obs_dict,
-                })
+                per_video.append(
+                    {
+                        "video_id": video_id,
+                        "webpage_url": video_meta.get("webpage_url", ""),
+                        "view_index": video_meta.get("view_index"),
+                        "observation": obs_dict,
+                    }
+                )
                 log.info(
                     "style_vision.video_done",
                     video_id=video_id,
@@ -274,7 +324,7 @@ def analyze_tiktok_style(self, persona_id: str, handle: str) -> None:  # noqa: A
 
     if not observations:
         log.info("style_vision.no_observations", persona_id=persona_id, handle=clean)
-        return
+        return "analysis_unavailable"
 
     aggregate = _aggregate_observations(observations)
 
@@ -287,11 +337,12 @@ def analyze_tiktok_style(self, persona_id: str, handle: str) -> None:  # noqa: A
     }
 
     with sync_session() as session:
-        row = session.get(Persona, uuid.UUID(str(persona_id)))
+        row = session.get(Persona, persona_uuid)
         if row is None:
             return
         blob = dict(row.tiktok_profile or {})
         blob["style_observations"] = style_observations
+        blob.pop("style_analysis_failure", None)
         row.tiktok_profile = blob
         session.commit()
 
@@ -312,4 +363,86 @@ def analyze_tiktok_style(self, persona_id: str, handle: str) -> None:  # noqa: A
             row = session.get(Persona, uuid.UUID(str(persona_id)))
             if row and row.style and row.style.get("status") != "edited":
                 from app.tasks.style_build import derive_user_style  # noqa: PLC0415
+
                 derive_user_style.delay(str(persona_id))
+    return None
+
+
+@celery_app.task(
+    name="app.tasks.style_vision_build.analyze_tiktok_style",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=1740,
+    time_limit=1800,
+)
+def analyze_tiktok_style(
+    self,
+    persona_id: str,
+    handle: str,
+    *,
+    claim_id: str | None = None,
+    explicit: bool = False,
+    usage_purpose: str | None = None,
+    test_run_id: str | None = None,
+    estimated_max_cost_usd: float | None = None,
+    reservation_approved: bool = False,
+    release_canary_id: str | None = None,
+) -> None:  # noqa: ANN001
+    """Run one explicitly claimed analysis and always release its DB claim."""
+
+    if not settings.tiktok_style_vision_enabled or not explicit or not claim_id:
+        return
+    try:
+        persona_uuid = uuid.UUID(str(persona_id))
+        claim_uuid = uuid.UUID(str(claim_id))
+    except ValueError:
+        return
+    now = datetime.now(UTC)
+    with sync_session() as session:
+        row = session.scalar(select(Persona).where(Persona.id == persona_uuid).with_for_update())
+        if (
+            row is None
+            or row.tiktok_style_analysis_claim_id != claim_uuid
+            or row.tiktok_style_analysis_claim_expires_at is None
+            or row.tiktok_style_analysis_claim_expires_at <= now
+        ):
+            return
+        # Renew the route claim under the same row lock before any download or
+        # provider interaction. A retrying route therefore observes an active
+        # worker claim and cannot fan out a second eight-video analysis.
+        row.tiktok_style_analysis_claim_expires_at = now + TIKTOK_STYLE_ANALYSIS_CLAIM_LEASE
+        session.commit()
+    failure_reason: str | None = None
+    try:
+        failure_reason = _run_tiktok_style_analysis(
+            self,
+            persona_id,
+            handle,
+            explicit=explicit,
+            usage_purpose=usage_purpose,
+            test_run_id=test_run_id,
+            estimated_max_cost_usd=estimated_max_cost_usd,
+            reservation_approved=reservation_approved,
+            release_canary_id=release_canary_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        failure_reason = "analysis_failed"
+        log.exception(
+            "style_vision.failed",
+            persona_id=persona_id,
+            error=str(exc)[:200],
+        )
+    finally:
+        with sync_session() as session:
+            row = session.get(Persona, persona_uuid)
+            if row is not None and row.tiktok_style_analysis_claim_id == claim_uuid:
+                if isinstance(failure_reason, str) and failure_reason:
+                    profile = dict(row.tiktok_profile or {})
+                    profile["style_analysis_failure"] = {
+                        "reason": failure_reason,
+                        "failed_at": datetime.now(UTC).isoformat(),
+                    }
+                    row.tiktok_profile = profile
+                row.tiktok_style_analysis_claim_id = None
+                row.tiktok_style_analysis_claim_expires_at = None
+                session.commit()

@@ -106,7 +106,20 @@ function appliedResult(): ApplyCopilotOpsResult {
   };
 }
 
-async function loadInitialReview(): Promise<void> {
+const reviewRequestedForHook = new WeakSet<object>();
+
+async function loadInitialReview(result: {
+  current: {
+    refresh?: () => void;
+    director?: { refresh: () => void };
+  };
+}): Promise<void> {
+  if (!reviewRequestedForHook.has(result)) {
+    const refresh = result.current.refresh ?? result.current.director?.refresh;
+    if (!refresh) throw new Error("test hook does not expose Director.refresh");
+    act(() => refresh());
+    reviewRequestedForHook.add(result);
+  }
   await act(async () => {
     jest.advanceTimersByTime(1200);
     await Promise.resolve();
@@ -117,6 +130,7 @@ describe("useEditDirector", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    jest.spyOn(window, "confirm").mockReturnValue(true);
     window.sessionStorage.clear();
     feedbackMock.mockResolvedValue(undefined);
     applySpeechCutMock.mockResolvedValue({
@@ -148,6 +162,75 @@ describe("useEditDirector", () => {
 
   afterEach(() => {
     jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it("does not request a paid review until the user explicitly asks", async () => {
+    let current = snapshot();
+    const { rerender, result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: jest.fn(() => appliedResult()),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    current = snapshot("edited without review");
+    rerender();
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+
+    expect(result.current.reviewed).toBe(false);
+    expect(suggestionsMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks futile review retries until the server budget reset", async () => {
+    const resetAt = "2099-09-09T00:00:00+00:00";
+    suggestionsMock.mockRejectedValue({
+      status: 429,
+      code: "ai_budget_exhausted",
+      retryable: false,
+      resetAt,
+    });
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => snapshot(),
+        applyOpsAtomic: jest.fn(() => appliedResult()),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    act(() => result.current.refresh());
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.reviewBlocked).toBe(true);
+    expect(result.current.error).toMatch(/review limit has been reached/i);
+    expect(result.current.error).toMatch(/2099/);
+
+    act(() => result.current.refresh());
+    await act(async () => {
+      jest.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+    expect(suggestionsMock).toHaveBeenCalledTimes(1);
   });
 
   it("loads, accepts atomically, dismisses, and refreshes", async () => {
@@ -160,6 +243,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     const applyOpsAtomic = jest.fn(() => appliedResult());
     const onApplied = jest.fn();
@@ -175,7 +259,7 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     expect(result.current.suggestions).toHaveLength(2);
     expect(result.current.modelUsed).toBe("gemini-3.1-pro-preview");
     expect(suggestionsMock).toHaveBeenCalledWith(
@@ -211,6 +295,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     }));
     const { result } = renderHook(() =>
       useEditDirector({
@@ -224,13 +309,13 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
-    await loadInitialReview();
+    await loadInitialReview(result);
+    await loadInitialReview(result);
     expect(result.current.suggestions).toEqual([]);
     expect(suggestionsMock).toHaveBeenCalledTimes(1);
 
     act(() => result.current.refresh());
-    await loadInitialReview();
+    await loadInitialReview(result);
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
   });
 
@@ -246,8 +331,9 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     }));
-    const { rerender } = renderHook(
+    const { result, rerender } = renderHook(
       ({ playheadS }: { playheadS: number }) =>
         useEditDirector({
           enabled: true,
@@ -267,7 +353,7 @@ describe("useEditDirector", () => {
       { initialProps: { playheadS: 0 } },
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     const firstRequest = suggestionsMock.mock.calls[0]?.[2];
     expect(firstRequest?.snapshot).not.toHaveProperty("editor_focus");
     expect(firstRequest?.snapshot.text_bars[0]).toBe(current.text_bars[0]);
@@ -313,6 +399,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     }));
     const { result, rerender } = renderHook(
       ({ buildSnapshot }: { buildSnapshot: () => CopilotSnapshot }) =>
@@ -339,7 +426,7 @@ describe("useEditDirector", () => {
     expect(suggestionsMock).not.toHaveBeenCalled();
 
     rerender({ buildSnapshot: () => current });
-    await loadInitialReview();
+    await loadInitialReview(result);
 
     expect(result.current.error).toBeNull();
     expect(suggestionsMock).toHaveBeenCalledTimes(1);
@@ -353,17 +440,9 @@ describe("useEditDirector", () => {
     expect(suggestionsMock).toHaveBeenCalledTimes(1);
   });
 
-  it("silently refreshes a stale 409 against the current revision", async () => {
+  it("does not auto-retry a stale 409", async () => {
     const current = snapshot();
-    suggestionsMock
-      .mockRejectedValueOnce({ status: 409, requestId: "req-stale" })
-      .mockImplementationOnce(async (_itemId, _variantId, body) => ({
-        suggestions: [],
-        snapshot_revision: body.snapshot_revision,
-        requested_model: "gemini-3.1-pro-preview",
-        model_used: "gemini-3.1-pro-preview",
-        fallback_reason: null,
-      }));
+    suggestionsMock.mockRejectedValueOnce({ status: 409, requestId: "req-stale" });
     const { result } = renderHook(() =>
       useEditDirector({
         enabled: true,
@@ -376,11 +455,9 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
-    expect(result.current.error).toBeNull();
-    await loadInitialReview();
-    expect(suggestionsMock).toHaveBeenCalledTimes(2);
-    expect(result.current.error).toBeNull();
+    await loadInitialReview(result);
+    expect(suggestionsMock).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toContain("draft changed");
   });
 
   it.each([
@@ -404,7 +481,7 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
 
     expect(result.current.error).toContain(copy);
     expect(result.current.error).toContain("unchanged");
@@ -429,6 +506,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     const applyOpsAtomic = jest.fn(() => appliedResult());
     const onServerRenderStarted = jest.fn();
@@ -447,7 +525,7 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     act(() => result.current.accept(cut));
     expect(result.current.serverRendering).toBe(true);
     await act(async () => {
@@ -480,6 +558,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     const { result } = renderHook(() =>
       useEditDirector({
@@ -496,7 +575,7 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     act(() => result.current.accept(cut));
     expect(result.current.error).toContain("Save your draft");
     expect(applySpeechCutMock).not.toHaveBeenCalled();
@@ -514,6 +593,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     const onServerRenderStarted = jest.fn();
     const { result } = renderHook(() =>
@@ -532,7 +612,7 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     act(() => result.current.restoreOriginalTiming());
     await act(async () => {
       await Promise.resolve();
@@ -580,7 +660,7 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     act(() => result.current.accept(cut));
     await act(async () => {
       await Promise.resolve();
@@ -658,7 +738,7 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     act(() => result.current.accept(cut));
     await act(async () => {
       await Promise.resolve();
@@ -706,6 +786,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
 
     const { result } = renderHook(() =>
@@ -720,7 +801,7 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
 
     expect(result.current.suggestions).toEqual([]);
     expect(result.current.error).toBe(DIRECTOR_CAPABILITY_MISMATCH_MESSAGE);
@@ -780,7 +861,7 @@ describe("useEditDirector", () => {
       return { director, previewChanges };
     });
 
-    await loadInitialReview();
+    await loadInitialReview(result);
 
     for (const recommendation of review) {
       act(() => result.current.director.accept(recommendation));
@@ -816,7 +897,7 @@ describe("useEditDirector", () => {
       jest.advanceTimersByTime(1200);
       await Promise.resolve();
     });
-    expect(suggestionsMock).toHaveBeenCalledTimes(2);
+    expect(suggestionsMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the recommendation visible when the editor cannot commit it", async () => {
@@ -843,7 +924,7 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     act(() => result.current.accept(recommendation));
 
     expect(result.current.suggestions).toEqual([recommendation]);
@@ -885,11 +966,11 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     expect(result.current.suggestions.map((item) => item.id)).toEqual(["old-review"]);
 
     act(() => result.current.refresh());
-    await loadInitialReview();
+    await loadInitialReview(result);
 
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
     expect(result.current.suggestions.map((item) => item.id)).toEqual(["fresh-review"]);
@@ -935,16 +1016,16 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     act(() => result.current.accept(stale));
-    await loadInitialReview();
+    await loadInitialReview(result);
 
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
     expect(result.current.loading).toBe(false);
     expect(result.current.suggestions.map((item) => item.id)).toEqual(["replacement-card"]);
   });
 
-  it("keeps an explicit refresh armed when hydration aborts its in-flight request", async () => {
+  it("does not spend a second review when hydration changes during an explicit refresh", async () => {
     let current = snapshot();
     let resolveInterrupted: ((value: Awaited<ReturnType<typeof editDirectorSuggestions>>) => void) | null = null;
     suggestionsMock
@@ -957,13 +1038,6 @@ describe("useEditDirector", () => {
       })
       .mockReturnValueOnce(new Promise((resolve) => {
         resolveInterrupted = resolve;
-      }))
-      .mockImplementationOnce(async (_itemId, _variantId, body) => ({
-        suggestions: [suggestion({ id: "hydrated-card" })],
-        snapshot_revision: body.snapshot_revision,
-        requested_model: "gemini-3.1-pro-preview",
-        model_used: "gemini-3.1-pro-preview",
-        fallback_reason: null,
       }));
     const { result, rerender } = renderHook(() =>
       useEditDirector({
@@ -977,8 +1051,9 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     act(() => result.current.refresh());
+    expect(result.current.loading).toBe(true);
     await act(async () => {
       jest.advanceTimersByTime(1200);
     });
@@ -986,7 +1061,7 @@ describe("useEditDirector", () => {
 
     current = snapshot("hydrated while refreshing");
     rerender();
-    await loadInitialReview();
+    await loadInitialReview(result);
 
     await act(async () => {
       resolveInterrupted?.({
@@ -999,9 +1074,10 @@ describe("useEditDirector", () => {
       await Promise.resolve();
     });
 
-    expect(suggestionsMock).toHaveBeenCalledTimes(3);
+    expect(suggestionsMock).toHaveBeenCalledTimes(2);
     expect(result.current.loading).toBe(false);
-    expect(result.current.suggestions.map((item) => item.id)).toEqual(["hydrated-card"]);
+    expect(result.current.suggestions).toEqual([]);
+    expect(result.current.error).toContain("draft changed");
   });
 
   it("drops a response when the material draft changed while it was in flight", async () => {
@@ -1022,6 +1098,7 @@ describe("useEditDirector", () => {
       }),
     );
 
+    act(() => result.current.refresh());
     await act(async () => {
       jest.advanceTimersByTime(1200);
     });
@@ -1038,22 +1115,17 @@ describe("useEditDirector", () => {
     });
 
     expect(result.current.suggestions).toEqual([]);
+    expect(result.current.reviewed).toBe(true);
+    expect(result.current.error).toContain("draft changed");
+    expect(suggestionsMock).toHaveBeenCalledTimes(1);
   });
 
-  it("restarts an in-flight initial review when async editor hydration changes the snapshot", async () => {
+  it("never auto-restarts an in-flight review when editor hydration changes", async () => {
     let current = snapshot();
     let resolveFirst: ((value: Awaited<ReturnType<typeof editDirectorSuggestions>>) => void) | null = null;
-    suggestionsMock
-      .mockReturnValueOnce(new Promise((resolve) => {
-        resolveFirst = resolve;
-      }))
-      .mockImplementationOnce(async (_itemId, _variantId, body) => ({
-        suggestions: [suggestion({ id: "director-hydrated" })],
-        snapshot_revision: body.snapshot_revision,
-        requested_model: "gemini-3.1-pro-preview",
-        model_used: "gemini-3.1-pro-preview",
-        fallback_reason: null,
-      }));
+    suggestionsMock.mockReturnValueOnce(new Promise((resolve) => {
+      resolveFirst = resolve;
+    }));
 
     const { result, rerender } = renderHook(() =>
       useEditDirector({
@@ -1067,6 +1139,7 @@ describe("useEditDirector", () => {
       }),
     );
 
+    act(() => result.current.refresh());
     await act(async () => {
       jest.advanceTimersByTime(1200);
     });
@@ -1086,10 +1159,72 @@ describe("useEditDirector", () => {
       await Promise.resolve();
     });
 
-    expect(suggestionsMock).toHaveBeenCalledTimes(2);
-    expect(result.current.suggestions.map((item) => item.id)).toEqual([
-      "director-hydrated",
-    ]);
+    expect(suggestionsMock).toHaveBeenCalledTimes(1);
+    expect(result.current.suggestions).toEqual([]);
+    expect(result.current.error).toContain("draft changed");
+  });
+
+  it("fences duplicate Omni confirms before the first start response and rounds cost up", async () => {
+    const current = snapshot();
+    const omni = suggestion({
+      id: "director-omni-fenced",
+      apply_mode: "omni_async",
+      ops: [],
+      omni: {
+        action: "generate_insert",
+        prompt: "A fractional visual bridge",
+        insert_at_s: 2,
+        duration_s: 3.4,
+      },
+    });
+    suggestionsMock.mockResolvedValue({
+      suggestions: [omni],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
+    });
+    let resolveStart: ((value: Awaited<ReturnType<typeof startOmniAsset>>) => void) | null = null;
+    startMock.mockReturnValue(new Promise((resolve) => {
+      resolveStart = resolve;
+    }));
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: true,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: () => appliedResult(),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await loadInitialReview(result);
+    act(() => {
+      result.current.accept(omni, { omniCostConfirmed: true });
+      result.current.accept(omni, { omniCostConfirmed: true });
+    });
+
+    expect(result.current.omniDispatchPending).toBe(true);
+    expect(startMock).toHaveBeenCalledTimes(1);
+    expect(startMock).toHaveBeenCalledWith(
+      "item-1",
+      "variant-1",
+      expect.objectContaining({ estimated_max_cost_usd: 0.38 }),
+    );
+
+    await act(async () => {
+      resolveStart?.({
+        asset_id: "asset-fenced",
+        status: "failed",
+        progress: 0,
+        model: "gemini-omni-flash-preview",
+      });
+      await Promise.resolve();
+    });
+    expect(result.current.omniDispatchPending).toBe(false);
   });
 
   it.each(["ready", "loading", "unavailable"] as const)("inserts a ready Omni asset while metadata status is %s", async (refreshedStatus) => {
@@ -1118,6 +1253,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     startMock.mockResolvedValue({
       asset_id: "asset-1",
@@ -1165,14 +1301,14 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
+    await loadInitialReview(result);
     expect(suggestionsMock).toHaveBeenCalledWith(
       "item-1",
       "variant-1",
       expect.objectContaining({ omni_enabled: true }),
       expect.any(AbortSignal),
     );
-    act(() => result.current.accept(omni));
+    act(() => result.current.accept(omni, { omniCostConfirmed: true }));
     await act(async () => {
       await Promise.resolve();
     });
@@ -1215,6 +1351,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     startMock.mockResolvedValue({
       asset_id: "asset-1",
@@ -1262,8 +1399,8 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
-    act(() => result.current.accept(omni));
+    await loadInitialReview(result);
+    act(() => result.current.accept(omni, { omniCostConfirmed: true }));
     await act(async () => {
       await Promise.resolve();
       jest.advanceTimersByTime(2000);
@@ -1301,6 +1438,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     startMock.mockResolvedValue({
       asset_id: "asset-1",
@@ -1327,8 +1465,8 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
-    act(() => result.current.accept(omni));
+    await loadInitialReview(result);
+    act(() => result.current.accept(omni, { omniCostConfirmed: true }));
     await act(async () => {
       await Promise.resolve();
       jest.advanceTimersByTime(2000);
@@ -1361,6 +1499,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     startMock.mockResolvedValue({
       asset_id: "asset-1",
@@ -1388,8 +1527,8 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
-    act(() => result.current.accept(omni));
+    await loadInitialReview(result);
+    act(() => result.current.accept(omni, { omniCostConfirmed: true }));
     current = snapshot("user changed this");
     await act(async () => {
       await Promise.resolve();
@@ -1423,6 +1562,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     startMock.mockResolvedValue({
       asset_id: "asset-1",
@@ -1454,8 +1594,8 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
-    act(() => result.current.accept(omni));
+    await loadInitialReview(result);
+    act(() => result.current.accept(omni, { omniCostConfirmed: true }));
     await act(async () => {
       await Promise.resolve();
       jest.advanceTimersByTime(2000);
@@ -1507,6 +1647,7 @@ describe("useEditDirector", () => {
       requested_model: "gemini-3.1-pro-preview",
       model_used: "gemini-3.1-pro-preview",
       fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
     });
     startMock.mockResolvedValue({
       asset_id: "asset-1",
@@ -1527,8 +1668,8 @@ describe("useEditDirector", () => {
       }),
     );
 
-    await loadInitialReview();
-    act(() => result.current.accept(omni));
+    await loadInitialReview(result);
+    act(() => result.current.accept(omni, { omniCostConfirmed: true }));
     await act(async () => {
       await Promise.resolve();
     });

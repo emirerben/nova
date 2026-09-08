@@ -17,10 +17,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.agents._runtime import ModelInvocation
-from app.agents.idea_expander import FilmingShot
+from app.agents.idea_expander import FilmingShot, IdeaExpanderInput
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.routes import plan_items
 
 # ── shared helpers ─────────────────────────────────────────────────────────────
 
@@ -681,13 +682,19 @@ def test_expand_does_not_write_db(client: TestClient) -> None:
     mock_output.rationale = "Creates curiosity"
 
     with patch("app.agents.idea_expander.IdeaExpanderAgent.run", return_value=mock_output) as run:
-        resp = client.post(f"/plan-items/{item.id}/expand")
+        resp = client.post(
+            f"/plan-items/{item.id}/expand",
+            json={"client_request_id": "expand-intent-1"},
+        )
 
     assert resp.status_code == 200
     agent_input = run.call_args.args[0]
     assert agent_input.creator_context == ""
     assert agent_input.video_type == "montage"
     assert agent_input.content_mode == "create_new"
+    run_context = run.call_args.kwargs["ctx"]
+    assert run_context.creator_id == str(user.id)
+    assert run_context.request_id.startswith(f"idea-expand:{item.id}:client:")
     data = resp.json()
     assert data["theme"] == "Coffee shop first visit"
     assert 2 <= len(data["filming_guide"]) <= 4
@@ -695,6 +702,29 @@ def test_expand_does_not_write_db(client: TestClient) -> None:
     # No DB writes.
     db.add.assert_not_called()
     db.commit.assert_not_awaited()
+
+
+def test_expand_client_intent_id_fences_changed_payload_and_separates_new_intent() -> None:
+    first = IdeaExpanderInput(
+        idea="visit the new coffee shop",
+        persona_summary="Creator",
+        creator_context="make it energetic",
+    )
+    changed = first.model_copy(update={"creator_context": "make it calm"})
+    scope = str(uuid.uuid4())
+
+    first_id = plan_items._paid_agent_request_id(
+        "idea-expand", scope, first, client_request_id="intent-1"
+    )
+    changed_retry_id = plan_items._paid_agent_request_id(
+        "idea-expand", scope, changed, client_request_id="intent-1"
+    )
+    new_intent_id = plan_items._paid_agent_request_id(
+        "idea-expand", scope, first, client_request_id="intent-2"
+    )
+
+    assert first_id == changed_retry_id
+    assert first_id != new_intent_id
 
 
 def test_item_read_owner_mismatch_is_generic_409(client: TestClient) -> None:

@@ -296,7 +296,10 @@ def _select_agentic_style_set(
         theme = str(getattr(recipe, "theme", "") or getattr(recipe, "name", "") or "")
         out = AgenticStyleSelectorAgent(default_client()).run(
             AgenticStyleSelectorInput(overlay_texts=texts, template_theme=theme),
-            ctx=RunContext(job_id=None),
+            ctx=RunContext(
+                job_id=job_id,
+                usage_purpose="optional_background",
+            ),
         )
         log.info("agentic_style_set_selected", style_set_id=out.style_set_id, job_id=job_id)
         return out.style_set_id
@@ -382,7 +385,7 @@ def extract_template_text_overlays(
         return False, 0
 
     agent = TemplateTextAgent(default_client())
-    ctx = RunContext(job_id=job_id)
+    ctx = RunContext(job_id=job_id, usage_purpose="optional_background")
     # `transcript_words` is what makes Stage E of the Layer-2 pipeline actually
     # run. Without it the alignment LLM short-circuits via its empty-transcript
     # early return and OCR garbage (duplicated tokens, stray characters)

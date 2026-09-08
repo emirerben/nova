@@ -158,14 +158,18 @@ def run_full_pipeline(
     from app.agents.text_alignment import TextAlignmentAgent  # noqa: PLC0415
     from app.agents.text_classification import TextClassificationAgent  # noqa: PLC0415
 
+    ctx = RunContext(
+        job_id=job_id,
+        usage_purpose="optional_background"
+        if job_id is None or job_id.startswith("template:")
+        else None,
+    )
     if backend is None:
-        backend = default_backend()
+        backend = default_backend(run_context=ctx)
     if transcript_words is None:
         transcript_words = []
     if slot_boundaries_s is None:
         slot_boundaries_s = []
-
-    ctx = RunContext(job_id=job_id)
     alignment_agent = TextAlignmentAgent(alignment_client or default_client())
     classification_agent = TextClassificationAgent(classification_client or default_client())
 
@@ -864,9 +868,7 @@ def _emit_cumulative_line_overlays(
         # OCR timestamps don't collapse into multi-word pops. Preserves order
         # and well-spaced words; only spreads the clusters.
         sub_texts = [word_texts[k] for k in sub_indices if word_texts[k]]
-        sub_starts = [
-            float(lg.word_start_s_list[k]) for k in sub_indices if word_texts[k]
-        ]
+        sub_starts = [float(lg.word_start_s_list[k]) for k in sub_indices if word_texts[k]]
         if not sub_texts:
             drops["empty_group"] += 1
             continue

@@ -249,7 +249,7 @@ def _run_text_designer_on_slots(
     )
 
     agent = TextDesignerAgent(default_client())
-    ctx = RunContext(job_id=job_id)
+    ctx = RunContext(job_id=job_id, usage_purpose="optional_background")
 
     # Separate body overlays (deterministic) from label overlays (LLM).
     body_overlays: list[dict] = []

@@ -205,7 +205,13 @@ def _build_user_style_context(style: dict | None) -> dict | None:
         parsed = coerce_user_style(style)
         if parsed is None:
             return None
-        return parsed.model_dump()
+        result = parsed.model_dump()
+        # Preserve only the retention provenance needed to expire a style on
+        # later re-renders after the Persona snapshot has been copied to Job.
+        derived_from = style.get("derived_from") or {}
+        if isinstance(derived_from, dict) and derived_from.get("observed_style_at"):
+            result["derived_from"] = {"observed_style_at": str(derived_from["observed_style_at"])}
+        return result
     except Exception:  # noqa: BLE001 — defensive; bad blob → None → baseline
         return None
 

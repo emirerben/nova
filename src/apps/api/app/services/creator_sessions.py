@@ -44,6 +44,7 @@ from app.services.edit_proposal_limits import (
     queue_for_guided_contract,
 )
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
+from app.services.tiktok_style_observations import effective_persona_style
 
 ACTIVE_CREATOR_PHASES = frozenset(
     {
@@ -202,7 +203,11 @@ def creator_context(persona: Persona, item: PlanItem) -> tuple[str, str]:
         "content_pillars": [
             _clean(value, 160) for value in (data.get("content_pillars") or [])[:8]
         ],
-        "style": persona.style or {},
+        "style": effective_persona_style(
+            persona.style,
+            profile=getattr(persona, "tiktok_profile", None),
+        )
+        or {},
     }
     item_data = {
         "idea": _clean(item.idea, 1200),

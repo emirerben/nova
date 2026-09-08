@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agents._model_client import default_client
-from app.agents._runtime import RunContext, TerminalError
+from app.agents._runtime import AiBudgetExceededError, RunContext, TerminalError
 from app.agents._schemas.creator_agent import (
     CREATOR_REQUEST_MAX_CHARS,
     ApplySpeechCutCommand,
@@ -83,6 +83,7 @@ from app.schemas.edit_proposal import (
     recognize_total_duration_s,
     rejects_round_robin_cadence,
 )
+from app.services.ai_usage_headers import paid_call_headers
 from app.services.content_plan_persona import load_owned_plan_persona
 from app.services.creator_autonomy import (
     build_auto_bundle,
@@ -1334,6 +1335,11 @@ async def _run_planning_turn(
     expected_revision: int,
     user_message: str,
     allow_chat: bool = False,
+    usage_purpose: str | None = None,
+    test_run_id: str | None = None,
+    estimated_max_cost_usd: float | None = None,
+    reservation_approved: bool = False,
+    release_canary_id: str | None = None,
 ) -> CreatorSessionResponse:
     item, plan, persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, session_id, user.id, item.id)
@@ -1372,7 +1378,10 @@ async def _run_planning_turn(
             )
         ).scalar_one_or_none()
     if isinstance(thread_row, dict):
-        direction_prompt = str(thread_row.get("prompt_block") or "")[:4000]
+        from app.services.creator_direction_snapshot import private_snapshot_from  # noqa: PLC0415
+
+        effective_direction = private_snapshot_from(thread_row) or thread_row
+        direction_prompt = str((effective_direction or {}).get("prompt_block") or "")[:4000]
     creator_request = _confirmed_creator_request(session.events, user_message)
     explicit_guided_voiceover = _explicit_guided_voiceover_request(creator_request, manifest)
     if explicit_guided_voiceover:
@@ -1494,6 +1503,25 @@ async def _run_planning_turn(
             },
         )
         return await _response(db, locked)
+    # Reserve the session's existing eight-call allowance under the row lock
+    # before contacting Pro. The previous post-call increment allowed the
+    # ninth request to reach Gemini and only failed the session afterwards.
+    locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+    if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
+        raise HTTPException(status_code=409, detail="Creator session changed while planning")
+    if locked.agent_call_count >= locked.agent_call_budget:
+        locked.status = "failed"
+        locked.last_error = {"code": "agent_budget_exhausted"}
+        await append_event(
+            db,
+            locked,
+            event_type="assistant_error",
+            payload={"message": "This edit needs a fresh creator session."},
+        )
+        return await _response(db, locked)
+    locked.agent_call_count += 1
+    await db.commit()
+
     agent_input = MainCreatorInput(
         user_message=user_message,
         creator_request=creator_request,
@@ -1511,10 +1539,23 @@ async def _run_planning_turn(
             agent_input,
             ctx=RunContext(
                 creator_agent_session_id=str(session.id),
+                creator_id=str(user.id),
                 request_id=str(expected_revision),
+                usage_purpose=usage_purpose,
+                test_run_id=test_run_id,
+                estimated_max_cost_usd=estimated_max_cost_usd,
+                reservation_approved=reservation_approved,
+                release_canary_id=release_canary_id,
             ),
         )
         action = output.action
+    except AiBudgetExceededError:
+        locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+        if locked.revision == expected_revision and locked.status in {"planning", "revising"}:
+            locked.agent_call_count = max(0, locked.agent_call_count - 1)
+            locked.status = "briefing"
+            await db.commit()
+        raise
     except TerminalError as exc:
         log.warning(
             "main_creator.planning_fallback", session_id=str(session.id), error=str(exc)[:300]
@@ -1528,18 +1569,6 @@ async def _run_planning_turn(
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
         raise HTTPException(status_code=409, detail="Creator session changed while planning")
-    locked.agent_call_count += 1
-    if locked.agent_call_count > locked.agent_call_budget:
-        locked.status = "failed"
-        locked.last_error = {"code": "agent_budget_exhausted"}
-        await append_event(
-            db,
-            locked,
-            event_type="assistant_error",
-            payload={"message": "This edit needs a fresh creator session."},
-        )
-        return await _response(db, locked)
-
     if isinstance(action, AskUser) and locked.question_count < locked.question_budget:
         locked.status = "briefing"
         locked.question_count += 1
@@ -1908,7 +1937,7 @@ async def start_creator_session_controller(
     *,
     allow_chat: bool = False,
 ) -> CreatorSessionResponse:
-    _ = request
+    cost_headers = paid_call_headers(request)
     _require_feature(user.id, allow_chat=allow_chat)
     # Serialize session creation against direct generation's PlanItem lock.
     item, plan, _persona = await _owned_context(db, item_id, user.id, for_update=True)
@@ -2062,6 +2091,7 @@ async def start_creator_session_controller(
         expected_revision=expected_revision,
         user_message=body.message.strip(),
         allow_chat=allow_chat,
+        **cost_headers.as_kwargs(),
     )
 
 
@@ -2086,7 +2116,7 @@ async def creator_session_turn_controller(
     *,
     allow_chat: bool = False,
 ) -> CreatorSessionResponse:
-    _ = request
+    cost_headers = paid_call_headers(request)
     _require_feature(user.id, allow_chat=allow_chat)
     item, _plan, _persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
@@ -2126,6 +2156,7 @@ async def creator_session_turn_controller(
         expected_revision=expected_revision,
         user_message=body.message.strip(),
         allow_chat=allow_chat,
+        **cost_headers.as_kwargs(),
     )
 
 

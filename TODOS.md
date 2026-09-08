@@ -8,6 +8,50 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Google Cloud cost controls — ship-review follow-ups (2026-09-08)
+
+### Consolidate the paid-call lifecycle adapters
+**What:** Token-metered and fixed-price calls currently have parallel reserve,
+provider-outcome, and settlement implementations in `ai_cost_control.py`; the two
+Cloud Vision OCR adapters also repeat the same image price and metering boundary.
+**Fix:** Extract one normalized reservation lifecycle and one metered Cloud Vision
+helper, leaving token/fixed-cost and OCR call sites as thin typed adapters.
+**Priority:** P2
+
+### Share one retention protected-reference specification
+**What:** Manifest creation and destructive execution enumerate the protected
+PlanItem, ContentPlan, publication, Job, and JobClip fields separately. The final
+delete is fail-closed, but a future media-reference field could be added to only
+one enumeration and make the two safety passes diverge.
+**Fix:** Build one owner-parameterized query/field specification used for both the
+global mark scan and the per-owner destructive recheck.
+**Priority:** P1
+
+### Make source-retention warnings item-specific
+**What:** The Gallery now always shows an owner-wide day-83 warning even when the
+affected videos are outside the first page, but the notice does not identify each
+affected tile or offer a preservation workflow.
+**Fix:** Add per-tile retention state and, after product policy defines it, an
+explicit keep-editable action; otherwise state that no preservation action exists.
+**Priority:** P2
+
+### Collapse Director review flags into one state machine
+**What:** Review state spans booleans, request counters, and refs for queued,
+loading, stale, failed, unavailable, and reviewed outcomes. Tests pin the current
+transitions, but future outcomes require synchronized manual updates.
+**Fix:** Replace the overlapping controls with a reducer and derive the public
+`loading`/`reviewed` values from one phase.
+**Priority:** P3
+
+### Bound long-term reservation-ledger growth and lock contention
+**What:** The reservation ledger does not yet have a scheduled pruning policy,
+and cap reservations serialize through a global advisory lock. This is safe at
+current volume but will become avoidable storage and latency as traffic grows.
+The review/media caches now have a bounded daily expiry purge.
+**Fix:** Add audited ledger retention and shard the reservation lock by
+environment/account while preserving atomic cap checks and reconciliation data.
+**Priority:** P2
+
 ## Stuck-variant reaper reactivation — deferrals (from /ship review, 2026-09-07)
 
 ### Broker inspect runs inside the row lock

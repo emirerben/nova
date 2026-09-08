@@ -109,7 +109,7 @@ def test_live_pro_outperforms_flash_on_editorial_quality(
     flash_scores: list[float] = []
     flash_client = _ModelOverrideClient(
         live_model_client,
-        settings.edit_director_fallback_model,
+        settings.edit_director_eval_comparison_model,
     )
     for path in FIXTURE_PATHS:
         fixture = load_fixture(path)

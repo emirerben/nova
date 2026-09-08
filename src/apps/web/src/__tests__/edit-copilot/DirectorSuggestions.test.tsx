@@ -7,6 +7,29 @@ import type { DirectorAppliedReceipt } from "@/lib/edit-copilot/useEditDirector"
 import type { EditorSuggestion } from "@/lib/plan-api";
 
 describe("DirectorSuggestions applied receipts", () => {
+  it("disables review while a non-retryable budget breaker is active", () => {
+    render(
+      <DirectorSuggestions
+        suggestions={[]}
+        appliedReceipts={[]}
+        historyVersion={0}
+        reviewed
+        loading={false}
+        reviewBlocked
+        error="Reviews become available tomorrow."
+        modelUsed=""
+        generation={null}
+        onAccept={jest.fn()}
+        onDismiss={jest.fn()}
+        onRefresh={jest.fn()}
+        onRevealApplied={jest.fn()}
+        onCancelGeneration={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Review limit reached" })).toBeDisabled();
+  });
+
   it("describes Stadium Diffusion as a clip-look change", () => {
     expect(directorWillChange({
       id: "look-1",
@@ -26,10 +49,10 @@ describe("DirectorSuggestions applied receipts", () => {
     const props = {
       appliedReceipts: [] as DirectorAppliedReceipt[],
       historyVersion: 0,
+      reviewed: true,
       loading: false,
       error: null,
       modelUsed: "gemini-3.1-pro-preview",
-      fallbackReason: null,
       generation: null,
       onAccept: jest.fn(),
       onDismiss: jest.fn(),
@@ -85,10 +108,11 @@ describe("DirectorSuggestions applied receipts", () => {
         suggestions={[suggestion]}
         appliedReceipts={[]}
         historyVersion={0}
+        reviewed={true}
         loading={false}
         error={null}
         modelUsed="gemini-3.1-pro-preview"
-        fallbackReason={null}
+        omniMaxCostPerSecondUsd={0.11}
         generation={null}
         onAccept={onAccept}
         onDismiss={onDismiss}
@@ -104,6 +128,107 @@ describe("DirectorSuggestions applied receipts", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dismiss Tighten the pause" }));
     expect(onAccept).toHaveBeenCalledWith(suggestion);
     expect(onDismiss).toHaveBeenCalledWith(suggestion);
+  });
+
+  it("requires the accessible cost dialog before starting an Omni generation", () => {
+    const suggestion: EditorSuggestion = {
+      id: "omni-1",
+      category: "effect",
+      title: "Generate a visual bridge",
+      rationale: "A generated insert connects the two shots.",
+      expected_benefit: "Smoother visual continuity.",
+      confidence: 0.9,
+      start_s: 2,
+      end_s: 6,
+      apply_mode: "omni_async",
+      ops: [],
+      omni: {
+        action: "generate_insert",
+        prompt: "A four-second visual bridge",
+        insert_at_s: 2,
+        duration_s: 4,
+      },
+    };
+    const onAccept = jest.fn();
+
+    render(
+      <DirectorSuggestions
+        suggestions={[suggestion]}
+        appliedReceipts={[]}
+        historyVersion={0}
+        reviewed={true}
+        loading={false}
+        error={null}
+        modelUsed="gemini-3.1-pro-preview"
+        omniMaxCostPerSecondUsd={0.11}
+        generation={null}
+        onAccept={onAccept}
+        onDismiss={jest.fn()}
+        onRefresh={jest.fn()}
+        onRevealApplied={jest.fn()}
+        onCancelGeneration={jest.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate & add" }));
+    expect(screen.getByRole("alertdialog", {
+      name: "Generate this experimental clip?",
+    })).toHaveTextContent("Estimated maximum provider cost: $0.44");
+    expect(onAccept).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep current draft" }));
+    expect(onAccept).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate & add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate & add" }));
+    expect(onAccept).toHaveBeenCalledWith(suggestion, { omniCostConfirmed: true });
+  });
+
+  it("rounds a fractional Omni maximum up to cents", () => {
+    const suggestion: EditorSuggestion = {
+      id: "omni-fractional",
+      category: "effect",
+      title: "Generate a fractional bridge",
+      rationale: "A generated insert connects the shots.",
+      expected_benefit: "Smoother continuity.",
+      confidence: 0.9,
+      start_s: 2,
+      end_s: 5.3,
+      apply_mode: "omni_async",
+      ops: [],
+      omni: {
+        action: "generate_insert",
+        prompt: "A short visual bridge",
+        insert_at_s: 2,
+        duration_s: 3.3,
+      },
+    };
+
+    render(
+      <DirectorSuggestions
+        suggestions={[suggestion]}
+        appliedReceipts={[]}
+        historyVersion={0}
+        reviewed={true}
+        loading={false}
+        error={null}
+        modelUsed="gemini-3.1-pro-preview"
+        omniMaxCostPerSecondUsd={0.11}
+        generation={null}
+        omniDispatchPending={false}
+        onAccept={jest.fn()}
+        onDismiss={jest.fn()}
+        onRefresh={jest.fn()}
+        onRevealApplied={jest.fn()}
+        onCancelGeneration={jest.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate & add" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "Estimated maximum provider cost: $0.37",
+    );
   });
 
   it("keeps every accepted recommendation visible with its exact delta and replay action", () => {
@@ -138,10 +263,10 @@ describe("DirectorSuggestions applied receipts", () => {
         suggestions={[]}
         appliedReceipts={receipts}
         historyVersion={0}
+        reviewed={true}
         loading={false}
         error={null}
         modelUsed="gemini-3.1-pro-preview"
-        fallbackReason={null}
         generation={null}
         onAccept={jest.fn()}
         onDismiss={jest.fn()}
@@ -180,10 +305,10 @@ describe("DirectorSuggestions applied receipts", () => {
         suggestions={[]}
         appliedReceipts={[receipt]}
         historyVersion={2}
+        reviewed={true}
         loading={false}
         error={null}
         modelUsed="gemini-3.1-pro-preview"
-        fallbackReason={null}
         generation={null}
         onAccept={jest.fn()}
         onDismiss={jest.fn()}
@@ -219,10 +344,10 @@ describe("DirectorSuggestions applied receipts", () => {
     const props = {
       appliedReceipts: [] as DirectorAppliedReceipt[],
       historyVersion: 0,
+      reviewed: true,
       loading: false,
       error: null,
       modelUsed: "gemini-3.1-pro-preview",
-      fallbackReason: null,
       generation: null,
       onAccept: jest.fn(),
       onDismiss: jest.fn(),

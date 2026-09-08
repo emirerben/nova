@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 
 from app.agents._model_client import GeminiClient
-from app.agents._runtime import TransientError
 from app.agents.music_matcher import MusicMatcherAgent
 
 
@@ -86,12 +85,17 @@ def test_main_creator_uses_bounded_low_thinking_and_output_budget() -> None:
 
 
 def test_per_agent_timeout_is_enforced(capturing_client, monkeypatch):
+    from app.agents._runtime import ProviderOutcomeUnknownError
+
     def slow_generate(**kwargs):  # noqa: ARG001
         time.sleep(0.2)
         return SimpleNamespace(text='{"ranked": []}', usage_metadata=None)
 
     monkeypatch.setattr(capturing_client, "generate_content", slow_generate)
-    with pytest.raises(TransientError, match="timed out after 0.1s"):
+    # A running SDK call may still reach and bill the provider after our local
+    # deadline. It must remain outcome-unknown so the runtime will not overlap
+    # it with a retry.
+    with pytest.raises(ProviderOutcomeUnknownError, match="unknown after 0.1s"):
         GeminiClient().invoke(
             model="gemini-3.6-flash",
             prompt="hi",

@@ -35,6 +35,7 @@ import asyncio
 import os
 import re
 import tempfile
+import uuid
 from typing import Final
 
 import structlog
@@ -149,6 +150,13 @@ async def _run_prefetch_locked(gcs_path: str, filter_hint: str) -> None:
     from app.storage import download_to_file  # noqa: PLC0415
 
     log.info("prefetch_start", gcs_path=gcs_path, filter_hint=filter_hint)
+    try:
+        creator_id = str(uuid.UUID(gcs_path.split("/", 1)[0]))
+    except (ValueError, IndexError):
+        # is_valid_prefetch_path already enforces this; keep the worker
+        # defensive if it is called directly during a rolling deploy.
+        log.warning("prefetch_owner_parse_failed", gcs_path=gcs_path)
+        return
 
     with tempfile.TemporaryDirectory() as tmp:
         local = os.path.join(tmp, "clip.mp4")
@@ -170,7 +178,12 @@ async def _run_prefetch_locked(gcs_path: str, filter_hint: str) -> None:
             log.info("prefetch_hash_failed", gcs_path=gcs_path)
             return
 
-        existing = await asyncio.to_thread(get_cached_meta, clip_hash, filter_hint)
+        existing = await asyncio.to_thread(
+            get_cached_meta,
+            clip_hash,
+            filter_hint,
+            creator_id=creator_id,
+        )
         if existing is not None:
             log.info(
                 "prefetch_skip_already_cached",
@@ -197,7 +210,13 @@ async def _run_prefetch_locked(gcs_path: str, filter_hint: str) -> None:
         # metas; we don't need to check that here. A meta with legitimately
         # empty best_moments IS cached — the read side backfills it
         # (_backfill_cached_empty_moments in template_orchestrate.py).
-        await asyncio.to_thread(set_cached_meta, clip_hash, filter_hint, meta)
+        await asyncio.to_thread(
+            set_cached_meta,
+            clip_hash,
+            filter_hint,
+            meta,
+            creator_id=creator_id,
+        )
         log.info(
             "prefetch_complete",
             gcs_path=gcs_path,

@@ -12,6 +12,7 @@ from app.tasks import mobile_upload_cleanup
 def _reservation(*, now: datetime) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
         object_path="analysis-proxy/user/upload/clip.mp4",
         status="reserved",
         retention_expires_at=now - timedelta(minutes=1),
@@ -24,7 +25,11 @@ def _reservation(*, now: datetime) -> SimpleNamespace:
 
 def _sessions(monkeypatch, row: SimpleNamespace) -> tuple[MagicMock, MagicMock]:
     claim_session = MagicMock()
-    claim_session.execute.return_value.scalars.return_value.all.return_value = [row]
+    candidates = MagicMock()
+    candidates.all.return_value = [SimpleNamespace(id=row.id, user_id=row.user_id)]
+    locked_rows = MagicMock()
+    locked_rows.scalars.return_value.all.return_value = [row]
+    claim_session.execute.side_effect = [candidates, MagicMock(), locked_rows]
     receipt_session = MagicMock()
     receipt_session.get.return_value = row
     pending = iter((claim_session, receipt_session))
@@ -97,7 +102,11 @@ def test_cleanup_caps_batch_and_ignores_row_changed_after_storage_delete(monkeyp
     now = datetime(2026, 9, 7, 12, tzinfo=UTC)
     row = _reservation(now=now)
     claim_session = MagicMock()
-    claim_session.execute.return_value.scalars.return_value.all.return_value = [row]
+    candidates = MagicMock()
+    candidates.all.return_value = [SimpleNamespace(id=row.id, user_id=row.user_id)]
+    locked_rows = MagicMock()
+    locked_rows.scalars.return_value.all.return_value = [row]
+    claim_session.execute.side_effect = [candidates, MagicMock(), locked_rows]
     receipt_session = MagicMock()
     receipt_session.get.return_value = SimpleNamespace(
         id=row.id,
@@ -119,6 +128,10 @@ def test_cleanup_caps_batch_and_ignores_row_changed_after_storage_delete(monkeyp
     deleted = mobile_upload_cleanup.cleanup_expired_temporary_uploads(now=now, limit=500)
 
     assert deleted == 0
-    statement = claim_session.execute.call_args.args[0]
-    assert 50 in statement.compile().params.values()
+    discovery_statement = claim_session.execute.call_args_list[0].args[0]
+    assert 50 in discovery_statement.compile().params.values()
+    lock_statement = str(claim_session.execute.call_args_list[1].args[0])
+    row_statement = str(claim_session.execute.call_args_list[2].args[0])
+    assert "pg_advisory_xact_lock" in lock_statement
+    assert "FOR UPDATE" in row_statement
     receipt_session.commit.assert_not_called()

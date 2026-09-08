@@ -279,7 +279,7 @@ class MobileSession(Base):
 
 
 class TemporaryMediaUpload(Base):
-    """Durable cleanup receipt for native analysis and cloud-render uploads."""
+    """Cleanup receipt for unattached project, analysis, and cloud-render uploads."""
 
     __tablename__ = "temporary_media_uploads"
 
@@ -683,6 +683,7 @@ class Job(Base):
         Index("idx_jobs_music_track_id", "music_track_id"),
         Index("idx_jobs_failure_reason", "failure_reason"),
         Index("idx_jobs_created_at", "created_at"),
+        Index("idx_jobs_retention_cursor", "updated_at", "id"),
         Index("idx_jobs_content_plan_item_id", "content_plan_item_id"),
         Index(
             "idx_jobs_video_poster_cleanup_sweep",
@@ -2080,6 +2081,22 @@ class AgentRun(Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_thoughts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_cached: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_tool: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    environment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    usage_purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    test_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reserved_cost_usd: Mapped[float | None] = mapped_column(Numeric(12, 6), nullable=True)
+    settled_cost_usd: Mapped[float | None] = mapped_column(Numeric(12, 6), nullable=True)
+    cost_reservation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("ai_cost_reservations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -2097,6 +2114,9 @@ class AgentRun(Base):
         ),
         Index("idx_agent_run_job_id_created", "job_id", "created_at"),
         Index("idx_agent_run_agent_name", "agent_name"),
+        Index("idx_agent_run_usage_created", "environment", "usage_purpose", "created_at"),
+        Index("idx_agent_run_test_run", "test_run_id", "created_at"),
+        Index("idx_agent_run_cost_reservation", "cost_reservation_id"),
         Index("idx_agent_run_template_id_created", "template_id", "created_at"),
         Index("idx_agent_run_music_track_id_created", "music_track_id", "created_at"),
         Index(
@@ -2116,6 +2136,281 @@ class AgentRun(Base):
             text("created_at DESC"),
             postgresql_where=text("music_track_id IS NOT NULL"),
         ),
+    )
+
+
+class AiCostReservation(Base):
+    """Atomic pre-provider reservation and settled AI usage ledger.
+
+    A reservation is inserted before a paid provider call. ``reserved`` and
+    ``unknown`` rows retain their estimate in cap calculations; ``settled``
+    rows use metered cost, and ``released`` rows cost zero. The idempotency key
+    fences task redelivery and overlapping retries for the same logical call.
+    """
+
+    __tablename__ = "ai_cost_reservations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    environment: Mapped[str] = mapped_column(Text, nullable=False)
+    usage_purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    feature: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False, server_default="google")
+    requested_model: Mapped[str] = mapped_column(Text, nullable=False)
+    resolved_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    creator_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    creator_agent_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    principal_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="system")
+    test_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    release_canary_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="reserved")
+    estimated_cost_usd: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False)
+    settled_cost_usd: Mapped[float | None] = mapped_column(Numeric(12, 6), nullable=True)
+    price_version: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    usage_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    period_start: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    provider_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    settled_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('reserved','provider_started','settled','released','unknown','rejected')",
+            name="ck_ai_cost_reservations_status",
+        ),
+        CheckConstraint(
+            "principal_type IN ('customer','internal','system')",
+            name="ck_ai_cost_reservations_principal_type",
+        ),
+        CheckConstraint(
+            "estimated_cost_usd >= 0 AND (settled_cost_usd IS NULL OR settled_cost_usd >= 0)",
+            name="ck_ai_cost_reservations_costs_nonnegative",
+        ),
+        Index("idx_ai_cost_reservations_budget", "environment", "period_start", "status"),
+        Index("idx_ai_cost_reservations_purpose", "usage_purpose", "period_start", "status"),
+        Index("idx_ai_cost_reservations_creator_day", "creator_id", "feature", "created_at"),
+        Index("idx_ai_cost_reservations_test_run", "test_run_id", "created_at"),
+        Index("idx_ai_cost_reservations_job", "job_id"),
+        Index("idx_ai_cost_reservations_session", "creator_agent_session_id"),
+        Index(
+            "idx_ai_cost_reservations_settled_at",
+            "settled_at",
+            postgresql_where=text("status = 'settled'"),
+        ),
+        Index(
+            "idx_ai_cost_reservations_settled_provider_started_at",
+            "provider_started_at",
+            postgresql_where=text("status = 'settled'"),
+        ),
+    )
+
+
+class AiBudgetOverride(Base):
+    """Operator-issued, expiring exception to a named cost scope."""
+
+    __tablename__ = "ai_budget_overrides"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scope: Mapped[str] = mapped_column(Text, nullable=False)
+    additional_cost_usd: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    approved_by: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("additional_cost_usd > 0", name="ck_ai_budget_overrides_positive"),
+        Index("idx_ai_budget_overrides_active", "scope", "expires_at"),
+    )
+
+
+class DirectorReviewCache(Base):
+    """Durable, owner-scoped cache for explicit Edit Director reviews."""
+
+    __tablename__ = "director_review_cache"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    snapshot_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    response_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "creator_id",
+            "snapshot_digest",
+            "prompt_version",
+            "model",
+            name="uq_director_review_cache_identity",
+        ),
+        Index("idx_director_review_cache_expiry", "expires_at"),
+        Index("idx_director_review_cache_job", "job_id"),
+    )
+
+
+class MediaAnalysisCache(Base):
+    """Owner-scoped, 24-hour cache for media analysis and transcript output."""
+
+    __tablename__ = "media_analysis_cache"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    source_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    analyzer: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    schema_version: Mapped[str] = mapped_column(Text, nullable=False)
+    result_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    last_hit_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    hit_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "creator_id",
+            "source_identity",
+            "analyzer",
+            "model",
+            "prompt_version",
+            "schema_version",
+            name="uq_media_analysis_cache_owner_identity",
+        ),
+        Index("idx_media_analysis_cache_expiry", "expires_at"),
+        Index("idx_media_analysis_cache_creator", "creator_id"),
+    )
+
+
+class StorageRetentionManifest(Base):
+    """Immutable candidate set produced by the database-backed retention audit."""
+
+    __tablename__ = "storage_retention_manifests"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="report_only")
+    generated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    report_only_until: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    approved_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    execution_lease_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    execution_lease_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    summary_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('report_only','pending_approval','approved','executing',"
+            "'completed','rejected')",
+            name="ck_storage_retention_manifest_status",
+        ),
+        Index("idx_storage_retention_manifest_status", "status", "generated_at"),
+    )
+
+
+class StorageRetentionEntry(Base):
+    """Generation-pinned warning or deletion candidate in one manifest."""
+
+    __tablename__ = "storage_retention_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    manifest_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("storage_retention_manifests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    creator_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    object_path: Mapped[str] = mapped_column(Text, nullable=False)
+    object_generation: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    eligible_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("action IN ('warn','delete')", name="ck_storage_retention_entry_action"),
+        CheckConstraint(
+            "status IN ('pending','deleting','deleted','skipped','failed')",
+            name="ck_storage_retention_entry_status",
+        ),
+        UniqueConstraint(
+            "manifest_id",
+            "object_path",
+            "object_generation",
+            name="uq_storage_retention_entry_object",
+        ),
+        Index("idx_storage_retention_entry_manifest", "manifest_id", "action", "status"),
+        Index(
+            "idx_storage_retention_entry_creator_warning",
+            "creator_id",
+            "action",
+            "status",
+            "job_id",
+        ),
+    )
+
+
+class BillingReconciliation(Base):
+    """Daily, delayed comparison of Cloud Billing export and settled AI usage."""
+
+    __tablename__ = "billing_reconciliations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    usage_date: Mapped[date] = mapped_column(Date, nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    threshold_pct: Mapped[float] = mapped_column(Numeric(8, 6), nullable=False)
+    cloud_costs_usd: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    ledger_costs_usd: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    differences: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    export_watermark: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    alerted_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # Durable outbox claim. Pub/Sub is at-least-once, so the published payload
+    # also carries a stable per-day event_id for consumer deduplication.
+    alert_claim_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    alert_claim_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('matched','mismatch','incomplete','failed')",
+            name="ck_billing_reconciliations_status",
+        ),
+        Index("idx_billing_reconciliations_status", "status", "usage_date"),
     )
 
 
@@ -2144,6 +2439,12 @@ class Persona(Base):
     # {handle, follower_count, video_count, top_captions[], top_hashtags[], analyzed_at}
     # NULL when user skipped the TikTok step or scrape failed.
     tiktok_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tiktok_style_analysis_claim_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    tiktok_style_analysis_claim_expires_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMPTZ, nullable=True
+    )
     # Per-user derived text style (Creator Agent M1). Pins a curated style_set_id
     # + parity-safe knob overrides applied to every generative render. NULL = no
     # style derived yet → byte-identical render behavior. status="edited" means the

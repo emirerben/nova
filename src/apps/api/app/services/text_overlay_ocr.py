@@ -25,15 +25,24 @@ new transitive grpc/protobuf deps independently of behavior changes.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Protocol
 
 import structlog
 
+from app.agents._runtime import RunContext
 from app.agents._schemas.text_overlay_ocr import FrameDetection, OcrPolygon
+from app.services.ai_cost_control import (
+    PaidCallRequest,
+    execute_metered_fixed_cost_google_call,
+    logical_call_id,
+)
 from app.storage import get_gcp_credentials
 
 log = structlog.get_logger()
+_CLOUD_VISION_DOCUMENT_TEXT_COST_USD = 0.0015
+_CLOUD_VISION_MODEL = "cloud-vision-document-text-detection"
 
 
 class OcrBackend(Protocol):
@@ -62,7 +71,7 @@ class CloudVisionBackend:
     # explicitly (the SDK doesn't add it automatically with service-account creds).
     _VISION_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 
-    def __init__(self) -> None:
+    def __init__(self, *, run_context: RunContext | None = None) -> None:
         # Import inside __init__ so unrelated callers (e.g. config loaders,
         # the runtime registry import scan) don't pay the SDK + grpc import
         # cost just because this module is on PYTHONPATH.
@@ -76,6 +85,7 @@ class CloudVisionBackend:
         # Raises RuntimeError (from get_gcp_credentials) if the JSON is invalid.
         creds = get_gcp_credentials(scopes=self._VISION_SCOPES)
         self._client = vision.ImageAnnotatorClient(credentials=creds)
+        self._run_context = run_context or RunContext(usage_purpose="optional_background")
 
     def detect(self, image_path: str, *, frame_t_s: float) -> list[FrameDetection]:
         from PIL import Image  # noqa: PLC0415
@@ -92,12 +102,35 @@ class CloudVisionBackend:
             return []
 
         image = self._vision.Image(content=content)
-        response = self._client.document_text_detection(image=image)
-        if response.error.message:
-            # The API surfaces transient and permanent errors the same way.
-            # Surface as an exception; the caller (pipeline orchestrator)
-            # decides retry policy.
-            raise RuntimeError(f"cloud_vision_error: {response.error.message}")
+        ctx = getattr(
+            self,
+            "_run_context",
+            RunContext(usage_purpose="optional_background"),
+        )
+        response = execute_metered_fixed_cost_google_call(
+            request=PaidCallRequest(
+                idempotency_key=logical_call_id(
+                    feature="text_overlay_ocr",
+                    model=_CLOUD_VISION_MODEL,
+                    prompt=f"document_text_detection:{frame_t_s:.6f}",
+                    ctx=ctx,
+                    attempt=1,
+                    media_identity=hashlib.sha256(content).hexdigest(),
+                ),
+                feature="text_overlay_ocr",
+                model=_CLOUD_VISION_MODEL,
+                estimated_cost_usd=_CLOUD_VISION_DOCUMENT_TEXT_COST_USD,
+                ctx=ctx,
+                provider="google-cloud-vision",
+            ),
+            operation=lambda: self._client.document_text_detection(image=image),
+            resolved_model=_CLOUD_VISION_MODEL,
+            actual_cost_usd=_CLOUD_VISION_DOCUMENT_TEXT_COST_USD,
+            provider_error=lambda result: (
+                f"cloud_vision_error: {result.error.message}" if result.error.message else None
+            ),
+            usage_json={"images": 1, "feature": "DOCUMENT_TEXT_DETECTION"},
+        )
 
         detections: list[FrameDetection] = []
         for page in response.full_text_annotation.pages or []:
@@ -245,7 +278,7 @@ class AppleVisionBackend:
 # ── Backend selection ─────────────────────────────────────────────────────────
 
 
-def default_backend() -> OcrBackend:
+def default_backend(*, run_context: RunContext | None = None) -> OcrBackend:
     """Return the best available OCR backend for this environment.
 
     Order:
@@ -258,7 +291,9 @@ def default_backend() -> OcrBackend:
 
     if cloud_import_ok and _cloud_vision_creds_present():
         try:
-            return CloudVisionBackend()
+            if run_context is None:
+                return CloudVisionBackend()
+            return CloudVisionBackend(run_context=run_context)
         except Exception as exc:  # pragma: no cover — defensive
             log.warning("cloud_vision_init_failed", err=str(exc))
 

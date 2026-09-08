@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -192,7 +193,7 @@ def test_authored_montage_review_is_per_source_and_fail_open(monkeypatch) -> Non
             pass
 
         def run(self, review_input, *, ctx=None):  # noqa: ANN001
-            calls.append((review_input.source_media_id, ctx.job_id if ctx else None))
+            calls.append((review_input.source_media_id, ctx.creator_id if ctx else None))
             return SimpleNamespace(
                 needs_replan=False,
                 summary="Strong windows.",
@@ -211,10 +212,14 @@ def test_authored_montage_review_is_per_source_and_fail_open(monkeypatch) -> Non
         [_source("source-a"), _source("source-b")],
         "Use the action.",
         "item-123",
+        uuid.UUID("00000000-0000-0000-0000-000000000123"),
+        "attempt-1",
     )
 
     assert {source_id for source_id, _job_id in result} == {"source-a", "source-b"}
-    assert {job_id for _source_id, job_id in calls} == {"item-123"}
+    assert {creator_id for _source_id, creator_id in calls} == {
+        "00000000-0000-0000-0000-000000000123"
+    }
 
 
 def test_authored_montage_review_returns_empty_when_provider_fails(monkeypatch) -> None:  # noqa: ANN001
@@ -234,6 +239,8 @@ def test_authored_montage_review_returns_empty_when_provider_fails(monkeypatch) 
             [_source("source-a"), _source("source-b")],
             "Use the action.",
             "item-123",
+            uuid.UUID("00000000-0000-0000-0000-000000000123"),
+            "attempt-1",
         )
         == []
     )

@@ -958,6 +958,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
 
         # Snapshot fields before session closes
         template_id = job.template_id
+        creator_id = str(job.user_id)
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
         user_subject = ((all_candidates.get("inputs") or {}).get("location") or "").strip()
@@ -1165,6 +1166,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
                 local_clip_paths,
                 filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
                 job_id=job_id,
+                creator_id=creator_id,
                 record_sub_phases=preview_mode,
             )
 
@@ -2384,6 +2386,7 @@ def _analyze_clips_with_cache(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    creator_id: str | None = None,
     record_sub_phases: bool = False,
 ) -> tuple[list[ClipMeta], list[ClipMeta | None], list, dict, int]:
     """Hash → cache lookup → concurrent (probe + upload misses) → analyze.
@@ -2429,7 +2432,7 @@ def _analyze_clips_with_cache(
     miss_indices: list[int] = []
     cache_hits = 0
     for i, h in enumerate(hashes):
-        cached = get_cached_meta(h, filter_hint) if h else None
+        cached = get_cached_meta(h, filter_hint, creator_id=creator_id) if h else None
         if cached is not None:
             cached.clip_path = local_paths[i]
             clip_metas_ordered[i] = cached
@@ -2475,6 +2478,7 @@ def _analyze_clips_with_cache(
         probe_map,
         filter_hint,
         job_id=job_id,
+        creator_id=creator_id,
         record_sub_phases=record_sub_phases,
     )
 
@@ -2493,7 +2497,7 @@ def _analyze_clips_with_cache(
         # content hash. Degraded entries are filtered inside set_cached_meta.
         h = path_to_hash.get(meta.clip_path)
         if h:
-            set_cached_meta(h, filter_hint, meta)
+            set_cached_meta(h, filter_hint, meta, creator_id=creator_id)
 
     # Cache-hit entries never passed through _analyze_one, so give any
     # empty-moments hits the same synthetic-moments backfill (idempotent for
@@ -2510,6 +2514,7 @@ def _analyze_clips_parallel_indexed(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    creator_id: str | None = None,
     record_sub_phases: bool = False,
 ) -> tuple[list[tuple[int, ClipMeta]], list[int]]:
     """Analyze clips in parallel while retaining their authoritative input slots.
@@ -2568,7 +2573,21 @@ def _analyze_clips_parallel_indexed(
                 # Whisper-fallback path in the except branch so the clip
                 # still produces a usable ClipMeta with default best_moments.
                 raise GeminiAnalysisError("gemini upload failed; skipping analysis")
-            meta = analyze_clip(ref, filter_hint=filter_hint, job_id=job_id)
+            run_context = None
+            if creator_id is not None:
+                from app.agents._runtime import RunContext  # noqa: PLC0415
+
+                run_context = RunContext(
+                    job_id=job_id,
+                    creator_id=creator_id,
+                    segment_idx=idx,
+                )
+            meta = analyze_clip(
+                ref,
+                filter_hint=filter_hint,
+                job_id=job_id,
+                run_context=run_context,
+            )
             if record_sub_phases and job_id is not None:
                 record_sub_phase(
                     job_id,
@@ -2694,6 +2713,7 @@ def _analyze_clips_parallel(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    creator_id: str | None = None,
     record_sub_phases: bool = False,
 ) -> tuple[list[ClipMeta], int]:
     """Compatibility wrapper returning completion-ordered metadata + count."""
@@ -2704,6 +2724,7 @@ def _analyze_clips_parallel(
         probe_map,
         filter_hint,
         job_id=job_id,
+        creator_id=creator_id,
         record_sub_phases=record_sub_phases,
     )
     return [meta for _source_slot, meta in indexed], len(failed_slots)

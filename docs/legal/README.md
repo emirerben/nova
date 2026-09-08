@@ -117,7 +117,7 @@ The Privacy Policy (§8) states specific retention windows. As of this PR:
 | Anonymous/session uploads | 24h | `infra/gcs-lifecycle.json` — already live |
 | Voiceover recordings, music renders | 24h | `infra/gcs-lifecycle.json` — already live |
 | Speech transcripts (`transcript-cache/`) | 24h | **This PR** — added to `infra/gcs-lifecycle.json` (was previously unbounded; the cache is content-hash-keyed with no link back to a user, so account deletion can't find and purge it — see below) |
-| Uploaded footage / rendered output (`users/…`, `generative-jobs/…`) | kept until you delete | Correct as-is — never auto-swept; `DELETE /me/account` (this PR) is now the removal path |
+| Attached footage / rendered output (`users/…`, `generative-jobs/…`) | policy windows, then deletion or latest-final preservation | Generation-pinned retention manifests; newly signed `users/…/generative/…` footage remains a 24h temporary-upload receipt until a Job transaction attaches it |
 | Internal AI processing logs tied to a job | 30 days | Already enforced (`agent_run_retention_days`) |
 
 **Corrected from an earlier draft of this document:** initial research flagged

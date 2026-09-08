@@ -33,6 +33,10 @@ from app.services.creator_direction_capabilities import (
     validate_capability_values,
 )
 from app.services.private_text import normalize_private_text
+from app.services.tiktok_style_observations import (
+    effective_persona_style,
+    persona_style_expires_at,
+)
 
 MAX_ACTIVE_ITEMS = 100
 MAX_TOTAL_INSTRUCTION_CHARS = 4_000
@@ -198,6 +202,7 @@ class CreatorDirectionSnapshot:
     overrides: tuple[dict[str, Any], ...] = ()
     compatibility_items: tuple[dict[str, Any], ...] = ()
     compatibility_input_version: str = COMPATIBILITY_INPUT_VERSION
+    compatibility_expires_at: datetime | None = None
 
     @staticmethod
     def _row_instruction(row: dict[str, Any]) -> str:
@@ -339,6 +344,14 @@ class CreatorDirectionResolver:
             await db.execute(select(Persona).where(Persona.user_id == user_id))
         ).scalar_one_or_none()
         compatibility_items = self._compatibility_items(persona)
+        compatibility_expires_at = (
+            persona_style_expires_at(
+                getattr(persona, "style", None),
+                profile=getattr(persona, "tiktok_profile", None),
+            )
+            if compatibility_items
+            else None
+        )
         total = 0
         items: list[dict[str, Any]] = []
         for row in rows:
@@ -368,6 +381,7 @@ class CreatorDirectionResolver:
             tuple(overrides if enabled else ()),
             tuple(compatibility_items if enabled else ()),
             COMPATIBILITY_INPUT_VERSION,
+            compatibility_expires_at if enabled else None,
         )
 
     @staticmethod
@@ -382,7 +396,12 @@ class CreatorDirectionResolver:
 
         if persona is None:
             return ()
-        style = coerce_user_style(persona.style)
+        style = coerce_user_style(
+            effective_persona_style(
+                persona.style,
+                profile=getattr(persona, "tiktok_profile", None),
+            )
+        )
         if style is None:
             return ()
         knobs = user_style_knobs_dict(style)

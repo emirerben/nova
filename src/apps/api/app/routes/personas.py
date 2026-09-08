@@ -12,25 +12,58 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import re
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    AiCostControlPolicyError,
+    CostControlUnavailableError,
+    ProviderOutcomeUnknownError,
+    RunContext,
+)
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
+from app.config import settings
 from app.database import get_db
 from app.models import Persona as PersonaRow
 from app.models import User
+from app.services.ai_usage_headers import paid_call_headers
 from app.services.creator_direction import CreatorDirectionService
+from app.services.tiktok_style_analysis import TIKTOK_STYLE_ANALYSIS_CLAIM_LEASE
+from app.services.tiktok_style_observations import effective_persona_style
 
 log = structlog.get_logger()
 router = APIRouter()
+
+_COST_CONTROL_ERRORS = (
+    AiBudgetExceededError,
+    AiCostControlPolicyError,
+    CostControlUnavailableError,
+    ProviderOutcomeUnknownError,
+)
+
+
+def _creator_run_context(
+    request: Request,
+    *,
+    creator_id: uuid.UUID,
+    request_id: str | None = None,
+) -> RunContext:
+    return RunContext(
+        creator_id=str(creator_id),
+        request_id=request_id,
+        **paid_call_headers(request).as_kwargs(),
+    )
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -94,18 +127,71 @@ class PersonaResponse(BaseModel):
     tiktok_profile: dict | None = None
     generation_started_at: datetime | None = None
     idea_seeds: list[dict] = []
+    tiktok_style_analysis_available: bool = False
+    tiktok_style_analysis_status: Literal["idle", "running", "ready", "failed"] = "idle"
+    tiktok_style_analyzed_at: datetime | None = None
+    tiktok_style_analysis_failed_at: datetime | None = None
+    tiktok_style_analysis_failure_reason: str | None = None
 
     @classmethod
     def of(cls, row: PersonaRow) -> PersonaResponse:
+        from app.services.tiktok_style_observations import (  # noqa: PLC0415
+            fresh_style_observations,
+        )
+
+        observations = (row.tiktok_profile or {}).get("style_observations") or {}
+        raw_observed_at = observations.get("observed_at")
+        observed_at = None
+        if raw_observed_at:
+            try:
+                observed_at = datetime.fromisoformat(str(raw_observed_at).replace("Z", "+00:00"))
+            except ValueError:
+                observed_at = None
+        fresh_observation = fresh_style_observations(row.tiktok_profile) is not None
+        response_profile = dict(row.tiktok_profile) if row.tiktok_profile else None
+        if response_profile is not None and not fresh_observation:
+            response_profile.pop("style_observations", None)
+        failure = (row.tiktok_profile or {}).get("style_analysis_failure") or {}
+        raw_failed_at = failure.get("failed_at")
+        failed_at = None
+        if raw_failed_at:
+            try:
+                failed_at = datetime.fromisoformat(str(raw_failed_at).replace("Z", "+00:00"))
+            except ValueError:
+                failed_at = None
+        claim_id = getattr(row, "tiktok_style_analysis_claim_id", None)
+        claim_expires_at = getattr(row, "tiktok_style_analysis_claim_expires_at", None)
+        running = bool(
+            isinstance(claim_id, uuid.UUID)
+            and isinstance(claim_expires_at, datetime)
+            and claim_expires_at > datetime.now(UTC)
+        )
         return cls(
             id=str(row.id),
             persona_status=row.persona_status,
             questionnaire=row.questionnaire,
             persona=row.persona,
             error_detail=row.error_detail,
-            tiktok_profile=row.tiktok_profile,
+            tiktok_profile=response_profile,
             generation_started_at=row.generation_started_at,
             idea_seeds=list(row.idea_seeds or []),
+            tiktok_style_analysis_available=settings.tiktok_style_vision_enabled,
+            tiktok_style_analysis_status=(
+                "running"
+                if running
+                else "ready"
+                if fresh_observation
+                else "failed"
+                if failed_at is not None
+                else "idle"
+            ),
+            tiktok_style_analyzed_at=observed_at if fresh_observation else None,
+            tiktok_style_analysis_failed_at=failed_at,
+            tiktok_style_analysis_failure_reason=(
+                str(failure.get("reason"))
+                if failed_at is not None and failure.get("reason")
+                else None
+            ),
         )
 
 
@@ -337,7 +423,14 @@ async def edit_persona(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
 
-    row = await db.get(PersonaRow, pid)
+    row = (
+        await db.execute(
+            select(PersonaRow)
+            .where(PersonaRow.id == pid)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
     if row is None or row.user_id != user.id:
         # Don't leak existence of other users' personas.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
@@ -479,6 +572,76 @@ async def retune_persona_from_feedback(
     return PersonaResponse.of(row)
 
 
+@router.post("/{persona_id}/analyze-tiktok-style", status_code=status.HTTP_202_ACCEPTED)
+async def analyze_tiktok_style_explicitly(
+    persona_id: str,
+    request: Request,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, bool]:
+    """Queue the bounded paid vision review only after an explicit user action."""
+
+    if not settings.tiktok_style_vision_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not available")
+    # Parse all caller-supplied cost attribution before claiming the Persona.
+    # A malformed header must not strand a 35-minute durable claim.
+    attribution = paid_call_headers(request, usage_purpose="style_vision")
+    try:
+        pid = uuid.UUID(persona_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+    row = (
+        await db.execute(select(PersonaRow).where(PersonaRow.id == pid).with_for_update())
+    ).scalar_one_or_none()
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    handle = str((row.questionnaire or {}).get("tiktok_handle") or "").strip()
+    if not handle:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="TikTok handle is required",
+        )
+    now = datetime.now(UTC)
+    if (
+        row.tiktok_style_analysis_claim_id is not None
+        and row.tiktok_style_analysis_claim_expires_at is not None
+        and row.tiktok_style_analysis_claim_expires_at > now
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="TikTok style analysis is already running",
+        )
+    claim_id = uuid.uuid4()
+    profile = dict(row.tiktok_profile or {})
+    profile.pop("style_analysis_failure", None)
+    row.tiktok_profile = profile
+    row.tiktok_style_analysis_claim_id = claim_id
+    row.tiktok_style_analysis_claim_expires_at = now + TIKTOK_STYLE_ANALYSIS_CLAIM_LEASE
+    await db.commit()
+    from app.tasks.style_vision_build import analyze_tiktok_style  # noqa: PLC0415
+
+    try:
+        analyze_tiktok_style.apply_async(
+            kwargs={
+                "persona_id": str(row.id),
+                "handle": handle,
+                "claim_id": str(claim_id),
+                "explicit": True,
+                **attribution.as_kwargs(),
+            }
+        )
+    except Exception:
+        row = (
+            await db.execute(select(PersonaRow).where(PersonaRow.id == pid).with_for_update())
+        ).scalar_one_or_none()
+        if row is not None and row.tiktok_style_analysis_claim_id == claim_id:
+            row.tiktok_style_analysis_claim_id = None
+            row.tiktok_style_analysis_claim_expires_at = None
+            await db.commit()
+        raise
+    return {"queued": True}
+
+
 # ── Style routes (Creator Agent M1) ──────────────────────────────────────────
 
 
@@ -555,7 +718,13 @@ def _style_provenance(tiktok_profile: dict | None) -> dict | None:
     """
     if not tiktok_profile:
         return None
-    observations = tiktok_profile.get("style_observations") or {}
+    from app.services.tiktok_style_observations import (  # noqa: PLC0415
+        fresh_style_observations,
+    )
+
+    observations = fresh_style_observations(tiktok_profile)
+    if observations is None:
+        return None
     aggregate = observations.get("aggregate") or {}
     videos_seen = int(observations.get("videos_seen") or 0)
     if not aggregate or videos_seen == 0:
@@ -589,7 +758,13 @@ async def get_style(
     row = result.scalar_one_or_none()
     if row is None:
         return StyleResponse(style=None, status="absent")
-    raw = dict(row.style) if row.style else None
+    tiktok_profile = dict(row.tiktok_profile) if row.tiktok_profile else None
+    stored = dict(row.style) if row.style else None
+    effective = effective_persona_style(stored, profile=tiktok_profile)
+    raw = effective
+    if stored and stored.get("status") in {"deriving", "failed"} and effective is None:
+        # Preserve polling/error state without returning expired visual knobs.
+        raw = {"status": stored["status"]}
     if raw is None:
         # Persona exists but no style — write "deriving" first (prevents re-queue
         # on concurrent requests), then kick off derivation in the background.
@@ -604,7 +779,6 @@ async def get_style(
         return StyleResponse(style=None, status="deriving")
     pinned_set_id = raw.get("style_set_id")
     pinned_font = (raw.get("knobs") or {}).get("font_family")
-    tiktok_profile = dict(row.tiktok_profile) if row.tiktok_profile else None
     return StyleResponse(
         style=raw,
         status=raw.get("status", "ready"),
@@ -622,7 +796,13 @@ async def _apply_style_edit(row: PersonaRow, edit: StyleEdit, db: AsyncSession) 
     Raises HTTPException on validation errors (unknown set_id / font_family /
     instruction_level).
     """
-    raw: dict = dict(row.style) if row.style else {}
+    raw: dict = (
+        effective_persona_style(
+            row.style,
+            profile=getattr(row, "tiktok_profile", None),
+        )
+        or {}
+    )
 
     # Validate style_set_id against catalog when provided.
     if edit.style_set_id is not None:
@@ -809,6 +989,7 @@ class ChatTurnResponse(BaseModel):
 
 @router.post("/chat/start", response_model=ChatStartResponse)
 async def chat_start(
+    request: Request,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> ChatStartResponse:
@@ -894,6 +1075,11 @@ async def chat_start(
             turn_count=agent_count + 1,
             prev_total_estimate=_prev_total_estimate(turns_raw),
         ),
+        ctx=_creator_run_context(
+            request,
+            creator_id=user.id,
+            request_id=f"persona-interview:{row.id}:turn:{agent_count + 1}",
+        ),
     )
 
     # turn_label comes from InterviewerAgent.parse(), which derives N from the
@@ -929,6 +1115,7 @@ async def chat_start(
 
 @router.post("/chat/turn", response_model=ChatTurnResponse)
 async def chat_turn(
+    request: Request,
     body: ChatTurnBody,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
@@ -1005,6 +1192,11 @@ async def chat_turn(
             turn_count=agent_count + 1,
             prev_total_estimate=_prev_total_estimate(turns_raw),
         ),
+        ctx=_creator_run_context(
+            request,
+            creator_id=user.id,
+            request_id=f"persona-interview:{row.id}:turn:{agent_count + 1}",
+        ),
     )
 
     new_agent_count = agent_count + 1
@@ -1064,9 +1256,13 @@ def _style_snapshot(row: PersonaRow) -> dict | None:
     Exposes all 10 knobs + top-level fields so the agent can answer
     read-back queries ("what is it set to right now?") accurately.
     """
-    if not row.style:
+    effective = effective_persona_style(
+        row.style,
+        profile=getattr(row, "tiktok_profile", None),
+    )
+    if not effective:
         return None
-    raw = dict(row.style)
+    raw = dict(effective)
     return {
         "style_set_id": raw.get("style_set_id"),
         "instruction_level": raw.get("instruction_level"),
@@ -1127,6 +1323,7 @@ async def style_agent_start(
 
 @router.post("/agent/turn", response_model=StyleAgentTurnResponse)
 async def style_agent_turn(
+    request: Request,
     body: StyleAgentTurnBody,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
@@ -1156,12 +1353,20 @@ async def style_agent_turn(
         prior_turns=body.prior_turns,
         current_style_snapshot=snapshot,
     )
+    input_digest = hashlib.sha256(agent_input.model_dump_json().encode("utf-8")).hexdigest()
 
     try:
         intent_result = await asyncio.to_thread(
             StyleIntentAgent(default_client()).run,
             agent_input,
+            ctx=_creator_run_context(
+                request,
+                creator_id=user.id,
+                request_id=f"style-agent:{row.id}:{input_digest}",
+            ),
         )
+    except _COST_CONTROL_ERRORS:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.warning("style_agent_turn.agent_failed", error=str(exc), user_id=str(user.id))
         # Store the failed turn for diagnostics, then surface a friendly fallback.

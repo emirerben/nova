@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +23,7 @@ from app.routes.generative_jobs import (
     GenerativeUploadUrlRequest,
     RetextRequest,
     SwapSongRequest,
+    _consume_project_upload_reservations,
     cancel_temporary_upload,
     create_generative_job,
     create_generative_upload_url,
@@ -41,6 +42,69 @@ def _request() -> Request:
             "client": ("127.0.0.1", 1234),
         }
     )
+
+
+def _empty_db_result() -> SimpleNamespace:
+    return SimpleNamespace(
+        scalar_one_or_none=lambda: None,
+        scalars=lambda: SimpleNamespace(all=lambda: []),
+    )
+
+
+def _upload_db() -> tuple[SimpleNamespace, list]:
+    stored: list = []
+
+    def add(row) -> None:
+        row.id = uuid.uuid4()
+        stored.append(row)
+
+    return (
+        SimpleNamespace(add=add, commit=AsyncMock(), refresh=AsyncMock()),
+        stored,
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_upload_receipt_is_consumed_inside_job_transaction() -> None:
+    user_id = uuid.uuid4()
+    path = f"users/{user_id}/generative/{uuid.uuid4().hex}/clip.mp4"
+    row = SimpleNamespace(
+        status="reserved",
+        deleted_at=None,
+        retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [row]))
+    db = SimpleNamespace(execute=AsyncMock(return_value=result), delete=AsyncMock())
+
+    await _consume_project_upload_reservations(db, user_id=user_id, object_paths=[path])
+
+    db.delete.assert_awaited_once_with(row)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row_status", "expires_delta"),
+    [("cleanup_pending", timedelta(hours=1)), ("reserved", timedelta(seconds=-1))],
+)
+async def test_project_upload_receipt_fails_closed_after_cleanup_wins(
+    row_status: str,
+    expires_delta: timedelta,
+) -> None:
+    user_id = uuid.uuid4()
+    path = f"users/{user_id}/generative/{uuid.uuid4().hex}/clip.mp4"
+    row = SimpleNamespace(
+        status=row_status,
+        deleted_at=None,
+        retention_expires_at=datetime.now(UTC) + expires_delta,
+    )
+    result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [row]))
+    db = SimpleNamespace(execute=AsyncMock(return_value=result), delete=AsyncMock())
+
+    with pytest.raises(HTTPException) as exc:
+        await _consume_project_upload_reservations(db, user_id=user_id, object_paths=[path])
+
+    assert exc.value.status_code == 409
+    db.delete.assert_not_awaited()
 
 
 def _required_speech_variant(job_id: uuid.UUID) -> dict:
@@ -215,7 +279,8 @@ async def test_create_route_enqueues_two_videos_two_images_in_authored_order(mon
         add=MagicMock(),
         commit=AsyncMock(),
         refresh=AsyncMock(),
-        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+        execute=AsyncMock(return_value=_empty_db_result()),
+        delete=AsyncMock(),
     )
     built: dict = {}
 
@@ -248,7 +313,8 @@ async def test_create_route_keeps_video_only_jobs_on_classic_montage(monkeypatch
         add=MagicMock(),
         commit=AsyncMock(),
         refresh=AsyncMock(),
-        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+        execute=AsyncMock(return_value=_empty_db_result()),
+        delete=AsyncMock(),
     )
     built: dict = {}
 
@@ -272,7 +338,11 @@ async def test_create_route_rejects_photo_with_final_voiceover_before_enqueue(mo
         voiceover_gcs_path="voiceover-uploads/legacy/voice.webm",
     )
     user = SimpleNamespace(id=uuid.uuid4())
-    db = SimpleNamespace(add=MagicMock(), execute=AsyncMock())
+    db = SimpleNamespace(
+        add=MagicMock(),
+        execute=AsyncMock(return_value=_empty_db_result()),
+        delete=AsyncMock(),
+    )
     monkeypatch.setattr("app.routes.generative_jobs.validate_direct_uploads", AsyncMock())
 
     with pytest.raises(HTTPException) as exc:
@@ -320,7 +390,7 @@ def test_rejects_path_traversal():
 
 
 @pytest.mark.asyncio
-async def test_direct_upload_url_uses_lifecycle_prefix_and_mobile_type_semantics(monkeypatch):
+async def test_direct_upload_url_uses_durable_prefix_and_mobile_type_semantics(monkeypatch):
     import types
 
     user = types.SimpleNamespace(id=uuid.uuid4())
@@ -331,6 +401,7 @@ async def test_direct_upload_url_uses_lifecycle_prefix_and_mobile_type_semantics
         return "https://storage.example/signed-put"
 
     monkeypatch.setattr("app.routes.generative_jobs.storage.signed_put_url", fake_sign)
+    db, stored = _upload_db()
     response = await create_generative_upload_url(
         _request(),
         GenerativeUploadUrlRequest(
@@ -339,14 +410,41 @@ async def test_direct_upload_url_uses_lifecycle_prefix_and_mobile_type_semantics
             file_size_bytes=12_345,
         ),
         user,
+        db,
     )
 
     assert response.kind == "video"
     assert response.content_type == "application/octet-stream"
-    assert response.gcs_path.startswith(f"dev-user/{user.id}/generative/")
+    assert response.gcs_path.startswith(f"users/{user.id}/generative/")
     assert response.gcs_path.endswith("/clip.mov")
     assert signed == [(response.gcs_path, "application/octet-stream", 12_345)]
     assert response.upload_headers == {"x-goog-if-generation-match": "0"}
+    assert response.reservation_id == str(stored[0].id)
+    assert stored[0].purpose == "generative_project_input"
+    assert stored[0].object_path == response.gcs_path
+    assert response.retention_expires_at == stored[0].retention_expires_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_synthetic_direct_upload_stays_in_short_lived_namespace(monkeypatch):
+    from app.auth import SYNTHETIC_USER_ID
+
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.signed_put_url",
+        lambda *_args, **_kwargs: "https://storage.example/signed-put",
+    )
+
+    response = await create_generative_upload_url(
+        _request(),
+        GenerativeUploadUrlRequest(
+            filename="trial.mov",
+            content_type="video/quicktime",
+            file_size_bytes=4096,
+        ),
+        SimpleNamespace(id=SYNTHETIC_USER_ID),
+    )
+
+    assert response.gcs_path.startswith(f"dev-user/{SYNTHETIC_USER_ID}/generative/")
 
 
 @pytest.mark.asyncio
@@ -383,6 +481,7 @@ async def test_direct_image_upload_uses_image_extension_default(monkeypatch):
         lambda path, content_type, file_size_bytes: "https://storage.example/signed-put",
     )
 
+    db, stored = _upload_db()
     response = await create_generative_upload_url(
         _request(),
         GenerativeUploadUrlRequest(
@@ -391,10 +490,12 @@ async def test_direct_image_upload_uses_image_extension_default(monkeypatch):
             file_size_bytes=4_096,
         ),
         user,
+        db,
     )
 
     assert response.kind == "image"
     assert response.gcs_path.endswith("/clip.jpg")
+    assert response.reservation_id == str(stored[0].id)
 
 
 @pytest.mark.asyncio

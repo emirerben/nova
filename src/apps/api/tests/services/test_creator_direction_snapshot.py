@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -12,11 +13,13 @@ from app.services.creator_direction_snapshot import (
     current_typed_overrides,
     ensure_job_snapshot,
     ensure_job_snapshot_async,
+    private_snapshot_from,
     renderer_policy_scope,
     resolve_snapshot_for_dispatch,
     resolve_snapshot_sync,
     serialize_private_snapshot,
     serialize_snapshot,
+    snapshot_from_container,
 )
 from app.services.public_assembly_plan import project_public_assembly_plan
 from app.tasks.content_plan_build import _plan_direction_prompt
@@ -78,6 +81,48 @@ def _rich_resolved() -> CreatorDirectionSnapshot:
                 "source_kind": "persona_style",
             },
         ),
+    )
+
+
+def _derived_resolved(*, expires_at: datetime) -> CreatorDirectionSnapshot:
+    return CreatorDirectionSnapshot(
+        enabled=True,
+        revision=8,
+        items=(
+            {
+                "id": "memory-color",
+                "instruction": "Always use the saved account color",
+                "normalized_key": "text_color",
+                "enforcement": "constraint",
+                "structured_value": {"text_color": "#112233"},
+            },
+        ),
+        overrides=(
+            {
+                "id": "project-font",
+                "instruction": "Use Montserrat in this project",
+                "normalized_key": "font_family",
+                "enforcement": "constraint",
+                "structured_value": {"font_family": "Montserrat"},
+            },
+        ),
+        compatibility_items=(
+            {
+                "id": "compatibility-style-font_family",
+                "instruction": "Existing style preference: font_family=Inter",
+                "normalized_key": "font_family",
+                "enforcement": "default",
+                "structured_value": {"font_family": "Inter"},
+            },
+            {
+                "id": "compatibility-style-highlight_color",
+                "instruction": "Existing style preference: highlight_color=#ffffff",
+                "normalized_key": "highlight_color",
+                "enforcement": "default",
+                "structured_value": {"highlight_color": "#ffffff"},
+            },
+        ),
+        compatibility_expires_at=expires_at,
     )
 
 
@@ -361,6 +406,141 @@ def test_private_snapshot_reuse_preserves_v1_receipts_and_redaction():
     )
 
 
+def test_persisted_snapshot_expires_only_observation_derived_compatibility():
+    observed_at = datetime(2026, 1, 1, tzinfo=UTC)
+    expires_at = observed_at + timedelta(days=90)
+    private = serialize_private_snapshot(
+        _derived_resolved(expires_at=expires_at), source="plan_dispatch"
+    )
+
+    active = private_snapshot_from(private, now=expires_at - timedelta(seconds=1))
+    expired = private_snapshot_from(private, now=expires_at + timedelta(seconds=1))
+
+    assert active is not None
+    assert active["typed_overrides"] == {
+        "font_family": "Montserrat",
+        "highlight_color": "#ffffff",
+        "text_color": "#112233",
+    }
+    assert expired is not None
+    assert expired["typed_overrides"] == {
+        "font_family": "Montserrat",
+        "text_color": "#112233",
+    }
+    assert expired["compatibility_item_ids"] == []
+    assert all(row["scope"] != "compatibility" for row in expired["capability_results"])
+    assert expired["context_sections"]["creator_context"] == []
+    assert "Existing style preference" not in expired["prompt_block"]
+    assert "saved account color" in expired["prompt_block"]
+    assert "Montserrat in this project" in expired["prompt_block"]
+    assert (
+        snapshot_from_container({SNAPSHOT_KEY: private}, now=expires_at + timedelta(seconds=1))
+        == expired
+    )
+
+
+def test_legacy_snapshot_fails_closed_only_for_unproven_compatibility():
+    resolved = _derived_resolved(expires_at=datetime(2026, 12, 1, tzinfo=UTC))
+    resolved = CreatorDirectionSnapshot(
+        enabled=resolved.enabled,
+        revision=resolved.revision,
+        items=(
+            *resolved.items,
+            {
+                "id": "memory-advisory-highlight",
+                "instruction": "Keep highlights tasteful",
+                "normalized_key": "highlight_color",
+                "enforcement": "advisory",
+                "structured_value": None,
+            },
+        ),
+        overrides=resolved.overrides,
+        compatibility_items=resolved.compatibility_items,
+        compatibility_expires_at=resolved.compatibility_expires_at,
+    )
+    legacy = serialize_private_snapshot(
+        resolved,
+        source="legacy_plan",
+    )
+    for field in (
+        "compatibility_expires_at",
+        "typed_overrides_without_compatibility",
+        "context_sections_without_compatibility",
+        "capability_results_without_compatibility",
+        "prompt_hash_without_compatibility",
+        "prompt_block_without_compatibility",
+    ):
+        legacy.pop(field, None)
+
+    effective = private_snapshot_from(legacy)
+
+    assert effective is not None
+    assert effective["typed_overrides"] == {
+        "font_family": "Montserrat",
+        "text_color": "#112233",
+    }
+    assert effective["compatibility_item_ids"] == []
+    assert effective["context_sections"]["creator_context"] == []
+    assert "Existing style preference" not in effective["prompt_block"]
+    assert "saved account color" in effective["prompt_block"]
+    assert "Keep highlights tasteful" in effective["prompt_block"]
+    assert "Montserrat in this project" in effective["prompt_block"]
+
+
+def test_legacy_public_snapshot_clears_unreconstructable_compatibility_hash():
+    legacy = serialize_snapshot(
+        _derived_resolved(expires_at=datetime(2026, 12, 1, tzinfo=UTC)),
+        source="legacy_receipt",
+    )
+    for field in (
+        "compatibility_expires_at",
+        "typed_overrides_without_compatibility",
+        "context_sections_without_compatibility",
+        "capability_results_without_compatibility",
+        "prompt_hash_without_compatibility",
+    ):
+        legacy.pop(field, None)
+    original_hash = legacy["prompt_hash"]
+
+    effective = snapshot_from_container({SNAPSHOT_KEY: legacy})
+
+    assert original_hash is not None
+    assert effective is not None
+    assert effective["compatibility_item_ids"] == []
+    assert effective["typed_overrides"] == {
+        "font_family": "Montserrat",
+        "text_color": "#112233",
+    }
+    assert all(row["scope"] != "compatibility" for row in effective["capability_results"])
+    assert effective["context_sections"]["creator_context"] == {
+        "item_ids": [],
+        "count": 0,
+    }
+    assert effective["prompt_hash"] is None
+
+
+def test_expired_inherited_snapshot_is_sanitized_when_job_is_stamped():
+    expired_private = serialize_private_snapshot(
+        _derived_resolved(expires_at=datetime(2000, 1, 1, tzinfo=UTC)),
+        source="plan_dispatch",
+    )
+    job = SimpleNamespace(user_id="user-b", assembly_plan={})
+
+    result = ensure_job_snapshot(
+        object(),
+        job,
+        source="content_plan_dispatch",
+        inherited_snapshot=expired_private,
+    )
+
+    assert result["typed_overrides"] == {
+        "font_family": "Montserrat",
+        "text_color": "#112233",
+    }
+    assert "Existing style preference" not in result["prompt_block"]
+    assert job.assembly_plan[SNAPSHOT_KEY] == result
+
+
 async def test_async_job_dispatch_pins_private_prompt_for_direct_generators(monkeypatch):
     import app.services.creator_direction_snapshot as snapshot_service
 
@@ -381,6 +561,20 @@ def test_content_plan_worker_reads_pinned_prompt_only():
         creator_direction_snapshot = {"prompt_block": "- Use the pinned direction"}
 
     assert _plan_direction_prompt(Plan()) == "- Use the pinned direction"
+
+
+def test_content_plan_worker_drops_expired_compatibility_from_pinned_prompt():
+    class Plan:
+        creator_direction_snapshot = serialize_private_snapshot(
+            _derived_resolved(expires_at=datetime(2000, 1, 1, tzinfo=UTC)),
+            source="plan_dispatch",
+        )
+
+    prompt = _plan_direction_prompt(Plan())
+
+    assert "Existing style preference" not in prompt
+    assert "saved account color" in prompt
+    assert "Montserrat in this project" in prompt
 
 
 def test_legacy_job_snapshot_fails_open_when_memory_storage_is_unavailable():

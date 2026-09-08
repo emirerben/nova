@@ -258,6 +258,7 @@ describe("useEditDirector when the API has no director route", () => {
       { initialProps: { revision: 1 } },
     );
 
+    act(() => result.current.refresh());
     await act(async () => {
       jest.advanceTimersByTime(1200);
       await Promise.resolve();
@@ -294,6 +295,7 @@ describe("useEditDirector when the API has no director route", () => {
       }),
     );
 
+    act(() => result.current.refresh());
     await act(async () => {
       jest.advanceTimersByTime(1200);
       await Promise.resolve();

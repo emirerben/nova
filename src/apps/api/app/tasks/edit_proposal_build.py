@@ -782,7 +782,9 @@ def _review_authored_montage(
     output,  # noqa: ANN001
     media: list[MediaRef],
     creator_request: str,
-    job_id: str,
+    item_id: str,
+    creator_id: uuid.UUID,
+    attempt_id: str,
 ) -> list[tuple[str, object]]:
     """Have a vision model inspect the source windows chosen by the montage agent.
 
@@ -839,7 +841,12 @@ def _review_authored_montage(
                         ],
                         candidate_moments=list((ref.analysis or {}).get("best_moments") or []),
                     ),
-                    ctx=RunContext(job_id=job_id),
+                    ctx=RunContext(
+                        creator_id=str(creator_id),
+                        request_id=(
+                            f"edit-proposal:{item_id}:{attempt_id}:montage-review:{source_id}"
+                        ),
+                    ),
                 )
                 return source_id, review
         except Exception as exc:  # noqa: BLE001 — review is fail-open
@@ -1241,7 +1248,7 @@ def _run_draft_attempt(
     """
 
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import TerminalError  # noqa: PLC0415
+    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
     from app.agents.edit_proposal import (  # noqa: PLC0415
         EditProposalAgent,
         EditProposalAgentInput,
@@ -1625,7 +1632,11 @@ def _run_draft_attempt(
                     montage_audio=brief.montage_audio,
                     montage_cadence=brief.montage_cadence,
                     media=agent_media,
-                )
+                ),
+                ctx=RunContext(
+                    creator_id=str(owner_id),
+                    request_id=f"edit-proposal:{iid}:{attempt_id}:draft",
+                ),
             )
         except TerminalError as exc:
             if brief.direction == "text_explainer" or (
@@ -1645,7 +1656,14 @@ def _run_draft_attempt(
             # Review only authored multi-source video montages. A single
             # generic review pass is enough to catch weak windows without
             # turning every ordinary photo montage into a vision round-trip.
-            reviews = _review_authored_montage(output, media, brief.creator_request, item_id)
+            reviews = _review_authored_montage(
+                output,
+                media,
+                brief.creator_request,
+                item_id,
+                owner_id,
+                attempt_id,
+            )
             review_feedback = _montage_review_feedback(reviews)
             if review_feedback:
                 try:
@@ -1671,7 +1689,11 @@ def _run_draft_attempt(
                             montage_cadence=brief.montage_cadence,
                             review_feedback=review_feedback,
                             media=agent_media,
-                        )
+                        ),
+                        ctx=RunContext(
+                            creator_id=str(owner_id),
+                            request_id=f"edit-proposal:{iid}:{attempt_id}:review-revision",
+                        ),
                     )
                     log.info(
                         "edit_proposal.montage_replanned_after_visual_review",

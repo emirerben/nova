@@ -379,9 +379,15 @@ def generate_omni_asset(self, *, job_id: str, asset_id: str) -> None:  # noqa: A
     storage_path: str | None = None
     provider_client: Any = None
     provider_input_names: list[str] = []
+    cost_receipt = None
+    reservation_finalized = False
+    provider_generation_started = False
     try:
         if not settings.omni_generated_video_enabled:
             _update(job_id, asset_id, status="failed", progress=0.0, error="feature_disabled")
+            return
+        if settings.ai_usage_environment != "lab":
+            _update(job_id, asset_id, status="failed", progress=0.0, error="lab_only")
             return
         if not settings.gemini_api_key:
             raise RuntimeError("gemini_api_key_missing")
@@ -392,6 +398,39 @@ def generate_omni_asset(self, *, job_id: str, asset_id: str) -> None:  # noqa: A
             return
         clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
         _update(job_id, asset_id, status="generating", progress=0.08, error=None)
+
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.services.ai_cost_control import (  # noqa: PLC0415
+            PaidCallRequest,
+            mark_paid_call_started,
+            mark_paid_call_unknown,
+            release_paid_call,
+            reserve_paid_call,
+            settle_paid_call_cost,
+        )
+
+        estimated_cost = float(record["estimated_max_cost_usd"])
+        # Reserve the complete generation envelope before even uploading an
+        # input to the paid provider. Local input preparation failures release
+        # this reservation; only an attempted generation can become unknown.
+        cost_receipt = reserve_paid_call(
+            PaidCallRequest(
+                idempotency_key=f"omni:{asset_id}",
+                feature="omni_video",
+                model=settings.edit_omni_model,
+                estimated_cost_usd=estimated_cost,
+                ctx=RunContext(
+                    job_id=job_id,
+                    creator_id=str(job.user_id),
+                    request_id=asset_id,
+                    usage_purpose="omni_lab",
+                    test_run_id=str(record["test_run_id"]),
+                    estimated_max_cost_usd=float(record["approved_run_max_cost_usd"]),
+                    reservation_approved=True,
+                ),
+            )
+        )
+        mark_paid_call_started(cost_receipt)
 
         with tempfile.TemporaryDirectory(prefix=f"nova-omni-{asset_id[:8]}-") as workdir:
             from google import genai  # type: ignore[import]  # noqa: PLC0415
@@ -411,23 +450,43 @@ def generate_omni_asset(self, *, job_id: str, asset_id: str) -> None:  # noqa: A
                 provider_client,
                 input_parts,
             )
-            interaction = provider_client.interactions.create(
-                model=settings.edit_omni_model,
-                input=input_parts,
-                background=True,
-                store=True,
-                response_modalities=["video"],
-                response_format={
-                    "type": "video",
-                    "delivery": "inline",
-                    "aspect_ratio": "9:16",
-                    "duration": f"{float(record['duration_s']):g}s",
-                },
-                generation_config={"video_config": {"task": task}},
-                timeout=90.0,
-            )
+            try:
+                provider_generation_started = True
+                interaction = provider_client.interactions.create(
+                    model=settings.edit_omni_model,
+                    input=input_parts,
+                    background=True,
+                    store=True,
+                    response_modalities=["video"],
+                    response_format={
+                        "type": "video",
+                        "delivery": "inline",
+                        "aspect_ratio": "9:16",
+                        "duration": f"{float(record['duration_s']):g}s",
+                    },
+                    generation_config={"video_config": {"task": task}},
+                    timeout=90.0,
+                )
+            except TimeoutError:
+                mark_paid_call_unknown(cost_receipt)
+                reservation_finalized = True
+                raise
+            except Exception as exc:
+                code = getattr(exc, "code", None)
+                # A provider-declared 4xx before an interaction is returned is
+                # a confirmed rejection. Capacity/server errors may have
+                # started work and must retain the unknown-outcome fence.
+                if isinstance(code, int) and 400 <= code < 500 and code != 429:
+                    release_paid_call(cost_receipt)
+                    reservation_finalized = True
+                else:
+                    mark_paid_call_unknown(cost_receipt)
+                    reservation_finalized = True
+                raise
             interaction_id = str(getattr(interaction, "id", "") or "")
             if not interaction_id:
+                mark_paid_call_unknown(cost_receipt)
+                reservation_finalized = True
                 raise RuntimeError("omni_missing_interaction_id")
             _update(
                 job_id,
@@ -444,6 +503,11 @@ def generate_omni_asset(self, *, job_id: str, asset_id: str) -> None:  # noqa: A
                         provider_client.interactions.cancel(interaction_id, timeout=20.0)
                     except Exception:  # noqa: BLE001
                         pass
+                    # A cancellation request is not a provider terminal result.
+                    # Preserve the unknown fence so a retry cannot overlap work
+                    # which may still be running remotely.
+                    mark_paid_call_unknown(cost_receipt)
+                    reservation_finalized = True
                     _update(job_id, asset_id, status="cancelled", progress=0.0)
                     return
                 if time.monotonic() >= deadline:
@@ -456,9 +520,13 @@ def generate_omni_asset(self, *, job_id: str, asset_id: str) -> None:  # noqa: A
 
             provider_status = str(getattr(interaction, "status", "failed"))
             if provider_status == "cancelled":
+                release_paid_call(cost_receipt)
+                reservation_finalized = True
                 _update(job_id, asset_id, status="cancelled", progress=0.0)
                 return
             if provider_status != "completed":
+                release_paid_call(cost_receipt)
+                reservation_finalized = True
                 raise RuntimeError(f"omni_provider_{provider_status}")
 
             raw_path = os.path.join(workdir, "provider-output.mp4")
@@ -466,6 +534,19 @@ def generate_omni_asset(self, *, job_id: str, asset_id: str) -> None:  # noqa: A
             _write_provider_video(getattr(interaction, "output_video", None), raw_path)
             _update(job_id, asset_id, status="normalizing", progress=0.82)
             duration_s = _normalize(raw_path, normalized_path, float(record["duration_s"]))
+            settle_paid_call_cost(
+                cost_receipt,
+                cost_usd=duration_s * settings.ai_omni_cost_per_second_usd,
+                resolved_model=settings.edit_omni_model,
+                provider_request_id=interaction_id,
+                usage_json={
+                    "pricing_unit": "generated_second",
+                    "duration_s": duration_s,
+                    "task": task,
+                    "provider_status": provider_status,
+                },
+            )
+            reservation_finalized = True
             if _cancelled(job_id, asset_id):
                 _update(job_id, asset_id, status="cancelled", progress=0.0)
                 return
@@ -494,11 +575,23 @@ def generate_omni_asset(self, *, job_id: str, asset_id: str) -> None:  # noqa: A
                     storage_path=storage_path,
                 )
     except SoftTimeLimitExceeded:
+        if cost_receipt is not None and not reservation_finalized:
+            if provider_generation_started:
+                mark_paid_call_unknown(cost_receipt)
+            else:
+                release_paid_call(cost_receipt)
+            reservation_finalized = True
         if storage_path:
             delete_object_best_effort(storage_path)
         _update(job_id, asset_id, status="failed", progress=0.0, error="generation_timeout")
         raise
     except Exception as exc:  # noqa: BLE001
+        if cost_receipt is not None and not reservation_finalized:
+            if provider_generation_started:
+                mark_paid_call_unknown(cost_receipt)
+            else:
+                release_paid_call(cost_receipt)
+            reservation_finalized = True
         if storage_path:
             delete_object_best_effort(storage_path)
         try:

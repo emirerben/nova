@@ -19,6 +19,7 @@ judge, and returns an EvalResult.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -84,6 +85,30 @@ def discover_fixtures(agent_dir_name: str) -> list[Path]:
     return sorted(p for p in base.rglob("*.json") if p.is_file())
 
 
+def build_eval_run_context(
+    fixture_id: str,
+    *,
+    is_live: bool,
+    invocation: str = "primary",
+) -> RunContext:
+    """Build the one attributed context shared by every live-eval call path."""
+
+    return RunContext(
+        request_id=f"eval:{fixture_id}:{invocation}",
+        usage_purpose=(os.environ.get("NOVA_EVAL_USAGE_PURPOSE") if is_live else None),
+        test_run_id=(os.environ.get("NOVA_EVAL_TEST_RUN_ID") if is_live else None),
+        estimated_max_cost_usd=(
+            float(os.environ["NOVA_EVAL_MAX_COST_USD"])
+            if is_live and os.environ.get("NOVA_EVAL_MAX_COST_USD")
+            else None
+        ),
+        reservation_approved=(
+            os.environ.get("NOVA_EVAL_RESERVATION_APPROVED") == "true" if is_live else False
+        ),
+        extra={"skip_langfuse_trace": True, "skip_agent_run_persist": True},
+    )
+
+
 # ── Cassette client (replay mode) ────────────────────────────────────────────
 
 
@@ -123,6 +148,19 @@ class CassetteModelClient(ModelClient):
             tokens_out=self.tokens_out,
             raw_response=None,
         )
+
+
+class RecordingModelClient(ModelClient):
+    """Forward live calls while retaining the paid response for replay capture."""
+
+    def __init__(self, delegate: ModelClient) -> None:
+        self.delegate = delegate
+        self.invocations: list[ModelInvocation] = []
+
+    def invoke(self, **kwargs: Any) -> ModelInvocation:
+        invocation = self.delegate.invoke(**kwargs)
+        self.invocations.append(invocation)
+        return invocation
 
 
 # ── Result + runner ──────────────────────────────────────────────────────────
@@ -416,7 +454,9 @@ def run_eval(
       in replay mode (cassette ignores `media_uri`).
     """
     agent_cls = _build_agent_class_for(fixture.agent)
-    client = model_client or CassetteModelClient(fixture.raw_text)
+    is_live = os.environ.get("NOVA_EVAL_MODE", "replay") == "live"
+    recording_client = RecordingModelClient(model_client) if is_live and model_client else None
+    client = recording_client or model_client or CassetteModelClient(fixture.raw_text)
     agent = agent_cls(client)
     # Eval runs post their own Langfuse trace (with source:eval) at the end
     # of run_eval. Suppress the inner per-Agent.run() trace so we don't
@@ -424,7 +464,7 @@ def run_eval(
     # `skip_agent_run_persist` keeps eval rows out of the prod `agent_run`
     # table — the admin debug view filters by job_id and eval runs have no
     # job, so persisting them would just be noise on the way to nowhere.
-    eval_ctx = RunContext(extra={"skip_langfuse_trace": True, "skip_agent_run_persist": True})
+    eval_ctx = build_eval_run_context(fixture.fixture_id, is_live=is_live)
 
     effective_input = fixture.input
     if live_input_normalizer is not None and model_client is not None:
@@ -476,6 +516,24 @@ def run_eval(
         judge=judge_result,
         output=output.model_dump(),
     )
+
+    capture_root = os.environ.get("NOVA_EVAL_CAPTURE_DIR")
+    if result.passed and recording_client is not None and capture_root:
+        capture_path = Path(capture_root) / fixture.path.parent.name / f"{fixture.path.stem}.json"
+        capture_path.parent.mkdir(parents=True, exist_ok=True)
+        capture = {
+            "agent": fixture.agent,
+            "prompt_version": agent.spec.prompt_version,
+            "input": fixture.input,
+            "raw_text": recording_client.invocations[-1].raw_text,
+            "output": result.output,
+            "meta": {
+                **fixture.meta,
+                "source": "provider_smoke_capture",
+                "test_run_id": os.environ.get("NOVA_EVAL_TEST_RUN_ID"),
+            },
+        }
+        capture_path.write_text(json.dumps(capture, indent=2, ensure_ascii=False) + "\n")
 
     if shadow_prompts_dir is not None and model_client is not None:
         # Shadow only runs when the cassette is bypassed (live). With cassette

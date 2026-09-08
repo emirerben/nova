@@ -37,6 +37,7 @@ from app.services.creator_direction import (
 from app.services.creator_direction_capabilities import capability_status
 from app.services.creator_direction_receipts import project_direction_receipt, stamp_private_receipt
 from app.services.creator_direction_snapshot import serialize_private_snapshot
+from app.services.tiktok_style_observations import effective_persona_style
 
 router = APIRouter()
 direction_router = APIRouter()
@@ -237,12 +238,20 @@ async def get_memory(user: CurrentUser, db: AsyncSession = Depends(get_db)) -> d
     ).scalar_one_or_none()
     # Compatibility projection is deliberately read-only and lower precedence;
     # it is never mislabeled as creator-authored ledger memory.
-    if persona and isinstance(persona.style, dict) and persona.style.get("style_set_id"):
+    compatibility_style = (
+        effective_persona_style(
+            persona.style,
+            profile=getattr(persona, "tiktok_profile", None),
+        )
+        if persona
+        else None
+    )
+    if compatibility_style and compatibility_style.get("style_set_id"):
         active.append(
             {
                 "id": "compatibility-style",
                 "category": "video_style",
-                "instruction": f"Existing style: {persona.style['style_set_id']}",
+                "instruction": f"Existing style: {compatibility_style['style_set_id']}",
                 "enforcement": "advisory",
                 "enforcement_status": "advisory",
                 "source_kind": "compatibility",

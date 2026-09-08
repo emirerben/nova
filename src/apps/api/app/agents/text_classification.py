@@ -263,11 +263,42 @@ class TextClassificationAgent(Agent[TextClassificationInput, TextClassificationO
         start = time.monotonic()
         for attempt in range(self.spec.max_attempts):
             try:
-                response = gemini_client.models.generate_content(
-                    model=self.spec.model,
-                    contents=contents,
-                    config=genai_types.GenerateContentConfig(
-                        response_mime_type="application/json",
+                from app.services.ai_cost_control import (  # noqa: PLC0415
+                    PaidCallRequest,
+                    effective_max_output_tokens,
+                    estimate_call_cost_usd,
+                    execute_metered_google_call,
+                    logical_call_id,
+                )
+
+                provider_max_output_tokens = effective_max_output_tokens(self.max_output_tokens)
+                response = execute_metered_google_call(
+                    request=PaidCallRequest(
+                        idempotency_key=logical_call_id(
+                            feature=self.spec.name,
+                            model=self.spec.model,
+                            prompt=prompt_text,
+                            ctx=ctx,
+                            attempt=attempt + 1,
+                        ),
+                        feature=self.spec.name,
+                        model=self.spec.model,
+                        estimated_cost_usd=estimate_call_cost_usd(
+                            model=self.spec.model,
+                            prompt=prompt_text,
+                            max_output_tokens=provider_max_output_tokens,
+                            media_mime="image/jpeg",
+                            media_count=len(input.frame_paths),
+                        ),
+                        ctx=ctx,
+                    ),
+                    operation=lambda: gemini_client.models.generate_content(
+                        model=self.spec.model,
+                        contents=contents,
+                        config=genai_types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            max_output_tokens=provider_max_output_tokens,
+                        ),
                     ),
                 )
             except genai_errors.APIError as exc:

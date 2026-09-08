@@ -66,6 +66,8 @@ celery_app = Celery(
         "app.tasks.creator_memory",
         "app.tasks.speech_cleanup_analysis",
         "app.tasks.mobile_upload_cleanup",
+        "app.tasks.storage_retention",
+        "app.tasks.billing_reconciliation",
         # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
         # a full MP4 into the RAM-backed /tmp, which is exactly the workload that
         # OOM'd the 1GB `light`/Beat machine on 2026-08-02. It is dispatched with
@@ -94,6 +96,7 @@ celery_app = Celery(
 MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "tasks.sweep_stale_jobs",
     "tasks.cleanup_agent_runs",
+    "tasks.purge_expired_ai_caches",
     "tasks.send_daily_digest",
     "tasks.cleanup_cancelled_job",
     "tasks.purge_job_storage",
@@ -111,6 +114,8 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "tasks.execute_kria_approval",
     "tasks.reconcile_speech_cleanup_analyses",
     "tasks.cleanup_temporary_media_uploads",
+    "tasks.sweep_storage_retention",
+    "tasks.reconcile_ai_billing",
 )
 
 celery_app.conf.update(
@@ -219,6 +224,21 @@ celery_app.conf.update(
         "cleanup-agent-runs-daily": {
             "task": "tasks.cleanup_agent_runs",
             "schedule": crontab(hour=4, minute=0),
+        },
+        "purge-expired-ai-caches-daily": {
+            "task": "tasks.purge_expired_ai_caches",
+            "schedule": crontab(hour=4, minute=10),
+        },
+        "storage-retention-report-daily": {
+            "task": "tasks.sweep_storage_retention",
+            "schedule": crontab(hour=5, minute=0),
+        },
+        # Standard Usage Cost exports are delayed. The task compares the
+        # configured closed usage day with the settled Nova ledger and emits a
+        # Pub/Sub alert only when the >10% mismatch threshold is crossed.
+        "reconcile-ai-billing-daily": {
+            "task": "tasks.reconcile_ai_billing",
+            "schedule": crontab(hour=6, minute=0),
         },
         # Daily dev-loop heartbeat digest (plan D5 / T7). 13:00 UTC ≈ morning
         # for the founder, within the builder cron's work-hours window so the

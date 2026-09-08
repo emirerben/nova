@@ -17,11 +17,11 @@ import type { ReactNode } from "react";
 
 import { Eyebrow } from "@/components/ui/Eyebrow";
 import {
-  EFFECTIVE_DATE,
   GOVERNING_LAW,
   LEGAL_ADDRESS,
   LEGAL_ENTITY,
   PRIVACY_EMAIL,
+  PRIVACY_EFFECTIVE_DATE,
   REQUEST_RESPONSE_DAYS,
 } from "@/lib/legal";
 
@@ -74,7 +74,7 @@ export default function PrivacyPage() {
         </Eyebrow>
         <h1 className="font-display mb-2 text-[36px] font-medium leading-snug">Privacy Policy</h1>
         <p className="mb-8 text-[13px] text-[#a1a1aa]">
-          Effective {EFFECTIVE_DATE}. Read alongside our{" "}
+          Effective {PRIVACY_EFFECTIVE_DATE}. Read alongside our{" "}
           <Link href="/terms" className="text-lime-700 underline underline-offset-2">
             Terms of Service
           </Link>
@@ -302,10 +302,11 @@ export default function PrivacyPage() {
           </p>
           <p>
             This is separate from, and does not require, connecting your TikTok account via official sign-in (§5). We
-            do not currently download or analyze the video files themselves from this public-profile flow. A related
-            feature that would do so — downloading your TikTok videos for AI visual-style analysis — exists in our
-            codebase but is switched off for all users as of this policy&apos;s effective date; if we turn it on, we
-            will update this section and notify users first.
+            do not download video files during the basic public-profile flow. If the optional visual-style review is
+            available, it starts only when you choose <em>Review my TikTok visual style</em>. Kria then temporarily
+            downloads up to eight representative public videos, sends them to Google&apos;s Gemini service for visual
+            analysis, discards the downloaded files after processing, and reuses the resulting style observations for
+            up to 90 days before asking you to run it again.
           </p>
         </Section>
 
@@ -324,10 +325,11 @@ export default function PrivacyPage() {
           <p>We keep data for as long as needed to provide the Service, specifically:</p>
           <ul className="list-disc space-y-1.5 pl-4">
             <li><strong>Account data</strong> (name, email) — for as long as your account is active, then deleted on request per §9.</li>
-            <li><strong>Uploaded footage and rendered videos</strong> — retained until you delete them or close your account. We do not currently auto-delete finished videos or the source footage behind them, because you may want to re-edit or re-download them later.</li>
-            <li><strong>Anonymous or session-only uploads</strong> (e.g. a not-yet-signed-in trial) — automatically deleted after 24 hours.</li>
-            <li><strong>Voiceover recordings and generated music renders</strong> — automatically deleted after 24 hours once incorporated into your final video.</li>
-            <li><strong>Speech transcripts</strong> — cached to avoid re-processing identical audio; we are moving this cache onto the same 24-hour retention window described above.</li>
+            <li><strong>Uploaded source footage</strong> — retained while it is active or referenced by a current project or publication. For an inactive project, we notify you before source or editable media becomes eligible for deletion after 90 days.</li>
+            <li><strong>Finished videos and poster images</strong> — retained while current or published; otherwise they become eligible for deletion after 365 days of inactivity. Deletion is generation-specific and is rechecked against current project and publication references immediately before it runs.</li>
+            <li><strong>Anonymous uploads</strong> (e.g. a not-yet-signed-in trial) — automatically deleted after 30 days; other unattached session uploads are deleted after 24 hours.</li>
+            <li><strong>Voiceover recordings and temporary music or lyric previews</strong> — automatically deleted after 24 hours once incorporated into your final video.</li>
+            <li><strong>Speech transcripts</strong> — cached for up to 24 hours to avoid re-processing identical audio.</li>
             <li><strong>Internal AI processing logs</strong> tied to a specific job — deleted after 30 days.</li>
           </ul>
           <p>

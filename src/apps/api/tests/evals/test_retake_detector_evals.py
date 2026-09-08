@@ -22,10 +22,15 @@ from pathlib import Path
 
 import pytest
 
-from app.agents._runtime import RunContext
 from app.agents.retake_detector import RetakeDetectorAgent
 
-from .runners.eval_runner import CassetteModelClient, discover_fixtures, load_fixture, run_eval
+from .runners.eval_runner import (
+    CassetteModelClient,
+    build_eval_run_context,
+    discover_fixtures,
+    load_fixture,
+    run_eval,
+)
 
 AGENT_DIR = "retake_detector"
 AGENT_NAME = "nova.audio.retake_detector"
@@ -98,7 +103,11 @@ def test_negative_fixtures_return_no_retakes(
     agent = RetakeDetectorAgent(client)
     output = agent.run(
         fixture.input,
-        ctx=RunContext(extra={"skip_langfuse_trace": True, "skip_agent_run_persist": True}),
+        ctx=build_eval_run_context(
+            fixture.fixture_id,
+            is_live=eval_mode == "live",
+            invocation="negative-gate",
+        ),
     )
 
     assert output.retakes == [], (

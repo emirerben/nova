@@ -14,7 +14,10 @@ from pydantic import BaseModel
 from app.agents._runtime import (
     Agent,
     AgentSpec,
+    AiBudgetExceededError,
+    CostControlUnavailableError,
     ModelInvocation,
+    ProviderOutcomeUnknownError,
     RunContext,
     TerminalError,
     TransientError,
@@ -40,6 +43,7 @@ def test_happy_path(sample_agent: SampleAgent, mock_client: MockModelClient) -> 
     # Single call, no fallback
     assert len(mock_client.invocations) == 1
     assert mock_client.invocations[0]["model"] == "gemini-2.5-flash"
+    assert mock_client.invocations[0]["max_output_tokens"] == 8_192
 
 
 def test_input_can_be_dict(sample_agent: SampleAgent, mock_client: MockModelClient) -> None:
@@ -257,6 +261,39 @@ def test_sensitive_terminal_failure_never_exposes_provider_text(
 
     assert "PRIVATE-MODEL-OUTPUT" not in str(exc_info.value)
     assert captured[0]["error"] == "sensitive_agent_error"
+
+
+@pytest.mark.parametrize(
+    "control_error",
+    [
+        AiBudgetExceededError(
+            scope="production",
+            reset_at="2026-10-01T00:00:00Z",
+            cached_behavior_available=False,
+        ),
+        ProviderOutcomeUnknownError("provider_outcome_unknown"),
+        CostControlUnavailableError("cost_control_unavailable"),
+    ],
+)
+def test_sensitive_agent_preserves_typed_cost_control_errors(
+    control_error: TerminalError,
+    mock_client: MockModelClient,
+) -> None:
+    class SensitiveSampleAgent(SampleAgent):
+        spec = replace(
+            SampleAgent.spec,
+            name="test.sensitive",
+            max_attempts=1,
+            fallback_models=(),
+            sensitive_io=True,
+        )
+
+    mock_client.queue("gemini-2.5-flash", control_error)
+
+    with pytest.raises(type(control_error)) as caught:
+        SensitiveSampleAgent(mock_client).run(SampleInput(topic="private creator direction"))
+
+    assert caught.value is control_error
 
 
 # ── Schema errors ─────────────────────────────────────────────────────────────

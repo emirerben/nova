@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
@@ -10,7 +9,6 @@ from fastapi import HTTPException
 from app.agents._runtime import ModelClient, ModelInvocation, RunContext
 from app.agents.edit_director import (
     EditDirectorAgent,
-    EditDirectorFallbackAgent,
     EditDirectorInput,
 )
 from app.routes import _director
@@ -192,14 +190,11 @@ def test_director_repairs_truncated_json_before_validation() -> None:
 
     assert len(output.suggestions) == 3
     assert EditDirectorAgent.spec.enable_json_repair is True
-    assert EditDirectorFallbackAgent.spec.enable_json_repair is True
 
 
-def test_director_review_latency_has_a_bounded_primary_and_fallback_budget() -> None:
+def test_director_review_has_one_bounded_paid_attempt() -> None:
     assert EditDirectorAgent.spec.max_attempts == 1
     assert EditDirectorAgent.spec.timeout_s <= 30.0
-    assert EditDirectorFallbackAgent.spec.max_attempts == 1
-    assert EditDirectorFallbackAgent.spec.timeout_s <= 20.0
 
 
 def test_director_prompt_includes_exact_operation_field_contract() -> None:
@@ -471,18 +466,20 @@ def test_director_omni_accepts_compact_timeline_with_clip_identity() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("server_enabled", "client_enabled", "expected"),
+    ("server_enabled", "client_enabled", "environment", "expected"),
     [
-        (False, False, False),
-        (False, True, False),
-        (True, False, False),
-        (True, True, True),
+        (False, False, "lab", False),
+        (False, True, "lab", False),
+        (True, False, "lab", False),
+        (True, True, "production", False),
+        (True, True, "lab", True),
     ],
 )
 async def test_director_omni_requires_server_and_client_capability(
     monkeypatch,
     server_enabled: bool,
     client_enabled: bool,
+    environment: str,
     expected: bool,
 ) -> None:
     output = _parse(_valid_suggestions()[:1])
@@ -493,12 +490,13 @@ async def test_director_omni_requires_server_and_client_capability(
         return output
 
     monkeypatch.setattr(_director.settings, "omni_generated_video_enabled", server_enabled)
+    monkeypatch.setattr(_director.settings, "ai_usage_environment", environment)
     monkeypatch.setattr(_director.EditDirectorAgent, "run", primary)
 
     await _director.run_director(
         _director.DirectorSuggestionsBody(
             snapshot=_snapshot(),
-            snapshot_revision=f"revision-{server_enabled}-{client_enabled}",
+            snapshot_revision=f"revision-{server_enabled}-{client_enabled}-{environment}",
             omni_enabled=client_enabled,
         ),
         job_id=uuid.uuid4(),
@@ -535,32 +533,30 @@ async def test_director_accepts_context_larger_than_legacy_20kib_limit(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_director_falls_back_from_pro_to_flash(monkeypatch) -> None:
-    output = _parse(_valid_suggestions()[:3])
+async def test_director_primary_failure_returns_502_without_second_paid_call(monkeypatch) -> None:
+    calls = 0
 
     def primary_failure(*args, **kwargs):  # noqa: ARG001
+        nonlocal calls
+        calls += 1
         from app.agents._runtime import TerminalError
 
         raise TerminalError("pro temporarily unavailable")
 
     monkeypatch.setattr(_director.EditDirectorAgent, "run", primary_failure)
-    monkeypatch.setattr(
-        _director.EditDirectorFallbackAgent,
-        "run",
-        lambda *args, **kwargs: output,
-    )
 
-    response = await _director.run_director(
-        _director.DirectorSuggestionsBody(
-            snapshot=_snapshot(),
-            snapshot_revision="revision-1",
-        ),
-        job_id=uuid.uuid4(),
-    )
+    with pytest.raises(HTTPException) as caught:
+        await _director.run_director(
+            _director.DirectorSuggestionsBody(
+                snapshot=_snapshot(),
+                snapshot_revision="revision-1",
+            ),
+            job_id=uuid.uuid4(),
+        )
 
-    assert response.requested_model == _director.settings.edit_director_model
-    assert response.model_used == _director.settings.edit_director_fallback_model
-    assert response.fallback_reason == "TerminalError"
+    assert caught.value.status_code == 502
+    assert caught.value.detail == "edit_director_failed"
+    assert calls == 1
 
 
 @pytest.mark.asyncio
@@ -568,7 +564,6 @@ async def test_director_skips_fallback_when_a_newer_snapshot_supersedes_primary(
     monkeypatch,
 ) -> None:
     job_id = uuid.uuid4()
-    fallback = Mock()
 
     def primary_failure(*args, **kwargs):  # noqa: ARG001
         from app.agents._runtime import TerminalError
@@ -577,7 +572,6 @@ async def test_director_skips_fallback_when_a_newer_snapshot_supersedes_primary(
         raise TerminalError("stale primary")
 
     monkeypatch.setattr(_director.EditDirectorAgent, "run", primary_failure)
-    monkeypatch.setattr(_director.EditDirectorFallbackAgent, "run", fallback)
 
     with pytest.raises(HTTPException) as caught:
         await _director.run_director(
@@ -590,4 +584,3 @@ async def test_director_skips_fallback_when_a_newer_snapshot_supersedes_primary(
 
     assert caught.value.status_code == 409
     assert caught.value.detail == "edit_director_request_superseded"
-    fallback.assert_not_called()

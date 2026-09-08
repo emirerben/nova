@@ -234,11 +234,14 @@ export default function CopilotDrawer({
             suggestions={director.suggestions}
             appliedReceipts={director.appliedReceipts}
             historyVersion={historyVersion}
+            reviewed={director.reviewed}
             loading={director.loading}
+            reviewBlocked={director.reviewBlocked}
             error={director.error}
             modelUsed={director.modelUsed}
-            fallbackReason={director.fallbackReason}
+            omniMaxCostPerSecondUsd={director.omniMaxCostPerSecondUsd}
             generation={director.generation}
+            omniDispatchPending={director.omniDispatchPending}
             serverRendering={director.serverRendering}
             onAccept={director.accept}
             onDismiss={director.dismiss}

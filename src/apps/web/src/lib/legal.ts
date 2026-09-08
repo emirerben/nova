@@ -29,6 +29,7 @@ export const PRIVACY_EMAIL = "usekria@gmail.com";
 export const LEGAL_EMAIL = "usekria@gmail.com";
 
 export const EFFECTIVE_DATE = "August 1, 2026";
+export const PRIVACY_EFFECTIVE_DATE = "September 8, 2026";
 
 // Fixed floor for the liability cap. With no billing in the product today,
 // "fees paid in the prior 12 months" evaluates to $0 for every user, which

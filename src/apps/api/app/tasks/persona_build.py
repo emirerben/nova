@@ -72,10 +72,6 @@ def scrape_tiktok_profile(self, persona_id: str, handle: str) -> None:  # noqa: 
     # written before these fire so the interviewer can proceed immediately.
     if settings.tiktok_deep_analysis_enabled:
         analyze_tiktok_profile.delay(str(persona_id), handle)
-    if settings.tiktok_style_vision_enabled:
-        from app.tasks.style_vision_build import analyze_tiktok_style  # noqa: PLC0415
-
-        analyze_tiktok_style.delay(str(persona_id), handle)
 
 
 @celery_app.task(
@@ -103,6 +99,12 @@ def analyze_tiktok_profile(self, persona_id: str, handle: str) -> None:  # noqa:
     if not settings.tiktok_deep_analysis_enabled:
         return
 
+    with sync_session() as session:
+        persona_row = session.get(Persona, uuid.UUID(str(persona_id)))
+        if persona_row is None:
+            return
+        creator_id = str(persona_row.user_id)
+
     clean = handle  # already normalized by scrape_tiktok_profile
     profile = fetch_profile_enriched(clean)
     if profile is None:
@@ -118,7 +120,7 @@ def analyze_tiktok_profile(self, persona_id: str, handle: str) -> None:  # noqa:
 
     try:
         agent = TikTokAnalyzerAgent(default_client())
-        output = agent.run(agent_input, ctx=RunContext(job_id=None))
+        output = agent.run(agent_input, ctx=RunContext(creator_id=creator_id))
     except Exception as exc:  # noqa: BLE001
         # Best-effort: analysis failure never marks the persona failed.
         log.warning(
@@ -163,10 +165,11 @@ def generate_persona(self, persona_id: str) -> None:  # noqa: ANN001
         questionnaire = PersonaQuestionnaire(**(persona_row.questionnaire or {})).model_copy(
             update={"tiktok_analysis": tiktok_summary}
         )
+        creator_id = str(persona_row.user_id)
 
     try:
         agent = PersonaGeneratorAgent(default_client())
-        persona = agent.run(questionnaire, ctx=RunContext(job_id=None))
+        persona = agent.run(questionnaire, ctx=RunContext(creator_id=creator_id))
     except Exception as exc:  # noqa: BLE001 — persist failure, then optionally retry
         log.warning("persona_build.failed", persona_id=persona_id, error=str(exc))
         with sync_session() as session:
@@ -234,10 +237,11 @@ def retune_persona_from_feedback(self, persona_id: str) -> None:  # noqa: ANN001
         questionnaire = PersonaQuestionnaire(**(row.questionnaire or {})).model_copy(
             update={"preference_summary": summary, "tiktok_analysis": tiktok_summary}
         )
+        creator_id = str(row.user_id)
 
     try:
         agent = PersonaGeneratorAgent(default_client())
-        persona = agent.run(questionnaire, ctx=RunContext(job_id=None))
+        persona = agent.run(questionnaire, ctx=RunContext(creator_id=creator_id))
     except Exception as exc:  # noqa: BLE001
         log.warning("persona_retune.failed", persona_id=persona_id, error=str(exc))
         with sync_session() as session:

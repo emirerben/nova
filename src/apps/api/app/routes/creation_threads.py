@@ -1376,6 +1376,7 @@ def _project_job_input_path(value: object, *, user_id: uuid.UUID, job_id: uuid.U
         f"{user_id}/{job_id}/",
         f"dev-user/{job_id}/",
         f"dev-user/{user_id}/generative/",
+        f"users/{user_id}/generative/",
         f"voiceover-uploads/direct/{user_id}/",
     )
     return candidate if candidate.startswith(allowed_prefixes) else None

@@ -81,6 +81,24 @@ export interface LibraryJob {
 export interface LibraryPage {
   jobs: LibraryJob[];
   next_cursor: string | null;
+  /** Notices for inactive source/editable media. Optional during rollout. */
+  retention_warnings?: LibraryRetentionWarning[];
+  /** Owner-wide warning total, independent of Gallery pagination. */
+  retention_summary?: LibraryRetentionSummary | null;
+}
+
+export interface LibraryRetentionWarning {
+  job_id: string;
+  delete_at: string;
+  source_count: number;
+  final_retention_days: number;
+}
+
+export interface LibraryRetentionSummary {
+  affected_video_count: number;
+  source_count: number;
+  earliest_delete_at: string;
+  final_retention_days: number;
 }
 
 export interface JobPlaybackUrl {

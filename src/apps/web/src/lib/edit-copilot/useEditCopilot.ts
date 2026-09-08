@@ -519,6 +519,7 @@ export function useEditCopilot(
         optsRef.current.itemId,
         optsRef.current.variantId,
         {
+          client_request_id: userMessageId,
           message: trimmed,
           turns: priorTurns,
           snapshot,

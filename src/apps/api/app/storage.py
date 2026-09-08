@@ -74,6 +74,7 @@ def _local_metadata(object_path: str) -> "ObjectMetadata":
         size=stat.st_size,
         content_type=content_type,
         md5_hash=None,
+        created_at=datetime.datetime.fromtimestamp(stat.st_mtime, tz=datetime.UTC),
     )
 
 
@@ -85,6 +86,17 @@ class ObjectMetadata:
     size: int
     content_type: str
     md5_hash: str | None = None
+    created_at: datetime.datetime | None = None
+
+
+def _blob_created_at(blob: object) -> datetime.datetime | None:
+    """Return a real SDK timestamp, ignoring loose MagicMock/test attributes."""
+
+    for name in ("time_created", "updated"):
+        value = getattr(blob, name, None)
+        if isinstance(value, datetime.datetime):
+            return value
+    return None
 
 
 PrefixDeletionStatus = Literal["verified_empty", "partial", "unavailable"]
@@ -486,7 +498,12 @@ def delete_object_best_effort(object_path: str) -> bool:
         return False
 
 
-def delete_object_generation(object_path: str, *, generation: str) -> None:
+def delete_object_generation(
+    object_path: str,
+    *,
+    generation: str,
+    timeout_s: float | None = None,
+) -> None:
     """Delete exactly the generation validated by registration.
 
     Unlike best-effort cleanup, callers use this to enforce a security boundary:
@@ -499,7 +516,11 @@ def delete_object_generation(object_path: str, *, generation: str) -> None:
         local_object_path(object_path).unlink()
         return
     bucket = _get_client().bucket(settings.storage_bucket)
-    bucket.blob(object_path, generation=int(generation)).delete()
+    blob = bucket.blob(object_path, generation=int(generation))
+    if timeout_s is None:
+        blob.delete()
+    else:
+        blob.delete(timeout=timeout_s)
 
 
 def delete_object_generation_best_effort(object_path: str, *, generation: str) -> bool:
@@ -923,6 +944,7 @@ def object_metadata(object_path: str) -> ObjectMetadata:
         size=int(blob.size or 0),
         content_type=blob.content_type or "video/mp4",
         md5_hash=blob.md5_hash,
+        created_at=_blob_created_at(blob),
     )
 
 
@@ -948,7 +970,37 @@ def object_metadata_once(object_path: str, *, timeout_s: float) -> ObjectMetadat
         size=int(blob.size or 0),
         content_type=blob.content_type or "video/mp4",
         md5_hash=blob.md5_hash,
+        created_at=_blob_created_at(blob),
     )
+
+
+def list_object_metadata(prefix: str) -> list[ObjectMetadata]:
+    """List immutable identities below one explicit prefix for retention audits."""
+
+    if _uses_local_storage():
+        root = local_object_path(prefix)
+        if not root.exists():
+            return []
+        configured_root = Path(settings.local_storage_root).expanduser().resolve()
+        return [
+            _local_metadata(path.relative_to(configured_root).as_posix())
+            for path in root.rglob("*")
+            if path.is_file()
+        ]
+    bucket = _get_client().bucket(settings.storage_bucket)
+    return [
+        ObjectMetadata(
+            path=blob.name,
+            generation=str(blob.generation or ""),
+            etag=blob.etag,
+            size=int(blob.size or 0),
+            content_type=blob.content_type or "application/octet-stream",
+            md5_hash=blob.md5_hash,
+            created_at=_blob_created_at(blob),
+        )
+        for blob in bucket.list_blobs(prefix=prefix)
+        if blob.generation is not None
+    ]
 
 
 def copy_object_generation(

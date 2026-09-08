@@ -204,3 +204,34 @@ class TestByteIdentityContract:
         assert "user_style" not in (job.all_candidates or {}), (
             "user_style must not appear in all_candidates when style is None"
         )
+
+    def test_job_snapshot_keeps_only_expiry_provenance(self) -> None:
+        from app.services.generative_jobs import _build_user_style_context
+
+        snapshot = _build_user_style_context(
+            {
+                "status": "ready",
+                "style_set_id": "editorial",
+                "derived_from": {
+                    "observed_style_at": "2026-06-01T00:00:00+00:00",
+                    "private_extra": "must-not-propagate",
+                },
+            }
+        )
+
+        assert snapshot["derived_from"] == {"observed_style_at": "2026-06-01T00:00:00+00:00"}
+
+    def test_render_worker_expires_stale_job_style_snapshot(self) -> None:
+        from app.tasks.generative_build import _effective_render_user_style
+
+        style = _effective_render_user_style(
+            {
+                "user_style": {
+                    "status": "ready",
+                    "style_set_id": "editorial",
+                    "derived_from": {"observed_style_at": "2000-01-01T00:00:00+00:00"},
+                }
+            }
+        )
+
+        assert style == {}
