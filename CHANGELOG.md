@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.0.0] — 2026-09-08
+
+### Changed
+- **Speech cleanup removes every pause and filler it finds, instead of stopping at 55% of the take.** Explicit cleanup used to decline cuts once it had removed just over half a clip, which hit hardest on exactly the filler-heavy takes the feature exists for: a 10-second clip that needed about two thirds removed shipped with a second of dead air still in it. The only remaining limit is that an edit never drops below three seconds. The consent card now shows the resulting length next to the seconds removed, so the choice is made with the outcome visible.
+
+### Fixed
+- **Hesitations that the transcript mis-times are now cut.** Speech cleanup read word timings as ground truth, so two shapes escaped it: a filler whose timing landed on the silence after it was spoken, and a pause hidden inside a word whose timing stretched across it. Both left an audible "uh" or a second of dead air in finished videos. Cleanup now reconciles word timings against the detected silence before deciding, and refuses any reconciliation that could belong to quietly spoken speech rather than a pause.
+
+### Internal
+- Detector bumped to `mixed-gap-v2`. Rule 0 (`_reconcile_words_with_silence`) carves a silence out of an ASR token only as a single interior span leaving voiced slivers either side; edge carves, multi-carves and substantial remnants are refused because `silencedetect`'s absolute -30 dBFS floor reads quiet speech as silence and `_validate_v2_candidate` checks reconciled words, not original ones. Island flanks use the full silence span only next to a removable filler. Guards pinned by `TestRuleZeroCannotCutRealSpeech`; adversarial sweep over 2600 layouts reports zero plans cutting real-word audio.
+- `MAX_REMOVAL_FRAC_REQUIRED` 0.55 → 1.0, with the cap surviving as `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` (default 1.0, rollback `=0.55`, api + worker restart). It is part of the source policy fingerprint, so a flip re-analyzes rather than serving stale plans. The auto/legacy `MAX_REMOVAL_FRAC` 0.4 bailout rail is a different rail and is untouched.
+- The `DETECTOR_VERSION` bump reshuffles preflight cohort membership (the mixed-gap shadow/apply salt does not move). Deploy-safety fixes ship with it: policy-stale analyses are superseded and re-queued instead of returning 409 forever, staged renders resume against their own snapshot's label, claimed rows are restamped, the shadow audit accepts both versions, and the render path no longer prefers a bailed-out candidate over a working baseline.
+- `scripts/speech_cleanup_preview.py` renders a local clip through the real analysis boundary so a detector change can be listened to before it ships.
+
 ## [0.72.3.0] — 2026-09-08
 
 ### Added

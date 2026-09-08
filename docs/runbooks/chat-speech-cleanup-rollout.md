@@ -97,6 +97,44 @@ Jobs: already-dispatched Jobs finish or fail under their stamped `required_v1` /
 `off_v1` contract. Keep the dedicated worker running until its queue and leased work
 are drained; stopping it is not the kill switch.
 
+### Removal-cap lever (gentler than the kill switch)
+
+`SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` (default `1.0` since 2026-09-08) caps how
+much of a clip an explicit-consent (`required_v1`) plan may remove, as a fraction of the
+runtime. At the default there is no fraction cap: `MIN_OUTPUT_S` (3.0 s) is the only
+rail, and a `silence_cut_clamped` receipt means that floor bound the plan. If cleanup is
+cutting more than creators want, restore the previous ceiling without turning anything
+off:
+
+```bash
+fly secrets set SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED=0.55 --app nova-video
+# + restart api and worker
+```
+
+The value is hashed into `source_policy_fingerprint`, so flipping it retires `ready`
+analyses, re-collects creator consent, and reshuffles preflight cohorts exactly like a
+`DETECTOR_VERSION` bump — start a fresh evidence window afterwards and never compare
+across the flip. Stamped Jobs finish under their own persisted `cut_plan`. This lever
+does NOT touch the auto/legacy path, which keeps its separate `MAX_REMOVAL_FRAC` 0.4
+bailout rail.
+
+**This lever is about taste, not speech safety.** Until 2026-09-08 the 0.55 cap was also
+— unintentionally — what stopped the detector cutting quiet speech that silencedetect's
+absolute −30 dBFS floor mis-reports as silence on soft-spoken and lapel-mic takes. That
+job now belongs to two guards in `app/pipeline/silence_cut.py`:
+`TOKEN_SPLIT_VOICE_RATIO = 0.5` + `TOKEN_SPLIT_PIECE_MAX_S = 0.35` (rule 0 carves ONE interior span per token, and only when both remnants are slivers whose total is at most half the carve; edge trims are refused outright — a carve at a token boundary is indistinguishable from a quiet onset, and edge trims were ~94% of the real speech an earlier, looser guard still destroyed) and `MIN_KEEP_SPEECH_SEGMENT_S = 0.6` (a short word-bearing
+keep segment is widened, never absorbed). So triage a report accordingly:
+
+- "cleanup left a pause in" → budget. Read the receipt: `clamped=true` with the span in
+  `proposed_removals` and absent from `removed` is a `MIN_OUTPUT_S` decline.
+- "cleanup is too aggressive for my taste" → this lever.
+- **"cleanup cut a word / clipped my speech" → a guard bug, NOT this lever.** Do not
+  reach for `=0.55` to make it stop; that only hides it again, on some clips, by
+  evicting the bad carve on budget grounds. Capture the source and the persisted
+  `timed_words`, and reproduce against `TestRuleZeroCannotCutRealSpeech` in
+  `tests/pipeline/test_silence_cut_asr_timestamp_golden.py`. Use the kill switch
+  (`SILENCE_CUT_ENABLED=false`) if it needs to stop now.
+
 For the mandatory pre-100% drill, prove off/0, verify one already-stamped clean Job
 still uses its exact snapshot, then restore the prior 50% settings. Record completion
 time and `inflight_contracts_preserved=true` in the evidence. If any observation is

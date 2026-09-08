@@ -54,6 +54,7 @@ from app.services.speech_cleanup_preflight import (
     finalize_analysis_success,
     mark_dispatch_failed,
 )
+from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.storage import signed_get_url_for_generation
 from app.worker import celery_app
 
@@ -151,6 +152,12 @@ def _validate_work(work: _ClaimedWork) -> None:
         raise SpeechCleanupOperationalError("unsupported_media", detail="window_too_long")
     if work.engine_version != SPEECH_CLEANUP_ENGINE_VERSION:
         raise SpeechCleanupOperationalError("snapshot_mismatch", detail="engine_version")
+    # The claimed label is threaded into the engine input and becomes the
+    # persisted plan's detector_version. The claim path restamps a pre-deploy
+    # row, so a surviving mismatch means the row was not claimed by this code;
+    # fail closed rather than publish a plan under another detector's name.
+    if work.detector_version != DETECTOR_VERSION:
+        raise SpeechCleanupOperationalError("snapshot_mismatch", detail="detector_version")
     if not work.source_storage_path.strip() or not work.source_generation.strip():
         raise SpeechCleanupOperationalError("snapshot_mismatch", detail="source_identity")
 
@@ -323,6 +330,7 @@ def _run_engine(work: _ClaimedWork, local_audio_path: Path) -> SpeechCleanupAnal
         mixed_gap_mode=SPEECH_CLEANUP_MIXED_GAP_MODE,
         include_silence_and_fillers=True,
         over_budget_policy=SPEECH_CLEANUP_OVER_BUDGET_POLICY,
+        max_removal_frac_required=settings.speech_cleanup_max_removal_frac_required,
     )
     try:
         return run_speech_cleanup_engine(analysis_input)

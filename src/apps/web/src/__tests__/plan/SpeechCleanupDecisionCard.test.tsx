@@ -23,6 +23,8 @@ function findings(overrides: Partial<CreationSpeechCleanupProjection> = {}): Cre
       candidate_count: 5,
       category_counts: { filler_sound: 4, long_pause: 1 },
       estimated_removed_ms: 2800,
+      source_duration_ms: 12_000,
+      result_duration_ms: 9_200,
       error: null,
     },
     decision: null,
@@ -43,7 +45,7 @@ describe("SpeechCleanupDecisionCard", () => {
 
     expect(screen.getByRole("heading", { name: "Speech cleanup" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Clean up 5 speech moments?" })).toBeInTheDocument();
-    expect(screen.getByText("Kria found 4 filler sounds and 1 long pause. Cleaning them removes about 2.8 seconds, and captions stay in sync.")).toBeInTheDocument();
+    expect(screen.getByText("Kria found 4 filler sounds and 1 long pause. Cleaning them removes about 2.8 seconds — your 12.0s clip becomes 9.2s, and captions stay in sync.")).toBeInTheDocument();
     const clean = screen.getByRole("button", { name: "Clean up and create" });
     const keep = screen.getByRole("button", { name: "Keep speech and create" });
     const choiceGrid = screen.getByTestId("speech-cleanup-choice-grid");
@@ -75,6 +77,55 @@ describe("SpeechCleanupDecisionCard", () => {
     render(<SpeechCleanupDecisionCard cleanup={cleanup} formatLabel="Narrated" {...callbacks} />);
     expect(screen.getByText("Kria found speech moments it can clean up while keeping captions in sync.")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Clean up the speech?" })).toBeInTheDocument();
+  });
+
+  it("states the resulting length so a two-thirds cut cannot be consented to blind", () => {
+    const cleanup = findings({
+      analysis: {
+        id: "analysis-uncapped",
+        status: "ready",
+        has_findings: true,
+        candidate_count: 6,
+        category_counts: { filler_sounds: 4, long_pauses: 2 },
+        estimated_removed_ms: 6_855,
+        source_duration_ms: 10_000,
+        result_duration_ms: 3_145,
+      },
+    });
+    render(<SpeechCleanupDecisionCard cleanup={cleanup} formatLabel="Narrated" {...callbacks} />);
+    expect(screen.getByText("Kria found 4 filler sounds and 2 long pauses. Cleaning them removes about 6.9 seconds — your 10.0s clip becomes 3.1s, and captions stay in sync.")).toBeInTheDocument();
+  });
+
+  it("formats a clip longer than a minute in minutes and seconds", () => {
+    const cleanup = findings({
+      analysis: {
+        id: "analysis-long",
+        status: "ready",
+        has_findings: true,
+        candidate_count: 3,
+        category_counts: { long_pauses: 3 },
+        estimated_removed_ms: 12_400,
+        source_duration_ms: 125_000,
+        result_duration_ms: 112_600,
+      },
+    });
+    render(<SpeechCleanupDecisionCard cleanup={cleanup} formatLabel="Narrated" {...callbacks} />);
+    expect(screen.getByText("Kria found 3 long pauses. Cleaning them removes about 12 seconds — your 2m 5s clip becomes 1m 53s, and captions stay in sync.")).toBeInTheDocument();
+  });
+
+  it("omits the resulting length when the server does not project it", () => {
+    const cleanup = findings({
+      analysis: {
+        id: "analysis-legacy",
+        status: "ready",
+        has_findings: true,
+        candidate_count: 5,
+        category_counts: { filler_sound: 4, long_pause: 1 },
+        estimated_removed_ms: 2800,
+      },
+    });
+    render(<SpeechCleanupDecisionCard cleanup={cleanup} formatLabel="Narrated" {...callbacks} />);
+    expect(screen.getByText("Kria found 4 filler sounds and 1 long pause. Cleaning them removes about 2.8 seconds, and captions stay in sync.")).toBeInTheDocument();
   });
 
   it("keeps the caption assurance when duration detail is absent", () => {

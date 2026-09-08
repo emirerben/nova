@@ -75,6 +75,20 @@ class SpeechCleanupSchedulingIntent:
 
 
 @dataclass(frozen=True)
+class StalePolicyRefresh:
+    """Outcome of retiring an analysis a server policy change invalidated.
+
+    ``refreshed`` is true only when this transaction actually replaced or
+    retired the current row; the caller must then commit before reporting its
+    conflict.  ``analysis_id`` is set only when new work needs post-commit
+    publication, exactly like ``schedule_item_preflight_async``.
+    """
+
+    refreshed: bool
+    analysis_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
 class SnapshotMismatchReanalysis:
     """Locked render row plus optional post-commit preflight publication.
 
@@ -167,10 +181,18 @@ def _exact_historical_analysis_sync(
     return db.execute(stmt).scalar_one_or_none()
 
 
-def _source_snapshot_matches(
+def _source_identity_matches(
     row: SpeechCleanupAnalysis,
     source: ActiveNarrationSource,
 ) -> bool:
+    """Compare only the immutable media identity, never the policy identity.
+
+    The fingerprint additionally hashes server-owned policy (engine, detector,
+    execution mode), so it cannot answer "is this the same bytes and window?".
+    Callers that must distinguish a creator media change from a deploy-time
+    policy change need exactly this narrower comparison.
+    """
+
     try:
         return bool(
             row.source_kind == source.source_kind
@@ -190,13 +212,22 @@ def _source_snapshot_matches(
                 rel_tol=0,
                 abs_tol=1e-6,
             )
-            and row.source_policy_fingerprint == source.source_policy_fingerprint
-            and row.engine_version == SPEECH_CLEANUP_ENGINE_VERSION
-            and row.detector_version == DETECTOR_VERSION
-            and row.analysis_payload_version == SPEECH_CLEANUP_PAYLOAD_VERSION
         )
     except (TypeError, ValueError):
         return False
+
+
+def _source_snapshot_matches(
+    row: SpeechCleanupAnalysis,
+    source: ActiveNarrationSource,
+) -> bool:
+    return bool(
+        _source_identity_matches(row, source)
+        and row.source_policy_fingerprint == source.source_policy_fingerprint
+        and row.engine_version == SPEECH_CLEANUP_ENGINE_VERSION
+        and row.detector_version == DETECTOR_VERSION
+        and row.analysis_payload_version == SPEECH_CLEANUP_PAYLOAD_VERSION
+    )
 
 
 def _terminal_result_is_reusable(
@@ -437,6 +468,66 @@ async def ensure_current_analysis_async(
     return SpeechCleanupSchedulingIntent(analysis.id, True)
 
 
+async def refresh_policy_stale_analysis_async(
+    db: AsyncSession,
+    item: PlanItem,
+    resolution: ActiveNarrationResolution,
+) -> StalePolicyRefresh:
+    """Retire a current analysis that only a server policy change invalidated.
+
+    Every source fingerprint hashes ``current_detector_policy``, so a detector
+    or engine deploy restamps the identity of media the creator never touched.
+    Only media and format mutations reschedule preflight work, which leaves the
+    confirmation fences reading a pre-deploy row forever: they compare it with
+    a freshly resolved fingerprint that nothing can ever make it match.
+
+    A row whose media identity also moved is deliberately left alone.  That is
+    the concurrent change the caller's 409 exists for, and its consent must be
+    re-collected against the new source rather than silently reissued here.
+
+    The caller owns the transaction and must commit before surfacing its
+    conflict; rolling back would restore the same dead end.
+    """
+
+    from app.config import settings  # noqa: PLC0415
+
+    source = resolution.source
+    # "off" is the only mode where this module does not own the item's consent
+    # mirror, so a dark-launch rollback must not clear a legacy editor opt-in.
+    if source is None or settings.speech_cleanup_preflight_mode == "off":
+        return StalePolicyRefresh(False)
+    current = await current_analysis_async(db, item.id, for_update=True)
+    if current is None:
+        return StalePolicyRefresh(False)
+    # The engine version is one of the fields hashed into the policy token, so
+    # a matching fingerprint already proves the row was produced under exactly
+    # the policy this process runs.
+    if current.source_policy_fingerprint == source.source_policy_fingerprint:
+        return StalePolicyRefresh(False)
+    if not _source_identity_matches(current, source):
+        return StalePolicyRefresh(False)
+    if preflight_enabled_for_source(
+        source.source_policy_fingerprint,
+        mode=settings.speech_cleanup_preflight_mode,
+        rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+    ):
+        # One owner for supersede + consent reset + queueing, so a policy
+        # refresh cannot drift from the media-mutation path it mirrors.
+        intent = await ensure_current_analysis_async(db, item, resolution)
+        return StalePolicyRefresh(
+            True,
+            intent.analysis_id if intent is not None and intent.created else None,
+        )
+    # The restamped fingerprint also re-rolls cohort membership. An item that
+    # left the cohort has nothing left to analyze, so retire the stale evidence
+    # instead of fencing every future generation against a row no worker will
+    # ever refresh.
+    current.superseded_at = datetime.now(UTC)
+    _clear_item_cleanup_choice(item)
+    await db.flush()
+    return StalePolicyRefresh(True)
+
+
 async def schedule_item_preflight_async(
     db: AsyncSession,
     item: PlanItem,
@@ -556,6 +647,14 @@ def claim_analysis(
         row.attempt_token = None
         return None
     token = uuid.uuid4().hex
+    # A row queued before a detector deploy is analyzed by the code that is
+    # running now, so its label must be restamped at claim time.  Leaving the
+    # stale label would persist a plan produced by this detector under the
+    # previous version's name, and every reuse/snapshot check downstream would
+    # then treat that plan as the older detector's evidence.  The row carries
+    # no result yet (claim only accepts queued/expired work), so nothing that
+    # the old label described is being relabelled.
+    row.detector_version = DETECTOR_VERSION
     row.status = "running"
     row.attempt_token = token
     row.attempt_count = int(row.attempt_count or 0) + 1
@@ -926,6 +1025,28 @@ def _public_count(value: object) -> int:
         return 0
 
 
+def _public_window_duration_ms(row: SpeechCleanupAnalysis) -> int | None:
+    """Project the analyzed window length, or None when the row has no window.
+
+    This is the same span the engine received as ``duration_s``, so it rounds
+    identically to the receipt's ``source_duration_ms`` without reading the
+    private payload. A row whose ``window_end_s`` is NULL never produces an
+    analysis, so returning None there is the truthful projection.
+    """
+
+    start = getattr(row, "window_start_s", None)
+    end = getattr(row, "window_end_s", None)
+    if start is None or end is None:
+        return None
+    try:
+        span = float(end) - float(start)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(span) or span <= 0:
+        return None
+    return max(0, int(round(span * 1000)))
+
+
 def _outcome_matches_analysis(job: Job, row: SpeechCleanupAnalysis | None) -> bool:
     """Fence an active-Job receipt to the analysis currently shown beside it."""
 
@@ -1040,6 +1161,15 @@ def public_projection(
         category_counts = {
             key: _public_count(raw_counts.get(key)) for key in ("filler_sounds", "long_pauses")
         }
+        # Consent copy states the outcome, not only the delta, so the creator
+        # sees how long the edit becomes before accepting it. Both stay
+        # timing-only: no words, paths, or intervals.
+        source_duration_ms = _public_window_duration_ms(row)
+        result_duration_ms = (
+            max(0, source_duration_ms - _public_count(row.estimated_removed_ms))
+            if source_duration_ms is not None and row.estimated_removed_ms is not None
+            else None
+        )
         analysis = {
             "id": str(row.id),
             "status": row.status,
@@ -1048,6 +1178,8 @@ def public_projection(
             "candidate_count": row.candidate_count,
             "category_counts": category_counts,
             "estimated_removed_ms": row.estimated_removed_ms,
+            "source_duration_ms": source_duration_ms,
+            "result_duration_ms": result_duration_ms,
             "error": error,
         }
         decision = row.decision

@@ -43,6 +43,7 @@ PROTECTED_PLAN_ITEM_MEDIA_FIELDS = frozenset(
 def current_detector_policy() -> str:
     """Return the stable policy token included in every source fingerprint."""
 
+    from app.config import settings  # noqa: PLC0415
     from app.services.speech_cleanup_preflight import (
         SPEECH_CLEANUP_ENGINE_VERSION,
         SPEECH_CLEANUP_MAX_DURATION_S,
@@ -58,6 +59,10 @@ def current_detector_policy() -> str:
             f"mixed-gap={SPEECH_CLEANUP_MIXED_GAP_MODE}",
             f"over-budget={SPEECH_CLEANUP_OVER_BUDGET_POLICY}",
             f"max-duration={SPEECH_CLEANUP_MAX_DURATION_S:g}",
+            # The removal cap changes the plan for identical media, so it is
+            # policy identity: flipping the operator switch must invalidate
+            # every analysis produced under the previous value.
+            f"max-removal-frac={settings.speech_cleanup_max_removal_frac_required:g}",
         )
     )
 

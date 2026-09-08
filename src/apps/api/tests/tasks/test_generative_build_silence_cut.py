@@ -742,31 +742,35 @@ def test_required_over_budget_clamps_and_renders(monkeypatch, tmp_path):
     assert not _events_named(calls, "silence_cut_required_failed")
     assert not _events_named(calls, "silence_cut_bailout")
 
-    # The 8.0s proposed trailing-silence cut is trimmed to the 5.499s explicit-
-    # consent budget (5.5 − float slack) — anchored at the clip END (no
-    # stranded dead air after the cut) — and applied inside the reframe with
+    # The 8.0s proposed trailing-silence cut is trimmed to the explicit-consent
+    # budget — since 2026-09-08 that is MIN_OUTPUT_S alone (10.0 − 3.0 − float
+    # slack = 6.999s), not a fraction of the runtime — anchored at the clip END
+    # (no stranded dead air after the cut) and applied inside the reframe with
     # the punch-in constant.
     reframe = calls["reframe"][0]
-    assert reframe["keep_segments"] == pytest.approx([(0.0, 4.501)])
+    # Flattened: pytest.approx does not compare nested tuples elementwise.
+    assert [value for seg in reframe["keep_segments"] for value in seg] == pytest.approx(
+        [0.0, 3.001]
+    )
     assert reframe["keep_segments_punch_in"] == KEEP_SEGMENTS_PUNCH_IN
 
     # Trace records asked-for vs delivered removal (admin debug contract) —
     # same key vocabulary as plan_summary/plan_event_payload (clamp_metadata).
     events = _events_named(calls, "silence_cut_clamped")
     assert events and events[0][2]["proposed_removed_s"] == pytest.approx(8.0)
-    assert events[0][2]["time_saved_s"] == pytest.approx(5.499)
-    assert events[0][2]["clamp_budget_s"] == pytest.approx(5.499)
+    assert events[0][2]["time_saved_s"] == pytest.approx(6.999)
+    assert events[0][2]["clamp_budget_s"] == pytest.approx(6.999)
 
     # Persisted summary carries the additive clamp keys (+ the required_v1
     # outcome marker the subtitled path stamps on applied cleanups).
     assert res["silence_cut"] == {
-        "removed": [{"start_s": 4.501, "end_s": BAILOUT_DURATION, "reason": "silence"}],
-        "time_saved_s": 5.499,
+        "removed": [{"start_s": 3.001, "end_s": BAILOUT_DURATION, "reason": "silence"}],
+        "time_saved_s": 6.999,
         "version": 1,
         "original_duration_s": BAILOUT_DURATION,
         "clamped": True,
         "proposed_removed_s": 8.0,
-        "clamp_budget_s": 5.499,
+        "clamp_budget_s": 6.999,
         "outcome": "applied",
     }
     assert res["silence_cut_outcome"] == "applied"
@@ -2112,11 +2116,11 @@ def test_talking_head_required_over_budget_clamps_and_renders(monkeypatch, tmp_p
     assert res["speech_cleanup_failure_reason"] is None
     assert not _events_named(calls, "silence_cut_required_failed")
     spine = next(c for c in calls["reframe"] if c["input"].endswith("a.mp4"))
-    assert spine["keep_segments"] == pytest.approx([(0.0, 4.501)])
+    assert [value for seg in spine["keep_segments"] for value in seg] == pytest.approx([0.0, 3.001])
     events = _events_named(calls, "silence_cut_clamped")
     assert events and events[0][2]["proposed_removed_s"] == pytest.approx(8.0)
     assert res["silence_cut"]["clamped"] is True
-    assert res["silence_cut"]["time_saved_s"] == pytest.approx(5.499)
+    assert res["silence_cut"]["time_saved_s"] == pytest.approx(6.999)
 
 
 def test_budget_clamp_flag_defaults_on():

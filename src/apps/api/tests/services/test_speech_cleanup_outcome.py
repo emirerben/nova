@@ -9,6 +9,7 @@ from app.services.speech_cleanup_outcome import (
     build_speech_cleanup_render_outcome,
     speech_cleanup_outcome_id,
 )
+from app.services.speech_cleanup_selection import DETECTOR_VERSION
 
 
 def _payload(**overrides):
@@ -16,7 +17,7 @@ def _payload(**overrides):
         "outcome": "published_candidate",
         "analysis_attempt_id": "attempt-a",
         "analysis_view": "full_clip",
-        "detector_version": "mixed-gap-v1",
+        "detector_version": DETECTOR_VERSION,
         "variant_id": "required-v1",
         "render_generation_id": "0123456789abcdef0123456789abcdef",
         "source_tag": "0123456789abcdef",
@@ -87,7 +88,7 @@ def test_outcome_id_uses_only_the_documented_correlation_identity() -> None:
         variant_id="required-v1",
         render_generation_id="0123456789abcdef0123456789abcdef",
         analysis_view="full_clip",
-        detector_version="mixed-gap-v1",
+        detector_version=DETECTOR_VERSION,
     )
 
 

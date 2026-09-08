@@ -13,7 +13,20 @@ from app.services.speech_cleanup_identity import (
     speech_cleanup_source_tag,
 )
 
-DETECTOR_VERSION = "mixed-gap-v1"
+# Bump whenever the V2 detector's output can change for the same inputs: the
+# preflight snapshot reuse key (_source_snapshot_matches) and the render-side
+# cut cache are both keyed on it, so an un-bumped change would silently keep
+# serving old plans. v2 (2026-09-08): rule-0 token reconciliation + filler-gated
+# full-span island flanks (silence_cut.py).
+#
+# Two cohorts key off different things, and a bump moves only one of them. The
+# mixed-gap shadow/apply bucket below is salted with a FIXED literal over an
+# identity-only fingerprint, so that assignment survives every bump. The
+# PREFLIGHT cohort buckets on source_policy_fingerprint, which hashes
+# current_detector_policy() and therefore this constant - bumping it re-rolls
+# preflight membership (measured: 1979 of 2000 synthetic sources change
+# bucket), so a canary comparison must not be carried across the deploy.
+DETECTOR_VERSION = "mixed-gap-v2"
 _MAX_ASR_SPANS = 128
 _MAX_SILENCE_SPANS = 128
 _MAX_LEXICAL_SPANS = 32

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.durable_attempt_cleanup import CleanupReconcileResult
+from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.services.speech_cleanup_terminal import (
     close_required_speech_generation_uploads,
     reserve_required_speech_generation,
@@ -122,7 +123,7 @@ def _required_speech_plan(
             "_speech_cleanup_outcome_context": {
                 "analysis_attempt_id": uuid.uuid4().hex,
                 "analysis_view": "full_clip",
-                "detector_version": "mixed-gap-v1",
+                "detector_version": DETECTOR_VERSION,
                 "source_tag": "0123456789abcdef",
                 "selected_plan": "candidate",
                 "candidate_status": "ready",

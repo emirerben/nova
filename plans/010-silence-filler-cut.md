@@ -424,11 +424,25 @@ geometry shifts.
 > `plans/019-speech-cleanup-render-contract-fix.md` for the cutover contract.
 >
 > **2026-08-31 (v0.59.2.0):** under explicit-consent `required_v1` the
-> over-budget bail-out is replaced by a clamp to
-> `MAX_REMOVAL_FRAC_REQUIRED=0.55` (`SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED`,
-> default on) — the 0.4 rail below now applies only to auto/legacy paths, and
-> the persisted `silence_cut` summary gains additive
-> `clamped`/`proposed_removed_s`/`clamp_budget_s` keys. See the 019 addendum.
+> over-budget bail-out is replaced by a clamp to a budget
+> (`SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED`, default on) — the 0.4 rail below now
+> applies only to auto/legacy paths, and the persisted `silence_cut` summary
+> gains additive `clamped`/`proposed_removed_s`/`clamp_budget_s` keys. See the
+> 019 addendum.
+>
+> **2026-09-08:** that clamp budget no longer has a fraction ceiling.
+> `MAX_REMOVAL_FRAC_REQUIRED` goes `0.55 → 1.0`, so `MIN_OUTPUT_S` (3.0 s) is
+> the only rail left on a consented plan and `clamped=true` now means that
+> floor bound the plan, not a fraction of the runtime. Rollback lever:
+> `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED=0.55` (api + worker restart; the
+> value is in `source_policy_fingerprint`). The cap had also been the accidental
+> backstop against rule 0 carving quiet speech that silencedetect's absolute
+> −30 dBFS floor mis-reported as silence, so two speech-safety guards replace
+> that protection: `TOKEN_SPLIT_VOICE_RATIO = 0.5` + `TOKEN_SPLIT_PIECE_MAX_S = 0.35` (rule 0 carves ONE interior span per token, and only when both remnants are slivers whose total is at most half the carve; edge trims are refused outright — a carve at a token boundary is indistinguishable from a quiet onset, and edge trims were ~94% of the real speech an earlier, looser guard still destroyed) and `MIN_KEEP_SPEECH_SEGMENT_S = 0.6` (widen a short
+> word-bearing keep segment, never absorb it). Pins:
+> `TestRuleZeroCannotCutRealSpeech` in
+> `tests/pipeline/test_silence_cut_asr_timestamp_golden.py`. See the plans/021
+> addenda and agents/DECISIONS.md (2026-09-08).
 
 | Failure | Handling | User sees |
 |---|---|---|

@@ -32,6 +32,7 @@ def _source_tag(source_id: str = SOURCE_ID) -> str:
 def _receipt(**overrides):
     data = {
         "schema_version": 1,
+        # Stale on purpose: the audit script filters on the literal "mixed-gap-v1".
         "detector_version": "mixed-gap-v1",
         "analysis_attempt_id": "attempt-a",
         "analysis_view": "full_clip",

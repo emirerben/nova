@@ -19,6 +19,7 @@ import pytest
 
 import app.tasks.generative_build as gb
 from app.agents.lyrics import LyricsExtractionAgent
+from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from tests.tasks.conftest import FakeJob as _FakeJob
 from tests.tasks.conftest import patch_job_session as _patch_job_session
 
@@ -874,7 +875,7 @@ def test_marked_preflight_finalize_stamps_generation_bound_public_success(
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": uuid.uuid4().hex,
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "selected_plan": "candidate",
             "candidate_status": "ready",
             "output_removal_count": removal_count,
@@ -1172,7 +1173,7 @@ def test_marked_required_success_requires_evidence_for_every_result():
     context = {
         "analysis_attempt_id": uuid.uuid4().hex,
         "analysis_view": "full_clip",
-        "detector_version": "mixed-gap-v1",
+        "detector_version": DETECTOR_VERSION,
         "selected_plan": "candidate",
         "candidate_status": "ready",
         "output_removal_count": 1,
@@ -1265,7 +1266,7 @@ def test_narrated_required_finalize_keeps_storage_generation_and_creator_receipt
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": uuid.uuid4().hex,
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "source_tag": "0123456789abcdef",
             "selected_plan": "candidate",
             "candidate_status": "ready",
@@ -1328,7 +1329,7 @@ def test_required_speech_finalize_atomically_consumes_private_stage(monkeypatch)
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": uuid.uuid4().hex,
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "source_tag": "0123456789abcdef",
             "selected_plan": "candidate",
             "candidate_status": "ready",
@@ -1393,7 +1394,7 @@ def test_required_speech_finalize_rejects_changed_private_stage(monkeypatch):
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": uuid.uuid4().hex,
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "source_tag": "0123456789abcdef",
             "selected_plan": "candidate",
             "candidate_status": "ready",
@@ -1474,7 +1475,7 @@ def test_required_speech_stage_reports_and_records_superseded_generation(monkeyp
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": uuid.uuid4().hex,
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "source_tag": "0123456789abcdef",
             "selected_plan": "candidate",
             "candidate_status": "ready",
@@ -1520,7 +1521,7 @@ def test_required_speech_same_generation_claim_loser_is_not_terminal(monkeypatch
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": uuid.uuid4().hex,
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "source_tag": "0123456789abcdef",
             "selected_plan": "candidate",
             "candidate_status": "ready",
@@ -1574,7 +1575,7 @@ def test_required_speech_initial_winner_journals_replaced_matte_and_sidecar(monk
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": uuid.uuid4().hex,
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "source_tag": "0123456789abcdef",
             "selected_plan": "candidate",
             "candidate_status": "ready",
@@ -1658,7 +1659,7 @@ def _required_speech_rerender_fixture(
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": uuid.uuid4().hex,
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": DETECTOR_VERSION,
             "source_tag": "0123456789abcdef",
             "selected_plan": "candidate",
             "candidate_status": "ready",
@@ -2005,7 +2006,13 @@ def test_speech_rerender_timeout_restores_expired_exact_owner(monkeypatch):
     assert internal["render_generation_cleanup_pending"][0]["upload_state"] == "closed"
 
 
-def _initial_required_resume_fixture(job_id: str, generation: str) -> tuple[_FakeJob, dict]:
+def _initial_required_resume_fixture(
+    job_id: str,
+    generation: str,
+    *,
+    detector_version: str = DETECTOR_VERSION,
+    preflight_snapshot: dict | None = None,
+) -> tuple[_FakeJob, dict]:
     result = {
         "variant_id": "subtitled",
         "rank": 1,
@@ -2019,7 +2026,7 @@ def _initial_required_resume_fixture(job_id: str, generation: str) -> tuple[_Fak
         "_speech_cleanup_outcome_context": {
             "analysis_attempt_id": "trace-1",
             "analysis_view": "full_clip",
-            "detector_version": "mixed-gap-v1",
+            "detector_version": detector_version,
             "source_tag": "0123456789abcdef",
             "selected_plan": "candidate",
             "candidate_status": "ready",
@@ -2027,14 +2034,190 @@ def _initial_required_resume_fixture(job_id: str, generation: str) -> tuple[_Fak
             "output_removed_ms": 572,
         },
     }
+    plan: dict = {"variants": []}
+    if preflight_snapshot is not None:
+        plan["speech_cleanup_contract"] = "required_v1"
+        plan["speech_cleanup_preflight_contract"] = "snapshot_v1"
+        plan["_speech_cleanup_internal"] = {"preflight_snapshot": preflight_snapshot}
     return (
         _FakeJob(
             status="rendering",
             job_id=job_id,
-            assembly_plan=_required_speech_stage(job_id, result),
+            assembly_plan=_required_speech_stage(job_id, result, plan=plan),
         ),
         result,
     )
+
+
+_PRE_BUMP_DETECTOR_VERSION = "mixed-gap-v0-test-only"
+
+
+def _voiceover_preflight_snapshot(detector_version: str) -> dict:
+    """Build the exact private snapshot shape an accepted preflight persists."""
+
+    fingerprint = "a" * 64
+    return {
+        "schema_version": 1,
+        "analysis_id": str(uuid.uuid4()),
+        "engine_version": "preflight-v1-2026-09-05",
+        "detector_version": detector_version,
+        "source": {
+            "kind": "voiceover",
+            "media_identity": "voiceover-1",
+            "storage_path": "users/u/voiceover.wav",
+            "generation": "1700000000000000",
+            "window_start_s": 0.0,
+            "window_end_s": 4.0,
+            "source_policy_fingerprint": fingerprint,
+        },
+        "analysis": {
+            "schema_version": 1,
+            "source_fingerprint": fingerprint,
+            "detector_version": detector_version,
+            "source_window_start_s": 0.0,
+            "source_window_end_s": 4.0,
+            "language": "en",
+            "timed_words": [],
+            "cut_plan": {
+                "keep_segments": [
+                    {"start_s": 0.0, "end_s": 1.0},
+                    {"start_s": 1.5, "end_s": 4.0},
+                ],
+                "removed": [
+                    {
+                        "start_s": 1.0,
+                        "end_s": 1.5,
+                        "reason": "filler_lexical",
+                        "category": "filler",
+                    }
+                ],
+                "time_saved_s": 0.5,
+                "version": 2,
+                "bailout_reason": None,
+                "clamped": False,
+            },
+            "findings": [
+                {
+                    "start_s": 1.0,
+                    "end_s": 1.5,
+                    "reason": "filler_lexical",
+                    "category": "filler",
+                }
+            ],
+            "safety_signals": {
+                "transcript_low_confidence": False,
+                "silence_detection_status": "ok",
+                "selected_plan": "candidate",
+                "candidate_status": "ready",
+                "bailout_reason": None,
+                "clamped": False,
+            },
+            "diagnostics": {},
+            "public_receipt": {
+                "candidate_count": 1,
+                "category_counts": {"filler_sounds": 1, "long_pauses": 0, "retakes": 0},
+                "estimated_removed_ms": 500,
+            },
+        },
+    }
+
+
+def test_initial_required_retry_resumes_preflight_stage_across_a_detector_bump(monkeypatch):
+    """A snapshot Job's staged output survives a DETECTOR_VERSION deploy.
+
+    The accepted snapshot is what a re-render would apply, so its own label —
+    not the newly deployed constant — is the resume expectation.
+    """
+    from app.pipeline.speech_cleanup_apply import hydrate_job_speech_cleanup_snapshot
+
+    assert _PRE_BUMP_DETECTOR_VERSION != DETECTOR_VERSION
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    job, result = _initial_required_resume_fixture(
+        job_id,
+        generation,
+        detector_version=_PRE_BUMP_DETECTOR_VERSION,
+        preflight_snapshot=_voiceover_preflight_snapshot(_PRE_BUMP_DETECTOR_VERSION),
+    )
+    # The fixture must be a snapshot the renderer would really hydrate and
+    # apply, otherwise the resume expectation it pins would be fictional.
+    snapshot = hydrate_job_speech_cleanup_snapshot(job.assembly_plan)
+    assert snapshot.detector_version == _PRE_BUMP_DETECTOR_VERSION
+    assert snapshot.outcome_context(analysis_view="full_clip")["detector_version"] == (
+        _PRE_BUMP_DETECTOR_VERSION
+    )
+    original_plan = copy.deepcopy(job.assembly_plan)
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr("app.storage.object_exists_once", lambda _path, *, timeout_s: True)
+
+    reservation = gb._reserve_required_speech_pending(
+        job_id,
+        {
+            "variant_id": "subtitled",
+            "rank": 1,
+            "text_mode": "none",
+            "music_track_id": None,
+            "render_generation_id": uuid.uuid4().hex,
+            "render_status": "pending",
+            "ok": False,
+        },
+        generation=uuid.uuid4().hex,
+    )
+
+    assert reservation == {"generation": generation, "resumed_result": result}
+    assert job.assembly_plan == original_plan
+
+
+def test_initial_required_retry_rotates_legacy_detector_stage_after_a_bump(monkeypatch):
+    """Without a snapshot the re-render really would run the new detector."""
+
+    job_id = str(uuid.uuid4())
+    old_generation = uuid.uuid4().hex
+    new_generation = uuid.uuid4().hex
+    job, _result = _initial_required_resume_fixture(
+        job_id,
+        old_generation,
+        detector_version=_PRE_BUMP_DETECTOR_VERSION,
+    )
+    assert "_speech_cleanup_internal" in job.assembly_plan
+    assert "preflight_snapshot" not in job.assembly_plan["_speech_cleanup_internal"]
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr("app.storage.object_exists_once", lambda _path, *, timeout_s: True)
+
+    reservation = gb._reserve_required_speech_pending(
+        job_id,
+        {
+            "variant_id": "subtitled",
+            "rank": 1,
+            "text_mode": "none",
+            "music_track_id": None,
+            "render_generation_id": new_generation,
+            "render_status": "pending",
+            "ok": False,
+        },
+        generation=new_generation,
+    )
+
+    assert reservation == {"generation": new_generation, "resumed_result": None}
+    internal = job.assembly_plan["_speech_cleanup_internal"]
+    assert internal["required_speech_generation_locks"] == {"subtitled": new_generation}
+    assert "staged_render_results" not in internal
+
+
+def test_expected_resume_detector_version_falls_back_on_unusable_snapshot():
+    for private in (
+        None,
+        {},
+        {"preflight_snapshot": None},
+        {"preflight_snapshot": {"detector_version": ""}},
+        {"preflight_snapshot": {"detector_version": 7}},
+        {"preflight_snapshot": {"detector_version": "x" * 101}},
+    ):
+        plan = {} if private is None else {"_speech_cleanup_internal": private}
+        assert (
+            gb._expected_resume_detector_version(plan, fallback=DETECTOR_VERSION)
+            == DETECTOR_VERSION
+        )
 
 
 def test_initial_required_retry_resumes_only_exact_proven_stage(monkeypatch):

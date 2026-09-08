@@ -166,6 +166,24 @@ class SpeechCleanupPublicReceipt(_FrozenModel):
     candidate_count: int = Field(ge=0)
     category_counts: SpeechCleanupCategoryCounts
     estimated_removed_ms: int = Field(ge=0)
+    # Consent needs the outcome, not just the delta: an explicit-consent plan is
+    # capped only by MIN_OUTPUT_S, so a removal can be most of the take. These
+    # are timing-only, exactly like estimated_removed_ms. They are optional so a
+    # snapshot persisted before this field existed still hydrates on the render
+    # path across a deploy; every analysis this build produces sets both.
+    source_duration_ms: int | None = Field(default=None, ge=0)
+    result_duration_ms: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_durations(self) -> SpeechCleanupPublicReceipt:
+        if (self.source_duration_ms is None) != (self.result_duration_ms is None):
+            raise ValueError("public receipt durations must be present together")
+        if (
+            self.source_duration_ms is not None
+            and self.result_duration_ms != self.source_duration_ms - self.estimated_removed_ms
+        ):
+            raise ValueError("public result duration does not match the removed estimate")
+        return self
 
 
 class SpeechCleanupSafetySignals(_FrozenModel):
@@ -189,6 +207,10 @@ class SpeechCleanupAnalysisInput(_FrozenModel):
     mixed_gap_mode: MixedGapMode = "apply"
     include_silence_and_fillers: bool = True
     over_budget_policy: Literal["bailout", "clamp"] = "clamp"
+    # Fraction-of-runtime cap for the clamp budget. 1.0 (the default) leaves
+    # MIN_OUTPUT_S as the only rail, which is what explicit consent asks for;
+    # an operator can restore a fraction cap without touching the detector.
+    max_removal_frac_required: float = Field(default=1.0, gt=0, le=1, allow_inf_nan=False)
     retake_spans: tuple[tuple[int, int], ...] = ()
     forced_removals: tuple[SpeechCleanupRemovalInput, ...] = ()
 
@@ -275,6 +297,10 @@ class SpeechCleanupAnalysisResult(_FrozenModel):
             raise ValueError("public category counts do not match private findings")
         if receipt.estimated_removed_ms != max(0, int(round(removed_s * 1000))):
             raise ValueError("public removed duration does not match the CutPlan")
+        if receipt.source_duration_ms is not None and receipt.source_duration_ms != max(
+            0, int(round(duration * 1000))
+        ):
+            raise ValueError("public source duration does not match the analysis window")
         return self
 
     def to_payload(self) -> dict[str, Any]:
@@ -480,6 +506,20 @@ def _diagnostics(plan: CutPlan, *, candidate_error_class: str | None) -> dict[st
             "mixed_gap_full_total": diagnostics.mixed_gap_full_total,
             "mixed_gap_partial_total": diagnostics.mixed_gap_partial_total,
             "mixed_gap_dropped_total": diagnostics.mixed_gap_dropped_total,
+            # Rule 0 (token reconciliation) evidence: timing only, no text.
+            "token_adjustments": [
+                {
+                    "original_start_s": item.original_start_s,
+                    "original_end_s": item.original_end_s,
+                    "pieces": [list(piece) for piece in item.pieces],
+                    "carved_s": item.carved_s,
+                    "kind": item.kind,
+                }
+                for item in diagnostics.token_adjustments
+            ],
+            "token_adjustments_total": diagnostics.token_adjustments_total,
+            "token_adjustments_omitted": diagnostics.token_adjustments_omitted,
+            "token_carved_s": diagnostics.token_carved_s,
         }
     if candidate_error_class:
         payload["candidate_error_class"] = candidate_error_class[:160]
@@ -490,10 +530,15 @@ def _public_receipt(
     findings: Sequence[SpeechCleanupFinding],
     *,
     time_saved_s: float,
+    source_duration_s: float,
 ) -> SpeechCleanupPublicReceipt:
     filler = sum(finding.category == "filler" for finding in findings)
     pauses = sum(finding.category == "long_pause" for finding in findings)
     retakes = sum(finding.category == "retake" for finding in findings)
+    # Findings can overlap when a detected filler lies inside a pause cut.
+    # The executable plan is the sole source for actual removed duration.
+    removed_ms = max(0, int(round(time_saved_s * 1000)))
+    source_ms = max(0, int(round(source_duration_s * 1000)))
     return SpeechCleanupPublicReceipt(
         candidate_count=len(findings),
         category_counts=SpeechCleanupCategoryCounts(
@@ -501,9 +546,11 @@ def _public_receipt(
             long_pauses=pauses,
             retakes=retakes,
         ),
-        # Findings can overlap when a detected filler lies inside a pause cut.
-        # The executable plan is the sole source for actual removed duration.
-        estimated_removed_ms=max(0, int(round(time_saved_s * 1000))),
+        estimated_removed_ms=removed_ms,
+        source_duration_ms=source_ms,
+        # Deliberately not clamped: a plan removing more than its own window is
+        # corrupt, and ge=0 must reject it here rather than round it away.
+        result_duration_ms=source_ms - removed_ms,
     )
 
 
@@ -558,6 +605,7 @@ def analyze_speech_cleanup(
             forced_removals=forced,
             include_silence_and_fillers=analysis_input.include_silence_and_fillers,
             over_budget_policy=analysis_input.over_budget_policy,
+            max_removal_frac_required=analysis_input.max_removal_frac_required,
         )
         diagnostic_plan = plan
     else:
@@ -569,16 +617,27 @@ def analyze_speech_cleanup(
             forced_removals=forced,
             include_silence_and_fillers=analysis_input.include_silence_and_fillers,
             over_budget_policy=analysis_input.over_budget_policy,
+            max_removal_frac_required=analysis_input.max_removal_frac_required,
         )
         candidate_status = comparison.candidate_status
         candidate_error_class = comparison.candidate_error_class
         diagnostic_plan = comparison.candidate or comparison.baseline
         if silence_status != "ok":
             candidate_status = "tool_unavailable"
+        # A candidate that bailed out is a no-op plan: preferring it over a
+        # baseline that still has cuts would ship ZERO cleanup (rule 0 exposes
+        # more dead air, so the bailout policy's 40% rail trips more often).
+        candidate_is_no_op_regression = (
+            comparison.candidate is not None
+            and comparison.candidate.bailout_reason is not None
+            and comparison.baseline.bailout_reason is None
+            and bool(comparison.baseline.removed)
+        )
         if (
             analysis_input.mixed_gap_mode == "apply"
             and candidate_status == "ready"
             and comparison.candidate is not None
+            and not candidate_is_no_op_regression
         ):
             plan = comparison.candidate
             selected_plan = "candidate"
@@ -611,5 +670,9 @@ def analyze_speech_cleanup(
             clamped=bool(plan.clamped),
         ),
         diagnostics=_diagnostics(diagnostic_plan, candidate_error_class=candidate_error_class),
-        public_receipt=_public_receipt(findings, time_saved_s=plan.time_saved_s),
+        public_receipt=_public_receipt(
+            findings,
+            time_saved_s=plan.time_saved_s,
+            source_duration_s=window_end - analysis_input.source_window_start_s,
+        ),
     )

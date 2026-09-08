@@ -399,6 +399,9 @@ def _dispatch(
         "candidate_count": preflight.result.public_receipt.candidate_count,
         "category_counts": {"filler_sounds": 2, "long_pauses": 3},
         "estimated_removed_ms": preflight.result.public_receipt.estimated_removed_ms,
+        # The column-derived projection must agree with the payload receipt.
+        "source_duration_ms": preflight.result.public_receipt.source_duration_ms,
+        "result_duration_ms": preflight.result.public_receipt.result_duration_ms,
         "error": None,
     }
     assert card["requires_choice"] is True

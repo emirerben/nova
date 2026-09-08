@@ -12171,6 +12171,34 @@ def _attach_variant_posters(
     return enriched, generated_paths
 
 
+def _expected_resume_detector_version(plan: Mapping[str, Any], *, fallback: str) -> str:
+    """Return the detector label a resumable staged render must already carry.
+
+    A preflight Job applies the accepted snapshot's CutPlan, so its terminal
+    capsule is stamped with that snapshot's own ``detector_version`` and a
+    re-render would reproduce the very same label.  Demanding the deployed
+    constant there would rotate every staged-but-unfinalized generation the
+    moment ``DETECTOR_VERSION`` is bumped, discarding finished output that is
+    still exactly correct.  Only a legacy render-time-detector Job actually
+    re-runs the current detector, so only that Job may demand the deployed
+    label.  A malformed or absent snapshot falls back to the deployed label:
+    the resulting rotation is safe because such a render fails closed anyway.
+    """
+
+    from app.services.variant_generation_guard import (  # noqa: PLC0415
+        PRIVATE_SPEECH_CLEANUP_KEY,
+    )
+
+    private = plan.get(PRIVATE_SPEECH_CLEANUP_KEY)
+    snapshot = private.get("preflight_snapshot") if isinstance(private, Mapping) else None
+    if not isinstance(snapshot, Mapping):
+        return fallback
+    label = snapshot.get("detector_version")
+    if not isinstance(label, str) or not label.strip() or len(label) > 100:
+        return fallback
+    return label
+
+
 def _reserve_required_speech_pending(
     job_id: str,
     pending_variant: dict[str, Any],
@@ -12229,7 +12257,10 @@ def _reserve_required_speech_pending(
                     if pending_variant.get("variant_id") == "talking_head"
                     else "full_clip"
                 ),
-                expected_detector_version=DETECTOR_VERSION,
+                expected_detector_version=_expected_resume_detector_version(
+                    plan,
+                    fallback=DETECTOR_VERSION,
+                ),
                 object_exists=lambda path: object_exists_once(path, timeout_s=3.0),
             )
             if decision.status == "resumable":
@@ -17629,6 +17660,11 @@ def _silence_cut_analysis(
             # escalated to a deterministic unsafe_plan render failure by every
             # strict caller (plans/019 addendum). Kill switch restores the
             # pre-clamp hard-fail; legacy_auto keeps the bailout rail untouched.
+            # NOTE (2026-09-08): flipping the kill switch OFF no longer restores
+            # a 55% consent cap — that cap is gone. It restores the auto path's
+            # MAX_REMOVAL_FRAC (40%) bailout, i.e. the unsafe_plan hard failure
+            # for anything over-budget. Narrow the cap instead with
+            # SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED, which keeps clamping.
             over_budget_policy = (
                 "clamp"
                 if analysis_policy == "required_v1" and settings.speech_cleanup_budget_clamp_enabled
@@ -17643,6 +17679,7 @@ def _silence_cut_analysis(
                     forced_removals=forced_removals,
                     include_silence_and_fillers=silence_enabled,
                     over_budget_policy=over_budget_policy,
+                    max_removal_frac_required=(settings.speech_cleanup_max_removal_frac_required),
                 )
             else:
                 comparison = build_cut_plan_comparison(
@@ -17653,14 +17690,25 @@ def _silence_cut_analysis(
                     forced_removals=forced_removals,
                     include_silence_and_fillers=silence_enabled,
                     over_budget_policy=over_budget_policy,
+                    max_removal_frac_required=(settings.speech_cleanup_max_removal_frac_required),
                 )
                 candidate_status = comparison.candidate_status
                 if silence_detection_status != "ok":
                     candidate_status = "tool_unavailable"
+                # A candidate that bailed out is a no-op plan; preferring it
+                # over a baseline that still has cuts ships ZERO cleanup. Same
+                # guard the preflight engine applies (speech_cleanup_analysis).
+                candidate_is_no_op_regression = (
+                    comparison.candidate is not None
+                    and comparison.candidate.bailout_reason is not None
+                    and comparison.baseline.bailout_reason is None
+                    and bool(comparison.baseline.removed)
+                )
                 select_candidate = (
                     mixed_gap_selection.effective_mode == "apply"
                     and candidate_status == "ready"
                     and comparison.candidate is not None
+                    and not candidate_is_no_op_regression
                 )
                 plan = comparison.candidate if select_candidate else comparison.baseline
                 selected_plan = "candidate" if select_candidate else "baseline"
@@ -17752,7 +17800,11 @@ def _silence_cut_analysis(
             if plan.clamped:
                 # Explicit-consent budget applied: the proposed removal total is
                 # traced so the admin view can show how much cleanup was asked
-                # for vs delivered (removal-fraction contract from the fix).
+                # for vs delivered. `clamped` does NOT mean "the 55% rail
+                # tripped" any more (that cap is gone by default): under the
+                # default MAX_REMOVAL_FRAC_REQUIRED=1.0 it means the MIN_OUTPUT_S
+                # floor bound the plan. `clamp_budget_s` says which rail bound
+                # it — compare it against frac*duration to tell them apart.
                 record_pipeline_event(
                     "silence_cut",
                     "silence_cut_clamped",
@@ -17805,6 +17857,11 @@ def _silence_cut_analysis(
             f"{key}::detector={DETECTOR_VERSION}"
             f"::mixed={mixed_gap_selection.effective_mode}"
             f"::clamp={int(settings.speech_cleanup_budget_clamp_enabled)}"
+            # Both settings below choose the plan for identical media, so both
+            # are cache identity: `clamp` picks bailout vs clamp, `frac` sizes
+            # the clamp budget. Missing `frac` would let a flipped removal cap
+            # reuse a plan built under the previous one.
+            f"::frac={settings.speech_cleanup_max_removal_frac_required:g}"
             f"::source={identity_key}"
         )
     # Per-key locking (R3c): hold the global lock only to get-or-insert the
