@@ -285,6 +285,31 @@ def test_claim_and_enqueue_sync_rolls_back_claim_before_failure_recovery() -> No
     recover.assert_called_once()
 
 
+def test_claim_and_enqueue_sync_preserves_published_task_when_commit_fails() -> None:
+    job_id = uuid.uuid4()
+    task = MagicMock()
+    task.name = "orchestrate_template_job"
+
+    claim_result = MagicMock()
+    claim_result.scalar_one_or_none.return_value = job_id
+    claim_session = MagicMock()
+    claim_session.execute.return_value = claim_result
+    claim_session.commit.side_effect = RuntimeError("commit outcome unknown")
+    claim_context = MagicMock()
+    claim_context.__enter__.return_value = claim_session
+    claim_context.__exit__.return_value = False
+
+    with (
+        patch("app.database.sync_session", return_value=claim_context),
+        patch("app.services.job_dispatch._recover_sync_publish_failure") as recover,
+    ):
+        assert claim_and_enqueue_orchestrator_sync(task, job_id) is True
+
+    task.apply_async.assert_called_once()
+    claim_session.rollback.assert_called_once()
+    recover.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_enqueue_orchestrator_swallows_db_write_failure() -> None:
     """Task is already on the broker — a column-write failure must not raise.

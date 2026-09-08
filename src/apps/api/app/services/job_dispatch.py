@@ -330,40 +330,50 @@ def claim_and_enqueue_orchestrator_sync(
     job_uuid = job_id if isinstance(job_id, uuid.UUID) else uuid.UUID(task_id)
     from app.database import sync_session  # noqa: PLC0415
 
-    try:
-        with sync_session() as db:
-            claimed = db.execute(
-                update(Job)
-                .where(
-                    Job.id == job_uuid,
-                    Job.status == "queued",
-                    Job.celery_task_id.is_(None),
-                )
-                .values(celery_task_id=task_id)
-                .returning(Job.id)
-            ).scalar_one_or_none()
-            if claimed is None:
-                db.rollback()
-                return False
+    with sync_session() as db:
+        claimed = db.execute(
+            update(Job)
+            .where(
+                Job.id == job_uuid,
+                Job.status == "queued",
+                Job.celery_task_id.is_(None),
+            )
+            .values(celery_task_id=task_id)
+            .returning(Job.id)
+        ).scalar_one_or_none()
+        if claimed is None:
+            db.rollback()
+            return False
 
-            opts: dict[str, Any] = {
-                "args": [task_id],
-                "kwargs": kwargs or {},
-                "task_id": task_id,
-            }
-            if queue:
-                opts["queue"] = queue
-            try:
-                task.apply_async(**opts)
-            except Exception:
-                db.rollback()
-                raise
+        opts: dict[str, Any] = {
+            "args": [task_id],
+            "kwargs": kwargs or {},
+            "task_id": task_id,
+        }
+        if queue:
+            opts["queue"] = queue
+        try:
+            task.apply_async(**opts)
+        except Exception as exc:
+            db.rollback()
+            _recover_sync_publish_failure(
+                job_id=job_uuid,
+                task_name=task.name,
+                publish_error=exc,
+            )
+            raise
+        try:
             db.commit()
-    except Exception as exc:
-        _recover_sync_publish_failure(
-            job_id=job_uuid,
-            task_name=task.name,
-            publish_error=exc,
-        )
-        raise
+        except Exception as exc:  # noqa: BLE001
+            # The task is already on the broker.  As with the async helper,
+            # never turn a claim-write failure into a false terminal state.
+            # A later duplicate publication remains safe because template
+            # workers atomically reject non-queued first deliveries.
+            db.rollback()
+            log.warning(
+                "claim_and_enqueue_orchestrator_task_id_write_failed",
+                task_name=task.name,
+                job_id=task_id,
+                error=str(exc),
+            )
     return True
