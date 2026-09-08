@@ -412,11 +412,13 @@ The chat edit copilot sees and honors the music's beat grid (v0.11.4.0):
   projected into assembled-output seconds by `beatMarks()` in
   `src/apps/web/src/app/generative/timeline-math.ts` (grid variants only; removed
   and footage-trimmed slots contribute no marks). Capped by endpoint-preserving
-  even sampling, never truncation: `COPILOT_BEAT_MARKS_MAX = 60`, re-sampled to 30
-  when the snapshot exceeds its byte budget — first/last marks always survive so
-  late-video beats stay addressable. Renderer-side mirror: `_BEAT_MARKS_SHOWN_MAX`
-  in `app/agents/edit_copilot.py` (MUSIC BEAT MARKS prompt section; non-finite /
-  overflow values filtered before rendering).
+  even sampling, never truncation: `COPILOT_BEAT_MARKS_MAX = 60`. Legacy snapshots
+  re-sample to 30 when over budget; first/last marks survive. Negotiated
+  `component_context_version=1` snapshots retain the sampled marks and report an
+  error if the context cannot fit (see [complete component context](editor-director.md#complete-component-context)).
+  In `app/agents/edit_copilot.py`, the MUSIC BEAT MARKS prompt section applies
+  `_BEAT_MARKS_SHOWN_MAX` only to legacy snapshots; both contracts filter
+  non-finite and overflow values before prompt rendering.
 - **Client-side snapping:** beat fidelity is not prompt-only. `applyCopilotOps`
   snaps model-proposed text/SFX/overlay timings within `BEAT_SNAP_EPSILON_S =
   0.12` s onto the nearest mark (`src/apps/web/src/lib/edit-copilot/apply-ops.ts`);

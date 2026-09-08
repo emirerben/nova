@@ -4,8 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [0.72.3.0] — 2026-09-08
 
+### Added
+- **The editor AI sees the full component context.** Text, captions, images, clips, motion, sound effects, and music carry their current timing, identity, available descriptions, and creator notes. Selection and playhead help resolve references, while explicit requests take precedence. Components remain visible for inspection when their editing tools are unavailable.
+
 ### Fixed
-- **Copilot can now target narrated score labels precisely.** Score provenance travels with the editor snapshot, so requests to retime a score change the intended label without shifting nearby text.
+- **Selective timing changes preserve unrelated components in caption-heavy edits.** The editor negotiates a larger context budget and reports oversized snapshots instead of silently omitting components. Locked caption timing remains protected, and unavailable edits receive an honest explanation.
 
 ## [0.72.2.0] — 2026-09-08
 

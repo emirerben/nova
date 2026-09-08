@@ -13,11 +13,15 @@ import {
 } from "@/lib/plan-api";
 import {
   DIRECTOR_CAPABILITY_MISMATCH_MESSAGE,
+  DIRECTOR_SNAPSHOT_TOO_LARGE_MESSAGE,
   directorSnapshotRevision,
   useEditDirector,
 } from "@/lib/edit-copilot/useEditDirector";
 import type { ApplyCopilotOpsResult } from "@/lib/edit-copilot/apply-ops";
-import type { CopilotSnapshot } from "@/lib/edit-copilot/snapshot";
+import {
+  CopilotSnapshotTooLargeError,
+  type CopilotSnapshot,
+} from "@/lib/edit-copilot/snapshot";
 
 jest.mock("@/lib/plan-api", () => ({
   applySpeechCutCandidate: jest.fn(),
@@ -228,6 +232,125 @@ describe("useEditDirector", () => {
     act(() => result.current.refresh());
     await loadInitialReview();
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start a new review when only editor focus changes", async () => {
+    const current = snapshot();
+    Object.defineProperty(current.text_bars[0], "mutation_fingerprint", {
+      value: "local-fingerprint",
+      enumerable: false,
+    });
+    suggestionsMock.mockImplementation(async (_itemId, _variantId, body) => ({
+      suggestions: [],
+      snapshot_revision: body.snapshot_revision,
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    }));
+    const { rerender } = renderHook(
+      ({ playheadS }: { playheadS: number }) =>
+        useEditDirector({
+          enabled: true,
+          omniEnabled: false,
+          itemId: "item-1",
+          variantId: "variant-1",
+          buildSnapshot: () => ({
+            ...current,
+            editor_focus: {
+              playhead_s: playheadS,
+              selected: { kind: "text", id: "bar-1", index: 0 },
+            },
+          }),
+          applyOpsAtomic: jest.fn(() => appliedResult()),
+          onApplied: jest.fn(),
+        }),
+      { initialProps: { playheadS: 0 } },
+    );
+
+    await loadInitialReview();
+    const firstRequest = suggestionsMock.mock.calls[0]?.[2];
+    expect(firstRequest?.snapshot).not.toHaveProperty("editor_focus");
+    expect(firstRequest?.snapshot.text_bars[0]).toBe(current.text_bars[0]);
+    expect(
+      Object.getOwnPropertyDescriptor(
+        firstRequest?.snapshot.text_bars[0],
+        "mutation_fingerprint",
+      )?.enumerable,
+    ).toBe(false);
+
+    rerender({ playheadS: 3 });
+    await act(async () => {
+      jest.advanceTimersByTime(1200);
+      await Promise.resolve();
+    });
+
+    expect(suggestionsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores metadata fetch status but invalidates changed component meaning", () => {
+    const current = snapshot();
+    current.asset_context_status = "ready";
+    current.text_bars[0].context = { semantic_role: "price" };
+    const revision = directorSnapshotRevision(current);
+
+    expect(directorSnapshotRevision({ ...current, asset_context_status: "loading" })).toBe(revision);
+    expect(directorSnapshotRevision({ ...current, asset_context_status: "unavailable" })).toBe(revision);
+    expect(current.asset_context_status).toBe("ready");
+    expect(directorSnapshotRevision({
+      ...current,
+      text_bars: [{ ...current.text_bars[0], context: { semantic_role: "warning" } }],
+    })).not.toBe(revision);
+  });
+
+  it("surfaces an oversized snapshot error without crashing and recovers", async () => {
+    const current = snapshot();
+    const oversizedBuilder: () => CopilotSnapshot = () => {
+      throw new CopilotSnapshotTooLargeError();
+    };
+    suggestionsMock.mockImplementation(async (_itemId, _variantId, body) => ({
+      suggestions: [],
+      snapshot_revision: body.snapshot_revision,
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    }));
+    const { result, rerender } = renderHook(
+      ({ buildSnapshot }: { buildSnapshot: () => CopilotSnapshot }) =>
+        useEditDirector({
+          enabled: true,
+          omniEnabled: false,
+          itemId: "item-1",
+          variantId: "variant-1",
+          buildSnapshot,
+          applyOpsAtomic: jest.fn(() => appliedResult()),
+          onApplied: jest.fn(),
+        }),
+      {
+        initialProps: {
+          buildSnapshot: oversizedBuilder,
+        },
+      },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.error).toBe(DIRECTOR_SNAPSHOT_TOO_LARGE_MESSAGE);
+    expect(suggestionsMock).not.toHaveBeenCalled();
+
+    rerender({ buildSnapshot: () => current });
+    await loadInitialReview();
+
+    expect(result.current.error).toBeNull();
+    expect(suggestionsMock).toHaveBeenCalledTimes(1);
+
+    // Returning to the exact previously reviewed draft clears the size error,
+    // even though its content revision has not changed.
+    rerender({ buildSnapshot: oversizedBuilder });
+    expect(result.current.error).toBe(DIRECTOR_SNAPSHOT_TOO_LARGE_MESSAGE);
+    rerender({ buildSnapshot: () => current });
+    expect(result.current.error).toBeNull();
+    expect(suggestionsMock).toHaveBeenCalledTimes(1);
   });
 
   it("silently refreshes a stale 409 against the current revision", async () => {
@@ -969,8 +1092,10 @@ describe("useEditDirector", () => {
     ]);
   });
 
-  it("polls an Omni asset and inserts it only after the normalized operation is ready", async () => {
+  it.each(["ready", "loading", "unavailable"] as const)("inserts a ready Omni asset while metadata status is %s", async (refreshedStatus) => {
     const current = snapshot();
+    current.asset_context_status = "ready";
+    let assetStatus: CopilotSnapshot["asset_context_status"] = "ready";
     const omni = suggestion({
       id: "director-omni",
       apply_mode: "omni_async",
@@ -1033,7 +1158,7 @@ describe("useEditDirector", () => {
         omniEnabled: true,
         itemId: "item-1",
         variantId: "variant-1",
-        buildSnapshot: () => current,
+        buildSnapshot: () => ({ ...current, asset_context_status: assetStatus }),
         applyOpsAtomic,
         onApplied,
         onGeneratedAssetReady,
@@ -1054,6 +1179,7 @@ describe("useEditDirector", () => {
     expect(result.current.generation?.status).toBe("queued");
     expect(onApplied).not.toHaveBeenCalled();
 
+    assetStatus = refreshedStatus;
     await act(async () => {
       jest.advanceTimersByTime(2000);
       await Promise.resolve();
@@ -1067,6 +1193,7 @@ describe("useEditDirector", () => {
     expect(onApplied).toHaveBeenCalledTimes(1);
     expect(onGeneratedAssetReady).toHaveBeenCalledTimes(1);
     expect(result.current.generation).toBeNull();
+    expect(cancelMock).not.toHaveBeenCalled();
   });
 
   it("disables cancellation as soon as an Omni operation is applied locally", async () => {

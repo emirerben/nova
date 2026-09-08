@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-09-08-v38",
+  "prompt_version": "2026-09-08-v39",
   "input": {
     "utterance": "Chaneg this to a fast paced montage video",
     "prior_turns": [],

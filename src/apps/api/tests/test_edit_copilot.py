@@ -666,28 +666,6 @@ def test_format_snapshot_renders_beat_marks() -> None:
     assert "median interval between listed marks" in rendered
 
 
-def test_format_snapshot_renders_text_source_metadata() -> None:
-    from app.agents.edit_copilot import _format_snapshot
-
-    snap = _snapshot()
-    snap["text_bars"][0].update(
-        {
-            "source_kind": "narrated_score",
-            "source_params": {
-                "narrated_storyboard": "narrated_storyboard:score:4",
-                "transcript_grounded": True,
-                "burn_dicts": [{"text": "six four"}],
-            },
-        }
-    )
-
-    rendered = _format_snapshot(snap)
-
-    assert "source: kind=narrated_score" in rendered
-    assert "narrated_storyboard:score:4" in rendered
-    assert "burn_dicts" not in rendered
-
-
 def test_compact_timeline_uses_source_summary_for_bulk_integrity() -> None:
     selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
     full = _bulk_snapshot()
@@ -3717,13 +3695,15 @@ def test_copilot_route_foreign_item_404(client: TestClient) -> None:
 
 
 def test_copilot_route_oversized_snapshot_422(client: TestClient) -> None:
+    from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
+
     settings.edit_copilot_enabled = True
     user = _user()
     item, plan = _item_and_plan(user.id)
     _install_route_deps(user, item, plan)
 
     body = _payload()
-    body["snapshot"] = {"text_bars": [{"text": "x" * (21 * 1024)}], "slots": []}
+    body["snapshot"] = {"text_bars": [{"text": "x" * COPILOT_SNAPSHOT_MAX_BYTES}], "slots": []}
     resp = client.post(f"/plan-items/{item.id}/variants/v1/copilot/turn", json=body)
     assert resp.status_code == 422
 
@@ -4120,12 +4100,11 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # guided timeline capacity, then (2026-08-28-v36) to make stack_images a
     # consecutive individual-clip slideshow with no implicit Creator Block, then
     # (2026-08-28-v37) so only the newest assistant turn can provide structured
-    # clarification and pending-action context, then (2026-09-08-v38) for
-    # text-bar source metadata and narrated score targeting — update this pin
-    # whenever EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
+    # clarification and pending-action context — update this pin whenever
+    # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-08-v38"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-08-v39"
 
 
 def _motion_snapshot() -> dict:

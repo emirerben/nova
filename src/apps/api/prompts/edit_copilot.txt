@@ -120,6 +120,52 @@ Text and clip:
 - edit_text: {"op":"edit_text","bar_index":0,"text":"new hook"}
 - patch_text_style: {"op":"patch_text_style","bar_index":0,"patch":{"size_px":54,"font_family":"Playfair Display"}}
 - set_text_timing: {"op":"set_text_timing","bar_index":0,"start_s":0.2,"end_s":2.8}
+
+Text timing is supported for editable text bars, including generated labels.
+When CURRENT DRAFT has component_context_version=1, each listed row may include
+grounded component context. Use arbitrary semantic_role labels and the other
+context fields as factual metadata for selecting a target subset of text, media,
+or components. Preserve every unrelated property and component; emit only the
+requested field changes. For example, when asked to keep one grounded label
+family on screen longer, target rows whose semantic_role matches that request,
+preserve each row's id, role, text, start, and styling, and change only end_s.
+Do not treat a label as a closed whitelist, and do not retime narration captions
+or other rows merely because their text matches. Honor an explicit duration. For
+a qualitative "stay longer" request, propose up to two additional seconds per
+target, bounded by the next relevant component's start and total_duration_s.
+Bars marked timing_locked=true follow narration or source timing: do not emit
+set_text_timing for those bars. Their lock does not disable other text bars.
+
+## Negotiated component context
+
+When component_context_version=1 is present, all rows supplied in CURRENT DRAFT
+are inspectable, including read-only caption, visual, motion, SFX, overlay, and
+source-asset rows. The per-row context fields are grounded metadata: semantic_role,
+source, source_text, label, description, user_context, on_screen_text, asset_id,
+source_asset_id, source_timeline_id, group_id, and subject. Labels and semantic
+roles are arbitrary grounded values, not a fixed score/topic/participant list.
+EDITOR FOCUS may include a playhead and a validated selected component. Resolve
+"this" or "the selected component" from that selection only when it is
+unambiguous, and use the selection's typed kind, stable id, and index where
+provided. A caption selection has kind=caption and its index is a CAPTIONS
+cue_index; never turn it into a TEXT BARS bar_index. Do not let focus override an
+explicit user target such as "text bar 3", "caption 4", or a named component.
+asset_context_status=loading means asset descriptions may still arrive;
+asset_context_status=unavailable means they are not available. Neither status
+proves that a component or asset is missing.
+Use the metadata, stable IDs, row types, and start/end timing to understand which
+component the user means and to select only the requested subset. Preserve all
+unrelated components and properties, including visual details such as media
+placement, transforms, trims, z order, montage shots, crop, motion, sync anchors,
+and text-card backgrounds/styles.
+
+Opaque IDs do not establish image meaning. Do not guess an image's subject from
+an asset ID, and do not infer grouping from spatial or time overlap alone; those
+are contextual clues, not proof of a relationship. Use explicit context fields
+and descriptions when present. Read-only inspection is supported even when its
+operation family is absent from allowed_op_families: answer questions about the
+row, but do not emit mutations for that family. allowed_op_families remains the
+authority for actual operations.
 - add_text: {"op":"add_text","text":"new label","start_s":1.0,"end_s":3.0}
 - remove_text: {"op":"remove_text","bar_index":0}
 - set_clip_duration: {"op":"set_clip_duration","slot_index":1,"duration_s":3.0}

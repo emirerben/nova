@@ -1142,6 +1142,7 @@ export default function EditorShell({
   const musicHydratedVariantIdRef = useRef<string | null>(null);
   const [overlayUploading, setOverlayUploading] = useState(false);
   const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
+  const [poolContextStatus, setPoolContextStatus] = useState<"loading" | "ready" | "unavailable">("loading");
   const [serverPoolReservations, setServerPoolReservations] = useState<
     PoolReservationCapacity[]
   >([]);
@@ -2906,6 +2907,7 @@ export default function EditorShell({
   }, [itemId, localSfx, localSfxAudioUrls]);
 
   const overlayPoolShouldLoad =
+    (activeTool === "nova" && capabilities?.copilot_snapshot_max_bytes != null) ||
     (MEDIA_OVERLAYS_UI_ENABLED &&
       overlaysAllowed &&
       (activeTool === "nova" || activeTool === "overlays")) ||
@@ -2914,6 +2916,7 @@ export default function EditorShell({
       activeTool === "visuals");
   useEffect(() => {
     if (!overlayPoolShouldLoad) return;
+    setPoolContextStatus((current) => current === "ready" ? current : "loading");
     let cancelled = false;
     const startedAtEpoch = poolListEpoch.current;
     listPoolAssets(itemId)
@@ -2922,6 +2925,7 @@ export default function EditorShell({
         setPoolAssets((current) =>
           mergePoolAssetsPreservingDisplayUrls(current, res.assets),
         );
+        setPoolContextStatus("ready");
         setMaxPoolAssets(res.max_assets);
         setServerPoolReservations(res.active_reservations ?? []);
         setServerPoolOccupiedCount(res.occupied_assets ?? res.assets.length);
@@ -2930,6 +2934,7 @@ export default function EditorShell({
       })
       .catch((err) => {
         if (cancelled) return;
+        setPoolContextStatus("unavailable");
         if (isUnavailableError(err)) setPoolUnavailable(true);
         else setPoolError("We couldn't load your visuals. Try again.");
       });
@@ -5158,6 +5163,10 @@ export default function EditorShell({
     ],
   );
 
+  // Read navigation state at chat send time without rebuilding the proactive
+  // Director snapshot on every playback frame or selection change.
+  const copilotFocusRef = useRef({ playhead_s: currentTime, selected: selection });
+  copilotFocusRef.current = { playhead_s: currentTime, selected: selection };
   const buildCopilotDraftSnapshot = useCallback((context?: CopilotSnapshotContext) => {
     const openTools = (["text", "visuals", "sounds", "overlays", "styles"] as const).filter((tool) => {
       if (toolDisabledReasons[tool]) return false;
@@ -5274,6 +5283,8 @@ export default function EditorShell({
       readOnly,
     });
     return buildCopilotSnapshot(visibleTextBars, slots, clip.clips, capabilities, clip.state.grid, {
+      editorFocus: copilotFocusRef.current,
+      assetContextStatus: poolContextStatus,
       sourcePool: clip.sourcePool,
       sfxEnabled: SOUND_EFFECTS_UI_ENABLED,
       overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
@@ -5298,6 +5309,7 @@ export default function EditorShell({
       pendingSuggestions: overlaySuggestions.rows,
       captionMeta: captionsPresent ? captionMeta : undefined,
       captionCuesEditable,
+      captionCues: captionCuesEditable ? undefined : variant?.caption_cues ?? undefined,
       captionTotalCues: captionCuesEditable ? undefined : variant?.caption_cues?.length ?? 0,
       musicState: {
         swappable: musicSwappable,
@@ -5351,6 +5363,7 @@ export default function EditorShell({
     });
   }, [
     capabilities,
+    poolContextStatus,
     captionMeta,
     carouselClips,
     carouselMoment,

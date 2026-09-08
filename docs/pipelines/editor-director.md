@@ -25,9 +25,10 @@ false. The prompt still asks for three to five ranked suggestions across varied
 categories, but the API returns every valid non-conflicting card that survives
 per-card validation, from one to five, instead of failing the whole review. The
 endpoint is authenticated, ownership-checked, editability-checked, size-limited
-to 20 KB, rate-limited, and gated by `EDIT_DIRECTOR_ENABLED`.
+to the shared negotiated context bound (20 KB on older deployments), rate-limited,
+and gated by `EDIT_DIRECTOR_ENABLED`.
 
-Snapshots normally serialize completely. When editor capabilities advertise
+Legacy snapshots normally serialize completely. When editor capabilities advertise
 `copilot_snapshot_wire_version=1` and trimming alone cannot reach the 18 KB
 client budget, the browser sends `wire_compact.version=1` and sparsifies
 `timeline`, `motion_catalog`, and `text_bars`. The API expands server-owned
@@ -194,3 +195,45 @@ Changes that touch the shared template orchestration or final transition render
 path also require a real-video `make local-render` pass. Record its run ID in the
 PR body as `Local test: <run_id>` so the Layer-2 release gate can distinguish
 render-verified changes from unit-test-only changes.
+
+## Complete component context
+
+When the API advertises `copilot_snapshot_max_bytes=524288`, the editor uses
+that negotiated limit with a 2 KiB request reserve and sends
+`component_context_version=1`. Copilot and Director share the backend bound.
+Older APIs retain the legacy 18 KB client/20 KB server contract described above.
+
+The new contract retains every supplied text, caption, overlay, visual block,
+motion block, camera effect, and sound placement, including read-only lanes.
+Only `allowed_op_families` grants mutation capability. The browser may compact
+the immutable motion catalog or remove historical orientation summaries; it
+never silently drops current components to fit the negotiated budget. An
+oversized draft reports a context-size error before sending a partial request.
+
+Component metadata carries open-ended semantic roles, source text, creator
+notes, analyzed descriptions/OCR, stable asset IDs, and explicit group/source
+links. Media visual blocks also expose their placement, transforms, shots,
+backgrounds, and sync anchors. Asset storage paths, signed URLs, raw analysis
+payloads, and mutation fingerprints do not enter this context. Guided timeline
+media descriptions come from the exact approved source generation; adding this
+read-only metadata leaves revision hashes, source digests, and render inputs
+unchanged. Existing asset analysis supplies visual meaning; absent descriptions
+remain unknown rather than being inferred from opaque IDs.
+
+Chat includes the selected component and playhead position. Selection resolves
+to the current authoritative index, with caption selections mapped to cue
+indices. Explicit user references take precedence. Director excludes selection
+and playhead from both its request and revision so navigation does not trigger
+new paid reviews. Transient asset-fetch status is also excluded from the revision,
+so a background refresh cannot cancel an in-flight generated clip; changed asset
+content still invalidates suggestions. Opening Kria also loads asset descriptions independently of
+lane write permissions; `asset_context_status` distinguishes loading, ready,
+and unavailable descriptions.
+
+The supported operation vocabulary, atomic application, stale-field checks,
+source-synced timing constraints, and Save/Undo behavior still apply. Context
+visibility does not imply a new renderer capability. Regression coverage spans
+arbitrary label families, tail components beyond legacy caps, exact-generation
+source context, selection, read-only inspection, and unknown-image clarification.
+Live component fixtures assert effective target changes, allowing repeated
+unchanged fields but rejecting changes to unrelated components.

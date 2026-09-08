@@ -2186,6 +2186,8 @@ export interface EditorCapabilities {
   timeline_max_slots?: number;
   /** Compact Copilot snapshot format understood by the deployed API. */
   copilot_snapshot_wire_version?: 1;
+  /** Maximum Copilot snapshot request size accepted by the deployed API. */
+  copilot_snapshot_max_bytes?: number;
   split_clips?: boolean;
   automatic_cut?: boolean;
   automatic_cut_reason?: string | null;
