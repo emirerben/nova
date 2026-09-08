@@ -8521,7 +8521,7 @@ export default function EditorShell({
               <div className="bg-white">
                 <MiniStrip
                   segments={miniStripSegments}
-                  durationS={virtualPreview.timeline.totalDurationS || timelineDuration || previewDuration}
+                  durationS={previewDuration}
                   currentTimeS={currentTime}
                   playbackClock={playbackClock}
                   selectedClipId={selection?.kind === "clip" ? selection.id : null}
