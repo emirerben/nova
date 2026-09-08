@@ -52,6 +52,7 @@ from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.db_locks import acquire_locked_rows
 from app.limiter import limiter
 from app.models import (
     ContentPlan,
@@ -2994,18 +2995,21 @@ async def _rollback_craft_commit(
     )
 
     await db.rollback()
-    # Match the route-wide lock order: CreatorAgentSession -> Job -> receipt.
-    # Reversing the first two creates a PostgreSQL deadlock when a fresh craft
-    # request overlaps broker-failure rollback for the same session and Job.
-    locked_session = None
-    if previous_session_state:
-        locked_session = await db.get(
-            CreatorAgentSession,
-            session_id,
-            populate_existing=True,
-            with_for_update=True,
-        )
-    locked_job = await db.get(Job, job_id, populate_existing=True, with_for_update=True)
+    # Canonical lock order (app/db_locks.CANONICAL_LOCK_ORDER): Job ->
+    # CreatorAgentSession -> receipt.  This used to lock the session first,
+    # which inverted against every Job -> Session path in the Kria runtime and
+    # in creation_threads; a fresh craft request overlapping broker-failure
+    # rollback for the same session and Job deadlocked.
+    _locked = await acquire_locked_rows(
+        db,
+        {
+            Job: job_id,
+            CreatorAgentSession: session_id if previous_session_state else None,
+        },
+        populate_existing=True,
+    )
+    locked_job = _locked.get(Job)
+    locked_session = _locked.get(CreatorAgentSession)
     generation_still_owned = False
     enqueue_uncertain = False
     if locked_job is not None:

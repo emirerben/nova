@@ -28,6 +28,7 @@ from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.db_locks import acquire_locked_rows
 from app.kria.api_schemas import KriaProblemOut, ThreadDeltaOut
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.runtime import RuntimeFailure, read_delta
@@ -855,8 +856,15 @@ async def _prepare_partial_variant_retry(
 
     if not thread.active_job_id or not thread.active_plan_item_id:
         raise HTTPException(status_code=409, detail="There is no partial render to retry")
-    job = await db.get(Job, thread.active_job_id, with_for_update=True)
-    item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
+    # Canonical lock order (app/db_locks.CANONICAL_LOCK_ORDER): PlanItem before
+    # Job.  Locking Job first here deadlocked against the media-attach guard in
+    # _reject_input_mutation_while_rendering, which takes PlanItem -> Job.
+    locked = await acquire_locked_rows(
+        db,
+        {PlanItem: thread.active_plan_item_id, Job: thread.active_job_id},
+    )
+    item = locked[PlanItem]
+    job = locked[Job]
     if job is None or item is None:
         raise HTTPException(status_code=404, detail="Creation render not found")
     if (
@@ -934,11 +942,15 @@ async def _record_partial_variant_retry_enqueue_failure(
 ) -> None:
     """Leave a scoped retry visibly retryable when the broker is unavailable."""
 
-    # The action commit happened before enqueue by design.  Reacquire the
-    # thread first, then session/job in route lock order.  A newer retry or
-    # projection update must remain authoritative if one raced the broker
-    # failure.
+    # The action commit happened before enqueue by design.  Reacquire in
+    # canonical order (app/db_locks.CANONICAL_LOCK_ORDER): Job -> Session ->
+    # CreationThread.  The thread projection is derived state and is locked
+    # last.  A newer retry or projection update must remain authoritative if
+    # one raced the broker failure.
     await db.rollback()
+    locked = await acquire_locked_rows(db, {Job: job_id, CreatorAgentSession: session_id})
+    job = locked[Job]
+    session = locked[CreatorAgentSession]
     thread_row = (
         await db.execute(
             select(CreationThread)
@@ -952,8 +964,6 @@ async def _record_partial_variant_retry_enqueue_failure(
     ).scalar_one_or_none()
     if thread_row is None:
         return
-    session = await db.get(CreatorAgentSession, session_id, with_for_update=True)
-    job = await db.get(Job, job_id, with_for_update=True)
     if session is not None and job is not None:
         variants = list((job.assembly_plan or {}).get("variants") or [])
         target = next(
@@ -2584,11 +2594,16 @@ async def message_thread(
                 db, thread, user
             )
         elif thread.active_creator_agent_session_id:
-            status_session = await db.get(
-                CreatorAgentSession, thread.active_creator_agent_session_id, with_for_update=True
+            # Canonical lock order: Job before CreatorAgentSession.
+            _locked = await acquire_locked_rows(
+                db,
+                {
+                    Job: thread.active_job_id,
+                    CreatorAgentSession: thread.active_creator_agent_session_id,
+                },
             )
-            if thread.active_job_id:
-                status_job = await db.get(Job, thread.active_job_id, with_for_update=True)
+            status_job = _locked.get(Job)
+            status_session = _locked[CreatorAgentSession]
         if status_session is not None:
             await reconcile_render_state(db, status_session)
             if isinstance(db, AsyncSession):

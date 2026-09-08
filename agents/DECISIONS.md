@@ -1733,3 +1733,68 @@ voiceover resolver could run.
   transcription and burned captions, even if a stale format token says `montage`. Generic legacy
   voiceover formats preserve audio but are not promised transcript captions; narrated format is the
   product contract when captions are required.
+
+## [2026-09-07] One canonical row-lock order; the routes had drifted into two
+
+Production returned 500s on `POST /creation-threads/{id}/media` (nova-video api
+machine e78413def29018, 2026-09-07T18:16:14Z):
+
+```
+asyncpg.exceptions.DeadlockDetectedError: deadlock detected
+DETAIL:  Process 18773 waits for ShareLock on transaction 44786; blocked by process 18871.
+Process 18871 waits for ShareLock on transaction 44785; blocked by process 18773.
+```
+
+The media-attach guard `_reject_input_mutation_while_rendering` locked
+`PlanItem` then `Job`; the retry-partial path `_prepare_partial_variant_retry`
+locked `Job` then `PlanItem`. Concurrent requests each held one row and waited
+for the other. `git blame` puts both sites in `1f102edd` (v0.59.4.0, #956) —
+pre-existing, and not from the speech-cleanup preflight work that was in flight.
+
+The interesting part is not the swap. It is *why* the swap survived review: the
+codebase carried two contradictory lock orders, each documented as authoritative
+in its own file. `app/tasks/kria_runtime.py` said "Global mutation order: Plan ->
+PlanItem -> Job -> Session -> ..."; `app/routes/creator_agent.py` said "Match the
+route-wide lock order: CreatorAgentSession -> Job", complete with a warning that
+reversing it would deadlock. Both comments were written in good faith. Neither
+was checkable, so each file's convention was locally consistent and globally
+wrong. A convention that lives in a comment is not a convention.
+
+Resolution: `app/db_locks.CANONICAL_LOCK_ORDER` is now the single source of
+truth (`User → Persona → ContentPlan → PlanItem → PlanItemAsset → Job →
+CreatorAgentSession → CreatorAgentTurn → CreatorEditDraft → CreatorAgentApproval
+→ CreatorAgentExecution → CreationThread`), the Kria order extended at both
+ends. `acquire_locked_rows` sorts the requested rows internally so a call site
+cannot be typed wrong, and `tests/routes/test_lock_order.py` reconstructs every
+function's lock sequence from the AST — inlining module-local helpers, because
+this inversion spanned two functions, and splitting at commit/rollback, because
+locks released between transactions cannot deadlock.
+
+Two findings worth keeping:
+
+- **`Job` before `CreatorAgentSession` won on evidence, not taste.** The
+  Session-first convention had 4 sites; Job-first had the Kria runtime plus 4
+  creation-thread repair helpers. Flipping `creator_agent._rollback_craft_commit`
+  without also flipping `tasks/creator_quality_review.py` would have created a
+  *new* deadlock pair — the fix has to move the whole equivalence class at once.
+- **Teaching the guard about the helper found a bug the audit missed.** Once
+  `acquire_locked_rows` calls were modelled as locks, the test flagged
+  `claim_exact_review`, which locked `CreatorAgentSession` FOR UPDATE and read
+  `Job` *unlocked* — then its callers locked `Job` moments later in the same
+  transaction. A per-statement audit sees no inversion there; only reconstructing
+  the transaction's full lock history does.
+
+`PlanItemAsset`'s rank relative to `Job` is genuinely undetermined: measuring
+both placements across `app/` gave 18 violating windows either way. It sits
+before `Job` to match the ownership hierarchy.
+
+Seven pre-existing inversions remain, listed with rationale in
+`KNOWN_INVERSIONS` and in `docs/runbooks/row-lock-order.md`. The largest is
+`delete_thread`, which locks the `CreationThread` root first because the whole
+delete cascade is discovered through that row; fixing it means restructuring a
+destructive path and was deliberately not bundled into a deadlock hotfix.
+
+Deadlocks are also no longer 500s: `main.transient_db_conflict_handler` maps
+SQLSTATE `40P01`/`40001` to a 409 with `Retry-After: 1`, logging
+`transient_db_conflict` at warning level. A sustained rate of that log line means
+an inversion slipped past the static guard.

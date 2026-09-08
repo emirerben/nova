@@ -8,6 +8,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy.exc import DBAPIError
 
 from app.config import settings
 from app.limiter import limiter
@@ -135,6 +136,70 @@ def _cors_headers_for(request: Request) -> dict[str, str]:
         "Access-Control-Allow-Credentials": "true",
         "Vary": "Origin",
     }
+
+
+#: PostgreSQL transient-concurrency SQLSTATEs.  ``40P01`` is deadlock_detected:
+#: two transactions took the same row locks in opposite order and the server
+#: aborted one of them.  ``40001`` is serialization_failure.  Both mean "your
+#: transaction lost a race", not "the request was invalid" -- the same call
+#: succeeds on retry, so it must not surface as a 500.
+_RETRYABLE_SQLSTATES = frozenset({"40P01", "40001"})
+
+
+def _transient_sqlstate(exc: BaseException) -> str | None:
+    """Return the SQLSTATE if ``exc`` wraps a retryable serialization error."""
+
+    if not isinstance(exc, DBAPIError):
+        return None
+    sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+    return sqlstate if sqlstate in _RETRYABLE_SQLSTATES else None
+
+
+@app.exception_handler(DBAPIError)
+async def transient_db_conflict_handler(request: Request, exc: DBAPIError) -> JSONResponse:
+    """Surface deadlock/serialization aborts as a retryable 409, never a 500."""
+
+    sqlstate = _transient_sqlstate(exc)
+    if sqlstate is None:
+        return await unhandled_exception_handler(request, exc)
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or _safe_trace_id(request.headers.get("x-request-id"))
+        or uuid.uuid4().hex
+    )
+    correlation_id = (
+        getattr(request.state, "correlation_id", None)
+        or _safe_trace_id(request.headers.get("x-correlation-id"))
+        or request_id
+    )
+    # Deadlocks are expected under concurrency and are self-healing, but a
+    # sustained rate means a lock-order inversion slipped past the static
+    # guard in tests/routes/test_lock_order.py -- so log it as a warning with
+    # the SQLSTATE rather than dropping it silently.
+    log.warning(
+        "transient_db_conflict",
+        path=request.url.path,
+        method=request.method,
+        sqlstate=sqlstate,
+        request_id=request_id,
+        correlation_id=correlation_id,
+    )
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": "That project was being updated at the same time. Try again.",
+            "code": "concurrent_update",
+            "retryable": True,
+            "request_id": request_id,
+            "correlation_id": correlation_id,
+        },
+        headers={
+            **_cors_headers_for(request),
+            "Retry-After": "1",
+            "X-Request-Id": request_id,
+            "X-Correlation-Id": correlation_id,
+        },
+    )
 
 
 @app.exception_handler(Exception)

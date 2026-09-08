@@ -1250,7 +1250,7 @@ async def test_creator_craft_enqueue_failure_restores_plan_and_fails_receipt(mon
     receipt_result = MagicMock()
     receipt_result.scalar_one_or_none.return_value = None
     db.execute.return_value = receipt_result
-    db.get.side_effect = [job, session, job, failed_receipt]
+    db.get.side_effect = [job, job, session, failed_receipt]
 
     def add(value):
         if isinstance(value, CreatorAgentExecution):
@@ -1438,7 +1438,7 @@ async def test_creator_craft_rollback_restores_speech_owned_state_only() -> None
     )
     failed_receipt = SimpleNamespace(id=receipt_id, status="running", error=None)
     db = AsyncMock()
-    db.get.side_effect = [session, job, failed_receipt]
+    db.get.side_effect = [job, session, failed_receipt]
 
     await creator_routes._rollback_craft_commit(
         db,
@@ -1479,9 +1479,12 @@ async def test_creator_craft_rollback_restores_speech_owned_state_only() -> None
     assert session.target_generation_id == "old"
     assert session.render_attempts == 1
     assert session.revision == 3
+    # Canonical lock order (app/db_locks.CANONICAL_LOCK_ORDER): Job before
+    # CreatorAgentSession.  This assertion is a lock-order guard, not an
+    # implementation detail -- see tests/routes/test_lock_order.py.
     assert [call.args[0] for call in db.get.await_args_list] == [
-        CreatorAgentSession,
         Job,
+        CreatorAgentSession,
         CreatorAgentExecution,
     ]
 
@@ -1528,7 +1531,7 @@ async def test_required_creator_speech_rollback_refuses_superseding_operation() 
     )
     receipt = SimpleNamespace(id=receipt_id, status="running", error=None)
     db = AsyncMock()
-    db.get.side_effect = [session, job, receipt]
+    db.get.side_effect = [job, session, receipt]
     stored_plan = copy.deepcopy(job.assembly_plan)
     stored_started_at = job.started_at
 
@@ -1646,7 +1649,7 @@ async def test_required_creator_enqueue_response_loss_preserves_adopted_private_
         completed_at=None,
     )
     db = AsyncMock()
-    db.get.side_effect = [session, job, receipt]
+    db.get.side_effect = [job, session, receipt]
     stored_job_plan = copy.deepcopy(job.assembly_plan)
     stored_job_state = (job.status, job.started_at)
     stored_session_state = copy.deepcopy(session.__dict__)
