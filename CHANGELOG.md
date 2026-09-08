@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Preference controls remain reliable during errors and overlapping updates.** Failed clears keep their confirmation open, failed toggles do not overwrite newer preferences, rule enforcement survives text edits, and keyboard focus returns to a visible control after a row changes.
 
+## [0.71.2.0] — 2026-09-08
+
+### Fixed
+- **Narrated edits stay editable when they contain many captions.** The editor now loads and saves the complete generated caption lane, preserves caption timing, and restores deleted captions. Ordinary text edits retain their existing limit, and each Save accepts at most 50 newly authored text elements.
+
 ## [0.71.1.0] — 2026-09-07
 
 ### Fixed

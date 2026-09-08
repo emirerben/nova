@@ -5,6 +5,19 @@ export const TEXT_ELEMENT_MAX_CHARS = 500;
  * of reducer updates or DOM overlays on the editor's main thread. */
 export const TEXT_ELEMENTS_API_MAX = 50;
 
+/** A large generated-caption lane must not consume the ordinary composition
+ * allowance, nor let one paste dispatch thousands of new text elements. */
+export function remainingTextCompositionCapacity(
+  existingCount: number,
+  totalLimit = TEXT_ELEMENTS_API_MAX,
+  newElementCount = 0,
+): number {
+  const limit = Number.isFinite(totalLimit) && totalLimit >= 0
+    ? Math.floor(totalLimit)
+    : TEXT_ELEMENTS_API_MAX;
+  return Math.max(0, Math.min(TEXT_ELEMENTS_API_MAX - newElementCount, limit - existingCount));
+}
+
 function normalizeCompositionText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }

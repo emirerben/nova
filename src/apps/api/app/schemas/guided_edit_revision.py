@@ -21,6 +21,11 @@ from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS, MOTION_FPS
 
 MAX_GUIDED_EDITOR_SEGMENTS = EDITOR_MAX_TIMELINE_SLOTS
 MAX_GUIDED_EDITOR_DURATION_S = 60.0
+# Guided narration uses word-level caption elements in the same editable lane
+# as titles and participant labels. The ordinary 50 authored-element cap cannot
+# represent those already-rendered stories. Include the planner's 2,000-word
+# stream plus grounded labels, story titles, and authored text in a bounded lane.
+MAX_GUIDED_EDITOR_TEXT_ELEMENTS = 5000
 MIN_GUIDED_EDITOR_SEGMENT_S = 0.1
 GUIDED_EDITOR_FPS = MOTION_FPS
 GUIDED_EDITOR_FRAME_S = 1.0 / GUIDED_EDITOR_FPS
@@ -40,7 +45,10 @@ GUIDED_EDITOR_LANES = (
     "custom_effects",
 )
 GUIDED_EDITOR_RECORD_ID_MAX_LENGTH = 100
-MAX_GUIDED_EDITOR_TOMBSTONES = 200
+# A full text-lane deletion must remain restorable, including a long generated
+# caption lane. Non-text lanes retain their existing combined history budget.
+MAX_GUIDED_EDITOR_OTHER_TOMBSTONES = 200
+MAX_GUIDED_EDITOR_TOMBSTONES = MAX_GUIDED_EDITOR_TEXT_ELEMENTS + MAX_GUIDED_EDITOR_OTHER_TOMBSTONES
 
 
 class GuidedEditorSource(BaseModel):
@@ -132,7 +140,9 @@ class GuidedEditorRevision(BaseModel):
     sources: list[GuidedEditorSource] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
     segments: list[GuidedEditorSegment] = Field(min_length=1, max_length=MAX_GUIDED_EDITOR_SEGMENTS)
     audio: GuidedEditorAudio = Field(default_factory=GuidedEditorAudio)
-    text_elements: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
+    text_elements: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=MAX_GUIDED_EDITOR_TEXT_ELEMENTS
+    )
     sound_effects: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     media_overlays: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     visual_blocks: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
@@ -146,6 +156,11 @@ class GuidedEditorRevision(BaseModel):
     @model_validator(mode="after")
     def validate_revision(self) -> GuidedEditorRevision:
         validate_guided_revision_lane_identities(self)
+        text_tombstones = sum(row.get("lane") == "text_elements" for row in self.tombstones)
+        if text_tombstones > MAX_GUIDED_EDITOR_TEXT_ELEMENTS:
+            raise ValueError("guided editor text history exceeds its element budget")
+        if len(self.tombstones) - text_tombstones > MAX_GUIDED_EDITOR_OTHER_TOMBSTONES:
+            raise ValueError("guided editor non-text history exceeds 200 records")
         source_ids = {source.media_id for source in self.sources}
         if len(source_ids) != len(self.sources):
             raise ValueError("guided editor source IDs must be unique")

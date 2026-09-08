@@ -63,6 +63,17 @@ the recording or dropping required sources. The compiler validates recovery
 before approval. `tests/services/test_narrated_fallback.py` covers this boundary,
 including the 39-source shape and a selected-media subset.
 
+Guided narration stores word captions and grounded labels in the editable text
+lane. Its revision and Save cap is 5,000 total elements, allowing the planner's
+2,000-word stream plus titles and labels; the generic authored-text cap remains
+50. V2 Save accepts at most 50 new IDs while existing and restored IDs retain
+their identity. Text deletion history has its own 5,000-record budget; other
+lanes retain their combined 200-record budget. The browser keeps guided
+`caption_cue` projections in `text_elements` instead of treating them as a
+duplicate of `caption_cues`. Guards: the narrated editor open/Save regression in
+`tests/routes/test_editor_commit.py` and the guided caption round-trip in
+`src/__tests__/plan/items/editor-bars-lyrics.test.ts`.
+
 ## Rollout
 
 Deploy workers that consume `creator-fidelity-v1` before enabling the capability
