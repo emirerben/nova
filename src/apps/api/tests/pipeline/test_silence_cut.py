@@ -571,24 +571,58 @@ class TestOverBudgetClamp:
     explicit-consent budget instead of tripping the auto-path bailout — the
     2026-08-25/31 prod incidents (three deterministic `unsafe_plan` render
     failures on one filler-heavy talking-to-camera clip) are the regression
-    this class pins. Default policy stays byte-identical (TestSafetyRails)."""
+    this class pins. Since 2026-09-08 that budget is bound ONLY by
+    MIN_OUTPUT_S: a creator who turned cleanup on consented past a
+    fraction-of-runtime rail, and the old 0.55 cap declined cuts on exactly
+    the filler-heavy clips the feature targets. Default policy stays
+    byte-identical (TestSafetyRails)."""
 
     def test_over_budget_clamps_instead_of_bailing(self):
         # Same geometry as test_max_removal_exceeded_bailout: one 8.25s pause
-        # removal on a 10s clip. Clamp trims it symmetrically to the 5.499s
-        # budget (5.5 − slack) instead of returning the no-op bailout plan.
+        # removal on a 10s clip. Clamp trims it symmetrically to the budget
+        # instead of returning the no-op bailout plan.
         words = [w("a", 0.5, 1.0), w("b", 9.5, 9.9)]
         plan = build_cut_plan(words, [(1.0, 9.5)], 10.0, over_budget_policy="clamp")
 
+        budget = clamp_budget(10.0)
+        assert budget == pytest.approx(10.0 - MIN_OUTPUT_S - silence_cut.CLAMP_BUDGET_SLACK_S)
         assert plan.bailout_reason is None
         assert plan.clamped is True
-        assert plan.clamp_budget_s == pytest.approx(clamp_budget(10.0))
+        assert plan.clamp_budget_s == pytest.approx(budget)
         assert plan.proposed_removed_s == pytest.approx(8.25)
-        assert plan.time_saved_s == pytest.approx(clamp_budget(10.0))
-        assert_spans([(r.start_s, r.end_s) for r in plan.removed], [(2.5005, 7.9995)])
-        assert_spans(plan.keep_segments, [(0.0, 2.5005), (7.9995, 10.0)])
+        assert plan.time_saved_s == pytest.approx(budget)
+        # One removal, trimmed symmetrically about its own centre to the budget.
+        (removal,) = plan.removed
+        assert (removal.start_s + removal.end_s) / 2.0 == pytest.approx(5.25)
+        assert removal.end_s - removal.start_s == pytest.approx(budget)
         assert_partition(plan, 10.0)
         assert 10.0 - plan.time_saved_s >= MIN_OUTPUT_S
+
+    def test_operator_switch_restores_a_fraction_cap(self):
+        # The 0.55 rail is gone by default but reachable through
+        # settings.speech_cleanup_max_removal_frac_required, which the task and
+        # render layers pass down verbatim. Rollback must reproduce the old
+        # budget exactly.
+        words = [w("a", 0.5, 1.0), w("b", 9.5, 9.9)]
+        plan = build_cut_plan(
+            words,
+            [(1.0, 9.5)],
+            10.0,
+            over_budget_policy="clamp",
+            max_removal_frac_required=0.55,
+        )
+        assert plan.clamp_budget_s == pytest.approx(5.5 - silence_cut.CLAMP_BUDGET_SLACK_S)
+        assert plan.time_saved_s == pytest.approx(5.499)
+        assert_spans([(r.start_s, r.end_s) for r in plan.removed], [(2.5005, 7.9995)])
+
+    def test_min_output_is_the_only_remaining_rail(self):
+        # A clip that is almost entirely dead air keeps exactly MIN_OUTPUT_S,
+        # never less -- the floor the fraction cap used to hide behind.
+        words = [w("a", 0.2, 0.5), w("b", 19.6, 19.9)]
+        plan = build_cut_plan(words, [(0.6, 19.5)], 20.0, over_budget_policy="clamp")
+        assert plan.clamped is True
+        assert 20.0 - plan.time_saved_s == pytest.approx(MIN_OUTPUT_S, abs=1e-3)
+        assert 20.0 - plan.time_saved_s >= MIN_OUTPUT_S
 
     def test_bailout_policy_is_the_default_and_unchanged(self):
         words = [w("a", 0.5, 1.0), w("b", 9.5, 9.9)]
@@ -705,12 +739,27 @@ class TestOverBudgetClamp:
         )
 
         assert plan.bailout_reason is None
-        assert plan.clamped is True
         assert any(r.start_s <= 18.0 + 1e-6 and r.end_s >= 18.5 - 1e-6 for r in plan.removed), (
             plan.removed
         )
         assert plan.time_saved_s <= clamp_budget(20.0) + 1e-6
         assert_partition(plan, 20.0)
+
+        # Under a restored fraction cap the same set genuinely competes for
+        # budget, and the forced cut still comes through whole.
+        capped = build_cut_plan(
+            words,
+            silences,
+            20.0,
+            forced_removals=[{"start_s": 18.0, "end_s": 18.5, "reason": "retake_review"}],
+            over_budget_policy="clamp",
+            max_removal_frac_required=0.55,
+        )
+        assert capped.clamped is True
+        assert any(r.start_s <= 18.0 + 1e-6 and r.end_s >= 18.5 - 1e-6 for r in capped.removed), (
+            capped.removed
+        )
+        assert_partition(capped, 20.0)
 
     def test_protected_forced_overload_still_bails_output_too_short(self):
         # The one rail the clamp deliberately cannot lift: forced/manual
@@ -889,13 +938,26 @@ class TestOverBudgetClamp:
         default_plan = build_cut_plan(words, silences, 10.0)
         assert default_plan.bailout_reason == BAILOUT_MAX_REMOVAL
 
+        # Under explicit consent the whole 6.425s proposal now lands: it fits
+        # under the MIN_OUTPUT_S-bound budget, so nothing is clamped away and
+        # the incident clip gets the cleanup it was denied twice.
         clamped_plan = build_cut_plan(words, silences, 10.0, over_budget_policy="clamp")
         assert clamped_plan.bailout_reason is None
-        assert clamped_plan.clamped is True
+        assert clamped_plan.clamped is False
         assert clamped_plan.removed  # a real cut set survives
+        assert clamped_plan.time_saved_s == pytest.approx(6.425)
         assert clamped_plan.time_saved_s <= clamp_budget(10.0) + 1e-6
         assert 10.0 - clamped_plan.time_saved_s >= MIN_OUTPUT_S
         assert_partition(clamped_plan, 10.0)
+
+        # The old 0.55 rail is what used to trim this clip; the operator switch
+        # reproduces that shape, one second of dead air and all.
+        capped_plan = build_cut_plan(
+            words, silences, 10.0, over_budget_policy="clamp", max_removal_frac_required=0.55
+        )
+        assert capped_plan.clamped is True
+        assert capped_plan.time_saved_s == pytest.approx(5.499)
+        assert capped_plan.time_saved_s < clamped_plan.time_saved_s
 
     def test_clamp_metadata_gated_out_of_legacy_summary_and_payload(self):
         # Un-clamped plans must serialize byte-identically to the pre-clamp

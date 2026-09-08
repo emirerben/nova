@@ -7,6 +7,7 @@ import math
 import random
 import shutil
 import subprocess
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,9 +20,18 @@ from app.pipeline.reframe import reframe_and_export
 from app.pipeline.silence_cut import (
     ACOUSTIC_GAP_MAX_S,
     ACOUSTIC_GAP_MIN_S,
+    MAX_REMOVALS,
     MIN_CUT_S,
+    MIN_OUTPUT_S,
+    TOKEN_PIECE_MIN_S,
+    TOKEN_SILENCE_MIN_OVERLAP_S,
+    TOKEN_SILENCE_MIN_S,
     AtomicDisposition,
     Removal,
+    _normalize_silences,
+    _normalize_words,
+    _reconcile_words_with_silence,
+    _subtract_intervals,
     build_cut_plan,
     build_cut_plan_comparison,
     plan_event_payload,
@@ -206,8 +216,15 @@ class TestMixedGapIncidentGolden:
             ]
             assert not any(island_lo < boundary < island_hi for boundary in boundaries)
 
-        assert candidate.time_saved_s <= 5.499 + 1e-9
-        assert DURATION_S - candidate.time_saved_s >= 3.0
+        # Bound against the plan's OWN consent budget, never a hardcoded
+        # fraction: the 0.55 rail that produced 5.499 here is gone (2026-09-08),
+        # so a literal would silently re-pin a cap the engine no longer has.
+        assert candidate.clamp_budget_s == pytest.approx(
+            DURATION_S - MIN_OUTPUT_S - silence_cut.CLAMP_BUDGET_SLACK_S
+        )
+        assert candidate.time_saved_s <= candidate.clamp_budget_s + 1e-9
+        assert candidate.clamped is False  # the incident set fits without trimming
+        assert DURATION_S - candidate.time_saved_s >= MIN_OUTPUT_S
         kept_s = sum(hi - lo for lo, hi in candidate.keep_segments)
         removed_s = sum(removal.end_s - removal.start_s for removal in candidate.removed)
         assert kept_s + removed_s == pytest.approx(DURATION_S)
@@ -866,3 +883,335 @@ def test_seeded_v2_layouts_preserve_partition_budget_and_atomicity():
             else:
                 assert covered == pytest.approx(0.0)
             assert len({record.disposition for record in records}) == 1
+
+
+# ---------------------------------------------------------------------------------
+# Rule 0 property test: silence spans that start/end INSIDE tokens or span whole
+# tokens (whisper-1 timestamps are not speech truth; prod 2026-09-08).
+# ---------------------------------------------------------------------------------
+
+_RULE0_FILLER_TEXTS = ["um", "Uh,", "ııı,", "Iıı,", "eee", "hmm"]
+_RULE0_REAL_TEXTS = ["hello", "world", "deneme", "video", "şimdi", "test."]
+_RULE0_SEEDS = 200
+_RULE0_EPS = silence_cut._EPS
+_RULE0_ALLOWED_STATUSES = {"ready", "validation_failed"}
+
+
+def _rule0_layout(rng: random.Random) -> tuple[float, list[dict], list[tuple[float, float]]]:
+    """Whisper-like tokens plus silencedetect spans anchored INSIDE those tokens.
+
+    The seeded generator above never places silence inside or across a word
+    span, so rule 0 is unexercised there.  Here every token draws one of:
+    an interior hole (split), a silence ending inside it (head trim), a span
+    from inside it to inside a later token (whole tokens swallowed), a long
+    silence around the whole token (ghost: never dropped), or a SHORT interior
+    silence (< TOKEN_SILENCE_MIN_S: must be ignored).  Ordinary inter-word gap
+    silences, soundful islands, lead/trail silence, touching tokens and sliver
+    tokens are mixed in so every other rule runs on the reconciled list.
+    """
+    duration = rng.uniform(5.0, 40.0)
+    words: list[dict] = []
+    cursor = rng.uniform(0.0, 1.5)
+    while cursor < duration - 0.3 and len(words) < 48:
+        text = (
+            rng.choice(_RULE0_FILLER_TEXTS) if rng.random() < 0.3 else rng.choice(_RULE0_REAL_TEXTS)
+        )
+        roll = rng.random()
+        if roll < 0.35:
+            length = rng.uniform(0.05, 0.6)  # ordinary token
+        elif roll < 0.8:
+            length = rng.uniform(0.7, 2.6)  # stretched token (can hold a hole)
+        else:
+            length = rng.uniform(0.0, 0.05)  # sliver token
+        end = min(duration, cursor + length)
+        words.append(w(text, cursor, end))
+        gap_roll = rng.random()
+        if gap_roll < 0.2:
+            gap = 0.0  # touching tokens
+        elif gap_roll < 0.6:
+            gap = rng.uniform(0.01, 0.5)
+        else:
+            gap = rng.uniform(0.5, 2.5)
+        cursor = end + gap
+
+    silences: list[tuple[float, float]] = []
+    count = len(words)
+    for index, word in enumerate(words):
+        word_lo, word_hi = word["start_s"], word["end_s"]
+        roll = rng.random()
+        if roll < 0.3:
+            # Interior hole: starts inside, ends inside or past the token end.
+            lo = rng.uniform(word_lo, word_hi)
+            hi = lo + rng.uniform(TOKEN_SILENCE_MIN_S - 0.1, 2.5)
+            if rng.random() < 0.6:
+                hi = min(hi, word_hi - rng.uniform(0.0, 0.3))
+            if hi > lo:
+                silences.append((lo, min(duration, hi)))
+        elif roll < 0.5:
+            # Head: starts before the token (gap or previous token), ends inside.
+            hi = rng.uniform(word_lo, word_hi)
+            lo = hi - rng.uniform(TOKEN_SILENCE_MIN_S - 0.1, 2.5)
+            silences.append((max(0.0, lo), hi))
+        elif roll < 0.65:
+            # Whole tokens swallowed: from inside token i to inside token j > i.
+            later = min(count - 1, index + rng.randint(1, 3))
+            lo = rng.uniform(word_lo, word_hi)
+            later_lo, later_hi = words[later]["start_s"], words[later]["end_s"]
+            if rng.random() < 0.7:
+                hi = rng.uniform(later_lo, later_hi)
+            else:
+                hi = later_hi + rng.uniform(0.0, 0.5)
+            if hi > lo:
+                silences.append((lo, min(duration, hi)))
+        elif roll < 0.75:
+            # Ghost: the whole token sits inside one long silence.
+            lo = word_lo - rng.uniform(0.0, 1.0)
+            hi = word_hi + rng.uniform(0.0, 1.0)
+            if hi - lo < TOKEN_SILENCE_MIN_S:
+                hi = lo + TOKEN_SILENCE_MIN_S + rng.uniform(0.0, 0.5)
+            silences.append((max(0.0, lo), min(duration, hi)))
+        elif roll < 0.85:
+            # Short interior silence: below TOKEN_SILENCE_MIN_S, rule 0 must skip it.
+            lo = rng.uniform(word_lo, word_hi)
+            hi = lo + rng.uniform(0.1, TOKEN_SILENCE_MIN_S - 0.01)
+            silences.append((lo, min(duration, hi)))
+        # Ordinary gap silence after the token, sometimes with a soundful island.
+        next_lo = words[index + 1]["start_s"] if index + 1 < count else duration
+        gap = next_lo - word_hi
+        if gap > 0.2 and rng.random() < 0.6:
+            gap_lo = word_hi + rng.uniform(0.0, min(0.3, gap / 3))
+            gap_hi = next_lo - rng.uniform(0.0, min(0.3, gap / 3))
+            if rng.random() < 0.5 and gap_hi - gap_lo > 0.6:
+                island = rng.uniform(ACOUSTIC_GAP_MIN_S, min(0.45, (gap_hi - gap_lo) / 2))
+                mid = (gap_lo + gap_hi) / 2
+                silences.append((gap_lo, mid - island / 2))
+                silences.append((mid + island / 2, gap_hi))
+            elif gap_hi > gap_lo:
+                silences.append((gap_lo, gap_hi))
+    if rng.random() < 0.7 and words[0]["start_s"] > 0.05:
+        silences.append((0.0, rng.uniform(0.0, words[0]["start_s"])))
+    if rng.random() < 0.7 and words[-1]["end_s"] < duration - 0.05:
+        silences.append((rng.uniform(words[-1]["end_s"], duration), duration))
+    rng.shuffle(silences)  # normalization must not depend on input order
+    return duration, words, silences
+
+
+def _assert_rule0_candidate_invariants(
+    candidate,
+    *,
+    duration: float,
+    words: list[dict],
+    silences: list[tuple[float, float]],
+) -> Counter:
+    """Every invariant one READY V2 candidate must satisfy; returns coverage."""
+    coverage: Counter = Counter()
+    diagnostics = candidate.diagnostics
+    assert diagnostics is not None
+    cut_words = _normalize_words(words)
+    normalized_silences = _normalize_silences(silences, duration)
+    reconciled, adjustments = _reconcile_words_with_silence(cut_words, normalized_silences)
+    long_spans = [
+        (lo, hi) for lo, hi in normalized_silences if hi - lo >= TOKEN_SILENCE_MIN_S - _RULE0_EPS
+    ]
+
+    # Diagnostics carry exactly the rule-0 result the plan was built on.
+    assert diagnostics.token_adjustments_total == len(adjustments)
+    assert diagnostics.token_adjustments == tuple(
+        adjustments[: silence_cut._MAX_DIAGNOSTIC_TOKEN_ADJUSTMENTS]
+    )
+    assert diagnostics.token_adjustments_omitted == max(
+        0, len(adjustments) - silence_cut._MAX_DIAGNOSTIC_TOKEN_ADJUSTMENTS
+    )
+    assert diagnostics.token_carved_s == pytest.approx(
+        sum(item.carved_s for item in adjustments), abs=1e-9
+    )
+
+    # Token count only grows: no token is ever dropped, order is kept, and
+    # every original token survives as at least one remnant of itself.
+    assert len(reconciled) == len(cut_words) + sum(len(item.pieces) - 1 for item in adjustments)
+    assert len(reconciled) >= len(cut_words)
+    assert [(item.start, item.end) for item in reconciled] == sorted(
+        (item.start, item.end) for item in reconciled
+    )
+    for original in cut_words:
+        assert any(
+            piece.text == original.text
+            and piece.start >= original.start - _RULE0_EPS
+            and piece.end <= original.end + _RULE0_EPS
+            for piece in reconciled
+        ), original
+        if any(
+            lo <= original.start + _RULE0_EPS and original.end <= hi + _RULE0_EPS
+            for lo, hi in long_spans
+        ):
+            coverage["ghost_token"] += 1
+            assert original in reconciled, original
+
+    for item in adjustments:
+        coverage[item.kind] += 1
+        assert item.pieces, item
+        assert all(hi - lo >= TOKEN_PIECE_MIN_S - _RULE0_EPS for lo, hi in item.pieces), item
+        assert all(
+            lo >= item.original_start_s - _RULE0_EPS and hi <= item.original_end_s + _RULE0_EPS
+            for lo, hi in item.pieces
+        ), item
+        assert list(item.pieces) == sorted(item.pieces)
+        assert all(nxt[0] > prev[1] + _RULE0_EPS for prev, nxt in zip(item.pieces, item.pieces[1:]))
+        expected_carved = (item.original_end_s - item.original_start_s) - sum(
+            hi - lo for lo, hi in item.pieces
+        )
+        assert item.carved_s == pytest.approx(expected_carved, abs=1e-9)
+        assert item.carved_s >= TOKEN_SILENCE_MIN_OVERLAP_S - 1e-6, item
+        if len(item.pieces) > 1:
+            assert item.kind == "split", item
+        else:
+            # A single piece means the carve was still interior and the sliver
+            # on one side fell under TOKEN_PIECE_MIN_S; the kind names the end
+            # that survived. Both ends trimmed is impossible: rule 0 performs
+            # exactly one interior carve.
+            ((piece_lo, piece_hi),) = item.pieces
+            trimmed_head = piece_lo > item.original_start_s + _RULE0_EPS
+            trimmed_tail = piece_hi < item.original_end_s - _RULE0_EPS
+            assert trimmed_head != trimmed_tail, item
+            assert item.kind == ("trim_head" if trimmed_head else "trim_tail"), item
+        # Every carved region lies inside a silence span: it is a union of
+        # >= TOKEN_SILENCE_MIN_OVERLAP_S overlaps with >= TOKEN_SILENCE_MIN_S
+        # spans, plus only absorbed voiced remnants shorter than
+        # TOKEN_PIECE_MIN_S.
+        carved_regions = _subtract_intervals(
+            item.original_start_s, item.original_end_s, item.pieces
+        )
+        assert carved_regions, item
+        for region_lo, region_hi in carved_regions:
+            soundful = _subtract_intervals(region_lo, region_hi, normalized_silences)
+            assert all(hi - lo < TOKEN_PIECE_MIN_S for lo, hi in soundful), (item, soundful)
+            assert any(
+                min(region_hi, span_hi) - max(region_lo, span_lo)
+                >= TOKEN_SILENCE_MIN_OVERLAP_S - 1e-6
+                for span_lo, span_hi in long_spans
+            ), (item, (region_lo, region_hi))
+
+    # Plan geometry: exact partition, time_saved, ordering, floors, budget.
+    if candidate.bailout_reason is not None:
+        assert candidate.removed == []
+        assert candidate.keep_segments == [(0.0, duration)]
+    removed = candidate.removed
+    assert all(nxt.start_s > prev.end_s + _RULE0_EPS for prev, nxt in zip(removed, removed[1:]))
+    assert all(removal.end_s - removal.start_s >= MIN_CUT_S - _RULE0_EPS for removal in removed)
+    assert all(
+        removal.start_s >= -_RULE0_EPS and removal.end_s <= duration + _RULE0_EPS
+        for removal in removed
+    )
+    assert len(removed) <= MAX_REMOVALS
+    cursor = 0.0
+    for _kind, lo, hi in sorted(
+        [
+            *(("keep", lo, hi) for lo, hi in candidate.keep_segments),
+            *(("cut", removal.start_s, removal.end_s) for removal in removed),
+        ],
+        key=lambda entry: entry[1],
+    ):
+        assert abs(lo - cursor) < 1e-6
+        assert hi > lo
+        cursor = hi
+    assert abs(cursor - duration) < 1e-6
+    total = sum(removal.end_s - removal.start_s for removal in removed)
+    assert total == pytest.approx(candidate.time_saved_s, abs=1e-7)
+    assert candidate.clamp_budget_s is not None
+    assert total <= candidate.clamp_budget_s + 1e-8
+    if removed:
+        coverage["seeds_with_removals"] += 1
+
+    # No removal overlaps a RECONCILED word except inside a selected
+    # filler/retake group (the validator contract, recomputed independently).
+    assert diagnostics.atomic_dispositions_omitted == 0, diagnostics.atomic_dispositions_total
+    by_group: dict[tuple[float, float], list[AtomicDisposition]] = {}
+    for record in diagnostics.atomic_dispositions:
+        by_group.setdefault((record.group_start_s, record.group_end_s), []).append(record)
+    allowed_word_spans: list[tuple[float, float]] = []
+    for (group_lo, group_hi), records in by_group.items():
+        assert len({record.disposition for record in records}) == 1
+        if records[0].disposition in {"selected_full", "promoted_protected"} and any(
+            record.atom_kind in {"filler_lexical", "retake"} for record in records
+        ):
+            allowed_word_spans.append((group_lo, group_hi))
+    for removal in removed:
+        for word in reconciled:
+            if min(removal.end_s, word.end) - max(removal.start_s, word.start) <= _RULE0_EPS:
+                continue
+            assert any(
+                word.start >= allowed_lo - _RULE0_EPS and word.end <= allowed_hi + _RULE0_EPS
+                for allowed_lo, allowed_hi in allowed_word_spans
+            ), (removal, word)
+        # A carve is FFmpeg silence by construction: whatever is cut INSIDE an
+        # original token outside those groups is silence up to absorbed slivers.
+        for original in cut_words:
+            inside_lo = max(removal.start_s, original.start)
+            inside_hi = min(removal.end_s, original.end)
+            if inside_hi - inside_lo <= _RULE0_EPS:
+                continue
+            coverage["removals_through_carves"] += 1
+            for lo, hi in _subtract_intervals(inside_lo, inside_hi, allowed_word_spans):
+                for sound_lo, sound_hi in _subtract_intervals(lo, hi, normalized_silences):
+                    assert sound_hi - sound_lo < TOKEN_PIECE_MIN_S, (removal, original)
+
+    # Remap on the ORIGINAL tokens: a cut through a carve shrinks the token,
+    # never inverts it, and start order survives.
+    remapped = remap_words(words, candidate)
+    assert all(entry["end_s"] >= entry["start_s"] - _RULE0_EPS for entry in remapped)
+    starts = [entry["start_s"] for entry in remapped]
+    assert starts == sorted(starts)
+    return coverage
+
+
+def test_seeded_silence_inside_token_layouts_hold_rule0_invariants():
+    coverage: Counter = Counter()
+    statuses: Counter = Counter()
+    for seed in range(_RULE0_SEEDS):
+        rng = random.Random(seed)
+        duration, words, silences = _rule0_layout(rng)
+        layout = f"seed={seed} duration={duration!r} words={words!r} silences={silences!r}"
+
+        comparison = build_cut_plan_comparison(
+            words, silences, duration, over_budget_policy="clamp"
+        )
+        statuses[comparison.candidate_status] += 1
+        assert comparison.candidate_status in _RULE0_ALLOWED_STATUSES, (
+            comparison.candidate_status,
+            comparison.candidate_error_class,
+            layout,
+        )
+        # V1 is untouched by rule 0: the comparison baseline IS the default
+        # entry point's plan, byte for byte.
+        assert comparison.baseline == build_cut_plan(
+            words, silences, duration, over_budget_policy="clamp"
+        ), layout
+        assert comparison.baseline.version == 1
+        assert comparison.baseline.diagnostics is None
+        if comparison.candidate_status != "ready":
+            continue
+        candidate = comparison.candidate
+        assert candidate is not None
+        assert candidate.version == 2
+        try:
+            coverage.update(
+                _assert_rule0_candidate_invariants(
+                    candidate, duration=duration, words=words, silences=silences
+                )
+            )
+        except AssertionError as exc:
+            raise AssertionError(f"{layout}\n{exc}") from exc
+
+    # The corpus must actually exercise rule 0, or the invariants are vacuous.
+    assert statuses["ready"] >= _RULE0_SEEDS // 2, statuses
+    # Rule 0 only ever performs a dominated interior carve, so "split" (and the
+    # single-sliver variants of it) are the only kinds it can produce.
+    # "trim_both" would mean two carves in one token, which is refused.
+    # ghost_token counts tokens lying wholly inside silence: the loop above
+    # already asserts each of those is returned untouched, and the generator
+    # must keep producing them.
+    assert coverage["split"] > 0, coverage
+    assert coverage["ghost_token"] > 0, coverage
+    assert coverage["trim_both"] == 0, coverage
+    assert coverage["seeds_with_removals"] >= _RULE0_SEEDS // 2, coverage
+    assert coverage["removals_through_carves"] > 0, coverage
