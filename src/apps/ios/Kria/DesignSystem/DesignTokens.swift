@@ -1,12 +1,16 @@
 import SwiftUI
 
 enum KriaColor {
-    static let paper = Color(red: 0.985, green: 0.982, blue: 0.965)
-    static let ink = Color(red: 0.075, green: 0.075, blue: 0.07)
-    static let zinc = Color(red: 0.42, green: 0.42, blue: 0.40)
-    static let line = Color.black.opacity(0.12)
-    static let lime = Color(red: 0.77, green: 0.95, blue: 0.18)
-    static let limeText = Color(red: 0.30, green: 0.48, blue: 0.02)
+    static let paper = Color.white
+    static let ink = Color(red: 0.094, green: 0.094, blue: 0.106)
+    static let mutedInk = Color(red: 0.39, green: 0.39, blue: 0.42)
+    static let zinc = Color(red: 0.443, green: 0.443, blue: 0.478)
+    static let line = Color(red: 0.894, green: 0.894, blue: 0.906)
+    static let border = Color(red: 0.831, green: 0.831, blue: 0.847)
+    static let softZinc = Color(red: 0.957, green: 0.957, blue: 0.965)
+    static let lime = Color(red: 0.518, green: 0.80, blue: 0.086)
+    static let limeText = Color(red: 0.247, green: 0.384, blue: 0.071)
+    static let limeSoft = Color(red: 0.925, green: 0.988, blue: 0.796)
 }
 
 enum KriaFont {

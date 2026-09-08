@@ -97,6 +97,45 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(delta.threadRevision, 7)
     }
 
+    func testFormatSelectionUsesTheCreationActionContract() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/creation-threads/\(PreviewFixtures.projectID.uuidString)/actions")
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any])
+            XCTAssertEqual(object["action"] as? String, "select_format")
+            XCTAssertEqual(object["expected_revision"] as? Int, 7)
+            let payload = try XCTUnwrap(object["payload"] as? [String: Any])
+            XCTAssertEqual(payload["format"] as? String, "talking_to_camera")
+            return (200, Self.threadResponse(jobStatus: nil, state: ["format": "talking_to_camera", "edit_format": "subtitled"]))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let thread = try await api.applyCreationAction(
+            threadID: PreviewFixtures.projectID,
+            action: "select_format",
+            payload: ["format": .string("talking_to_camera")],
+            expectedRevision: 7
+        )
+        XCTAssertEqual(thread.state?["edit_format"]?.stringValue, "subtitled")
+    }
+
+    func testTranscriptProjectionKeepsConversationAndHidesAuditEvents() {
+        let user = ThreadEvent(
+            id: "user-1", sequence: 1, revision: 1, role: "user", eventType: "user_message",
+            content: "Keep the opening quick", payload: nil, createdAt: .now
+        )
+        let assistant = ThreadEvent(
+            id: "assistant-1", sequence: 2, revision: 2, role: "assistant", eventType: "assistant_question",
+            content: "Should it feel playful or polished?", payload: nil, createdAt: .now
+        )
+        let audit = ThreadEvent(
+            id: "audit-1", sequence: 3, revision: 3, role: "system", eventType: "turn_started",
+            content: "internal lifecycle detail", payload: nil, createdAt: .now
+        )
+
+        XCTAssertEqual(ChatTranscriptMessage.from(event: user)?.role, .user)
+        XCTAssertEqual(ChatTranscriptMessage.from(event: assistant)?.role, .assistant)
+        XCTAssertNil(ChatTranscriptMessage.from(event: audit))
+    }
+
     func testDraftWriteSendsServerETagAndRevision() async throws {
         let store = MemoryTokenStore()
         URLProtocolStub.handler = { request in
@@ -288,6 +327,45 @@ final class KriaTests: XCTestCase {
         XCTAssertTrue(url.query?.contains("Expires=123") == true)
     }
 
+    func testEditorVariantLoadsAuthoritativeStatusProjection() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/generative-jobs/\(PreviewFixtures.projectID.uuidString)/status")
+            return (200, Data(#"{"job_id":"job","status":"variants_ready","variants":[{"variant_id":"other"},{"variant_id":"initial","render_generation_id":"generation-live","output_url":"https://cdn.example.test/live.mp4"}]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let variant = try await api.editorVariant(jobID: PreviewFixtures.projectID, variantID: "initial")
+        XCTAssertEqual(variant["render_generation_id"], .string("generation-live"))
+    }
+
+    func testOpenLibraryJobUsesIdempotentEditorPromotionRoute() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/me/jobs/\(PreviewFixtures.projectID.uuidString)/open-in-editor")
+            return (200, Data(#"{"plan_item_id":"item-7","variant_id":"initial"}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let receipt = try await api.openJobInEditor(jobID: PreviewFixtures.projectID)
+        XCTAssertEqual(receipt, OpenInEditorResponse(planItemID: "item-7", variantID: "initial"))
+    }
+
+    func testEditorCommitUsesAtomicRendererContract() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/plan-items/item-1/variants/initial/editor-commit")
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any])
+            XCTAssertEqual(object["base_generation"] as? String, "generation-1")
+            XCTAssertEqual((object["caption_meta"] as? [String: Any])?["style"] as? String, "sentence")
+            return (200, Data(#"{"ok":true,"generation":"generation-2","sections":{"text_elements":false,"caption_meta":true,"timeline":false,"mix":false},"expected_duration_s":12.3}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let response = try await api.editorCommit(
+            itemID: "item-1",
+            variantID: "initial",
+            request: EditorCommitRequest(captionMeta: ["enabled": .bool(true), "style": .string("sentence")], baseGeneration: "generation-1")
+        )
+        XCTAssertEqual(response.generation, "generation-2")
+        XCTAssertEqual(response.expectedDuration, 12.3)
+    }
+
     @MainActor func testProjectCacheCompareAndSetRejectsStaleRevision() throws {
         let container = try ModelContainer(for: CachedProject.self, CachedAsset.self, CachedUploadJob.self, CachedReceipt.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let repository = CacheRepository(context: ModelContext(container))
@@ -322,10 +400,12 @@ final class KriaTests: XCTestCase {
         """.utf8)
     }
 
-    private static func threadResponse(jobStatus: String?) -> Data {
+    private static func threadResponse(jobStatus: String?, state: [String: String] = [:]) -> Data {
         let activeJob = jobStatus == nil ? "null" : #""74A559F6-28D9-4E0D-9EB6-71CD09A958DE""#
         let job = jobStatus.map { #"{"id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE","status":"\#($0)"}"# } ?? "null"
-        return Data(#"{"id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B","title":"Project","status":"active","revision":8,"runtime_version":2,"active_job_id":\#(activeJob),"job":\#(job),"updated_at":"2026-09-07T12:00:00Z"}"#.utf8)
+        let stateData = try! JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+        let stateJSON = String(decoding: stateData, as: UTF8.self)
+        return Data(#"{"id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B","title":"Project","status":"active","revision":8,"runtime_version":2,"active_job_id":\#(activeJob),"job":\#(job),"state":\#(stateJSON),"updated_at":"2026-09-07T12:00:00Z"}"#.utf8)
     }
 
     private static func bodyData(_ request: URLRequest) -> Data {

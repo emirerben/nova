@@ -51,7 +51,7 @@ struct PocketEditorView: View {
     @State private var selectedTool: EditorTool = .timeline
     init(project: ProjectSummary) {
         self.project = project
-        let empty = EditorDraft(projectID: project.id, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "clean"), music: nil, revision: 0)
+        let empty = EditorDraft(projectID: project.id, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0)
         _session = StateObject(wrappedValue: EditorSession(draft: empty, operations: LocalEditorOperations()))
     }
     var body: some View {
@@ -191,6 +191,7 @@ private struct TrimClipsView: View {
 
 struct ResultsView: View {
     let project: ProjectSummary
+    let libraryJobID: UUID?
     @EnvironmentObject private var model: AppModel
     @State private var showShare = false
     @State private var playbackURL: URL?
@@ -199,6 +200,13 @@ struct ResultsView: View {
     @State private var message: String?
     @State private var isRefreshingPlayback = false
     @State private var isPreparingShare = false
+    @State private var showsEditor = false
+
+    init(project: ProjectSummary, libraryJobID: UUID? = nil) {
+        self.project = project
+        self.libraryJobID = libraryJobID
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Your video is ready.").font(KriaFont.display(34))
@@ -207,6 +215,8 @@ struct ResultsView: View {
                 else { RoundedRectangle(cornerRadius: 22).fill(KriaColor.ink).overlay(ProgressView().tint(KriaColor.lime)) }
             }.aspectRatio(9/16, contentMode: .fit).frame(maxHeight: 420).clipShape(RoundedRectangle(cornerRadius: 22))
             HStack {
+                Button("Edit video") { showsEditor = true }
+                    .buttonStyle(KriaPrimaryButtonStyle())
                 Button("Save to Photos") { Task { await saveToPhotos() } }.buttonStyle(KriaPrimaryButtonStyle()).disabled(playbackURL == nil)
                 Button(isPreparingShare ? "Preparing…" : "Share") { Task { await prepareShare() } }
                     .buttonStyle(KriaSecondaryButtonStyle())
@@ -220,6 +230,15 @@ struct ResultsView: View {
         .task { await refreshPlayback() }
         .sheet(isPresented: $showShare, onDismiss: removeShareFile) {
             if let shareFileURL { ShareSheetView(url: shareFileURL) }
+        }
+        .fullScreenCover(isPresented: $showsEditor) {
+            NativeEditorView(
+                project: project,
+                libraryJobID: libraryJobID,
+                onProjects: { showsEditor = false },
+                onChat: { showsEditor = false }
+            )
+                .environmentObject(model)
         }
     }
     private func refreshPlayback() async {

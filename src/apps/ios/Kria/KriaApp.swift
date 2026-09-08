@@ -37,11 +37,56 @@ struct RootView: View {
     @EnvironmentObject private var model: AppModel
     var body: some View {
         Group {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
+                NativeEditorUITestHost()
+            }
+            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") { ChatWorkspaceView() }
+            else if !auth.isSignedIn { SignInView() }
+            else { ChatWorkspaceView() }
+            #else
             if !auth.isSignedIn { SignInView() }
-            else if !model.hasCompletedOnboarding { OnboardingView() }
-            else { MainShellView() }
+            else { ChatWorkspaceView() }
+            #endif
         }
         .kriaPage()
         .background(KriaColor.paper.ignoresSafeArea())
     }
 }
+
+#if DEBUG
+private struct NativeEditorUITestHost: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var showsEditor = true
+    @State private var showsProjects = false
+
+    var body: some View {
+        ZStack {
+            Color.white.ignoresSafeArea()
+
+            if showsProjects {
+                ProjectsDrawer(
+                    close: { showsProjects = false },
+                    openGallery: { showsProjects = false }
+                )
+                .environmentObject(model)
+            }
+
+            if showsEditor {
+                NavigationStack {
+                    NativeEditorView(
+                        project: PreviewFixtures.editorProject,
+                        initialDraft: PreviewFixtures.editorDraft,
+                        initialPlaybackURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"),
+                        onProjects: {
+                            showsEditor = false
+                            showsProjects = true
+                        },
+                        onChat: { showsEditor = false }
+                    )
+                }
+            }
+        }
+    }
+}
+#endif

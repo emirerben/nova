@@ -13,6 +13,14 @@ xcodebuild -project Kria.xcodeproj -scheme Kria \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' test
 ```
 
+After sign-in, `ChatWorkspaceView` is the app shell: the active creation thread
+fills the screen, project switching and the finished-video gallery live in
+sheets, and the safe-area composer remains available throughout the workflow.
+Format cards use the server-owned `select_format` action; messages, approvals,
+render state, and results are projected from the runtime-v2 thread instead of
+being held as a separate native flow. If an account has no thread, the shell
+creates one and restores that active project on the next launch.
+
 `Kria/Core` owns API, auth, secure token storage, SwiftData cache models, upload
 consent, background upload recovery, and an internal editor diagnostic. The
 diagnostic persists preview state only and is intentionally not exposed in the

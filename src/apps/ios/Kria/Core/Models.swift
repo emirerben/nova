@@ -193,12 +193,117 @@ struct EditorDraft: Codable, Equatable, Sendable {
 struct EditorClip: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     var assetID: UUID
+    /// Stable index into the render job's source pool. This is deliberately
+    /// independent from the clip's position in the edited timeline: moving a
+    /// clip changes its order, not which source video it references.
+    var sourceClipIndex: Int?
     var start: TimeInterval
     var end: TimeInterval
     var trimIn: TimeInterval
     var trimOut: TimeInterval
+    var sourceDuration: TimeInterval?
+    var muted: Bool
+    var slotID: String?
+
+    init(id: UUID, assetID: UUID, sourceClipIndex: Int? = nil, start: TimeInterval, end: TimeInterval, trimIn: TimeInterval, trimOut: TimeInterval, sourceDuration: TimeInterval? = nil, muted: Bool = false, slotID: String? = nil) {
+        self.id = id; self.assetID = assetID; self.sourceClipIndex = sourceClipIndex; self.start = start; self.end = end; self.trimIn = trimIn; self.trimOut = trimOut; self.sourceDuration = sourceDuration; self.muted = muted; self.slotID = slotID
+    }
+
+    private enum CodingKeys: String, CodingKey { case id; case assetID = "asset_id"; case sourceClipIndex = "clip_index"; case start, end; case trimIn = "trim_in"; case trimOut = "trim_out"; case sourceDuration = "source_duration"; case muted; case slotID = "slot_id" }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id); assetID = try values.decode(UUID.self, forKey: .assetID); sourceClipIndex = try values.decodeIfPresent(Int.self, forKey: .sourceClipIndex); start = try values.decode(TimeInterval.self, forKey: .start); end = try values.decode(TimeInterval.self, forKey: .end); trimIn = try values.decode(TimeInterval.self, forKey: .trimIn); trimOut = try values.decode(TimeInterval.self, forKey: .trimOut); sourceDuration = try values.decodeIfPresent(TimeInterval.self, forKey: .sourceDuration); muted = try values.decodeIfPresent(Bool.self, forKey: .muted) ?? false; slotID = try values.decodeIfPresent(String.self, forKey: .slotID)
+    }
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id); try values.encode(assetID, forKey: .assetID); try values.encodeIfPresent(sourceClipIndex, forKey: .sourceClipIndex); try values.encode(start, forKey: .start); try values.encode(end, forKey: .end); try values.encode(trimIn, forKey: .trimIn); try values.encode(trimOut, forKey: .trimOut); try values.encodeIfPresent(sourceDuration, forKey: .sourceDuration); try values.encode(muted, forKey: .muted); try values.encodeIfPresent(slotID, forKey: .slotID)
+    }
 }
 
 struct TextLayer: Codable, Equatable, Identifiable, Sendable { let id: UUID; var content: String; var position: CGPoint; var style: String }
 struct CaptionStyle: Codable, Equatable, Sendable { var enabled: Bool; var style: String }
-struct MusicSelection: Codable, Equatable, Sendable { var trackID: UUID; var title: String; var start: TimeInterval }
+struct MusicSelection: Codable, Equatable, Sendable {
+    var trackID: UUID; var title: String; var start: TimeInterval; var volume: Double
+    init(trackID: UUID, title: String, start: TimeInterval, volume: Double = 1) { self.trackID = trackID; self.title = title; self.start = start; self.volume = volume }
+    private enum CodingKeys: String, CodingKey { case trackID = "track_id"; case title, start, volume }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        trackID = try values.decode(UUID.self, forKey: .trackID); title = try values.decode(String.self, forKey: .title); start = try values.decode(TimeInterval.self, forKey: .start); volume = try values.decodeIfPresent(Double.self, forKey: .volume) ?? 1
+    }
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(trackID, forKey: .trackID); try values.encode(title, forKey: .title); try values.encode(start, forKey: .start); try values.encode(volume, forKey: .volume)
+    }
+}
+
+extension EditorDraft {
+    /// Merge the native projection into the server envelope. Unknown root,
+    /// section, and per-item fields remain untouched for forward compatibility.
+    func persistedSnapshot() -> [String: JSONValue] {
+        var root = serverSnapshot
+        if root["schema_version"] == nil { root["schema_version"] = .number(2) }
+        if root["kind"] == nil { root["kind"] = .string("editor") }
+        if root["edit_format"] == nil { root["edit_format"] = .string("montage") }
+        var editorPayload = Self.object(root["editor_payload"]) ?? [:]
+        var sections = Self.object(editorPayload["sections"]) ?? [:]
+        var iosEditor = Self.object(sections["ios_editor"]) ?? [:]
+        let oldClips = Self.array(iosEditor["clips"])
+        iosEditor["clips"] = .array(clips.map { clip in
+            var value = Self.object(oldClips.first { Self.uuid(Self.object($0)?["id"]) == clip.id }) ?? [:]
+            value["id"] = .string(clip.id.uuidString); value["asset_id"] = .string(clip.assetID.uuidString); value["start"] = .number(clip.start); value["end"] = .number(clip.end); value["trim_in"] = .number(clip.trimIn); value["trim_out"] = .number(clip.trimOut); value["muted"] = .bool(clip.muted)
+            if let duration = clip.sourceDuration { value["source_duration"] = .number(duration) }
+            return .object(value)
+        })
+        let oldText = Self.array(iosEditor["text"])
+        iosEditor["text"] = .array(text.map { layer in
+            var value = Self.object(oldText.first { Self.uuid(Self.object($0)?["id"]) == layer.id }) ?? [:]
+            value["id"] = .string(layer.id.uuidString); value["content"] = .string(layer.content); value["x"] = .number(layer.position.x); value["y"] = .number(layer.position.y); value["style"] = .string(layer.style)
+            return .object(value)
+        })
+        iosEditor["captions_enabled"] = .bool(captions.enabled); iosEditor["captions_style"] = .string(captions.style)
+        if let music {
+            var value = Self.object(iosEditor["music"]) ?? [:]
+            value["track_id"] = .string(music.trackID.uuidString); value["title"] = .string(music.title); value["start"] = .number(music.start); value["volume"] = .number(music.volume); iosEditor["music"] = .object(value)
+        } else { iosEditor["music"] = .null }
+        // Production editor-commit sections are the canonical representation.
+        // Keep the ios_editor projection as a compatibility mirror for older
+        // mobile builds and for drafts created before this client shipped.
+        let oldSlots = Self.array(sections["timeline_slots"])
+        sections["timeline_slots"] = .array(clips.enumerated().map { index, clip in
+            var value = Self.object(oldSlots.first {
+                let object = Self.object($0)
+                return Self.uuid(object?["id"]) == clip.id || object?["slot_id"]?.stringValue == clip.slotID
+            }) ?? [:]
+            value["slot_id"] = .string(clip.slotID ?? value["slot_id"]?.stringValue ?? clip.id.uuidString)
+            let preservedIndex = clip.sourceClipIndex ?? Self.integer(value["clip_index"]) ?? index
+            let editedDuration = max(0.1, clip.end - clip.start)
+            let sourceWindowChanged = Self.number(value["in_s"]).map { abs($0 - clip.trimIn) > 0.000_001 } ?? true
+            let durationChanged = Self.number(value["duration_s"]).map { abs($0 - editedDuration) > 0.000_001 } ?? true
+            value["clip_index"] = .number(Double(preservedIndex)); value["in_s"] = .number(clip.trimIn); value["duration_s"] = .number(editedDuration)
+            // A trim cannot keep the old beat count: the backend would snap it
+            // back to the original length and make the handle appear broken.
+            if sourceWindowChanged || durationChanged { value["duration_beats"] = .null }
+            else { value["duration_beats"] = value["duration_beats"] ?? .null }
+            value["removed"] = .bool(false)
+            return .object(value)
+        })
+        sections["text_elements"] = .array(text.map { layer in
+            var value = Self.object(Self.array(sections["text_elements"]).first { Self.uuid(Self.object($0)?["id"]) == layer.id }) ?? [:]
+            let totalDuration = clips.map(\.end).max() ?? 0
+            value["id"] = .string(layer.id.uuidString); value["text"] = .string(layer.content); value["start_s"] = value["start_s"] ?? .number(0); value["end_s"] = value["end_s"] ?? .number(max(0.1, totalDuration)); value["role"] = value["role"] ?? .string("generative_intro"); value["position"] = value["position"] ?? .string("custom"); value["x_frac"] = .number(layer.position.x); value["y_frac"] = .number(layer.position.y); value["font_family"] = .string(layer.style)
+            return .object(value)
+        })
+        sections["captions_enabled"] = .bool(captions.enabled); sections["caption_style"] = .string(captions.style)
+        var audioMix = Self.object(sections["audio_mix"]) ?? [:]; audioMix["music_level"] = .number(music?.volume ?? 0); sections["audio_mix"] = .object(audioMix)
+        if let music { sections["music_track_id"] = .string(music.trackID.uuidString); var window = Self.object(sections["music_window"]) ?? [:]; window["start_s"] = .number(music.start); sections["music_window"] = .object(window) }
+        else { sections["music_track_id"] = .null; sections["music_window"] = .null }
+        sections["ios_editor"] = .object(iosEditor); editorPayload["sections"] = .object(sections); root["editor_payload"] = .object(editorPayload)
+        return root
+    }
+    func serializedSnapshot() -> [String: JSONValue] { persistedSnapshot() }
+    private static func object(_ value: JSONValue?) -> [String: JSONValue]? { if case let .object(value) = value { value } else { nil } }
+    private static func array(_ value: JSONValue?) -> [JSONValue] { if case let .array(value) = value { value } else { [] } }
+    private static func number(_ value: JSONValue?) -> Double? { if case let .number(value) = value { value } else { nil } }
+    private static func uuid(_ value: JSONValue?) -> UUID? { value?.stringValue.flatMap(UUID.init(uuidString:)) }
+    private static func integer(_ value: JSONValue?) -> Int? { if case let .number(value) = value, value.rounded() == value { Int(value) } else { nil } }
+}

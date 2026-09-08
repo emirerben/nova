@@ -85,9 +85,13 @@ protocol KriaAPIClient: Sendable {
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession
     func revokeMobileSession(_ refreshToken: String) async throws
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted
+    func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
     func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot
+    func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse
+    func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue]
+    func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws
@@ -97,6 +101,26 @@ protocol KriaAPIClient: Sendable {
     func cancelUpload(reservationID: UUID) async throws
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
+}
+
+/// Existing API test doubles can remain focused on the older protocol. Native
+/// editor saves fail explicitly when the production commit endpoint is not
+/// implemented by a substitute.
+extension KriaAPIClient {
+    func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
+        _ = jobID
+        throw APIError.unsupported
+    }
+
+    func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
+        _ = jobID; _ = variantID
+        throw APIError.unsupported
+    }
+
+    func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse {
+        _ = itemID; _ = variantID; _ = request
+        throw APIError.unsupported
+    }
 }
 
 struct TurnAccepted: Codable, Sendable { let turnID: String; let threadRevision: Int; let status: String; enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status } }
@@ -109,7 +133,8 @@ struct CreationThread: Codable, Identifiable, Sendable {
     let activeJobID: String?
     let job: CreationJob?
     let updatedAt: Date
-    enum CodingKeys: String, CodingKey { case id, title, status, revision, job; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case updatedAt = "updated_at" }
+    let state: [String: JSONValue]?
+    enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case updatedAt = "updated_at" }
     var summary: ProjectSummary {
         ProjectSummary(
             id: UUID(uuidString: id) ?? UUID(),
@@ -146,6 +171,44 @@ struct DraftSnapshot: Codable, Sendable {
     let canUndo: Bool
     let createdAt: Date
     enum CodingKeys: String, CodingKey { case snapshot, etag; case draftID = "draft_id"; case itemID = "item_id"; case variantKey = "variant_key"; case draftRevision = "draft_revision"; case snapshotHash = "snapshot_hash"; case baseJobID = "base_job_id"; case baseGenerationID = "base_generation_id"; case canUndo = "can_undo"; case createdAt = "created_at" }
+}
+
+struct OpenInEditorResponse: Codable, Sendable, Equatable {
+    let planItemID: String
+    let variantID: String
+    private enum CodingKeys: String, CodingKey {
+        case planItemID = "plan_item_id"
+        case variantID = "variant_id"
+    }
+}
+
+struct EditorCommitRequest: Codable, Sendable {
+    var timelineSlots: [JSONValue]?
+    var textElements: [JSONValue]?
+    var captionMeta: [String: JSONValue]?
+    var mix: [String: JSONValue]?
+    var baseGeneration: String
+    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, baseGeneration: String) {
+        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionMeta = captionMeta; self.mix = mix; self.baseGeneration = baseGeneration
+    }
+    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionMeta = "caption_meta"; case mix; case baseGeneration = "base_generation" }
+}
+
+struct EditorCommitSections: Codable, Sendable {
+    var textElements: Bool; var captionMeta: Bool; var timeline: Bool; var mix: Bool
+    private enum CodingKeys: String, CodingKey { case textElements = "text_elements"; case captionMeta = "caption_meta"; case timeline, mix }
+}
+struct EditorCommitResponse: Codable, Sendable {
+    let ok: Bool
+    let generation: String
+    let sections: EditorCommitSections
+    let revisionNumber: Int?
+    let revisionHash: String?
+    let expectedDuration: Double?
+    private enum CodingKeys: String, CodingKey { case ok, generation, sections; case revisionNumber = "revision_number"; case revisionHash = "revision_hash"; case expectedDuration = "expected_duration_s" }
+}
+private struct EditorStatusEnvelope: Decodable {
+    let variants: [[String: JSONValue]]
 }
 struct ApprovalSnapshot: Codable, Sendable, Identifiable {
     let approvalID: String
@@ -286,9 +349,28 @@ struct KriaAPI: KriaAPIClient {
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession { try await request(path: "auth/mobile/refresh", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: MobileSession.self) }
     func revokeMobileSession(_ refreshToken: String) async throws { _ = try await request(path: "auth/mobile/revoke", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: RevokeResponse.self) }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted { try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: UUID().uuidString, expectedThreadRevision: expectedRevision)), decode: TurnAccepted.self) }
+    func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
+        try await request(
+            path: "creation-threads/\(threadID.uuidString)/actions",
+            method: "POST",
+            bodyData: try JSONEncoder().encode(CreationActionRequest(action: action, payload: payload, clientActionID: UUID().uuidString, expectedRevision: expectedRevision)),
+            decode: CreationThread.self
+        )
+    }
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta { try await request(path: "creation-threads/\(threadID.uuidString)/delta", method: "GET", query: [URLQueryItem(name: "after_sequence", value: String(afterSequence))], bodyData: nil, decode: ThreadDelta.self) }
     func draft(threadID: UUID) async throws -> DraftSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/draft", method: "GET", bodyData: nil, decode: DraftSnapshot.self) }
     func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/draft", method: "PUT", headers: ["If-Match": etag], bodyData: try JSONEncoder().encode(DraftWriteRequest(expectedRevision: expectedRevision, snapshot: snapshot)), decode: DraftSnapshot.self) }
+    func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
+        try await request(path: "me/jobs/\(jobID.uuidString)/open-in-editor", method: "POST", bodyData: nil, decode: OpenInEditorResponse.self)
+    }
+    func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
+        let status = try await request(path: "generative-jobs/\(jobID.uuidString)/status", method: "GET", bodyData: nil, decode: EditorStatusEnvelope.self)
+        guard let variant = status.variants.first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
+        return variant
+    }
+    func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
+        try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
+    }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/draft/undo", method: "POST", bodyData: try JSONEncoder().encode(DraftUndoRequest(expectedRevision: expectedRevision)), decode: DraftSnapshot.self) }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint)), decode: ApprovalResponse.self) }
@@ -335,6 +417,7 @@ struct KriaAPI: KriaAPIClient {
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         if http.statusCode == 401 { clearExpiredSession(); throw APIError.sessionExpired }
+        if http.statusCode == 409 || http.statusCode == 412 { throw APIError.conflict }
         guard (200..<300).contains(http.statusCode) else { throw APIError.requestFailed }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
     }
@@ -359,6 +442,7 @@ private enum ServerDateCoding {
     }
 }
 private struct SubmitTurnRequest: Encodable { let message: String; let clientEventID: String; let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision" } }
+private struct CreationActionRequest: Encodable { let action: String; let payload: [String: JSONValue]; let clientActionID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case action, payload; case clientActionID = "client_action_id"; case expectedRevision = "expected_revision" } }
 private struct ApprovalDecisionRequest: Encodable { let expectedThreadRevision: Int; let expectedDraftRevision: Int; let fingerprint: String; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision"; case expectedDraftRevision = "expected_draft_revision"; case fingerprint = "expected_approval_fingerprint" } }
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }
 private struct UploadReservationRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let purpose: UploadPurpose; enum CodingKeys: String, CodingKey { case filename, purpose; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes" } }
@@ -369,7 +453,7 @@ private struct ProjectMediaInput: Encodable { let mediaID: String; let gcsPath: 
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
 private struct DraftUndoRequest: Encodable { let expectedRevision: Int; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision" } }
-enum APIError: Error, LocalizedError, Equatable { case requestFailed, offline, invalidResponse, sessionExpired; var errorDescription: String? { switch self { case .sessionExpired: "Your session expired. Please sign in again."; default: "Kria couldn’t complete that request. Check your connection and try again." } } }
+enum APIError: Error, LocalizedError, Equatable { case requestFailed, offline, invalidResponse, sessionExpired, conflict, unsupported; var errorDescription: String? { switch self { case .sessionExpired: "Your session expired. Please sign in again."; case .conflict: "This edit changed elsewhere. Review your local changes before saving again."; case .unsupported: "This API client does not support native editor saves."; default: "Kria couldn’t complete that request. Check your connection and try again." } } }
 
 protocol AuthProvider { func signIn() async throws -> AuthCredential }
 struct AuthCredential: Sendable { let token: String; let displayName: String?; let nonce: String; init(token: String, displayName: String?, nonce: String = "") { self.token = token; self.displayName = displayName; self.nonce = nonce } }
@@ -533,45 +617,111 @@ struct LocalEditorOperations: EditorOperations {
 }
 
 extension DraftSnapshot {
-    func editorDraft(projectID: UUID) -> EditorDraft {
-        let payload: [String: JSONValue]
-        if let editorPayload = Self.object(snapshot["editor_payload"]),
-           let sections = Self.object(editorPayload["sections"]),
-           let value = Self.object(sections["ios_editor"]) {
-            payload = value
-        } else { payload = [:] }
-        let clips = Self.array(payload["clips"]).compactMap { value -> EditorClip? in
-            guard let object = Self.object(value), let id = Self.uuid(object["id"]), let assetID = Self.uuid(object["asset_id"]),
-                  let start = Self.number(object["start"]), let end = Self.number(object["end"]),
-                  let trimIn = Self.number(object["trim_in"]), let trimOut = Self.number(object["trim_out"]) else { return nil }
-            return EditorClip(id: id, assetID: assetID, start: start, end: end, trimIn: trimIn, trimOut: trimOut)
+    /// Rebase the recoverable runtime draft onto the live render variant.
+    /// Direct editor commits intentionally do not mint a runtime-draft head, so
+    /// an older head may still exist when the editor is reopened. The status
+    /// variant is authoritative for every renderer-owned section and baseline.
+    func editorDraft(projectID: UUID, authoritativeVariant: [String: JSONValue]? = nil) -> EditorDraft {
+        var document = snapshot
+        if let authoritativeVariant {
+            var editorPayload = Self.object(document["editor_payload"]) ?? [:]
+            var sections = Self.object(editorPayload["sections"]) ?? [:]
+            let directKeys = [
+                "text_elements", "caption_cues", "captions_enabled", "caption_size_px",
+                "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled",
+                "music_track_id", "music_window", "background_music", "lyrics", "orientation",
+                "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
+                "camera_effects", "carousel_moment",
+            ]
+            for key in directKeys where authoritativeVariant[key] != nil {
+                sections[key] = authoritativeVariant[key]
+            }
+            if let style = authoritativeVariant["voiceover_caption_style"] ?? authoritativeVariant["caption_style"] {
+                sections["caption_style"] = style
+            }
+            if let font = authoritativeVariant["voiceover_caption_font"] ?? authoritativeVariant["caption_font"] {
+                sections["caption_font"] = font
+            }
+            if let color = authoritativeVariant["caption_text_color"] ?? authoritativeVariant["caption_color"] {
+                sections["caption_color"] = color
+            }
+            if let audioMix = authoritativeVariant["audio_mix"] {
+                sections["audio_mix"] = audioMix
+            } else if let mix = authoritativeVariant["mix"] {
+                var audioMix = Self.object(sections["audio_mix"]) ?? [:]
+                audioMix["music_level"] = mix
+                sections["audio_mix"] = .object(audioMix)
+            }
+            if let title = authoritativeVariant["track_title"] {
+                sections["music_track_title"] = title
+            }
+            if let timeline = Self.object(authoritativeVariant["user_timeline"] ?? authoritativeVariant["ai_timeline"]),
+               let slotValue = timeline["slots"], case let .array(slots) = slotValue {
+                sections["timeline_slots"] = .array(slots)
+            }
+            editorPayload["base_generation"] =
+                authoritativeVariant["render_generation_id"]
+                ?? authoritativeVariant["render_finished_at"]
+                ?? baseGenerationID.map(JSONValue.string)
+                ?? editorPayload["base_generation"]
+                ?? .string("")
+            editorPayload["sections"] = .object(sections)
+            document["editor_payload"] = .object(editorPayload)
         }
-        let text = Self.array(payload["text"]).compactMap { value -> TextLayer? in
-            guard let object = Self.object(value), let id = Self.uuid(object["id"]), let content = object["content"]?.stringValue,
-                  let x = Self.number(object["x"]), let y = Self.number(object["y"]), let style = object["style"]?.stringValue else { return nil }
+
+        let editorPayload = Self.object(document["editor_payload"]) ?? [:]
+        let sections = Self.object(editorPayload["sections"]) ?? [:]
+        let legacy = Self.object(sections["ios_editor"]) ?? [:]
+        let canonicalSlots = Self.array(sections["timeline_slots"])
+        let usesCanonicalTimeline = sections["timeline_slots"] != nil && !canonicalSlots.isEmpty
+        let slotValues = usesCanonicalTimeline ? canonicalSlots : Self.array(legacy["clips"])
+        var cursor: TimeInterval = 0
+        let clips = slotValues.enumerated().compactMap { index, value -> EditorClip? in
+            guard let object = Self.object(value), object["removed"] != .bool(true) else { return nil }
+            if !usesCanonicalTimeline {
+                guard let id = Self.uuid(object["id"]), let assetID = Self.uuid(object["asset_id"]), let start = Self.number(object["start"]), let end = Self.number(object["end"]), let trimIn = Self.number(object["trim_in"]), let trimOut = Self.number(object["trim_out"]) else { return nil }
+                return EditorClip(id: id, assetID: assetID, sourceClipIndex: Self.integer(object["clip_index"]), start: start, end: end, trimIn: trimIn, trimOut: trimOut, sourceDuration: Self.number(object["source_duration"] ?? object["source_duration_s"]), muted: object["muted"] == .bool(true))
+            }
+            guard let duration = Self.number(object["duration_s"]), duration > 0 else { return nil }
+            let id = Self.uuid(object["id"]) ?? Self.uuid(object["slot_id"]) ?? UUID()
+            let sourceStart = Self.number(object["in_s"]) ?? 0
+            let start = cursor; cursor += duration
+            let sourceDuration = Self.number(object["source_duration"] ?? object["source_duration_s"]) ?? (sourceStart + duration)
+            return EditorClip(id: id, assetID: Self.uuid(object["asset_id"]) ?? id, sourceClipIndex: Self.integer(object["clip_index"]) ?? index, start: start, end: start + duration, trimIn: sourceStart, trimOut: sourceStart + duration, sourceDuration: sourceDuration, muted: object["muted"] == .bool(true), slotID: object["slot_id"]?.stringValue)
+        }
+        let textValues = Self.array(sections["text_elements"] ?? legacy["text"])
+        let text = textValues.compactMap { value -> TextLayer? in
+            guard let object = Self.object(value), let content = (object["text"] ?? object["content"])?.stringValue else { return nil }
+            let id = Self.uuid(object["id"]) ?? UUID()
+            let x = Self.number(object["x_frac"] ?? object["x"]) ?? 0.5; let y = Self.number(object["y_frac"] ?? object["y"]) ?? 0.5
+            let style = (object["font_family"] ?? object["style"])?.stringValue ?? "Fraunces"
             return TextLayer(id: id, content: content, position: CGPoint(x: x, y: y), style: style)
         }
         let music: MusicSelection?
-        if let object = Self.object(payload["music"]), let trackID = Self.uuid(object["track_id"]),
-           let title = object["title"]?.stringValue, let start = Self.number(object["start"]) {
-            music = MusicSelection(trackID: trackID, title: title, start: start)
+        if let object = Self.object(legacy["music"]), let trackID = Self.uuid(object["track_id"]) {
+            music = MusicSelection(trackID: trackID, title: object["title"]?.stringValue ?? "Music", start: Self.number(object["start"]) ?? 0, volume: Self.number(object["volume"]) ?? 1)
+        } else if let trackID = Self.uuid(sections["music_track_id"]) {
+            let window = Self.object(sections["music_window"]); let mix = Self.object(sections["audio_mix"])
+            music = MusicSelection(trackID: trackID, title: sections["music_track_title"]?.stringValue ?? "Music", start: Self.number(window?["start_s"]) ?? 0, volume: Self.number(mix?["music_level"]) ?? 1)
         } else { music = nil }
-        let captionsEnabled = payload["captions_enabled"] == .bool(true)
+        let captionsEnabled = (sections["captions_enabled"] ?? legacy["captions_enabled"]) == .bool(true)
+        let captionStyle = (sections["caption_style"] ?? legacy["captions_style"])?.stringValue ?? "sentence"
         return EditorDraft(
             projectID: projectID,
             clips: clips,
             text: text,
-            captions: CaptionStyle(enabled: captionsEnabled, style: "clean"),
+            captions: CaptionStyle(enabled: captionsEnabled, style: captionStyle),
             music: music,
             revision: draftRevision,
             etag: etag,
-            serverSnapshot: snapshot
+            serverSnapshot: document
         )
     }
 
     fileprivate static func object(_ value: JSONValue?) -> [String: JSONValue]? { if case let .object(object) = value { object } else { nil } }
     private static func array(_ value: JSONValue?) -> [JSONValue] { if case let .array(array) = value { array } else { [] } }
     private static func number(_ value: JSONValue?) -> Double? { if case let .number(number) = value { number } else { nil } }
+    private static func integer(_ value: JSONValue?) -> Int? { if case let .number(number) = value, number.rounded() == number { Int(number) } else { nil } }
     private static func uuid(_ value: JSONValue?) -> UUID? { value?.stringValue.flatMap(UUID.init(uuidString:)) }
 }
 

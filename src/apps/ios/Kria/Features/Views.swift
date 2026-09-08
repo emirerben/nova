@@ -130,18 +130,149 @@ struct ProjectDetailView: View {
 
 struct GalleryView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var auth: AuthStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var filter: GalleryFilter = .all
+
+    private var projects: [ProjectSummary] {
+        switch filter {
+        case .all: model.libraryProjects
+        case .ready: model.libraryProjects.filter { $0.status == .ready }
+        case .inProgress: model.libraryProjects.filter { $0.status == .draft || $0.status == .rendering }
+        }
+    }
+
+    private var initial: String {
+        String((auth.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).first ?? "E")).uppercased()
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Gallery").font(KriaFont.display(34))
-                Text("Finished cuts, ready to revisit.").foregroundStyle(KriaColor.zinc)
-                if model.libraryProjects.isEmpty {
-                    KriaEmptyState(title: "Your next cut will live here.", action: "Refresh") { Task { await model.loadLibrary() } }
-                } else {
-                    ForEach(model.libraryProjects) { project in NavigationLink(destination: ResultsView(project: project)) { ProjectRow(project: project) }.buttonStyle(.plain) }
+        VStack(spacing: 0) {
+            ZStack {
+                Text("Gallery")
+                    .font(KriaFont.body(14).weight(.semibold))
+
+                HStack {
+                    Button("Projects") { dismiss() }
+                        .font(KriaFont.body(14).weight(.medium))
+                        .frame(minWidth: 68, minHeight: 44, alignment: .leading)
+                    Spacer()
+                    Text(initial)
+                        .font(KriaFont.body(13).weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(KriaColor.softZinc)
+                        .clipShape(Circle())
                 }
-            }.padding(20)
-        }.navigationTitle("").task { await model.loadLibrary() }
+                .padding(.horizontal, 16)
+            }
+            .frame(height: 54)
+
+            Rectangle().fill(KriaColor.line).frame(height: 1)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Your gallery")
+                            .font(KriaFont.display(29))
+                        Text("Finished cuts and the stories still taking shape.")
+                            .font(KriaFont.body(14))
+                            .foregroundStyle(KriaColor.zinc)
+                    }
+
+                    HStack(spacing: 8) {
+                        ForEach(GalleryFilter.allCases) { option in
+                            Button(option.title) { filter = option }
+                                .font(KriaFont.body(12).weight(.medium))
+                                .foregroundStyle(filter == option ? Color.white : KriaColor.ink)
+                                .padding(.horizontal, 12)
+                                .frame(height: 34)
+                                .background(filter == option ? KriaColor.ink : Color.white)
+                                .overlay(Capsule().stroke(KriaColor.border, lineWidth: filter == option ? 0 : 1))
+                                .clipShape(Capsule())
+                        }
+                    }
+
+                    if projects.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Your next cut will live here.")
+                                .font(KriaFont.display(22))
+                            Button("Refresh") { Task { await model.loadLibrary() } }
+                                .font(KriaFont.body(13).weight(.semibold))
+                        }
+                        .padding(.top, 34)
+                    } else {
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())], spacing: 20) {
+                            ForEach(projects) { project in
+                                NavigationLink(destination: ResultsView(project: project, libraryJobID: project.id)) {
+                                    GalleryProjectCard(project: project)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 42)
+                .padding(.bottom, 28)
+            }
+        }
+        .background(Color.white)
+        .toolbar(.hidden, for: .navigationBar)
+        .task { await model.loadLibrary() }
+    }
+}
+
+private enum GalleryFilter: CaseIterable, Identifiable {
+    case all, ready, inProgress
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .ready: "Ready"
+        case .inProgress: "In progress"
+        }
+    }
+}
+
+private struct GalleryProjectCard: View {
+    let project: ProjectSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Group {
+                if let posterURL = project.posterURL {
+                    AsyncImage(url: posterURL) { phase in
+                        if let image = phase.image { image.resizable().scaledToFill() }
+                        else { BundledPosterImage(name: "montage").scaledToFill() }
+                    }
+                } else {
+                    BundledPosterImage(name: project.status == .ready ? "montage" : "voiceover")
+                        .scaledToFill()
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(0.75, contentMode: .fit)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                Text(project.workspaceStatusLabel.uppercased())
+                    .font(KriaFont.body(8).weight(.bold))
+                    .tracking(0.8)
+                    .foregroundStyle(project.status == .ready ? KriaColor.limeText : KriaColor.ink)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 5)
+                    .background(project.status == .ready ? KriaColor.limeSoft : Color.white.opacity(0.9))
+                    .clipShape(Capsule())
+                    .padding(7)
+            }
+
+            Text(project.workspaceTitle)
+                .font(KriaFont.body(13).weight(.semibold))
+                .lineLimit(1)
+            Text(project.updatedAt, style: .relative)
+                .font(KriaFont.body(11))
+                .foregroundStyle(KriaColor.zinc)
+        }
     }
 }
 
