@@ -92,6 +92,9 @@ describe("editorReasonCopy", () => {
   it("keeps the existing mappings and the empty-reason fallback", () => {
     expect(editorReasonCopy("caption_archetype")).toBe(CAPTIONS_TAB_REASON);
     expect(editorReasonCopy("locked_to_voiceover")).toBe("locked to your narration");
+    expect(editorReasonCopy("guided_story_revision_unavailable")).toBe(
+      "this edit's timeline could not be loaded",
+    );
     expect(editorReasonCopy(null)).toBe("This version can't be edited.");
     expect(editorReasonCopy(undefined)).toBe("This version can't be edited.");
   });

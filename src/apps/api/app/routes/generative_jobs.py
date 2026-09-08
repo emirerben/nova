@@ -64,6 +64,7 @@ from app.routes.music_jobs import classify_slot_kind
 from app.routes.waitlist import get_real_ip
 from app.schemas.guided_edit_revision import (
     GUIDED_EDITOR_LANES,
+    MAX_GUIDED_EDITOR_TEXT_ELEMENTS,
     MAX_GUIDED_EDITOR_TOMBSTONES,
     guided_editor_revision_from_approval,
     guided_editor_state_hash,
@@ -3950,11 +3951,17 @@ def validate_text_elements_payload(
                 ),
             )
 
-    # A—: payload size cap (50 elements comfortably covers the longest short-form edit)
-    if len(elements) > _TEXT_ELEMENTS_MAX:
+    # Guided stories include generated word captions and labels in this lane.
+    # Their read projection and Save must accept the same bounded element set.
+    element_limit = (
+        MAX_GUIDED_EDITOR_TEXT_ELEMENTS
+        if variant.get("resolved_archetype") == "guided_story"
+        else _TEXT_ELEMENTS_MAX
+    )
+    if len(elements) > element_limit:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Too many text elements (max {_TEXT_ELEMENTS_MAX}).",
+            detail=f"Too many text elements (max {element_limit}).",
         )
 
     # fast-reburn requires a pre-built text-free base; older/lyrics variants lack it.
@@ -5703,6 +5710,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             }
             return {
                 "text_elements": text_editable,
+                "text_elements_max": MAX_GUIDED_EDITOR_TEXT_ELEMENTS,
                 "timeline": bool(revision is not None),
                 "timeline_max_slots": _TIMELINE_MAX_SLOTS,
                 "copilot_snapshot_wire_version": 1,
@@ -5795,6 +5803,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "pool" if settings.reliable_overlay_uploads_enabled else "legacy"
             ),
             "text_elements": text_editable,
+            "text_elements_max": MAX_GUIDED_EDITOR_TEXT_ELEMENTS,
             "timeline": False,
             "timeline_max_slots": _TIMELINE_MAX_SLOTS,
             "copilot_snapshot_wire_version": 1,
@@ -7553,6 +7562,7 @@ def _guided_text_revision_state(
     text_ids = {row_id for row_id in text_by_id if row_id is not None}
 
     submitted_ids: set[str] = set()
+    new_text_count = 0
     resolved: list[dict] = []
     for row in submitted:
         if not isinstance(row, dict):
@@ -7592,6 +7602,12 @@ def _guided_text_revision_state(
         if row_id in tombstone_by_id:
             raise _timeline_error(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        new_text_count += 1
+        if new_text_count > _TEXT_ELEMENTS_MAX:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Too many new text elements in one Save (max {_TEXT_ELEMENTS_MAX}).",
             )
         resolved.append(row)
 

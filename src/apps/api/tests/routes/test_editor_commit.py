@@ -41,6 +41,168 @@ _VALID_ELEMENT = {
 }
 
 
+def _narrated_guided_job():
+    from app.pipeline.guided_story import compile_execution_plan
+    from app.schemas.edit_proposal import (
+        EditProposalSnapshot,
+        FastMontageCut,
+        MediaRef,
+        NarrationTrack,
+        NarrationWord,
+        StoryBeat,
+        canonical_media_digest,
+    )
+
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"speech-{index}",
+            gcs_path=f"users/test/speech-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=9,
+        )
+        for index in range(5)
+    ]
+    snapshot = EditProposalSnapshot(
+        direction="fast_montage",
+        duration_s=45,
+        title="A narrated story",
+        media=media,
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"cut-{index}",
+                media_id=ref.media_id,
+                source_start_s=0,
+                source_end_s=9,
+                output_duration_s=9,
+                role="hook" if index == 0 else "build",
+            )
+            for index, ref in enumerate(media)
+        ],
+        story_beats=[
+            StoryBeat(
+                beat_id=f"story-{index}", topic="Story", media_ids=[ref.media_id], duration_s=9
+            )
+            for index, ref in enumerate(media)
+        ],
+        narration=NarrationTrack(
+            gcs_path="users/test/narration.m4a",
+            generation="2",
+            duration_s=45,
+            words=[
+                NarrationWord(text=f"word{i}", start_s=i * 0.3, end_s=(i + 1) * 0.3)
+                for i in range(150)
+            ],
+        ),
+    )
+    guided = {
+        "proposal_version": 1,
+        "media_digest": canonical_media_digest(media, snapshot.narration),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                key: getattr(ref, key)
+                for key in ("lane", "media_id", "gcs_path", "generation", "kind")
+            }
+            for ref in media
+        ],
+    }
+    plan = compile_execution_plan(guided, track=None)
+    job = _job(resolved_archetype="guided_story", text_elements=plan["text_elements"])
+    job.assembly_plan.update(guided_edit=guided, guided_story_execution_plan=plan)
+    return job
+
+
+@pytest.mark.parametrize("section", ["text", "timeline"])
+def test_narrated_guided_editor_opens_and_saves_full_caption_lane(monkeypatch, section):
+    from app.config import settings
+    from app.pipeline.guided_story import compile_guided_runtime_plan
+    from app.schemas.guided_edit_revision import MAX_GUIDED_EDITOR_TEXT_ELEMENTS
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj, "_TEXT_ELEMENTS_ENABLED", True)
+    job = _narrated_guided_job()
+    before = copy.deepcopy(job.assembly_plan)
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    assert revision is not None
+    captions = [
+        row for row in revision["text_elements"] if row["id"].startswith("narration-caption-")
+    ]
+    assert len(captions) == 150
+    capabilities = gj._editor_capabilities(job, variant)
+    assert capabilities["timeline"] is True
+    assert capabilities["text"]["editable"] is True
+    assert capabilities["text_elements_max"] == MAX_GUIDED_EDITOR_TEXT_ELEMENTS
+    payload = {"base_generation": revision["base_generation"], "guided_revision_number": 1}
+    if section == "text":
+        elements = copy.deepcopy(revision["text_elements"])
+        elements[0]["text"] = "Corrected title"
+        payload["text_elements"] = elements
+    else:
+        payload["timeline_slots"] = [
+            gj.TimelineSlotEdit(
+                slot_id=row["segment_id"],
+                clip_index=next(
+                    index
+                    for index, source in enumerate(revision["sources"])
+                    if source["media_id"] == row["media_id"]
+                ),
+                in_s=row["source_start_s"],
+                duration_s=row["duration_s"],
+            )
+            for row in revision["segments"]
+        ]
+    result = gj.prepare_editor_commit(job, "song_text", gj.EditorCommitRequest(**payload))
+    saved = job.assembly_plan["variants"][0]["guided_edit_revision"]
+    assert result["sections"]["text_elements" if section == "text" else "timeline"] is True
+    assert saved["revision_number"] == 2
+    assert [row["id"] for row in saved["text_elements"]] == [
+        row["id"] for row in revision["text_elements"]
+    ]
+    runtime = compile_guided_runtime_plan(
+        before["guided_story_execution_plan"], before["guided_edit"], saved
+    )
+    assert runtime["narration"] == before["guided_story_execution_plan"]["narration"]
+    assert [(row["id"], row["start_s"], row["end_s"]) for row in runtime["text_elements"]] == [
+        (row["id"], row["start_s"], row["end_s"])
+        for row in before["guided_story_execution_plan"]["text_elements"]
+    ]
+    assert job.assembly_plan["guided_edit"] == before["guided_edit"]
+
+
+@pytest.mark.parametrize("archetype,limit", [("montage", 50), ("guided_story", 5000)])
+def test_text_payload_limits_remain_bounded_by_archetype(monkeypatch, archetype, limit):
+    monkeypatch.setattr(gj, "_TEXT_ELEMENTS_ENABLED", True)
+    elements = [{**_VALID_ELEMENT, "id": f"text-{i}"} for i in range(limit + 1)]
+    with pytest.raises(HTTPException, match="Too many text elements") as error:
+        gj.validate_text_elements_payload(
+            {"resolved_archetype": archetype}, elements, require_base=False
+        )
+    assert error.value.status_code == 422
+
+
+def test_guided_text_save_limits_new_ids_but_preserves_and_restores_existing_ids():
+    current = _guided_text_revision_fixture()
+    captions = [{**_VALID_ELEMENT, "id": f"caption-{i}"} for i in range(300)]
+    current["text_elements"] = captions
+    authored = [{**_VALID_ELEMENT, "id": f"authored-{i}"} for i in range(51)]
+    with pytest.raises(HTTPException, match="Too many new text elements"):
+        gj._guided_text_revision_state(current, captions + authored)
+    accepted, _ = gj._guided_text_revision_state(current, captions + authored[:50])
+    assert len(accepted) == 350
+    remaining, deleted = gj._guided_text_revision_state(current, [])
+    assert remaining == []
+    assert len(deleted) == 300
+    restored, tombstones = gj._guided_text_revision_state(
+        {**current, "text_elements": [], "tombstones": deleted}, captions
+    )
+    assert restored == captions
+    assert tombstones == []
+
+
 def _ai_slots(prefix: str) -> list[dict]:
     return [
         {

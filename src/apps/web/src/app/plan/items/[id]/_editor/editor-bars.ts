@@ -454,10 +454,13 @@ export function seedBarsFromVariant(
   const includeLyrics = opts.includeLyrics ?? true;
   const filterLyrics = (bars: TextElementBar[]) =>
     includeLyrics ? bars : bars.filter((bar) => !isLyricBar(bar));
+  // Guided narration owns captions in its text-elements revision. Other
+  // caption archetypes use caption_cues and must exclude duplicate projections.
+  const captionsInTextLane = variant.resolved_archetype === "guided_story";
   const textBars = filterLyrics(convertApiTextElements(variant.text_elements)).filter(
-    (bar) => !isCaptionCueProjection(bar),
+    (bar) => captionsInTextLane || !isCaptionCueProjection(bar),
   );
-  const captionBars = convertCaptionCues(variant.caption_cues, variant);
+  const captionBars = captionsInTextLane ? [] : convertCaptionCues(variant.caption_cues, variant);
   if (captionBars.length) return [...captionBars, ...textBars];
   if (variant.text_elements_user_edited) {
     return textBars;

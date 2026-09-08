@@ -207,7 +207,7 @@ import {
 } from "./editor-smart-placement";
 import {
   buildTimedTextSequence,
-  TEXT_ELEMENTS_API_MAX,
+  remainingTextCompositionCapacity,
 } from "./editor-text-composition";
 import {
   activeSlotCount,
@@ -4426,6 +4426,16 @@ export default function EditorShell({
         notify(textElementsLockedCopy(capabilities));
         return null;
       }
+      const currentElements = barsToTextElements(state.bars, originalsRef.current, {
+        includeLyrics: lyricsOptionalActive,
+      });
+      const newElementCount = currentElements.filter((row) => !originalsRef.current.has(row.id)).length;
+      if (remainingTextCompositionCapacity(currentElements.length, capabilities?.text_elements_max, newElementCount) === 0) {
+        notify(currentElements.length >= (capabilities?.text_elements_max ?? 50)
+          ? "This edit has reached its text limit."
+          : "Save these changes before adding more text.");
+        return null;
+      }
       history.record();
       setTextDirty(true);
       const bar = newTextBar({
@@ -4454,6 +4464,8 @@ export default function EditorShell({
       capabilities,
       history,
       notify,
+      state.bars,
+      lyricsOptionalActive,
     ],
   );
 
@@ -4473,10 +4485,14 @@ export default function EditorShell({
       }
       const draft = text.trim();
       if (!draft) return false;
-      const existingElementCount = barsToTextElements(state.bars, originalsRef.current, {
+      const existingElements = barsToTextElements(state.bars, originalsRef.current, {
         includeLyrics: lyricsOptionalActive,
-      }).length;
-      const remainingElementCount = Math.max(0, TEXT_ELEMENTS_API_MAX - existingElementCount);
+      });
+      const remainingElementCount = remainingTextCompositionCapacity(
+        existingElements.length,
+        capabilities?.text_elements_max,
+        existingElements.filter((row) => !originalsRef.current.has(row.id)).length,
+      );
       const sequence = buildTimedTextSequence(
         draft,
         outputToBaseTimeRef.current(currentTime),

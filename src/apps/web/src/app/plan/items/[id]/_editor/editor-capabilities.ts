@@ -109,6 +109,9 @@ export function editorReasonCopy(reason: string | null | undefined): string {
   if (reason === "guided_story_edit_unsupported") {
     return "change the story in Plan edit, approve it, then generate again";
   }
+  if (reason === "guided_story_revision_unavailable") {
+    return "this edit's timeline could not be loaded";
+  }
   if (reason === "duration_unknown") return "re-render this legacy edit before adding visual blocks";
   if (reason === "no_video") return "waiting for this edit to finish rendering";
   return "this feature isn't available for this edit";
