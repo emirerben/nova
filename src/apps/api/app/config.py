@@ -355,6 +355,26 @@ class Settings(BaseSettings):
         "nova-video` + worker restart.",
     )
 
+    speech_cleanup_max_removal_frac_required: float = Field(
+        default=1.0,
+        # gt, not ge: SpeechCleanupAnalysisInput rejects 0, so accepting it here
+        # would boot cleanly and then fail every analysis with a user-visible
+        # error. "Turn cleanup off" is SILENCE_CUT_ENABLED, not this knob.
+        gt=0.0,
+        le=1.0,
+        description="Fraction-of-runtime cap on explicit-consent (required_v1) speech "
+        "cleanup. 1.0 (default, 2026-09-08) means no fraction cap: the clamp budget is "
+        "bound only by the MIN_OUTPUT_S floor, so every filler and pause the detector "
+        "found is removed. The previous 0.55 rail declined cuts on exactly the clips "
+        "the feature exists for — a 10s clip needing ~65% removal shipped with a second "
+        "of dead air left in. Does NOT affect the auto/legacy path, which keeps its own "
+        "MAX_REMOVAL_FRAC bailout rail. The value is part of the source policy "
+        "fingerprint, so flipping it re-analyzes affected items. Rollback: "
+        "`fly secrets set SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED=0.55 --app "
+        "nova-video` + api and worker restart (the fingerprint is computed in "
+        "the API process, the plan in the worker).",
+    )
+
     speech_cleanup_mixed_gap_mode: Literal["off", "shadow", "apply"] = Field(
         default="off",
         description="Required-v1 mixed-gap filler detector rollout. off preserves the "

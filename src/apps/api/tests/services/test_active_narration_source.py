@@ -42,6 +42,7 @@ def request(**changes: object) -> ActiveNarrationRequest:
     values = {
         "edit_format": "narrated",
         "audio_mode": "kria",
+        # Opaque fixture value, not DETECTOR_VERSION; must differ from the v2 literal below.
         "detector_policy": "mixed-gap-v1:apply",
         "clips": (),
         "voiceover": None,
