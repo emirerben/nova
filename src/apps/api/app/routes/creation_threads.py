@@ -4223,12 +4223,18 @@ async def delete_thread(
             job.content_plan_item_id = None
         await db.execute(delete(TikTokPublication).where(TikTokPublication.job_id.in_(job_ids)))
         await db.execute(delete(JobClip).where(JobClip.job_id.in_(job_ids)))
-        for job in jobs:
-            await db.delete(job)
     if item is not None:
+        # edit_artifacts and edit_interaction_receipts retain a nullable
+        # job_id, whose ON DELETE SET NULL action is an UPDATE in PostgreSQL.
+        # Their append-only trigger rejects that UPDATE. Delete the PlanItem
+        # first so its CASCADE removes the learning rows before the Job rows
+        # can trigger SET NULL on them.
         await db.execute(delete(PlanItem).where(PlanItem.id == item.id))
     elif session_ids:
         await db.execute(delete(CreatorAgentSession).where(CreatorAgentSession.id.in_(session_ids)))
+    if jobs:
+        for job in jobs:
+            await db.delete(job)
     # Use a direct parent delete so the 0092 append-only trigger permits the
     # database FK cascade to remove transcript events after the parent vanishes.
     await db.execute(delete(CreationThread).where(CreationThread.id == identifier))

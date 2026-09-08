@@ -998,7 +998,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.7.1",
+        prompt_version="1.7.2",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1038,11 +1038,46 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "cut stays at or below the absolute 1.2s maximum."
             )
         mixed_timing_note = ""
+        mixed_timing_rule = (
+            "When MIXED-MEDIA TIMING PROFILE is present, use photos at 0.5-0.8s "
+            "(prefer 0.65s), videos at 1.5-3.0s (prefer 2.0s when the source allows), "
+            "hard cuts only, preserve the exact total, and return the exact typed profile "
+            "instead of null."
+        )
         if uses_quick_photo_long_video_timing(input.mixed_media_timing):
+            profile = input.mixed_media_timing
+            image_bounds = mixed_media_hold_bounds("image", profile)
+            video_bounds = mixed_media_hold_bounds("video", profile)
+            if profile is not None and profile.image_hold_s is not None:
+                image_timing = f"photos must hold exactly {image_bounds.preferred_s:g}s"
+            else:
+                image_timing = (
+                    f"photos should hold about {image_bounds.minimum_s:g}-"
+                    f"{image_bounds.maximum_s:g}s (prefer {image_bounds.preferred_s:g}s)"
+                )
+            if input.narration_duration_s is not None:
+                video_timing = (
+                    f"videos should hold at least {video_bounds.minimum_s:g}s when the source "
+                    f"allows and may exceed {video_bounds.maximum_s:g}s up to the actual source "
+                    "duration when needed to cover the pinned narration; shorter sources may "
+                    "use their full available duration"
+                )
+            else:
+                video_timing = (
+                    f"videos should hold about {video_bounds.minimum_s:g}-"
+                    f"{video_bounds.maximum_s:g}s (prefer {video_bounds.preferred_s:g}s when "
+                    "the source allows)"
+                )
             mixed_timing_note = (
-                "MIXED-MEDIA TIMING PROFILE: photos should hold about 0.5-0.8s "
-                "(prefer 0.65s), videos about 1.5-3.0s (prefer 2.0s when source allows), "
-                "and every boundary must be a hard cut. Preserve the exact total duration."
+                "MIXED-MEDIA TIMING PROFILE: "
+                f"{image_timing}, {video_timing}, and every boundary must be a hard cut. "
+                "Preserve the exact total duration."
+            )
+            mixed_timing_rule = (
+                "When MIXED-MEDIA TIMING PROFILE is present, follow the exact per-kind timing "
+                "instructions in the profile note above, including any explicit photo hold and "
+                "any narration-specific video duration allowance. Preserve the exact total and "
+                "return the exact typed profile instead of null."
             )
         montage_note = ""
         if input.montage_audio is not None:
@@ -1141,6 +1176,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             target_duration_s=str(input.target_duration_s),
             fast_timing_note=fast_timing_note,
             mixed_timing_note=mixed_timing_note,
+            mixed_timing_rule=mixed_timing_rule,
             montage_note=montage_note,
             review_note=review_note,
             narration_note=narration_note,

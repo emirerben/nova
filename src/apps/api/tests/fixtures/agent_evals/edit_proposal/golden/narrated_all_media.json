@@ -1,0 +1,87 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.7.2",
+  "input": {
+    "idea": "A team practice recap",
+    "theme": "Weekend practice",
+    "direction": "fast_montage",
+    "goal": "Keep the recording and use every uploaded visual",
+    "creator_request": "Use all seven visuals, including the short clips. Group the photos with each photo shown for exactly 0.3 seconds. Let the long clip fill the remaining recorded narration.",
+    "pace": "fast",
+    "target_duration_s": 11,
+    "narration_duration_s": 10.988,
+    "narration_words": [
+      {
+        "text": "Football practice brings the team together.",
+        "start_s": 0,
+        "end_s": 8.5
+      },
+      {
+        "text": "We finish with a celebration.",
+        "start_s": 8.5,
+        "end_s": 10.988
+      }
+    ],
+    "media_scope": "all",
+    "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "image_hold_s": 0.3,
+      "video_hold": "longer",
+      "boundary_style": "cut",
+      "image_grouping": "runs"
+    },
+    "media": [
+      {
+        "media_id": "long-video",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 10,
+        "subject": "football practice"
+      },
+      {
+        "media_id": "short-video",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 0.3,
+        "subject": "a quick ball kick"
+      },
+      {
+        "media_id": "closing-video",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 0.5,
+        "subject": "players celebrating"
+      },
+      {
+        "media_id": "photo-0",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "team practice photo"
+      },
+      {
+        "media_id": "photo-1",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "team practice photo"
+      },
+      {
+        "media_id": "photo-2",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "team practice photo"
+      },
+      {
+        "media_id": "photo-3",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "team practice photo"
+      }
+    ]
+  },
+  "raw_text": "{\"title\":\"Together on the pitch\",\"duration_s\":11,\"story_beats\":[],\"fast_cuts\":[{\"cut_id\":\"cut-1\",\"media_id\":\"long-video\",\"source_start_s\":0,\"source_end_s\":9,\"output_duration_s\":9,\"role\":\"hook\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"cut-4\",\"media_id\":\"short-video\",\"source_start_s\":0,\"source_end_s\":0.3,\"output_duration_s\":0.3,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"cut-2\",\"media_id\":\"photo-0\",\"source_start_s\":0,\"source_end_s\":0.3,\"output_duration_s\":0.3,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"cut-3\",\"media_id\":\"photo-1\",\"source_start_s\":0,\"source_end_s\":0.3,\"output_duration_s\":0.3,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"cut-5\",\"media_id\":\"photo-2\",\"source_start_s\":0,\"source_end_s\":0.3,\"output_duration_s\":0.3,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"cut-6\",\"media_id\":\"photo-3\",\"source_start_s\":0,\"source_end_s\":0.3,\"output_duration_s\":0.3,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"cut-7\",\"media_id\":\"closing-video\",\"source_start_s\":0,\"source_end_s\":0.5,\"output_duration_s\":0.5,\"role\":\"payoff\",\"transition\":\"none\",\"beat_align\":false}],\"mixed_media_timing\":{\"image_hold\":\"very_fast\",\"image_hold_s\":0.3,\"video_hold\":\"longer\",\"boundary_style\":\"cut\",\"image_grouping\":\"runs\"}}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "narrated all-media edit with exact photo holds, subsecond clips, and a video longer than three seconds",
+    "contract": "Preserve all seven source identities, grouped nine-frame photos, bounded real video windows, and the full 330-frame narration timeline."
+  }
+}

@@ -39,6 +39,7 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
     parse_edit_proposal,
+    uses_quick_photo_long_video_timing,
 )
 from app.services.content_plan_persona import load_owned_plan_persona_sync
 from app.services.creator_render_projection import build_creator_render_projection
@@ -1627,7 +1628,10 @@ def _run_draft_attempt(
                 )
             )
         except TerminalError as exc:
-            if brief.direction == "text_explainer":
+            if brief.direction == "text_explainer" or (
+                narration is not None
+                and not uses_quick_photo_long_video_timing(brief.mixed_media_timing)
+            ):
                 raise
             fallback_used = True
             output = None
@@ -1724,6 +1728,14 @@ def _run_draft_attempt(
                 target_duration_s,
                 brief.mixed_media_timing,
                 brief.montage_cadence,
+                narration_duration_s=narration.duration_s if narration else None,
+                required_media_ids=(
+                    [ref.media_id for ref in media]
+                    if brief.media_scope == "all"
+                    else brief.selected_media_ids
+                    if brief.media_scope == "selected"
+                    else None
+                ),
             )
             fallback_beats = _fast_story_beats(fallback_cuts)
         else:

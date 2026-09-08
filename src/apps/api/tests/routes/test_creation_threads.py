@@ -1036,6 +1036,98 @@ def _delete_thread(*, user_id: uuid.UUID, thread_id: uuid.UUID, **overrides) -> 
 
 
 @pytest.mark.asyncio
+async def test_delete_removes_plan_item_before_jobs_with_append_only_learning_fks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan-item cascades must remove learning rows before Job SET NULL runs."""
+    import app.routes.creation_threads as routes
+    from app.tasks.account_lifecycle import purge_job_storage
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id, plan_id, item_id, job_id = (uuid.uuid4() for _ in range(4))
+    thread = _delete_thread(
+        user_id=user.id,
+        thread_id=thread_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, persona_id=uuid.uuid4())
+    persona = SimpleNamespace(user_id=user.id)
+    item = SimpleNamespace(
+        id=item_id,
+        content_plan_id=plan_id,
+        current_job_id=job_id,
+        clip_gcs_paths=[],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+        speech_cleanup_analyses=[],
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=user.id,
+        content_plan_item_id=item_id,
+        status="done",
+        raw_storage_path=None,
+        assembly_plan={},
+        all_candidates={},
+    )
+    operations: list[tuple[str, object]] = []
+    execute_count = 0
+
+    def result(*, one=None, rows=(), all_rows=()) -> Mock:
+        value = Mock()
+        value.scalar_one_or_none.return_value = one
+        value.scalars.return_value.all.return_value = list(rows)
+        value.all.return_value = list(all_rows)
+        return value
+
+    async def execute(statement):  # noqa: ANN001
+        nonlocal execute_count
+        execute_count += 1
+        table = getattr(statement, "table", None)
+        operations.append(("execute", getattr(table, "name", None)))
+        if execute_count == 1:
+            return result()
+        if execute_count == 2:
+            return result(one=thread)
+        if execute_count == 3:
+            return result(rows=[])
+        if execute_count == 4:
+            return result(rows=[])
+        if execute_count == 5:
+            return result(rows=[])
+        if execute_count == 6:
+            return result(rows=[job])
+        if execute_count == 7:
+            return result(rows=[])
+        if execute_count == 8:
+            return result(rows=[])
+        if execute_count in {9, 10}:
+            return result(all_rows=[])
+        return result()
+
+    async def delete_job(row):  # noqa: ANN001
+        operations.append(("job", row.id))
+
+    monkeypatch.setattr(purge_job_storage, "apply_async", Mock())
+    db = Mock()
+    db.execute = AsyncMock(side_effect=execute)
+    db.get = AsyncMock(side_effect=[plan, persona, item])
+    db.delete = AsyncMock(side_effect=delete_job)
+    db.add = Mock()
+    db.commit = AsyncMock()
+
+    response = await routes.delete_thread(
+        _request(), str(thread_id), user, db, expected_revision=thread.revision
+    )
+
+    assert response.status_code == 204
+    plan_item_delete = operations.index(("execute", "plan_items"))
+    job_delete = operations.index(("job", job_id))
+    assert plan_item_delete < job_delete
+
+
+@pytest.mark.asyncio
 async def test_delete_rejects_a_live_signed_upload_reservation() -> None:
     import app.routes.creation_threads as routes
 

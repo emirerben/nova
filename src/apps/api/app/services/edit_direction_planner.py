@@ -26,6 +26,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     MontageCadenceConstraint,
     StoryBeat,
+    canonical_narration_duration_s,
     media_context_group,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -366,6 +367,9 @@ def deterministic_fast_cuts(
     duration_s: int,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
     montage_cadence: MontageCadenceConstraint | None = None,
+    *,
+    narration_duration_s: float | None = None,
+    required_media_ids: Sequence[str] | None = None,
 ) -> list[FastMontageCut]:
     """Build a strict source-aware montage when the semantic planner is invalid.
 
@@ -375,6 +379,15 @@ def deterministic_fast_cuts(
     image sources are used once, and adjacent cuts always use different media.
     """
 
+    if narration_duration_s is not None and (
+        montage_cadence is not None or not uses_quick_photo_long_video_timing(mixed_media_timing)
+    ):
+        raise ValueError("narrated fallback requires the mixed-media timing contract")
+    required_ids = set(required_media_ids or ())
+    if required_ids - {ref.media_id for ref in media}:
+        raise ValueError("fast montage fallback is missing required media")
+    if required_ids:
+        media = [ref for ref in media if ref.media_id in required_ids]
     if montage_cadence is not None:
         return deterministic_round_robin_cuts(media, duration_s, montage_cadence)
 
@@ -388,8 +401,17 @@ def deterministic_fast_cuts(
     if not eligible:
         raise ValueError("fast montage fallback found no usable media")
     eligible_ids = {ref.media_id for ref in eligible}
+    if required_ids - eligible_ids:
+        raise ValueError("fast montage fallback cannot use every required source safely")
     ranked = [ref for _, ref in _ranked_fast_media(media) if ref.media_id in eligible_ids]
-    target_duration_s = clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
+    # A recording owns its full frame budget. The music montage clamp and
+    # three-second video ceiling can otherwise make a feasible all-media
+    # narration fail (or silently shorten it) when the specialist rejects a draft.
+    target_duration_s = (
+        canonical_narration_duration_s(narration_duration_s)
+        if narration_duration_s is not None
+        else clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
+    )
     # Render timelines are CFR at 30fps. Allocate in frames rather than
     # milliseconds so fallback source windows are always frame aligned.
     fps = 30
@@ -425,7 +447,9 @@ def deterministic_fast_cuts(
     ):
         raise ValueError("fast montage fallback found no source supporting a primary cut")
     required_sources = (
-        maximum_distinct_sources(
+        len(required_ids)
+        if required_ids
+        else maximum_distinct_sources(
             eligible,
             target_duration_s=target_duration_s,
             mixed_media_timing=mixed_media_timing,
@@ -533,6 +557,8 @@ def deterministic_fast_cuts(
             bounds = mixed_media_hold_bounds(ref.kind, mixed_media_timing)
             preferred_minimum_frames = round(bounds.minimum_s * fps)
             preferred_maximum_frames = round(bounds.maximum_s * fps)
+            if narration_duration_s is not None and ref.kind == "video":
+                preferred_maximum_frames = remaining_frames[ref.media_id]
         else:
             preferred_minimum_frames = int(round(0.8 * fps))
             preferred_maximum_frames = int(round(1.2 * fps))
@@ -780,7 +806,13 @@ def plan_direction_snapshot(
             ctx=RunContext(job_id=job_id) if job_id else None,
         )
     except TerminalError as exc:
-        if narrated or direction == "text_explainer":
+        if direction == "text_explainer" or (
+            narrated
+            and (
+                direction != "fast_montage"
+                or not uses_quick_photo_long_video_timing(mixed_media_timing)
+            )
+        ):
             raise
         log.warning(
             "edit_direction_planner.deterministic_fallback",
@@ -797,6 +829,14 @@ def plan_direction_snapshot(
             planning_duration_s,
             mixed_media_timing,
             montage_cadence,
+            narration_duration_s=source.narration.duration_s if source.narration else None,
+            required_media_ids=(
+                [ref.media_id for ref in source.media]
+                if source.media_scope == "all"
+                else source.selected_media_ids
+                if source.media_scope == "selected"
+                else None
+            ),
         )
         if direction == "fast_montage"
         else None
