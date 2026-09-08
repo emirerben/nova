@@ -1057,9 +1057,10 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
         if item_ref is None:
             return None
 
-        # Global mutation order: Plan -> PlanItem -> Job -> Session -> Turn ->
-        # Draft -> Approval -> Execution -> Thread. No external work is done
-        # while any of these locks are held.
+        # Canonical lock order -- app/db_locks.CANONICAL_LOCK_ORDER is the single
+        # source of truth and tests/routes/test_lock_order.py enforces it:
+        # Plan -> PlanItem -> Job -> Session -> Turn -> Draft -> Approval ->
+        # Execution -> Thread. No external work is done while these are held.
         plan = db.execute(
             select(ContentPlan)
             .where(
