@@ -141,6 +141,46 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.has_narrated_captions).toBe(true);
   });
 
+  it("exposes text provenance so semantic bars can be targeted safely", () => {
+    const snapshot = buildCopilotSnapshot(
+      [
+        bar({
+          id: "score",
+          text: "six four",
+          role: "generative_sequence",
+          source_params: {
+            narrated_storyboard: "narrated_storyboard:score:4",
+            transcript_grounded: true,
+            burn_dicts: [{ text: "six four" }],
+          },
+        }),
+        bar({
+          id: "ordinary",
+          text: "ordinary text",
+          role: "generative_sequence",
+          source_params: { source: "manual", internal: { ignored: true } },
+        }),
+      ],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+    );
+
+    expect(snapshot.text_bars[0]).toMatchObject({
+      source_kind: "narrated_score",
+      source_params: {
+        narrated_storyboard: "narrated_storyboard:score:4",
+        transcript_grounded: true,
+      },
+    });
+    expect(snapshot.text_bars[0].source_params).not.toHaveProperty("burn_dicts");
+    expect(snapshot.text_bars[1]).toMatchObject({
+      source_params: { source: "manual" },
+    });
+    expect(snapshot.text_bars[1].source_kind).toBeUndefined();
+    expect(snapshot.text_bars[1].source_params).not.toHaveProperty("internal");
+  });
+
   it("4b: surfaces smart_role/smart_emphasis on each caption cue", () => {
     const snapshot = buildCopilotSnapshot(
       [

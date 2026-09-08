@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-28-v37",
+  "prompt_version": "2026-09-08-v38",
   "input": {
     "utterance": "trim the video from the first second and remove the music",
     "prior_turns": [],

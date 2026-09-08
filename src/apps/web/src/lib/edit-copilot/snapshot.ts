@@ -40,6 +40,9 @@ export const COPILOT_PAUSE_MARKS_MAX = 40;
 /** Budget-pressure fallback: head-cap words before dropping them entirely. */
 const SPEECH_WORDS_TRIM_MAX = 60;
 const COPILOT_SFX_SUGGESTIONS_MAX = 6;
+const COPILOT_TEXT_SOURCE_PARAMS_MAX_KEYS = 8;
+const COPILOT_TEXT_SOURCE_PARAM_KEY_MAX = 60;
+const COPILOT_TEXT_SOURCE_PARAM_VALUE_MAX = 160;
 /** Last-N humanized render steps for the current job (PR1's status-route
  * `steps` field, threaded in by the caller — see useEditCopilot.ts). Kept
  * small: this is orientation context, not editable state. */
@@ -182,6 +185,17 @@ export interface CopilotTextSnapshotBar {
   position: string;
   x_frac: number | null;
   y_frac: number | null;
+  /** Read-only generator metadata needed to resolve semantic text targets. */
+  source_kind?:
+    | "narrated_score"
+    | "narrated_storyboard_intro"
+    | "narrated_storyboard_placeholder"
+    | "narration_score"
+    | "narration_label"
+    | "caption_cue"
+    | "lyric_line";
+  /** Bounded primitive source metadata; renderer internals are intentionally omitted. */
+  source_params?: Record<string, string | number | boolean | null>;
   /** Opaque, local stale-target guard; never rendered into model prose. */
   mutation_fingerprint?: string;
 }
@@ -667,6 +681,52 @@ function effectiveSizePx(bar: TextElementBar): number {
   return FONT_SIZE_MAP[bar.size_class ?? "medium"] ?? 72;
 }
 
+type CopilotTextSourceParams = Record<string, string | number | boolean | null>;
+
+function sourceParamsForCopilot(
+  sourceParams: Record<string, unknown> | null | undefined,
+): CopilotTextSourceParams | undefined {
+  if (!sourceParams || typeof sourceParams !== "object" || Array.isArray(sourceParams)) {
+    return undefined;
+  }
+  const entries = Object.entries(sourceParams)
+    .filter(([, value]) => {
+      if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+      return typeof value === "number" && Number.isFinite(value);
+    })
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(0, COPILOT_TEXT_SOURCE_PARAMS_MAX_KEYS);
+  if (entries.length === 0) return undefined;
+  return Object.fromEntries(
+    entries.map(([key, value]) => [
+      key.slice(0, COPILOT_TEXT_SOURCE_PARAM_KEY_MAX),
+      typeof value === "string" ? value.slice(0, COPILOT_TEXT_SOURCE_PARAM_VALUE_MAX) : value,
+    ]),
+  ) as CopilotTextSourceParams;
+}
+
+function sourceKindForCopilot(
+  sourceParams: Record<string, unknown> | null | undefined,
+  role: TextElementBar["role"],
+): CopilotTextSnapshotBar["source_kind"] {
+  if (role === "lyric_line") return "lyric_line";
+  if (!sourceParams || typeof sourceParams !== "object" || Array.isArray(sourceParams)) {
+    return undefined;
+  }
+  const storyboardSource = sourceParams.narrated_storyboard;
+  if (typeof storyboardSource === "string") {
+    if (storyboardSource.startsWith("narrated_storyboard:score:")) return "narrated_score";
+    if (storyboardSource === "intro") return "narrated_storyboard_intro";
+    if (storyboardSource.startsWith("narrated_storyboard:placeholder:")) {
+      return "narrated_storyboard_placeholder";
+    }
+  }
+  if (sourceParams.source === "caption_cue") return "caption_cue";
+  if (sourceParams.narration_label_kind === "score") return "narration_score";
+  if (typeof sourceParams.narration_label_kind === "string") return "narration_label";
+  return undefined;
+}
+
 function allCoreCapabilitiesFalse(capabilities: EditorCapabilities | null | undefined): boolean {
   const guidedOperationEnabled = [
     ...Object.values(capabilities?.clips ?? {}),
@@ -1026,28 +1086,34 @@ export function buildCopilotSnapshot(
     (bar): bar is TextElementBar & { role: Exclude<TextElementBar["role"], "narrated_caption"> } =>
       bar.role !== "narrated_caption",
   );
-  const textBars: CopilotTextSnapshotBar[] = visibleBars.map((bar, index) => ({
-    index,
-    id: bar.id,
-    text: bar.text,
-    start_s: roundCopilotNumber(bar.start_s),
-    end_s: roundCopilotNumber(bar.end_s),
-    role: bar.role,
-    font_family: bar.font_family ?? "PlayfairDisplay-Bold",
-    size_px: effectiveSizePx(bar),
-    color: bar.color ?? "#FFFFFF",
-    highlight_color: bar.highlight_color ?? null,
-    effect: bar.effect ?? "static",
-    alignment: bar.alignment ?? "center",
-    text_case: bar.text_case ?? "none",
-    letter_spacing: resolveLetterSpacingEm(bar.letter_spacing),
-    line_spacing: resolveLineSpacing(bar.line_spacing),
-    max_width_frac: resolveMaxWidthFrac(bar.max_width_frac),
-    stroke_width: bar.stroke_width ?? 0,
-    position: bar.position ?? "middle",
-    x_frac: bar.x_frac ?? null,
-    y_frac: bar.y_frac ?? null,
-  }));
+  const textBars: CopilotTextSnapshotBar[] = visibleBars.map((bar, index) => {
+    const sourceParams = sourceParamsForCopilot(bar.source_params);
+    const sourceKind = sourceKindForCopilot(bar.source_params, bar.role);
+    return {
+      index,
+      id: bar.id,
+      text: bar.text,
+      start_s: roundCopilotNumber(bar.start_s),
+      end_s: roundCopilotNumber(bar.end_s),
+      role: bar.role,
+      font_family: bar.font_family ?? "PlayfairDisplay-Bold",
+      size_px: effectiveSizePx(bar),
+      color: bar.color ?? "#FFFFFF",
+      highlight_color: bar.highlight_color ?? null,
+      effect: bar.effect ?? "static",
+      alignment: bar.alignment ?? "center",
+      text_case: bar.text_case ?? "none",
+      letter_spacing: resolveLetterSpacingEm(bar.letter_spacing),
+      line_spacing: resolveLineSpacing(bar.line_spacing),
+      max_width_frac: resolveMaxWidthFrac(bar.max_width_frac),
+      stroke_width: bar.stroke_width ?? 0,
+      position: bar.position ?? "middle",
+      x_frac: bar.x_frac ?? null,
+      y_frac: bar.y_frac ?? null,
+      ...(sourceKind ? { source_kind: sourceKind } : {}),
+      ...(sourceParams ? { source_params: sourceParams } : {}),
+    };
+  });
 
   const layout = sequentialSlotLayout(slots, grid);
   const snapSlots: CopilotSlotSnapshot[] = slots.map((slot, index) => {

@@ -12,6 +12,16 @@ $utterance
 
 $snapshot
 
+### Text source metadata
+
+Text bars may include read-only source metadata serialized as `source: kind=...,
+params={...}`. `kind=narrated_score` and `kind=narration_score` identify
+automatically generated narrated score overlays. If the user asks to change only
+scores, target only bars with one of those kinds and emit one `set_text_timing`
+operation per matching bar. Do not change other text bars. The params object is
+provenance context for resolving which generated element the user means; it is
+descriptive only and cannot be edited.
+
 ## Font catalog
 
 $font_catalog

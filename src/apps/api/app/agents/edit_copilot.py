@@ -33,8 +33,12 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-28-v37"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-08-v38"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
+_TEXT_SOURCE_PARAMS_MAX_KEYS = 8
+_TEXT_SOURCE_PARAM_KEY_MAX = 60
+_TEXT_SOURCE_PARAM_VALUE_MAX = 160
+_TEXT_SOURCE_PARAMS_MAX_CHARS = 900
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
 _MAX_OPS = 12
@@ -640,6 +644,30 @@ def _snapshot_list(snapshot: dict, keys: Iterable[str]) -> list:
     return []
 
 
+def _format_text_source_params(value: object) -> str | None:
+    """Keep model-facing text provenance bounded to primitive metadata only."""
+    if not isinstance(value, dict):
+        return None
+    safe: dict[str, object] = {}
+    for key, item in sorted(value.items(), key=lambda entry: str(entry[0])):
+        if not isinstance(key, str):
+            continue
+        if item is not None and not isinstance(item, (str, int, float, bool)):
+            continue
+        if isinstance(item, float) and not math.isfinite(item):
+            continue
+        safe[key[:_TEXT_SOURCE_PARAM_KEY_MAX]] = (
+            item[:_TEXT_SOURCE_PARAM_VALUE_MAX] if isinstance(item, str) else item
+        )
+        if len(safe) >= _TEXT_SOURCE_PARAMS_MAX_KEYS:
+            break
+    if not safe:
+        return None
+    return _clean_prompt_data(
+        json.dumps(safe, ensure_ascii=False), max_chars=_TEXT_SOURCE_PARAMS_MAX_CHARS
+    )
+
+
 def _wire_section_compact(snapshot: dict, section: str) -> bool:
     compact = snapshot.get("wire_compact")
     return (
@@ -856,12 +884,23 @@ def _format_snapshot(snapshot: dict) -> str:
             ):
                 if bar.get(key) is not None:
                     style_bits.append(f"{key}={_clean_prompt_data(bar.get(key), max_chars=80)}")
+            source_bits = []
+            if bar.get("source_kind") is not None:
+                source_bits.append(
+                    f"kind={_clean_prompt_data(bar.get('source_kind'), max_chars=60)}"
+                )
+            source_params = _format_text_source_params(bar.get("source_params"))
+            if source_params is not None:
+                source_bits.append(f"params={source_params}")
             timing = (
                 f" {start:.2f}-{end:.2f}s"
                 if start is not None and end is not None
                 else " timing unknown"
             )
-            lines.append(f"{i}. {timing} text={text!r} style: {', '.join(style_bits) or '(none)'}")
+            source = f" source: {', '.join(source_bits)}" if source_bits else ""
+            lines.append(
+                f"{i}. {timing} text={text!r} style: {', '.join(style_bits) or '(none)'}{source}"
+            )
     else:
         lines.append("(none visible to copilot)")
     if has_captions:
