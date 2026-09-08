@@ -49,7 +49,15 @@ carries the speech-cleanup engine's decisions: `silence_cut_config`,
 `silence_cut_skipped_no_audio`, `silence_cut_rule2_disabled`,
 `retake_detector_failed`. `silence_cut_clamped` (v0.59.2.0) records the
 explicit-consent budget clamp: proposed vs delivered removal seconds plus the
-budget (`proposed_removed_s` / `time_saved_s` / `clamp_budget_s`).
+budget (`proposed_removed_s` / `time_saved_s` / `clamp_budget_s`). Since
+2026-09-08 that budget has no fraction ceiling (`MAX_REMOVAL_FRAC_REQUIRED`
+went `0.55 → 1.0`), so a `silence_cut_clamped` event now means the
+`MIN_OUTPUT_S` 3.0 s output floor bound the plan — the removals the detector
+proposed would have left under 3 s of video. Triage a "cleanup left a pause"
+report from this event first: a span present in `proposed_removals` but absent
+from `removed` was found by the detector and declined by the floor. The
+auto/legacy `MAX_REMOVAL_FRAC` 0.4 bailout (`silence_cut_bailout`) is a
+different rail and is unchanged.
 
 ## Template-scoped sibling
 

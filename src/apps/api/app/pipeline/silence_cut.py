@@ -13,9 +13,13 @@ apply step (``reframe_and_export(keep_segments=…)``); see plans/010.
                                                 ▼
                     build_cut_plan(words, silences, duration_s,
                                    retake_spans=…)
+                      0. V2 only: carve >=MAX_PAUSE_S silencedetect
+                         spans out of ASR token spans (token timestamps
+                         are not speech truth; _reconcile_words_with_silence)
                       1. lexical fillers    (universal lexicon + guards)
                       2. acoustic fillers   (soundful short gaps; V2 also
-                                             scans silence-bounded islands)
+                                             scans silence-bounded islands,
+                                             flanks measured on FULL spans)
                       3. pause tightening   (silence-intersected)
                       4. retake spans       (outward-snapped, never mid-word)
                       5. hygiene: MIN_CUT_S drop → merge →
@@ -93,12 +97,20 @@ PAD_S = 0.12  # breathing room every kept word keeps on both flanks
 PAD_ACOUSTIC_S = 0.15  # thicker flank for cuts silencedetect cannot confirm (rule 2)
 MIN_CUT_S = 0.18  # removals shorter than this are not worth a jump cut
 MAX_REMOVAL_FRAC = 0.4  # total removal above this fraction of the clip bails out
-# Explicit-consent removal budget (over_budget_policy="clamp"): a creator who
-# turned Speech cleanup ON asked for the dead air to go, so instead of bailing
-# out the plan is clamped to this fraction (largest removals first). Chosen so
-# a filler-heavy clip still keeps ~45% of its runtime; MIN_OUTPUT_S remains the
-# hard floor via the budget formula min(frac·dur, dur − MIN_OUTPUT_S) − slack.
-MAX_REMOVAL_FRAC_REQUIRED = 0.55
+# Explicit-consent removal budget (over_budget_policy="clamp"). A creator who
+# turned Speech cleanup ON asked for the dead air to go, so the plan is clamped
+# rather than bailed out — and as of 2026-09-08 it is clamped only by
+# MIN_OUTPUT_S, not by a fraction of the runtime. The old 0.55 rail capped a
+# clip at 55% removal, which on the clips this feature exists for (heavy filler,
+# long pauses) declined cuts the detector had correctly found: a 10 s clip
+# needing ~65% removal shipped with a second of dead air still in it. Removing
+# a rail the creator explicitly consented past is the point of the required
+# path; MIN_OUTPUT_S (via ``duration − MIN_OUTPUT_S − protected``) remains the
+# hard floor, so an edit can never collapse below a usable length.
+# Callers may pass ``max_removal_frac_required`` to restore a fraction cap —
+# ``settings.speech_cleanup_max_removal_frac_required`` is the operator switch
+# that does exactly that (set it to 0.55 to reinstate the old behavior).
+MAX_REMOVAL_FRAC_REQUIRED = 1.0
 # Float-safety margin subtracted from the clamp budget so trimmed spans can
 # never round past the MIN_OUTPUT_S rail (1 ulp of trim arithmetic did exactly
 # that on 5.0–6.67s clips). Millisecond-scale: imperceptible on any timeline.
@@ -109,6 +121,50 @@ LEAD_KEEP_S = 0.3  # leading silence is trimmed down to this much, not to zero
 TRAIL_KEEP_S = 0.5  # trailing silence is trimmed down to this much
 ACOUSTIC_GAP_MIN_S = 0.15  # soundful gap must be at least this long to be a filler
 ACOUSTIC_GAP_MAX_S = 1.2  # soundful gaps longer than this are left alone (laughter…)
+# V2 token reconciliation (prod 2026-09-08, jobs a75981f8/d0e284cb): whisper-1
+# word timestamps around disfluencies are NOT speech truth — a token can be
+# stamped onto the silence after its vocalization, or stretched across a pause
+# ("a..." spanning a 1.4 s hole). Every rule windows off token boundaries, so
+# such audio was structurally invisible. A silencedetect span at least
+# TOKEN_SILENCE_MIN_S long is never part of a word; when it overlaps a token by
+# at least TOKEN_SILENCE_MIN_OVERLAP_S the overlap is carved out of the token
+# (head/tail trim or interior split) BEFORE detection. Shorter silences and
+# smaller overlaps (quiet onsets under the -30 dB floor, plosive closures) are
+# left alone. Voiced remnants shorter than TOKEN_PIECE_MIN_S are absorbed; a
+# token left with no remnant is kept untouched (never dropped), so a very quiet
+# clip keeps today's behaviour. V2 only — V1 stays byte-identical.
+TOKEN_SILENCE_MIN_S = MAX_PAUSE_S
+TOKEN_SILENCE_MIN_OVERLAP_S = 0.3
+TOKEN_PIECE_MIN_S = 0.05
+# Rule 0 carves silence out of a token only in ONE shape: a single interior
+# span with nothing but slivers of voice left on either side. Every condition
+# below exists because silencedetect's floor is an absolute -30 dBFS, so on a
+# soft-spoken or lapel-mic take it reports quiet SPEECH as silence (the
+# pipeline says so itself: "silencedetect undercounts quiet/lapel speech").
+# Once a span is carved it becomes cuttable, and nothing downstream can object:
+# the validator checks word_intrusion against the RECONCILED words, so a cut
+# inside the ORIGINAL token is structurally invisible to it. Rule 0 is
+# therefore the only place that can protect the speech, and it does so by
+# refusing every ambiguous shape:
+#   * no EDGE trims — a carve at a token boundary is indistinguishable from a
+#     quiet onset or a trailing-off word, and edge trims were empirically the
+#     source of ~94% of the real-word audio a review measured being destroyed;
+#   * one carve per token — several quiet patches in one span is a mumbled
+#     word, not a stretched token;
+#   * both remnants must be slivers (TOKEN_SPLIT_PIECE_MAX_S) AND together at
+#     most TOKEN_SPLIT_VOICE_RATIO of the carve.
+# The incident shape passes all of it: "a..." spans 1.72 s around a 1.405 s
+# hole, leaving 0.18 s and 0.13 s. A 2.2 s word with a 1.0 s under-read middle
+# keeps 0.6 s on each side and is left whole.
+TOKEN_SPLIT_VOICE_RATIO = 0.5
+TOKEN_SPLIT_PIECE_MAX_S = 0.35
+# A surviving speech fragment shorter than this reads as a stutter between two
+# jump cuts rather than a shot. Hygiene widens it by retreating a neighbouring
+# silence carrier; it is never absorbed, because the fragment is audio.
+MIN_KEEP_SPEECH_SEGMENT_S = 0.6
+# One 24 fps frame: the largest gap between the decoded-audio length silencedetect
+# measures and the container duration every other stage uses.
+_CONTAINER_EDGE_SNAP_S = 1.0 / 24.0
 AVG_LOGPROB_MIN = -1.0  # segment avg_logprob below this blocks lexical cuts
 NO_SPEECH_PROB_MAX = 0.5  # segment no_speech_prob above this blocks lexical cuts
 MIN_KEEP_SEGMENT_S = 0.25  # word-free keep fragments shorter than this are absorbed
@@ -123,6 +179,7 @@ _MAX_DIAGNOSTIC_ACOUSTIC = 64
 _MAX_DIAGNOSTIC_DECISIONS = 32
 _MAX_DIAGNOSTIC_DISPOSITIONS = 64
 _MAX_DIAGNOSTIC_REMOVALS = MAX_REMOVALS
+_MAX_DIAGNOSTIC_TOKEN_ADJUSTMENTS = 32
 
 
 # ---------------------------------------------------------------------------------
@@ -253,6 +310,19 @@ class AcousticDecision:
 
 
 @dataclass(frozen=True)
+class TokenAdjustment:
+    """One V2 token-span reconciliation against long silence; timing only."""
+
+    original_start_s: float
+    original_end_s: float
+    pieces: tuple[tuple[float, float], ...]
+    carved_s: float
+    # Only an interior carve is ever performed, so the token either keeps both
+    # slivers ("split") or loses one of them to TOKEN_PIECE_MIN_S absorption.
+    kind: Literal["trim_head", "trim_tail", "split"]
+
+
+@dataclass(frozen=True)
 class AtomicDisposition:
     """Authoritative terminal allocation state for one input atom."""
 
@@ -293,6 +363,12 @@ class CutDiagnostics:
     mixed_gap_full_total: int
     mixed_gap_partial_total: int
     mixed_gap_dropped_total: int
+    # Rule 0 evidence (V2 token reconciliation). Defaults keep older
+    # constructions and pickled/serialized shapes valid.
+    token_adjustments: tuple[TokenAdjustment, ...] = ()
+    token_adjustments_total: int = 0
+    token_adjustments_omitted: int = 0
+    token_carved_s: float = 0.0
 
 
 @dataclass
@@ -437,7 +513,15 @@ def _normalize_words(words: Sequence[Any] | None) -> list[_CutWord]:
 def _normalize_silences(
     silences: Sequence[tuple[float, float]] | None, duration_s: float
 ) -> list[tuple[float, float]]:
-    """Clamp silence ranges to the clip, drop empties, sort + merge overlaps."""
+    """Clamp silence ranges to the clip, drop empties, sort + merge overlaps.
+
+    A span within ``_CONTAINER_EDGE_SNAP_S`` of 0 or ``duration_s`` snaps to
+    that boundary. silencedetect reports on decoded audio, whose length differs
+    from the container by up to a frame (EN prod clip: trailing silence ended
+    20 µs early), and that sliver of a gap left the trailing cut unable to reach
+    the end of the clip — enough to strand a quarter second of dead air at the
+    end of the edit once micro-gap hygiene was involved.
+    """
     spans: list[tuple[float, float]] = []
     for raw in silences or []:
         try:
@@ -449,6 +533,10 @@ def _normalize_silences(
             continue
         lo = max(0.0, raw_lo)
         hi = min(duration_s, raw_hi)
+        if lo <= _CONTAINER_EDGE_SNAP_S:
+            lo = 0.0
+        if math.isfinite(duration_s) and duration_s - hi <= _CONTAINER_EDGE_SNAP_S:
+            hi = duration_s
         if hi - lo > _EPS:
             spans.append((lo, hi))
     spans.sort()
@@ -503,22 +591,124 @@ def _subtract_intervals(
     return out
 
 
+def _reconcile_words_with_silence(
+    words: list[_CutWord],
+    silence_spans: list[tuple[float, float]],
+) -> tuple[list[_CutWord], list[TokenAdjustment]]:
+    """V2 rule 0: carve long silencedetect spans out of ASR token spans.
+
+    whisper-1 word timestamps are unreliable around disfluencies in two ways
+    seen in production (2026-09-08, reproducible run after run):
+
+    * a token is STRETCHED across a pause — ``a...`` at 5.48–7.20 s containing
+      a 1.4 s silence — so the pause lies inside a token and no rule can see it
+      (rules 2/3 only window BETWEEN tokens, and the validator forbids cutting
+      into a token);
+    * a token's edge drifts into the silence next to it (``Um,`` stamped from
+      0.0 while the voice starts at 1.14 s), hiding lead/trail/interior dead air.
+
+    Only one shape is carved, and only when it cannot plausibly be a word: a
+    SINGLE silencedetect span of at least ``TOKEN_SILENCE_MIN_S``, strictly
+    interior to the token, overlapping it by at least
+    ``TOKEN_SILENCE_MIN_OVERLAP_S``, leaving a voiced sliver on each side that
+    is under ``TOKEN_SPLIT_PIECE_MAX_S`` and together at most
+    ``TOKEN_SPLIT_VOICE_RATIO`` of the carve. Anything else — an edge trim,
+    several quiet patches, substantial voice either side — is left alone,
+    because it is indistinguishable from a quiet onset or a mumbled word and
+    the cut would delete real speech. Tokens are never dropped either (a
+    mis-stamped filler inside silence is handled by rule 2's full-span flanks),
+    so a very quiet clip behaves exactly as before. Text and order are
+    preserved. ``retake_spans`` keep indexing the ORIGINAL list, so the caller
+    must not feed the result to rule 4. Rule 3 then cuts only the silence
+    inside the carve, never the slivers.
+    """
+    if not words or not silence_spans:
+        return list(words), []
+    long_spans = [(lo, hi) for lo, hi in silence_spans if hi - lo >= TOKEN_SILENCE_MIN_S - _EPS]
+    if not long_spans:
+        return list(words), []
+
+    reconciled: list[_CutWord] = []
+    adjustments: list[TokenAdjustment] = []
+    for word in words:
+        carve = [
+            (max(word.start, lo), min(word.end, hi))
+            for lo, hi in long_spans
+            if min(word.end, hi) - max(word.start, lo) >= TOKEN_SILENCE_MIN_OVERLAP_S - _EPS
+        ]
+        # Exactly one carve, strictly interior: an edge carve is a quiet onset
+        # or a trailing-off word, and several carves are a mumbled word.
+        if len(carve) != 1:
+            reconciled.append(word)
+            continue
+        carve_lo, carve_hi = carve[0]
+        if carve_lo <= word.start + _EPS or carve_hi >= word.end - _EPS:
+            reconciled.append(word)
+            continue
+        pieces = [(word.start, carve_lo), (carve_hi, word.end)]
+        carved_s = carve_hi - carve_lo
+        if (
+            any(hi - lo > TOKEN_SPLIT_PIECE_MAX_S + _EPS for lo, hi in pieces)
+            or sum(hi - lo for lo, hi in pieces) > carved_s * TOKEN_SPLIT_VOICE_RATIO + _EPS
+        ):
+            # Real voice survives on both sides: a word the mic under-read.
+            reconciled.append(word)
+            continue
+        pieces = [(lo, hi) for lo, hi in pieces if hi - lo >= TOKEN_PIECE_MIN_S - _EPS]
+        if not pieces:
+            reconciled.append(word)
+            continue
+        for lo, hi in pieces:
+            reconciled.append(word._replace(start=lo, end=hi))
+        adjustments.append(
+            TokenAdjustment(
+                original_start_s=word.start,
+                original_end_s=word.end,
+                pieces=tuple(pieces),
+                carved_s=(word.end - word.start) - sum(hi - lo for lo, hi in pieces),
+                kind=(
+                    "split"
+                    if len(pieces) > 1
+                    # One sliver was absorbed: name the end that survived.
+                    else ("trim_tail" if pieces[0][0] <= word.start + _EPS else "trim_head")
+                ),
+            )
+        )
+    reconciled.sort(key=lambda item: (item.start, item.end))
+    return reconciled, adjustments
+
+
 def _interior_soundful_islands(
     window_lo: float,
     window_hi: float,
     silence_spans: list[tuple[float, float]],
+    *,
+    filler_lo_boundary: bool = False,
+    filler_hi_boundary: bool = False,
 ) -> list[AcousticDecision]:
     """Classify maximal non-silent complements inside one ASR word gap.
 
     Only a complement strictly inside the window can be eligible: that proves
     it has a contiguous FFmpeg-detected silence flank on both sides and cannot
-    touch an ASR word or clip boundary.  Inputs are expected to be normalized,
-    but clipping here keeps the helper deterministic for direct unit tests.
+    touch an ASR word or clip boundary.
+
+    A flank LENGTH is measured on the full silencedetect span instead of the
+    window-clipped piece only on a side whose boundary token is a removable
+    filler (``filler_lo_boundary`` / ``filler_hi_boundary``).  A filler token
+    whisper had stamped INSIDE the silence (prod 2026-09-08, ``ııı,`` at 8.04 s
+    over silence 7.98–8.29 s) truncated the real vocalization's right flank to
+    62 ms and got it rejected as too short; every span is at least
+    ``min_silence_s`` long by construction, so such a rejection can only come
+    from a token boundary inside silence.  The measurement stays window-clipped
+    next to a REAL word: whisper stamps those late too, and there the clipped
+    flank is the guard that keeps the word's own vocalization from being cut as
+    an acoustic filler.  Inputs are expected to be normalized; merging here
+    keeps the helper deterministic for direct unit tests.
     """
     if window_hi - window_lo <= _EPS:
         return []
-    normalized_silences = _normalize_silences(silence_spans, window_hi)
-    intersections = _intersect_span(window_lo, window_hi, normalized_silences)
+    merged_silences = _normalize_silences(silence_spans, math.inf)
+    intersections = _intersect_span(window_lo, window_hi, merged_silences)
     if not intersections:
         return []
 
@@ -531,6 +721,11 @@ def _interior_soundful_islands(
                 left_flank = silence_hi - silence_lo
             if abs(silence_lo - island_hi) <= _EPS:
                 right_flank = silence_hi - silence_lo
+        for silence_lo, silence_hi in merged_silences:
+            if filler_lo_boundary and abs(silence_hi - island_lo) <= _EPS:
+                left_flank = max(left_flank, silence_hi - silence_lo)
+            if filler_hi_boundary and abs(silence_lo - island_hi) <= _EPS:
+                right_flank = max(right_flank, silence_hi - silence_lo)
 
         duration = island_hi - island_lo
         if island_lo <= window_lo + _EPS or island_hi >= window_hi - _EPS:
@@ -661,11 +856,13 @@ def _acoustic_removals_v2(
 
     removals: list[Removal] = []
     decisions: list[AcousticDecision] = []
-    windows: list[tuple[float, float, bool]] = [(0.0, words[0].start, False)]
-    windows.extend((prev.end, nxt.start, True) for prev, nxt in pairwise(words))
-    windows.append((words[-1].end, duration_s, False))
+    windows: list[tuple[float, float, bool, _CutWord | None, _CutWord | None]] = [
+        (0.0, words[0].start, False, None, words[0])
+    ]
+    windows.extend((prev.end, nxt.start, True, prev, nxt) for prev, nxt in pairwise(words))
+    windows.append((words[-1].end, duration_s, False, words[-1], None))
 
-    for window_lo, window_hi, allow_legacy_gap in windows:
+    for window_lo, window_hi, allow_legacy_gap, lo_word, hi_word in windows:
         if window_hi - window_lo <= _EPS:
             continue
         if not _overlaps_any(window_lo, window_hi, silence_spans):
@@ -684,6 +881,8 @@ def _acoustic_removals_v2(
             window_lo,
             window_hi,
             silence_spans,
+            filler_lo_boundary=lo_word is not None and _removable_filler(lo_word),
+            filler_hi_boundary=hi_word is not None and _removable_filler(hi_word),
         )
         decisions.extend(window_decisions)
         for decision in window_decisions:
@@ -706,10 +905,17 @@ def _acoustic_removals_v2(
 # ---------------------------------------------------------------------------------
 
 
+def _removable_filler(word: _CutWord) -> bool:
+    """True when rule 1 will remove this token (same predicate, one place)."""
+    return is_filler_token(word.text) and _segment_signals_allow(word)
+
+
 def _pause_removals(
     words: list[_CutWord],
     silence_spans: list[tuple[float, float]],
     duration_s: float,
+    *,
+    edges_skip_fillers: bool = False,
 ) -> list[Removal]:
     """Rule 3: tighten long pauses ONLY where silencedetect agrees.
 
@@ -718,17 +924,35 @@ def _pause_removals(
     constant). No intersection ⇒ no cut: whisper end times drift (D16), so
     word-gap arithmetic alone is never trusted. Leading silence is trimmed
     down to LEAD_KEEP_S, trailing to TRAIL_KEEP_S, both silence-confirmed.
+
+    ``edges_skip_fillers`` (V2 only) measures those two keeps from the first
+    and last token rule 1 will KEEP.  A clip that opens on a filler otherwise
+    leaves ``LEAD_KEEP_S − PAD_S`` of dead air stranded between the lead trim
+    and the filler's own padded cut: too short to hear as a pause, too short
+    for its own cut, and at the consent budget's ceiling the micro-gap pass
+    paid for that sliver by evicting the whole lead trim — resurrecting a
+    second of dead air at the start of the edit (prod EN clip, 2026-09-08).
+    Only silence is ever removed here, so extending the window across a filler
+    cannot touch the vocalization itself.
     """
     removals: list[Removal] = []
     first, last = words[0], words[-1]
+    if edges_skip_fillers:
+        first = next((word for word in words if not _removable_filler(word)), first)
+        last = next((word for word in reversed(words) if not _removable_filler(word)), last)
     if first.start > LEAD_KEEP_S:
         for lo, hi in _intersect_span(0.0, first.start - LEAD_KEEP_S, silence_spans):
             removals.append(Removal(start_s=lo, end_s=hi, reason=REASON_SILENCE))
     for prev, nxt in pairwise(words):
         if nxt.start - prev.end < MAX_PAUSE_S - _EPS:
             continue
-        window_lo = prev.end + KEPT_GAP_S / 2
-        window_hi = nxt.start - KEPT_GAP_S / 2
+        # A neighbour rule 1 will cut takes its own PAD_S flank; keeping the
+        # wider KEPT_GAP_S/2 residual against it strands a 5 ms silence sliver
+        # between the two cuts, which later costs a whole cut to clean up.
+        keep_lo = PAD_S if edges_skip_fillers and _removable_filler(prev) else KEPT_GAP_S / 2
+        keep_hi = PAD_S if edges_skip_fillers and _removable_filler(nxt) else KEPT_GAP_S / 2
+        window_lo = prev.end + keep_lo
+        window_hi = nxt.start - keep_hi
         for lo, hi in _intersect_span(window_lo, window_hi, silence_spans):
             removals.append(Removal(start_s=lo, end_s=hi, reason=REASON_SILENCE))
     if duration_s - last.end > TRAIL_KEEP_S:
@@ -1305,6 +1529,64 @@ def _eviction_key(item: _AllocationItem) -> tuple[int, float]:
     return rank, -item.start_s
 
 
+def _retreat_from_micro_gap(
+    evictable: Sequence[_AllocationItem],
+    gap_lo: float,
+    gap_hi: float,
+    words: list[_CutWord],
+    *,
+    target_gap_s: float = MIN_KEEP_SEGMENT_S,
+) -> tuple[_AllocationItem, _AllocationItem] | None:
+    """Pull one flexible carrier back so the flash becomes a real keep segment.
+
+    Only silence carriers retreat: filler/retake groups are atomic and a
+    protected span is never touched.  The retreating edge snaps clear of words
+    (which can only shrink the cut further), the carrier must survive as a cut
+    of its own, and the widened gap must clear ``MIN_KEEP_SEGMENT_S``.  Returns
+    ``(carrier, replacement)``, or None when no carrier can afford to retreat.
+    """
+    needed = target_gap_s - (gap_hi - gap_lo)
+    if needed <= _EPS:
+        return None
+    best: tuple[float, _AllocationItem, _AllocationItem] | None = None
+    for item in evictable:
+        if item.kind not in {"flexible", "bridge"}:
+            continue
+        if item.end_s <= gap_lo + _EPS:
+            boundary = _snap_boundary_out_of_words(item.end_s - needed, words, direction="left")
+            if (
+                boundary - item.start_s < MIN_CUT_S - _EPS
+                or gap_hi - boundary < target_gap_s - _EPS
+            ):
+                continue
+            replacement = _AllocationItem(
+                start_s=item.start_s,
+                end_s=boundary,
+                reason=item.reason,
+                kind=item.kind,
+                group_id=item.group_id,
+            )
+        elif item.start_s >= gap_hi - _EPS:
+            boundary = _snap_boundary_out_of_words(item.start_s + needed, words, direction="right")
+            if item.end_s - boundary < MIN_CUT_S - _EPS or boundary - gap_lo < target_gap_s - _EPS:
+                continue
+            replacement = _AllocationItem(
+                start_s=boundary,
+                end_s=item.end_s,
+                reason=item.reason,
+                kind=item.kind,
+                group_id=item.group_id,
+            )
+        else:
+            continue
+        lost = (item.end_s - item.start_s) - (replacement.end_s - replacement.start_s)
+        if best is None or lost < best[0] - _EPS:
+            best = (lost, item, replacement)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
 def _apply_v2_micro_gap_hygiene(
     items: list[_AllocationItem],
     words: list[_CutWord],
@@ -1333,16 +1615,42 @@ def _apply_v2_micro_gap_hygiene(
             gaps.append((clusters[-1][1], duration_s, clusters[-1][2], []))
         for gap_lo, gap_hi, left_members, right_members in gaps:
             gap = gap_hi - gap_lo
-            if gap <= _EPS or gap >= MIN_KEEP_SEGMENT_S - _EPS:
+            if gap <= _EPS:
                 continue
             if _has_word_overlap(gap_lo, gap_hi, words):
-                if (
+                if gap < MIN_KEEP_SEGMENT_S - _EPS and (
                     left_members
                     and right_members
                     and all(item.protected for item in left_members)
                     and all(item.protected for item in right_members)
                 ):
                     return active, False
+                if gap < MIN_KEEP_SPEECH_SEGMENT_S - _EPS:
+                    # Too short to read as a shot. Widen it by pulling a
+                    # neighbouring silence carrier back; never absorb it, the
+                    # fragment is audio and may be real speech.
+                    speech_retreat = _retreat_from_micro_gap(
+                        [
+                            item
+                            for item in (
+                                *(left_members[-1:] if left_members else []),
+                                *(right_members[:1] if right_members else []),
+                            )
+                            if not item.protected
+                        ],
+                        gap_lo,
+                        gap_hi,
+                        words,
+                        target_gap_s=MIN_KEEP_SPEECH_SEGMENT_S,
+                    )
+                    if speech_retreat is not None:
+                        shrunk, replacement = speech_retreat
+                        active.remove(shrunk)
+                        active.append(replacement)
+                        changed = True
+                        break
+                continue
+            if gap >= MIN_KEEP_SEGMENT_S - _EPS:
                 continue
 
             adjacent = [
@@ -1376,6 +1684,22 @@ def _apply_v2_micro_gap_hygiene(
             evictable = [item for item in adjacent if not item.protected]
             if not evictable:
                 return active, False
+
+            # Widening the flash into a real keep segment is always cheaper than
+            # dropping a whole cut: pulling one silence carrier back by
+            # ``MIN_KEEP_SEGMENT_S − gap`` costs a fraction of a second and frees
+            # budget, while eviction returns the carrier's entire span to the
+            # edit. At the consent budget's ceiling every fitted carrier ends up
+            # flush against its neighbour, so eviction there silently undid most
+            # of the cleanup the creator asked for (prod clips, 2026-09-08).
+            retreat = _retreat_from_micro_gap(evictable, gap_lo, gap_hi, words)
+            if retreat is not None:
+                shrunk, replacement = retreat
+                active.remove(shrunk)
+                active.append(replacement)
+                changed = True
+                break
+
             evicted = min(evictable, key=_eviction_key)
             active.remove(evicted)
             if evicted.group_id is not None:
@@ -1445,6 +1769,7 @@ def _bounded_diagnostics(
     groups: list[_AtomicGroup],
     dispositions: dict[int, _Disposition],
     proposed: list[Removal],
+    token_adjustments: Sequence[TokenAdjustment] = (),
 ) -> CutDiagnostics:
     atomic_records: list[AtomicDisposition] = []
     for group in groups:
@@ -1515,6 +1840,12 @@ def _bounded_diagnostics(
         mixed_gap_dropped_total=sum(
             record.disposition.startswith("dropped_") for record in mixed_records
         ),
+        token_adjustments=tuple(token_adjustments[:_MAX_DIAGNOSTIC_TOKEN_ADJUSTMENTS]),
+        token_adjustments_total=len(token_adjustments),
+        token_adjustments_omitted=max(
+            0, len(token_adjustments) - _MAX_DIAGNOSTIC_TOKEN_ADJUSTMENTS
+        ),
+        token_carved_s=sum(item.carved_s for item in token_adjustments),
     )
 
 
@@ -1531,6 +1862,7 @@ def _v2_no_op_plan(
     clamped: bool = False,
     proposed_removed_s: float | None = None,
     clamp_budget_s: float | None = None,
+    token_adjustments: Sequence[TokenAdjustment] = (),
 ) -> CutPlan:
     for group in groups:
         if group.atoms:
@@ -1542,6 +1874,7 @@ def _v2_no_op_plan(
         groups=groups,
         dispositions=dispositions,
         proposed=proposed,
+        token_adjustments=token_adjustments,
     )
     return CutPlan(
         keep_segments=[(0.0, duration_s)],
@@ -1686,6 +2019,17 @@ def _validate_v2_candidate(
                 raise ValueError("word_intrusion")
 
 
+def _resolve_removal_frac(max_removal_frac_required: float | None) -> float:
+    """Caller override for the explicit-consent fraction cap, else the default.
+
+    Resolved per call (never captured at import) so both the operator setting
+    and a monkeypatched module constant take effect.
+    """
+    if max_removal_frac_required is None:
+        return MAX_REMOVAL_FRAC_REQUIRED
+    return max(0.0, float(max_removal_frac_required))
+
+
 def _merge_plain_spans(spans: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
     merged: list[tuple[float, float]] = []
     for lo, hi in sorted(spans):
@@ -1721,6 +2065,7 @@ def _build_v2_cut_plan_normalized(
     forced: list[Removal],
     include_silence_and_fillers: bool,
     over_budget_policy: Literal["bailout", "clamp"],
+    max_removal_frac_required: float | None = None,
 ) -> CutPlan:
     """Build the V2 candidate without invoking normalization or external I/O."""
     if not cut_words:
@@ -1746,14 +2091,22 @@ def _build_v2_cut_plan_normalized(
             proposed=[],
         )
 
+    # Rule 0: token spans are reconciled with long silence for every
+    # token-relative rule below. Retake spans are WORD INDICES over the
+    # original transcript, so rule 4 keeps the original list.
+    v2_words = cut_words
+    token_adjustments: list[TokenAdjustment] = []
+    if include_silence_and_fillers:
+        v2_words, token_adjustments = _reconcile_words_with_silence(cut_words, silence_spans)
+
     lexical: list[Removal] = []
     acoustic: list[Removal] = []
     decisions: list[AcousticDecision] = []
     pauses: list[Removal] = []
     if include_silence_and_fillers:
-        lexical = _lexical_removals(cut_words, duration)
-        acoustic, decisions = _acoustic_removals_v2(cut_words, silence_spans, duration)
-        pauses = _pause_removals(cut_words, silence_spans, duration)
+        lexical = _lexical_removals(v2_words, duration)
+        acoustic, decisions = _acoustic_removals_v2(v2_words, silence_spans, duration)
+        pauses = _pause_removals(v2_words, silence_spans, duration, edges_skip_fillers=True)
     retakes = _retake_removals(cut_words, retake_spans, duration)
 
     atom_inputs: list[_AtomicInput] = []
@@ -1786,9 +2139,22 @@ def _build_v2_cut_plan_normalized(
 
     clamp_budget_s: float | None = None
     if over_budget_policy == "clamp":
+        # Protected (forced/manual) spans are exempt from the budget but still
+        # shorten the output, so the output rail has to be reserved for them
+        # here — otherwise a fully allocated plan plus a large forced span trips
+        # MIN_OUTPUT_S at the end and the whole candidate becomes a no-op.
+        protected_total = sum(
+            hi - lo
+            for lo, hi in _merge_plain_spans(
+                [(group.start_s, group.end_s) for group in groups if group.protected]
+            )
+        )
         clamp_budget_s = max(
             0.0,
-            min(MAX_REMOVAL_FRAC_REQUIRED * duration, duration - MIN_OUTPUT_S)
+            min(
+                _resolve_removal_frac(max_removal_frac_required) * duration,
+                duration - MIN_OUTPUT_S - protected_total,
+            )
             - CLAMP_BUDGET_SLACK_S,
         )
         budget_s = clamp_budget_s
@@ -1821,7 +2187,7 @@ def _build_v2_cut_plan_normalized(
             removal,
             remaining,
             edge_kind=edge_kind,
-            words=cut_words,
+            words=v2_words,
         )
         if fitted is None:
             return
@@ -1836,7 +2202,7 @@ def _build_v2_cut_plan_normalized(
     edge_flexible: list[tuple[Removal, Literal["lead", "trail", "interior"]]] = []
     interior_flexible: list[Removal] = []
     for removal in flexible:
-        edge_kind = _edge_kind_v2(removal, cut_words, duration)
+        edge_kind = _edge_kind_v2(removal, v2_words, duration)
         if edge_kind in {"lead", "trail"}:
             edge_flexible.append((removal, edge_kind))
         else:
@@ -1880,7 +2246,7 @@ def _build_v2_cut_plan_normalized(
 
     active, micro_ok = _apply_v2_micro_gap_hygiene(
         active,
-        cut_words,
+        v2_words,
         duration,
         budget_s,
         groups,
@@ -1896,6 +2262,7 @@ def _build_v2_cut_plan_normalized(
             groups=groups,
             dispositions=dispositions,
             proposed=proposed,
+            token_adjustments=token_adjustments,
             clamped=clamped,
             proposed_removed_s=proposed_total if clamped else None,
             clamp_budget_s=clamp_budget_s,
@@ -1915,6 +2282,7 @@ def _build_v2_cut_plan_normalized(
                 groups=groups,
                 dispositions=dispositions,
                 proposed=proposed,
+                token_adjustments=token_adjustments,
                 clamped=clamped,
                 proposed_removed_s=proposed_total if clamped else None,
                 clamp_budget_s=clamp_budget_s,
@@ -1935,6 +2303,7 @@ def _build_v2_cut_plan_normalized(
             groups=groups,
             dispositions=dispositions,
             proposed=proposed,
+            token_adjustments=token_adjustments,
             clamped=clamped,
             proposed_removed_s=proposed_total if clamped else None,
             clamp_budget_s=clamp_budget_s,
@@ -1952,6 +2321,7 @@ def _build_v2_cut_plan_normalized(
             groups=groups,
             dispositions=dispositions,
             proposed=proposed,
+            token_adjustments=token_adjustments,
         )
     if duration - total_removed < MIN_OUTPUT_S - _EPS:
         return _v2_no_op_plan(
@@ -1963,6 +2333,7 @@ def _build_v2_cut_plan_normalized(
             groups=groups,
             dispositions=dispositions,
             proposed=proposed,
+            token_adjustments=token_adjustments,
             clamped=clamped,
             proposed_removed_s=proposed_total if clamped else None,
             clamp_budget_s=clamp_budget_s,
@@ -1975,6 +2346,7 @@ def _build_v2_cut_plan_normalized(
         groups=groups,
         dispositions=dispositions,
         proposed=proposed,
+        token_adjustments=token_adjustments,
     )
     plan = CutPlan(
         keep_segments=_complement(removals, duration),
@@ -1990,7 +2362,7 @@ def _build_v2_cut_plan_normalized(
         _validate_v2_candidate(
             plan,
             duration_s=duration,
-            words=cut_words,
+            words=v2_words,
             forced=[
                 Removal(
                     start_s=item.start_s,
@@ -2018,6 +2390,7 @@ def _build_v1_cut_plan_normalized(
     forced: list[Removal],
     include_silence_and_fillers: bool = True,
     over_budget_policy: Literal["bailout", "clamp"] = "bailout",
+    max_removal_frac_required: float | None = None,
 ) -> CutPlan:
     """The pre-V2 algorithm over already-normalized immutable inputs."""
     if not cut_words:
@@ -2060,9 +2433,18 @@ def _build_v1_cut_plan_normalized(
         # (5.0–6.67s clips) tripped the epsilon-free output rail below and
         # resurrected the strict unsafe_plan failure. 1 ms is imperceptible
         # and dwarfs any accumulated error (≤ ~1e-13 over MAX_REMOVALS spans).
+        # No protected reservation here, unlike V2: this budget is compared
+        # against `total_removed`, which ALREADY includes the protected spans
+        # (V2 compares against its budgeted-only subtotal). Subtracting them
+        # again would double-count and report a plan made entirely of forced
+        # cuts as clamped. A forced set large enough to breach MIN_OUTPUT_S is
+        # caught by the output rail below, which is this branch's backstop.
         clamp_budget_s = max(
             0.0,
-            min(MAX_REMOVAL_FRAC_REQUIRED * duration, duration - MIN_OUTPUT_S)
+            min(
+                _resolve_removal_frac(max_removal_frac_required) * duration,
+                duration - MIN_OUTPUT_S,
+            )
             - CLAMP_BUDGET_SLACK_S,
         )
         if total_removed > clamp_budget_s + _EPS:
@@ -2107,6 +2489,7 @@ def build_cut_plan(
     include_silence_and_fillers: bool = True,
     over_budget_policy: Literal["bailout", "clamp"] = "bailout",
     mixed_gap_enabled: bool = False,
+    max_removal_frac_required: float | None = None,
 ) -> CutPlan:
     """Detect silence/filler/retake cuts and return one executable plan.
 
@@ -2129,6 +2512,7 @@ def build_cut_plan(
             forced=[],
             include_silence_and_fillers=include_silence_and_fillers,
             over_budget_policy=over_budget_policy,
+            max_removal_frac_required=max_removal_frac_required,
         )
     silence_spans = _normalize_silences(silences, duration)
     forced = _normalize_forced_removals(forced_removals, duration)
@@ -2137,6 +2521,7 @@ def build_cut_plan(
         "forced": forced,
         "include_silence_and_fillers": include_silence_and_fillers,
         "over_budget_policy": over_budget_policy,
+        "max_removal_frac_required": max_removal_frac_required,
     }
     if mixed_gap_enabled:
         return _build_v2_cut_plan_normalized(
@@ -2162,6 +2547,7 @@ def build_cut_plan_comparison(
     forced_removals: Sequence[Removal | dict[str, Any]] | None = None,
     include_silence_and_fillers: bool = True,
     over_budget_policy: Literal["bailout", "clamp"] = "bailout",
+    max_removal_frac_required: float | None = None,
 ) -> CutPlanComparison:
     """Build V1 first, then isolate all V2-only failures from that baseline."""
     duration = float(duration_s)
@@ -2177,6 +2563,7 @@ def build_cut_plan_comparison(
         "forced": forced,
         "include_silence_and_fillers": include_silence_and_fillers,
         "over_budget_policy": over_budget_policy,
+        "max_removal_frac_required": max_removal_frac_required,
     }
     baseline = _build_v1_cut_plan_normalized(
         cut_words,
@@ -2226,10 +2613,13 @@ def remap_words(words: Sequence[Any] | None, plan: CutPlan) -> list[dict]:
     """Shift surviving words into cut-timeline coordinates.
 
     Words fully inside a removal are dropped; survivors shift left by the
-    cumulative removed time before them. Removals never intrude into kept
-    words' interiors by construction, so the remap is exact arithmetic —
-    kept spans keep their exact durations. Returns plain dicts
-    (``text``/``start_s``/``end_s``) ready for caption-cue building.
+    cumulative removed time before them. V1 removals never intrude into kept
+    words' interiors by construction, so kept spans keep their exact
+    durations. A V2 plan may cut FFmpeg silence that rule 0 carved out of a
+    stretched token (``a...`` spanning a 1.4 s hole): that word then shrinks
+    by exactly the carved silence and its caption no longer lingers over dead
+    air. Returns plain dicts (``text``/``start_s``/``end_s``) ready for
+    caption-cue building.
     """
     removals = sorted(plan.removed, key=lambda r: (r.start_s, r.end_s))
     remapped: list[dict] = []

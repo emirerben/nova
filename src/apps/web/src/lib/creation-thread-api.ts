@@ -133,6 +133,10 @@ export interface CreationSpeechCleanupAnalysis {
   candidate_count?: number | null;
   category_counts?: Record<string, number> | null;
   estimated_removed_ms?: number | null;
+  /** Length of the analyzed narration window. Null on rows without a window. */
+  source_duration_ms?: number | null;
+  /** What the take becomes if the cleanup is accepted. Null until estimated. */
+  result_duration_ms?: number | null;
   error?: CreationSpeechCleanupError | null;
 }
 

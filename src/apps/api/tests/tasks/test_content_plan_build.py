@@ -18,6 +18,7 @@ import pytest
 from app.agents._schemas.content_plan import PlanItemSpec
 from app.models import ContentPlan, Job, PlanItem, SpeechCleanupAnalysis
 from app.models import Persona as PersonaRow
+from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.tasks.content_plan_build import (
     _dispatch_item_render,
     _guided_render_queue,
@@ -68,7 +69,7 @@ def _recovery_payload(source_fingerprint: str) -> dict[str, object]:
     return {
         "schema_version": 1,
         "source_fingerprint": source_fingerprint,
-        "detector_version": "mixed-gap-v1",
+        "detector_version": DETECTOR_VERSION,
         "source_window_start_s": 0.0,
         "source_window_end_s": 12.0,
         "language": "en",
@@ -681,7 +682,7 @@ def _run_cleanup_application_recovery(
     fingerprint = "a" * 64
     row = _cleanup_analysis(item, fingerprint=fingerprint)
     row.engine_version = "preflight-v1-2026-09-05"
-    row.detector_version = "mixed-gap-v1"
+    row.detector_version = DETECTOR_VERSION
     row.analysis_payload = _recovery_payload(fingerprint)
     row.decision = "clean"
     row.decision_at = datetime.now(UTC)
@@ -949,7 +950,7 @@ def _run_cleanup_preflight_publish_recovery(
         fingerprint=fingerprint,
     )
     row.engine_version = "preflight-v1-2026-09-05"
-    row.detector_version = "mixed-gap-v1"
+    row.detector_version = DETECTOR_VERSION
     row.analysis_payload = _recovery_payload(fingerprint)
     row.decision = {
         None: "clean",

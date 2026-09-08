@@ -412,6 +412,7 @@ applicable
 unavailable_reason
 analysis: id, status, detector_version, has_findings,
           candidate_count, category_counts, estimated_removed_ms,
+          source_duration_ms, result_duration_ms,
           error: { code, retryable } | null
 decision: clean | keep_original | create_without_cleanup | null
 requires_choice
@@ -429,6 +430,9 @@ the field or returns `speech_cleanup: null` according to the tolerant summary sc
 Never expose raw source fingerprints, GCS paths, signed URLs, timed words,
 transcripts, cut intervals, detector diagnostics, or private error details. The
 detail projection is bounded to scalar/enumerated fields and category counts.
+`source_duration_ms` and `result_duration_ms` are timing-only window lengths (never
+positions) derived from the analysis row's own window columns, so the consent card
+can state the resulting length rather than the removal delta alone.
 The outcome receipt is generation-bound and is projected only from the active Job
 and its current render generation. Older Job/generation outcomes never win by recency
 or fill a missing current receipt. Public `/me`, generative Job, and creation-thread

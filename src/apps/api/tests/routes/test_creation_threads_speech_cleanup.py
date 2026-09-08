@@ -16,7 +16,12 @@ from starlette.requests import Request
 from app.config import settings
 from app.models import ContentPlan, CreatorAgentSession, Job, Persona, PlanItem
 from app.routes import creation_threads as routes
+from app.services.active_narration_source import (
+    ActiveNarrationResolution,
+    ActiveNarrationSource,
+)
 from app.services.speech_cleanup_preflight import public_projection
+from app.services.speech_cleanup_selection import DETECTOR_VERSION
 
 
 def _request() -> Request:
@@ -136,6 +141,10 @@ def test_bounded_projection_hydrates_each_analysis_state(
             "long_pauses": 0,
         },
         "estimated_removed_ms": 400 if count else 0,
+        # Derived from the durable window columns, so the consent card can name
+        # the resulting length without reading the private payload.
+        "source_duration_ms": 12_000,
+        "result_duration_ms": 12_000 - (400 if count else 0),
         "error": expected_error,
     }
     serialized = json.dumps(projection)
@@ -149,6 +158,52 @@ def test_bounded_projection_hydrates_each_analysis_state(
         "secret upstream details",
     ):
         assert private_value not in serialized
+
+
+def test_projection_names_the_resulting_length_without_leaking_intervals() -> None:
+    row = _analysis(uuid.uuid4(), status="ready", candidate_count=2)
+    row.window_start_s = 4.0
+    row.window_end_s = 14.5
+    row.estimated_removed_ms = 6_855
+
+    projection = public_projection(
+        row,
+        applicable=True,
+        unavailable_reason=None,
+        video_present=True,
+    )
+
+    assert projection is not None
+    analysis = projection["analysis"]
+    assert analysis["source_duration_ms"] == 10_500
+    assert analysis["result_duration_ms"] == 10_500 - 6_855
+    # Timing-only receipt contract: a window length is not a window position.
+    serialized = json.dumps(projection)
+    assert "window_start_s" not in serialized
+    assert "start_s" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("window_end_s", "removed_ms"),
+    [(None, 400), (12.0, None)],
+)
+def test_projection_omits_durations_it_cannot_state_truthfully(
+    window_end_s: float | None,
+    removed_ms: int | None,
+) -> None:
+    row = _analysis(uuid.uuid4(), status="queued", candidate_count=None)
+    row.window_end_s = window_end_s
+    row.estimated_removed_ms = removed_ms
+
+    projection = public_projection(
+        row,
+        applicable=True,
+        unavailable_reason=None,
+        video_present=True,
+    )
+
+    assert projection is not None
+    assert projection["analysis"]["result_duration_ms"] is None
 
 
 def test_audio_only_analysis_is_visible_but_never_offers_a_choice() -> None:
@@ -1173,6 +1228,244 @@ async def test_create_without_cleanup_is_a_distinct_recovery_decision(
     confirmation = controller.await_args.args[1]
     assert confirmation.speech_cleanup_analysis_id == row.id
     assert confirmation.speech_cleanup_choice == "create_without_cleanup"
+
+
+def _resolved_source(fingerprint: str, *, media_id: str = "media-1") -> ActiveNarrationSource:
+    """Mirror the ``_analysis`` fixture's immutable identity for one policy."""
+
+    return ActiveNarrationSource(
+        source_kind="embedded_spine",
+        media_id=media_id,
+        storage_path="users/private/talking.mp4",
+        generation="secret-generation",
+        media_kind="video",
+        manifest_identity=media_id,
+        window_start_s=0.0,
+        window_end_s=12.0,
+        edit_format="subtitled",
+        audio_mode="original",
+        resolved_renderer="subtitled",
+        detector_policy="engine:detector",
+        source_policy_fingerprint=fingerprint,
+    )
+
+
+def _policy_refresh_db(
+    session: SimpleNamespace,
+    item: SimpleNamespace,
+) -> tuple[Mock, list[object], list[str]]:
+    """A session whose flush stamps ids the way PostgreSQL defaults would."""
+
+    db = Mock()
+    added: list[object] = []
+    order: list[str] = []
+
+    async def get(model: object, _identifier: object, **_kwargs: object) -> object | None:
+        if model is CreatorAgentSession:
+            return session
+        if model is PlanItem:
+            return item
+        return None
+
+    async def flush() -> None:
+        for row in added:
+            if getattr(row, "id", None) is None:
+                row.id = uuid.uuid4()
+
+    async def commit() -> None:
+        order.append("commit")
+
+    db.get = AsyncMock(side_effect=get)
+    db.add = Mock(side_effect=added.append)
+    db.flush = AsyncMock(side_effect=flush)
+    db.commit = AsyncMock(side_effect=commit)
+    db.refresh = AsyncMock()
+    return db, added, order
+
+
+@pytest.mark.asyncio
+async def test_policy_stale_analysis_is_requeued_then_generation_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A detector deploy must not strand an item whose media never moved.
+
+    Every fingerprint hashes the detector policy, so each pre-deploy row stops
+    matching its own item.  Nothing on the generation path rescheduled it, so
+    the conflict below used to repeat forever while the thread kept projecting
+    the same unreachable analysis.
+    """
+
+    thread, session, item = _action_graph()
+    item.speech_cleanup_enabled = True
+    item.speech_cleanup_notice = {"state": "accepted"}
+    stale = _analysis(item.id, status="ready", candidate_count=2)
+    stale.source_policy_fingerprint = "pre-deploy-fingerprint"
+    stale.detector_version = "mixed-gap-v1"
+    stale.decision = "clean"
+    db, added, order = _policy_refresh_db(session, item)
+    controller = AsyncMock(
+        return_value=SimpleNamespace(id=str(session.id), current_job_id=str(uuid.uuid4()))
+    )
+
+    async def to_thread(_callable: object, identifier: object) -> bool:
+        order.append(f"publish:{identifier}")
+        return True
+
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_sync_agent", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes.creator_agent, "confirm_creator_plan_controller", controller)
+    monkeypatch.setattr(routes.asyncio, "to_thread", to_thread)
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: ActiveNarrationResolution(
+            source=_resolved_source("post-deploy-fingerprint"),
+            reason=None,
+            video_present=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight._exact_historical_analysis_async",
+        AsyncMock(return_value=None),
+    )
+    current = AsyncMock(return_value=stale)
+    monkeypatch.setattr("app.services.speech_cleanup_preflight.current_analysis_async", current)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await routes.action_thread(
+            _request(),
+            str(thread.id),
+            routes.ActionBody(
+                action="generate",
+                payload={
+                    "session_revision": 2,
+                    "plan_version": 1,
+                    "plan_hash": "a" * 64,
+                    "speech_cleanup_analysis_id": str(stale.id),
+                    "speech_cleanup_choice": "clean",
+                },
+                client_action_id="generate-on-stale-policy",
+                expected_revision=4,
+            ),
+            SimpleNamespace(id=thread.creator_id),
+            db,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "speech_cleanup_analysis_changed"
+    controller.assert_not_awaited()
+    # Superseded, re-queued under the current policy, and consent re-collected.
+    assert stale.superseded_at is not None
+    assert len(added) == 1
+    replacement = added[0]
+    assert replacement.plan_item_id == item.id
+    assert replacement.source_policy_fingerprint == "post-deploy-fingerprint"
+    assert replacement.detector_version == DETECTOR_VERSION
+    assert replacement.status == "queued"
+    assert replacement.superseded_at is None
+    assert item.speech_cleanup_enabled is False
+    assert item.speech_cleanup_notice is None
+    # The replacement must outlive the conflict, and only then be published.
+    assert order == ["commit", f"publish:{replacement.id}"]
+
+    # The replacement analysis settles, and the same action now generates.
+    replacement.status = "ready"
+    replacement.candidate_count = 2
+    current.return_value = replacement
+    order.clear()
+
+    await routes.action_thread(
+        _request(),
+        str(thread.id),
+        routes.ActionBody(
+            action="generate",
+            payload={
+                "session_revision": 2,
+                "plan_version": 1,
+                "plan_hash": "a" * 64,
+                "speech_cleanup_analysis_id": str(replacement.id),
+                "speech_cleanup_choice": "clean",
+            },
+            client_action_id="generate-after-policy-refresh",
+            expected_revision=4,
+        ),
+        SimpleNamespace(id=thread.creator_id),
+        db,
+    )
+
+    confirmation = controller.await_args.args[1]
+    assert confirmation.speech_cleanup_analysis_id == replacement.id
+    assert confirmation.speech_cleanup_choice == "clean"
+    assert len(added) == 1
+
+
+@pytest.mark.asyncio
+async def test_media_change_keeps_its_conflict_instead_of_reconsenting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only policy staleness self-heals; replaced media must re-collect consent."""
+
+    thread, session, item = _action_graph()
+    item.speech_cleanup_enabled = True
+    stale = _analysis(item.id, status="ready", candidate_count=2)
+    stale.source_policy_fingerprint = "pre-deploy-fingerprint"
+    db, added, order = _policy_refresh_db(session, item)
+    controller = AsyncMock()
+
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes.creator_agent, "confirm_creator_plan_controller", controller)
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: ActiveNarrationResolution(
+            # A different clip: the fingerprint moved *and* so did the identity.
+            source=_resolved_source("post-media-fingerprint", media_id="media-2"),
+            reason=None,
+            video_present=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.current_analysis_async",
+        AsyncMock(return_value=stale),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await routes.action_thread(
+            _request(),
+            str(thread.id),
+            routes.ActionBody(
+                action="generate",
+                payload={
+                    "session_revision": 2,
+                    "plan_version": 1,
+                    "plan_hash": "a" * 64,
+                    "speech_cleanup_analysis_id": str(stale.id),
+                    "speech_cleanup_choice": "clean",
+                },
+                client_action_id="generate-after-media-change",
+                expected_revision=4,
+            ),
+            SimpleNamespace(id=thread.creator_id),
+            db,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "speech_cleanup_analysis_changed"
+    assert stale.superseded_at is None
+    assert added == []
+    assert order == []
+    assert item.speech_cleanup_enabled is True
+    controller.assert_not_awaited()
 
 
 @pytest.mark.asyncio

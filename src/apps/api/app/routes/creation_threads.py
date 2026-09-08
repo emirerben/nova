@@ -525,6 +525,60 @@ async def _ensure_speech_cleanup_preflight(
     return await schedule_item_preflight_async(db, item)
 
 
+async def _refresh_stale_cleanup_policy(
+    db: AsyncSession,
+    item: PlanItem | None,
+    *,
+    resolution: Any | None = None,
+) -> tuple[bool, uuid.UUID | None]:
+    """Supersede + re-queue an analysis a detector/engine deploy made stale.
+
+    A version bump restamps every source fingerprint, so every analysis
+    persisted before that deploy stops matching the item it belongs to.  Only
+    media/format mutations reschedule preflight work, so without this the
+    consent fences below would refuse an untouched item on every attempt while
+    the thread kept projecting the same unreachable row.
+
+    Returns ``(refreshed, analysis_id_to_publish)``.  A creator-driven media
+    change is never refreshed here; that mismatch stays a conflict.
+    """
+
+    if item is None:
+        return False, None
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        resolve_item_narration,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        refresh_policy_stale_analysis_async,
+    )
+
+    active = resolution or resolve_item_narration(
+        item,
+        detector_policy=current_detector_policy(),
+    )
+    refresh = await refresh_policy_stale_analysis_async(db, item, active)
+    return refresh.refreshed, refresh.analysis_id
+
+
+async def _commit_refreshed_cleanup_policy(
+    db: AsyncSession,
+    analysis_id: uuid.UUID | None,
+) -> None:
+    """Durably land a policy refresh before the caller reports its conflict.
+
+    The refreshed identity must outlive the 409 that follows it: a rollback
+    would restore the superseded row and the item would dead-end again on the
+    creator's next attempt.
+    """
+
+    await db.commit()
+    if analysis_id is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await asyncio.to_thread(publish_preflight_after_commit, analysis_id)
+
+
 async def _probe_registered_media(
     *,
     object_path: str,
@@ -2971,9 +3025,19 @@ async def action_thread(
             )
         from app.services.speech_cleanup_preflight import retry_failed_analysis  # noqa: PLC0415
 
-        if not retry_failed_analysis(analysis):
+        # Re-queueing a policy-stale identity would hand the worker a row whose
+        # fingerprint no confirmation can accept. Replace it instead, so "Try
+        # again" restarts the check the creator is actually shown.
+        refreshed, refreshed_analysis_id = await _refresh_stale_cleanup_policy(
+            db,
+            await db.get(PlanItem, analysis.plan_item_id),
+        )
+        if refreshed:
+            preflight_analysis_id = refreshed_analysis_id
+        elif not retry_failed_analysis(analysis):
             raise HTTPException(status_code=409, detail="Speech check cannot be retried")
-        preflight_analysis_id = analysis.id
+        else:
+            preflight_analysis_id = analysis.id
     elif body.action in {
         "confirm_generation",
         "generate",
@@ -3206,6 +3270,20 @@ async def action_thread(
                     detail="speech_cleanup_analysis_id is required",
                 ) from exc
             cleanup_choice = "create_without_cleanup"
+            # The bypass is the creator's escape hatch, so it must not be the
+            # one action that still dead-ends on a policy-stale row: the sync
+            # dispatcher would reject that identity after the durable receipt
+            # commit. Refresh first and report the same refreshable conflict.
+            refreshed, refreshed_analysis_id = await _refresh_stale_cleanup_policy(
+                db,
+                await db.get(PlanItem, thread.active_plan_item_id),
+            )
+            if refreshed:
+                await _commit_refreshed_cleanup_policy(db, refreshed_analysis_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail="speech_cleanup_analysis_changed",
+                )
         elif body.action in {"generate", "confirm_generation"}:
             raw_analysis_id = payload.get("speech_cleanup_analysis_id")
             if raw_analysis_id is not None:
@@ -3253,6 +3331,29 @@ async def action_thread(
                         rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
                     )
                 )
+                if (
+                    current_cleanup is not None
+                    and resolution is not None
+                    and resolution.source is not None
+                    and current_cleanup.source_policy_fingerprint
+                    != resolution.source.source_policy_fingerprint
+                ):
+                    # A deploy that bumps the detector/engine restamps every
+                    # fingerprint, so this row can be stale for media that never
+                    # moved. Replace it here -- nothing else on the generation
+                    # path reschedules -- and keep the conflict, which the chat
+                    # client already answers by re-reading the fresh card.
+                    refreshed, refreshed_analysis_id = await _refresh_stale_cleanup_policy(
+                        db,
+                        item,
+                        resolution=resolution,
+                    )
+                    if refreshed:
+                        await _commit_refreshed_cleanup_policy(db, refreshed_analysis_id)
+                        raise HTTPException(
+                            status_code=409,
+                            detail="speech_cleanup_analysis_changed",
+                        )
                 if enforced_for_source and current_cleanup is None:
                     raise HTTPException(status_code=409, detail="speech_cleanup_pending")
                 if current_cleanup is not None and (
