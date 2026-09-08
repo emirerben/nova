@@ -56,6 +56,11 @@ const RENDER_STEP_LABEL_MAX = 80;
 export const COPILOT_RECENT_EDIT_HISTORY_MAX = 6;
 const RECENT_EDIT_HISTORY_TRIM_MAX = 3;
 const RECENT_EDIT_HISTORY_ENTRY_MAX = 160;
+const COMPONENT_PROVENANCE_MAX = 8;
+const COMPONENT_PROVENANCE_KEY_MAX = 60;
+const COMPONENT_PROVENANCE_STRING_MAX = 160;
+const COMPONENT_PROVENANCE_UNSAFE_KEY_RE = /(?:url|uri|path|token|secret|password|credential|filename|gcs)/i;
+const COMPONENT_PROVENANCE_URL_RE = /(?:https?|gs|s3):\/\/|www\./i;
 
 function stableMutationValue(value: unknown): unknown {
   if (value === undefined) return { __nova_undefined__: true };
@@ -180,15 +185,50 @@ export interface CopilotComponentContext {
   source_timeline_id?: string;
   group_id?: string;
   subject?: string;
+  /** Bounded scalar provenance copied from a component's source metadata. */
+  provenance?: Record<string, string | number | boolean>;
 }
 
-function componentContext(input: Record<string, unknown>): CopilotComponentContext | undefined {
-  const context: Record<string, string> = {};
+function componentProvenance(value: unknown): Record<string, string | number | boolean> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const provenance: Record<string, string | number | boolean> = {};
+  for (const [rawKey, rawValue] of Object.entries(value as Record<string, unknown>)
+    .filter(([key, item]) => key.trim() && !COMPONENT_PROVENANCE_UNSAFE_KEY_RE.test(key) && (
+      typeof item === "string" || typeof item === "boolean" ||
+      (typeof item === "number" && Number.isFinite(item))
+    ) && !(typeof item === "string" && COMPONENT_PROVENANCE_URL_RE.test(item)))
+    .sort(([left], [right]) => left.localeCompare(right))) {
+    const key = rawKey.slice(0, COMPONENT_PROVENANCE_KEY_MAX);
+    if (!key || Object.prototype.hasOwnProperty.call(provenance, key)) continue;
+    if (typeof rawValue === "string") {
+      const text = rawValue.trim().slice(0, COMPONENT_PROVENANCE_STRING_MAX);
+      if (!text) continue;
+      provenance[key] = text;
+    } else if (typeof rawValue === "boolean") {
+      provenance[key] = rawValue;
+    } else if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      provenance[key] = rawValue;
+    } else {
+      continue;
+    }
+    if (Object.keys(provenance).length >= COMPONENT_PROVENANCE_MAX) break;
+  }
+  return Object.keys(provenance).length ? provenance : undefined;
+}
+
+function componentContext(
+  input: Record<string, unknown>,
+  provenance?: Record<string, string | number | boolean>,
+): CopilotComponentContext | undefined {
+  const context: Partial<CopilotComponentContext> = {};
   for (const key of ["semantic_role", "source", "source_text", "label", "description",
     "user_context", "on_screen_text", "asset_id", "source_asset_id", "source_timeline_id", "group_id", "subject"]) {
     const value = input[key];
-    if (typeof value === "string" && value.trim()) context[key] = value;
+    if (typeof value === "string" && value.trim()) {
+      (context as Record<string, unknown>)[key] = value;
+    }
   }
+  if (provenance) context.provenance = provenance;
   return Object.keys(context).length ? context : undefined;
 }
 
@@ -1170,6 +1210,7 @@ export function buildCopilotSnapshot(
   );
   const textBars: CopilotTextSnapshotBar[] = visibleBars.map((bar, index) => {
     const sourceParams = bar.source_params;
+    const provenance = componentProvenance(sourceParams);
     const rawLabelKind = sourceParams?.narration_label_kind;
     const narrationLabelKind =
       rawLabelKind === "score" || rawLabelKind === "topic" || rawLabelKind === "participant"
@@ -1207,7 +1248,7 @@ export function buildCopilotSnapshot(
         source_asset_id: sourceParams?.source_asset_id,
         source_timeline_id: sourceParams?.source_timeline_id,
         group_id: bar.visual_block_id ?? sourceParams?.effect_group_id ?? sourceParams?.group_id,
-      }) } : {}),
+      }, provenance) } : {}),
       ...(narrationLabelKind ? { narration_label_kind: narrationLabelKind } : {}),
       ...(timingLocked ? { timing_locked: true as const } : {}),
     };

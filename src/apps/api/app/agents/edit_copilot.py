@@ -33,7 +33,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-08-v39"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-08-v40"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -69,6 +69,12 @@ _COMPONENT_CONTEXT_KEYS = (
     "subject",
     "user_context",
     "on_screen_text",
+)
+_COMPONENT_PROVENANCE_MAX = 8
+_COMPONENT_PROVENANCE_KEY_MAX = 60
+_COMPONENT_PROVENANCE_STRING_MAX = 160
+_COMPONENT_PROVENANCE_UNSAFE_KEY_RE = re.compile(
+    r"(?:url|uri|path|token|secret|password|credential|filename|gcs)", re.IGNORECASE
 )
 _CONTEXT_URL_RE = re.compile(r"(?i)(?:https?|gs|s3)://[^\s'\"]+|www\.[^\s'\"]+")
 
@@ -697,6 +703,38 @@ def _format_component_context(value: object) -> str:
         clean = _clean_component_data(raw)
         if clean:
             parts.append(f"{key}={clean!r}")
+    provenance = value.get("provenance")
+    if isinstance(provenance, dict):
+        provenance_parts: list[str] = []
+        for raw_key, raw_value in sorted(provenance.items(), key=lambda item: str(item[0])):
+            if (
+                not isinstance(raw_key, str)
+                or not raw_key.strip()
+                or _COMPONENT_PROVENANCE_UNSAFE_KEY_RE.search(raw_key)
+            ):
+                continue
+            if isinstance(raw_value, bool):
+                rendered = str(raw_value)
+            elif isinstance(raw_value, int) and not isinstance(raw_value, bool):
+                rendered = str(raw_value)
+            elif isinstance(raw_value, float) and math.isfinite(raw_value):
+                rendered = _fmt_round3(raw_value)
+            elif isinstance(raw_value, str):
+                if _CONTEXT_URL_RE.search(raw_value):
+                    continue
+                clean = _clean_component_data(raw_value)[:_COMPONENT_PROVENANCE_STRING_MAX]
+                if not clean:
+                    continue
+                rendered = repr(clean)
+            else:
+                continue
+            key = _clean_component_data(raw_key)[:_COMPONENT_PROVENANCE_KEY_MAX]
+            if key:
+                provenance_parts.append(f"{key!r}={rendered}")
+            if len(provenance_parts) >= _COMPONENT_PROVENANCE_MAX:
+                break
+        if provenance_parts:
+            parts.append("provenance={" + ", ".join(provenance_parts) + "}")
     return " context={" + ", ".join(parts) + "}" if parts else ""
 
 

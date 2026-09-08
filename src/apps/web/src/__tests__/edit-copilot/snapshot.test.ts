@@ -144,6 +144,35 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.has_narrated_captions).toBe(true);
   });
 
+  it("exposes bounded generic text provenance in negotiated context", () => {
+    const snapshot = buildCopilotSnapshot(
+      [
+        bar({
+          id: "score",
+          text: "six four",
+          role: "generative_sequence",
+          source_params: {
+            custom_role: "arbitrary-label",
+            metric_value: 4,
+            transcript_grounded: true,
+            nested_renderer_state: [{ text: "six four" }],
+            signed_url: "https://example.test/private.mp4",
+          },
+        }),
+      ],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true, copilot_snapshot_max_bytes: 524288 },
+    );
+
+    expect(snapshot.component_context_version).toBe(1);
+    expect(snapshot.text_bars[0].context?.provenance).toEqual({
+      custom_role: "arbitrary-label",
+      metric_value: 4,
+      transcript_grounded: true,
+    });
+  });
+
   it("4b: surfaces smart_role/smart_emphasis on each caption cue", () => {
     const snapshot = buildCopilotSnapshot(
       [
@@ -1492,7 +1521,9 @@ describe("complete component context", () => {
       } }),
     ], [], [], capabilities, { overlayCards: [overlay], poolAssets: [asset], videoDurationS: 10 });
     expect(snapshot.text_bars[0].context).toEqual({ semantic_role: "price",
-      source_text: "Coffee costs four pounds", source_timeline_id: "clip-coffee", group_id: "menu-scene" });
+      source_text: "Coffee costs four pounds", source_timeline_id: "clip-coffee", group_id: "menu-scene",
+      provenance: { narration_label_kind: "price", source_text: "Coffee costs four pounds",
+        source_timeline_id: "clip-coffee" } });
     expect(snapshot.overlays?.cards[0].context).toMatchObject({ asset_id: "asset-menu",
       subject: "Cafe menu", user_context: "Use with the price labels",
       on_screen_text: "Coffee £4; cake £6", group_id: "menu-scene" });
