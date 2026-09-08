@@ -136,11 +136,9 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Read agents/DECISIONS.md for why key choices were made
 
 ## Storage retention
-- GCS lifecycle deletes `dev-user/*`, `music-jobs/*`, `music-lyrics-previews/*`, `voiceover-uploads/*`, `transcript-cache/*`, `training-exports/*`, `analysis-proxy/*`, and `cloud-render-source/*` after 24h; `jobs/*` and anonymous `00000000-…0001/*` after 30d. Soft delete is off. Source + apply command: `infra/{gcs-lifecycle.json,README.md}`.
-- Curated `music/*` and `templates/*`, plus `job-posters/{job_id}/*`, persist; posters must outlive their source videos.
-- Signed-URL TTL in `storage.py` is 1 day to match the object lifetime.
-- **`generative-jobs/*` exception:** blobs persist forever but `upload_public_read` signs `output_url` for only 1 day → expired URLs show blank video after 24h. Fix is read-time re-signing via `_variants_for_response` in `routes/generative_jobs.py` (`PLAYBACK_URL_TTL_MIN`). Pinned by `test_variants_for_response_resigns_ready_variant`. See agents/DECISIONS.md "Storage retention incidents" for the full narrative.
-- Authenticated uploads live under `users/{user_id}/`, outside the 24h delete prefixes.
+- Bucket lifecycle is limited to transient/unowned prefixes: 24h for `dev-user/*`, `staging/*`, upload/preview/cache prefixes and 30d for anonymous-user and TikTok-delivery prefixes. Exact table + drift check: `infra/README.md`.
+- Current/published job media is outside unconditional bucket-age rules. The approval-gated DB manifest warns at day 83, deletes inactive source/editable media at 90d, keeps the latest final/poster for 365d, and rechecks references + GCS generation. Rollout: `docs/runbooks/gcp-cost-controls.md`.
+- Signed URLs remain short-lived; ready generative URLs are refreshed by `_variants_for_response`. New authenticated generative uploads carry 24h DB cleanup receipts until a Job atomically attaches them; account deletion runs immediate and delayed verified sweeps.
 
 ## ⚠️ Anti-pattern: do NOT use MoviePy / VideoFileClip
 VideoFileClip(path) buffers the entire video into RAM. On a 2GB source file this crashes.
@@ -212,7 +210,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 ## Agent evals
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
-- With judge: `... --with-judge` (needs `ANTHROPIC_API_KEY`). Live Gemini: `NOVA_EVAL_MODE=live ... --eval-mode=live --with-judge` (~$2-5/run).
+- With judge: `... --with-judge` (replay only; needs `ANTHROPIC_API_KEY`). Paid live Gemini requires an approved development-ledger run (hard cap $2, no judge); see `tests/evals/README.md`.
 - **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec` AND run live evals against current fixtures before merge.
 - **template_text live-eval wrapper:** `bash src/apps/api/scripts/run_template_text_eval.sh`. See `tests/evals/README.md` for the full prompt-iteration loop.
 - **Layer-2 cache-bump rule:** any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts must bump `TEXT_OVERLAY_VERSION_V2` in `template_cache.py`. Guard: `.github/workflows/layer2-cache-guard.yml`. Escape hatch: `[skip-layer2-cache-bump]` in a commit message.

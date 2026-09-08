@@ -58,9 +58,9 @@ per-prefix table CLAUDE.md's "Storage retention" points at; every rule in
 - `00000000-0000-0000-0000-000000000001/*` — the anonymous upload prefix
 - `tiktok-publish/*` — bounded delivery snapshots (the task normally deletes sooner)
 
-**Persists forever (not matched by any bucket rule — auth landed, see
-"Re-evaluate when" below; account deletion is the removal path for live assets,
-see `routes/me.py::confirm_account_deletion` + `docs/legal/README.md`):**
+**Not deleted by bucket lifecycle** (current/published media is instead governed
+by the approval-gated database manifest and account deletion; see
+`docs/runbooks/gcp-cost-controls.md` and `docs/legal/README.md`):
 - `users/{user_id}/*` — attached plan clips, plan-pool footage, activation seed
   batches. A newly signed `users/{user_id}/generative/*` upload has a database
   cleanup receipt until the Job transaction consumes it; unattached receipts
@@ -107,6 +107,6 @@ after install will start chewing through the existing backlog.
 
 ### Re-evaluate when
 
-- A user-facing "my videos" gallery is added → retention has to grow to match
-  whatever lifetime the gallery promises. (Already the case today — `users/`
-  and `generative-jobs/` persist indefinitely for exactly this reason.)
+- The Gallery's published retention promise changes, or a new job/media prefix
+  ships. Update the Privacy Policy, database manifest policy, this table, and the
+  checked-in lifecycle JSON as one change.

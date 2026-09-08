@@ -38,6 +38,13 @@ Routine CI must have no Gemini secret. `.github/workflows/agent-evals.yml`
 rejects a real key unless the named live workflow sets
 `NOVA_PAID_AI_WORKFLOW=1`. Paid development calls also fail closed without
 `usage_purpose`, `test_run_id`, estimated maximum cost, and reservation approval.
+For direct non-production HTTP QA, these map to
+`X-Nova-Usage-Purpose`, `X-Nova-Test-Run-Id`,
+`X-Nova-Estimated-Max-Cost-Usd`, and `X-Nova-Reservation-Approved: true`.
+Background render work cannot inherit HTTP headers, so use the process-wide
+manual-QA envelope in section 5 for those flows. Production ignores test headers;
+an internal release canary must instead send `X-Nova-Usage-Purpose: release_canary`
+and `X-Nova-Release-Canary-Id`.
 
 ## 2. Budgets, email, and Pub/Sub
 
@@ -136,8 +143,15 @@ in this order:
 
 At 80% of an environment budget, experiments, weekly smoke, manual QA, and
 optional background analysis stop. At 90%, internal canaries and new Director
-reviews stop. At 100%, every new paid call stops unless an operator has created a
-scoped, expiring override. Cached responses remain available.
+reviews stop. At 100%, every new paid call stops. The schema can represent a
+scoped, expiring override, but this release ships no override CLI or endpoint;
+do not insert one ad hoc. Cached responses remain available.
+
+API callers receive stable failures: `429 ai_budget_exhausted` includes the
+scope, reset time, and whether cached behavior is available; invalid attribution
+returns `ai_cost_control_policy_rejected`; a ledger outage returns retryable
+`503 ai_cost_control_unavailable`; and an uncertain provider outcome returns
+non-retryable `503 ai_provider_outcome_unknown` so clients do not double-spend.
 
 Application rollback is flag-first and schema-preserving: disable
 `AI_COST_CONTROL_ENABLED`, `BILLING_RECONCILIATION_ENABLED`, and
@@ -228,11 +242,25 @@ New batch uploads land under `staging/<user>/batch/` and are promoted to an
 owned job prefix only after the job row is committed. Authenticated generative
 browser uploads land directly under `users/<user>/generative/`; each retains a
 24-hour database cleanup receipt until the Job transaction atomically attaches
-it. Explicit mobile-purpose and synthetic session uploads use 24-hour lifecycle prefixes. Enable
+it. Explicit mobile-purpose and synthetic session uploads use 24-hour lifecycle
+prefixes. Account deletion immediately purges owned media and also records a
+delayed, verified owner-prefix sweep after signed upload capabilities and slow
+in-flight PUTs have quiesced. Enable
 `STORAGE_RETENTION_ENABLED=true` to create the first generation-pinned report.
-After seven days, inspect it with `scripts/storage_retention.py`, approve that
-exact manifest, verify the deployed Privacy Policy shows the September 8, 2026
-retention terms, and only then enable `STORAGE_RETENTION_DELETE_ENABLED=true`.
+The daily scanner processes `STORAGE_RETENTION_SCAN_JOBS` jobs per pass (100 by
+default). After seven days, inspect and approve that exact manifest:
+
+```bash
+cd src/apps/api
+MANIFEST_ID=replace-with-manifest-uuid
+OPERATOR=replace-with-operator-name
+python scripts/storage_retention.py report "$MANIFEST_ID"
+python scripts/storage_retention.py approve "$MANIFEST_ID" --operator "$OPERATOR"
+# To reject instead: python scripts/storage_retention.py reject "$MANIFEST_ID" --operator "$OPERATOR"
+```
+
+Verify the deployed Privacy Policy shows the September 8, 2026 retention terms,
+then and only then enable `STORAGE_RETENTION_DELETE_ENABLED=true`.
 
 The database-backed sweep preserves active/pinned references and publications,
 warns at 83 inactive days, deletes inactive sources/editable bases at 90 days,
