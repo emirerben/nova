@@ -17,6 +17,7 @@ from app.pipeline.speech_cut_state import make_candidate
 from app.routes import plan_items
 from app.routes._director import DirectorSuggestionsResponse
 from app.routes._omni import OmniAssetResponse
+from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 
 
 @pytest.fixture()
@@ -198,7 +199,7 @@ def test_director_oversized_snapshot_and_invalid_variant_reject(client: TestClie
     user, item, plan, _ = _owned(uuid.uuid4())
     _install(user, item, plan)
     body = _director_body()
-    body["snapshot"] = {"text": "x" * (21 * 1024)}
+    body["snapshot"] = {"text": "x" * COPILOT_SNAPSHOT_MAX_BYTES}
     response = client.post(
         f"/plan-items/{item.id}/variants/v1/director/suggestions",
         json=body,

@@ -3695,13 +3695,15 @@ def test_copilot_route_foreign_item_404(client: TestClient) -> None:
 
 
 def test_copilot_route_oversized_snapshot_422(client: TestClient) -> None:
+    from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
+
     settings.edit_copilot_enabled = True
     user = _user()
     item, plan = _item_and_plan(user.id)
     _install_route_deps(user, item, plan)
 
     body = _payload()
-    body["snapshot"] = {"text_bars": [{"text": "x" * (21 * 1024)}], "slots": []}
+    body["snapshot"] = {"text_bars": [{"text": "x" * COPILOT_SNAPSHOT_MAX_BYTES}], "slots": []}
     resp = client.post(f"/plan-items/{item.id}/variants/v1/copilot/turn", json=body)
     assert resp.status_code == 422
 
@@ -4102,7 +4104,7 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-28-v37"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-08-v39"
 
 
 def _motion_snapshot() -> dict:

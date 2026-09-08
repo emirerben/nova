@@ -86,6 +86,7 @@ from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
     load_owned_plan_persona,
 )
+from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS
 from app.services.generative_upload_paths import (
     DIRECT_CLIP_PREFIX,
@@ -446,6 +447,7 @@ class EditorCapabilitiesOut(BaseModel):
 
     music_window: MusicWindowCapabilityOut | None = None
     copilot_snapshot_wire_version: Literal[1] | None = None
+    copilot_snapshot_max_bytes: int | None = None
 
     model_config = {"extra": "allow"}
 
@@ -941,6 +943,7 @@ class TimelineClipOut(BaseModel):
     media_id: str | None = None
     generation: str | None = None
     kind: Literal["image", "video"] | None = None
+    context: dict[str, str] | None = None
 
 
 class TimelineResponse(BaseModel):
@@ -5749,6 +5752,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "timeline": bool(revision is not None),
                 "timeline_max_slots": _TIMELINE_MAX_SLOTS,
                 "copilot_snapshot_wire_version": 1,
+                "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
                 "split_clips": bool(revision is not None),
                 "clips": clips,
                 "music_operations": music_operations,
@@ -5842,6 +5846,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             "timeline": False,
             "timeline_max_slots": _TIMELINE_MAX_SLOTS,
             "copilot_snapshot_wire_version": 1,
+            "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
             "split_clips": False,
             "automatic_cut": False,
             "automatic_cut_reason": reason,
@@ -5971,6 +5976,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "timeline": timeline_ok,
         "timeline_max_slots": _TIMELINE_MAX_SLOTS,
         "copilot_snapshot_wire_version": 1,
+        "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
         # Splitting a clip is a timeline-override operation — same eligibility.
         "split_clips": timeline_ok,
         "automatic_cut": automatic_cut,
@@ -6509,6 +6515,42 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         return None
 
 
+def _guided_source_context(assembly: dict, source: dict) -> dict[str, str]:
+    """Expose approved media meaning without copying storage or analysis payloads.
+
+    Context belongs to the exact approved generation, not whichever upload now
+    happens to have the same display name or media ID. It is read-only and never
+    becomes part of the revision source digest or renderer input.
+    """
+    guided = assembly.get("guided_edit")
+    if not isinstance(guided, dict):
+        return {}
+    proposal = guided.get("approved_proposal")
+    if not isinstance(proposal, dict):
+        return {}
+    media = proposal.get("media")
+    if not isinstance(media, list):
+        return {}
+    for row in media:
+        if not isinstance(row, dict) or any(
+            row.get(key) != source.get(key)
+            for key in ("media_id", "generation", "gcs_path", "lane")
+        ):
+            continue
+        analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+        values = {
+            "label": row.get("source_filename"),
+            "user_context": row.get("user_context"),
+            "description": analysis.get("description"),
+            "subject": analysis.get("subject"),
+            "on_screen_text": analysis.get("on_screen_text"),
+        }
+        return {
+            key: value for key, value in values.items() if isinstance(value, str) and value.strip()
+        }
+    return {}
+
+
 def _guided_v2_timeline_projection(
     job: Job,
     variant: dict,
@@ -6548,6 +6590,7 @@ def _guided_v2_timeline_projection(
                 "media_id": source.get("media_id"),
                 "generation": source.get("generation"),
                 "kind": source.get("kind"),
+                "context": _guided_source_context(job.assembly_plan or {}, source),
             }
         )
     slots: list[dict] = []

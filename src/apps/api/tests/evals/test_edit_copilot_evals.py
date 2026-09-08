@@ -164,5 +164,46 @@ def test_edit_copilot_eval(
     assert result.passed, (
         f"\n{result.fixture_id}: {result.summary()}\n"
         f"  failures: {result.structural_failures}\n"
-        f"  error: {result.error}"
+        f"  error: {result.error}\n"
+        f"  judge: {result.judge.reasoning if result.judge else ''}\n"
+        f"  output: {result.output}"
     )
+
+    if "exact_component_ops" in fixture.meta:
+        assert result.output is not None
+        expected_intent = fixture.meta.get("expected_intent", "edit")
+        assert result.output["intent"] in (
+            expected_intent if isinstance(expected_intent, list) else [expected_intent]
+        )
+        assert result.output["needs_clarification"] is fixture.meta.get(
+            "needs_clarification", False
+        )
+        # Semantic assertions apply to LIVE outputs too: no edits to unrelated components.
+        expected = fixture.meta["exact_component_ops"]
+
+        def deltas(ops):
+            rows = []
+            snapshot = fixture.input["variant_snapshot"]
+            for op in ops:
+                if op["op"] == "set_text_timing":
+                    index = op["bar_index"]
+                    current = snapshot["text_bars"][index]
+                    fields = {
+                        key: value for key, value in op.items() if key not in {"op", "bar_index"}
+                    }
+                elif op["op"] == "patch_overlay":
+                    index = op["overlay_index"]
+                    current = snapshot["overlays"]["cards"][index]
+                    fields = op["patch"]
+                    assert set(op) == {"op", "overlay_index", "patch"}
+                else:
+                    pytest.fail(f"Unexpected component operation: {op}")
+                changes = {key: value for key, value in fields.items() if current.get(key) != value}
+                rows.append((op["op"], index, changes))
+            return sorted(rows, key=lambda row: (row[0], row[1]))
+
+        # Equivalent payloads may repeat unchanged starts/styles; assert effective
+        # deltas so valid preservation isn't mistaken for an extra edit.
+        assert deltas(result.output["ops"]) == deltas(expected)
+        for phrase in fixture.meta.get("reply_contains", []):
+            assert phrase.lower() in result.output["reply"].lower()

@@ -1,0 +1,347 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-08-v39",
+  "input": {
+    "utterance": "Make only the coffee cup image stay until 6 seconds. Leave every other image and text unchanged.",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "component_context_version": 1,
+      "allowed_op_families": [
+        "text",
+        "overlay"
+      ],
+      "total_duration_s": 45,
+      "slots": [],
+      "text_bars": [
+        {
+          "id": "price-coffee",
+          "role": "generative_sequence",
+          "text": "£4",
+          "start_s": 3,
+          "end_s": 5,
+          "context": {
+            "semantic_role": "price",
+            "source_text": "Coffee costs four pounds",
+            "group_id": "coffee"
+          },
+          "index": 0
+        },
+        {
+          "id": "price-cake",
+          "role": "generative_sequence",
+          "text": "£6",
+          "start_s": 12,
+          "end_s": 14,
+          "context": {
+            "semantic_role": "price",
+            "source_text": "Cake costs six pounds",
+            "group_id": "cake"
+          },
+          "index": 1
+        },
+        {
+          "id": "topic",
+          "text": "Cafe menu",
+          "start_s": 0,
+          "end_s": 3,
+          "context": {
+            "semantic_role": "topic"
+          },
+          "index": 2
+        }
+      ],
+      "overlays": {
+        "cards": [
+          {
+            "index": 0,
+            "id": "image-0",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-0",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 1,
+            "id": "image-1",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-1",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 2,
+            "id": "image-2",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-2",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 3,
+            "id": "image-3",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-3",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 4,
+            "id": "image-4",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-4",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 5,
+            "id": "image-5",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-5",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 6,
+            "id": "image-6",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-6",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 7,
+            "id": "image-7",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-7",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 8,
+            "id": "image-8",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-8",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 9,
+            "id": "image-9",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-9",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 10,
+            "id": "image-10",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-10",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 11,
+            "id": "image-11",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-11",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 12,
+            "id": "image-12",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-12",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 13,
+            "id": "image-13",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-13",
+              "subject": "A cake slice"
+            }
+          },
+          {
+            "index": 14,
+            "id": "image-14",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-14",
+              "subject": "A coffee cup"
+            }
+          },
+          {
+            "index": 15,
+            "id": "image-15",
+            "kind": "image",
+            "start_s": 2,
+            "end_s": 4,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.5,
+            "display_mode": "pip",
+            "context": {
+              "asset_id": "asset-15",
+              "subject": "A cake slice"
+            }
+          }
+        ],
+        "asset_pool": [],
+        "pending_suggestions": []
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"patch_overlay\", \"overlay_index\": 14, \"patch\": {\"end_s\": 6}}], \"confidence\": 0.95, \"reply\": \"Extended the coffee cup image to six seconds.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_overlay",
+        "overlay_index": 14,
+        "patch": {
+          "end_s": 6
+        }
+      }
+    ],
+    "confidence": 0.95,
+    "reply": "Extended the coffee cup image to six seconds.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "component_late_image_selective",
+    "exact_component_ops": [
+      {
+        "op": "patch_overlay",
+        "overlay_index": 14,
+        "patch": {
+          "end_s": 6
+        }
+      }
+    ]
+  }
+}

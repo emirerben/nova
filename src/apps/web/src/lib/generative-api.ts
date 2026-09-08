@@ -845,6 +845,8 @@ export interface TimelineSlot {
 }
 
 export interface TimelineClip {
+  /** Safe context from the exact approved source generation. */
+  context?: Record<string, string> | null;
   clip_index: number;
   /** null when signing failed server-side — the editor still opens. */
   signed_url: string | null;
