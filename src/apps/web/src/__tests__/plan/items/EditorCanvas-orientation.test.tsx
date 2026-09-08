@@ -2,7 +2,10 @@ import "@testing-library/jest-dom";
 import React from "react";
 import { render } from "@testing-library/react";
 
-import EditorCanvas from "@/app/plan/items/[id]/_editor/EditorCanvas";
+import EditorCanvas, {
+  editorCanvasStageStyle,
+} from "@/app/plan/items/[id]/_editor/EditorCanvas";
+import { createEditorCanvasVirtualPreview } from "@/app/dev-qa/editor-canvas-geometry/virtual-preview-fixture";
 import type { VirtualPreviewController } from "@/app/plan/items/[id]/_editor/useVirtualPreview";
 import type { LookAdjustments, LookPreset } from "@/lib/generative-api";
 import type { PlanItemVariant } from "@/lib/plan-api";
@@ -27,6 +30,8 @@ function editorCanvas(
   virtualPreview: VirtualPreviewController | null = null,
   lookPreset: LookPreset = "none",
   lookAdjustments: LookAdjustments | null = null,
+  stageHeightCss?: string,
+  zoomPct = 100,
 ) {
   return (
     <EditorCanvas
@@ -38,7 +43,7 @@ function editorCanvas(
       lookPreset={lookPreset}
       lookAdjustments={lookAdjustments}
       masonryDurationS={8}
-      zoomPct={100}
+      zoomPct={zoomPct}
       tool="select"
       videoRef={React.createRef<HTMLVideoElement>()}
       onSelectText={jest.fn()}
@@ -49,54 +54,59 @@ function editorCanvas(
       onDuration={jest.fn()}
       canvas={canvas}
       virtualPreview={virtualPreview}
+      stageHeightCss={stageHeightCss}
     />
   );
 }
 
 function virtualPreview(): VirtualPreviewController {
-  const videoARef = React.createRef<HTMLVideoElement>();
-  const videoBRef = React.createRef<HTMLVideoElement>();
-  const noop = jest.fn();
-  const videoProps = (deck: "a" | "b", ref: React.RefObject<HTMLVideoElement>) => ({
-    ref,
-    muted: true,
-    playsInline: true as const,
-    preload: "auto" as const,
-    "data-virtual-preview-deck": deck,
-    "data-active": deck === "a",
-    onLoadedMetadata: noop,
-    onCanPlay: noop,
-    onPlaying: noop,
-    onWaiting: noop,
-    onSeeking: noop,
-    onSeeked: noop,
-    onTimeUpdate: noop,
-    onEnded: noop,
-    onPlay: noop,
-    onPause: noop,
-    onError: noop,
-  });
-
-  return {
-    timeline: {
-      entries: [],
-      totalDurationS: 0,
-      hasMissingSource: false,
-      carouselProjection: null,
-    },
-    activeDeck: "a",
-    buffering: false,
-    videoAProps: videoProps("a", videoARef),
-    videoBProps: videoProps("b", videoBRef),
-    musicAudioProps: null,
-    play: noop,
-    pause: noop,
-    toggle: noop,
-    seekTo: noop,
-  } as VirtualPreviewController;
+  return createEditorCanvasVirtualPreview(jest.fn());
 }
 
 describe("EditorCanvas orientation video fit", () => {
+  it("uses width-driven aspect-ratio sizing for portrait and landscape stages", () => {
+    expect(editorCanvasStageStyle({ w: 1080, h: 1920 }, "100dvh - 152px", 100)).toEqual({
+      width: "calc(max(1px, (100dvh - 152px)) * 1 * 0.5625)",
+      aspectRatio: "1080 / 1920",
+      maxWidth: "100%",
+    });
+    expect(editorCanvasStageStyle({ w: 1920, h: 1080 }, "100dvh - 152px", 100)).toEqual({
+      width: "calc(max(1px, (100dvh - 152px)) * 1 * 1.7777777777777777)",
+      aspectRatio: "1920 / 1080",
+      maxWidth: "100%",
+    });
+
+    const view = render(
+      editorCanvas({ w: 1080, h: 1920 }, null, "none", null, "100dvh - 152px"),
+    );
+    const stage = view.getByTestId("editor-canvas-stage");
+    expect(stage.style.height).toBe("");
+    expect(stage.style.aspectRatio).toBe("1080 / 1920");
+  });
+
+  it("supports fallback height, zoom, and a positive short-viewport floor", () => {
+    expect(editorCanvasStageStyle({ w: 1080, h: 1920 }, undefined, 100).width).toBe(
+      "calc(max(1px, (100vh - 56px - 260px - 48px)) * 1 * 0.5625)",
+    );
+    expect(editorCanvasStageStyle({ w: 1080, h: 1920 }, "100dvh - 398px", 150).width).toBe(
+      "calc(max(1px, (100dvh - 398px)) * 1.5 * 0.5625)",
+    );
+    expect(editorCanvasStageStyle({ w: 1080, h: 1920 }, "100dvh - 398px", 200).width).toBe(
+      "calc(max(1px, (100dvh - 398px)) * 2 * 0.5625)",
+    );
+  });
+
+  it("uses the same stage geometry for clean and virtual preview", () => {
+    const clean = render(editorCanvas({ w: 1080, h: 1920 }, null, "none", null, "100dvh - 350px", 200));
+    const cleanStage = clean.getByTestId("editor-canvas-stage");
+    const cleanAspectRatio = cleanStage.style.aspectRatio;
+
+    clean.rerender(
+      editorCanvas({ w: 1080, h: 1920 }, virtualPreview(), "none", null, "100dvh - 350px", 200),
+    );
+    expect(clean.getByTestId("editor-canvas-stage").style.aspectRatio).toBe(cleanAspectRatio);
+  });
+
   it("preserves portrait contain and switches the rendered video to landscape cover", () => {
     const view = render(editorCanvas({ w: 1080, h: 1920 }));
     const video = view.container.querySelector("video");

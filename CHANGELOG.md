@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.1.0] — 2026-09-08
+
+### Fixed
+- **The editor preview keeps the selected frame after an edit.** Portrait and landscape videos now preserve their output aspect ratio instead of showing cropped footage or white bands, including narrow layouts, zoomed canvases, and clean or unsaved virtual previews. The exported video path is unchanged.
+
 ## [0.73.0.0] — 2026-09-08
 
 ### Changed

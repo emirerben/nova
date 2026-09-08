@@ -114,6 +114,23 @@ const DEFAULT_CAPTION_COLOR = "#FFFFFF";
 const DEFAULT_CAPTION_HIGHLIGHT_COLOR = "#A3E635";
 const DEFAULT_CAPTION_STROKE_WIDTH = 2;
 
+export function editorCanvasStageStyle(
+  canvas: { w: number; h: number },
+  stageHeightCss: string | undefined,
+  zoomPct: number,
+): React.CSSProperties {
+  const zoom = zoomPct / 100;
+  const baseStageHeightCss = stageHeightCss
+    ? `max(1px, (${stageHeightCss}))`
+    : "max(1px, (100vh - 56px - 260px - 48px))";
+
+  return {
+    width: `calc(${baseStageHeightCss} * ${zoom} * ${canvas.w / canvas.h})`,
+    aspectRatio: `${canvas.w} / ${canvas.h}`,
+    maxWidth: "100%",
+  };
+}
+
 function PlaybackFrame({
   clock,
   fallbackTimeS,
@@ -1106,6 +1123,7 @@ export default function EditorCanvas({
 
   const zoom = zoomPct / 100;
   const outputFormatLabel = canvas.w > canvas.h ? "16:9 landscape" : "9:16 portrait";
+  const stageStyle = editorCanvasStageStyle(canvas, stageHeightCss, zoomPct);
   // Unsaved orientation changes still display the previously rendered video.
   // In landscape, cover-crop that source so the canvas previews the same
   // centered 16:9 composition the server will produce on Save. Portrait keeps
@@ -1293,16 +1311,11 @@ export default function EditorCanvas({
         className="flex min-h-full items-center justify-center p-6"
         style={zoom > 1 ? { minWidth: `${zoom * 100}%`, minHeight: `${zoom * 100}%` } : undefined}
       >
-        {/* height-driven output stage; zoom scales it up */}
+        {/* width-driven output stage; aspect-ratio derives height and zoom scales it up */}
         <div
           className="relative"
-          style={{
-            height: stageHeightCss
-              ? `calc(${stageHeightCss} * ${zoom})`
-              : `calc((100vh - 56px - 260px - 48px) * ${zoom})`,
-            aspectRatio: `${canvas.w} / ${canvas.h}`,
-            maxWidth: "100%",
-          }}
+          style={stageStyle}
+          data-testid="editor-canvas-stage"
         >
           <div
             ref={stageRef}
