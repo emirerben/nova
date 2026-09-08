@@ -182,21 +182,133 @@ struct OpenInEditorResponse: Codable, Sendable, Equatable {
     }
 }
 
-struct EditorCommitRequest: Codable, Sendable {
-    var timelineSlots: [JSONValue]?
-    var textElements: [JSONValue]?
-    var captionMeta: [String: JSONValue]?
-    var mix: [String: JSONValue]?
-    var baseGeneration: String
-    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, baseGeneration: String) {
-        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionMeta = captionMeta; self.mix = mix; self.baseGeneration = baseGeneration
-    }
-    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionMeta = "caption_meta"; case mix; case baseGeneration = "base_generation" }
+struct EditorCommitMusicWindow: Codable, Equatable, Sendable {
+    var startS: Double
+    var alignment: String
+    init(startS: Double, alignment: String = "preserve_cuts") { self.startS = startS; self.alignment = alignment }
+    private enum CodingKeys: String, CodingKey { case startS = "start_s"; case alignment }
 }
 
-struct EditorCommitSections: Codable, Sendable {
-    var textElements: Bool; var captionMeta: Bool; var timeline: Bool; var mix: Bool
-    private enum CodingKeys: String, CodingKey { case textElements = "text_elements"; case captionMeta = "caption_meta"; case timeline, mix }
+struct EditorCommitBackgroundMusic: Codable, Equatable, Sendable {
+    var trackID: String?
+    var enabled: Bool
+    var startS: Double?
+    var endS: Double?
+    var gainDB: Double?
+    var muted: Bool
+    init(trackID: String? = nil, enabled: Bool = true, startS: Double? = nil, endS: Double? = nil, gainDB: Double? = nil, muted: Bool = false) {
+        self.trackID = trackID; self.enabled = enabled; self.startS = startS; self.endS = endS; self.gainDB = gainDB; self.muted = muted
+    }
+    private enum CodingKeys: String, CodingKey { case trackID = "track_id"; case enabled; case startS = "start_s"; case endS = "end_s"; case gainDB = "gain_db"; case muted }
+}
+
+struct EditorCommitLyrics: Codable, Equatable, Sendable {
+    var enabled: Bool?
+    var lineOverrides: [String: JSONValue]?
+    var lineOverridesPatch: EditorCommitLyricsOverridesPatch
+    init(enabled: Bool? = nil, lineOverrides: [String: JSONValue]? = nil, lineOverridesPatch: EditorCommitLyricsOverridesPatch = .omitted) {
+        self.enabled = enabled; self.lineOverrides = lineOverrides; self.lineOverridesPatch = lineOverridesPatch
+    }
+    private enum CodingKeys: String, CodingKey { case enabled; case lineOverrides = "line_overrides" }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(enabled, forKey: .enabled)
+        switch lineOverridesPatch {
+        case .omitted: try c.encodeIfPresent(lineOverrides, forKey: .lineOverrides)
+        case .remove: try c.encodeNil(forKey: .lineOverrides)
+        case let .replace(value): try c.encode(value, forKey: .lineOverrides)
+        }
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
+        if !c.contains(.lineOverrides) {
+            lineOverrides = nil; lineOverridesPatch = .omitted
+        } else if try c.decodeNil(forKey: .lineOverrides) {
+            lineOverrides = nil; lineOverridesPatch = .remove
+        } else {
+            let value = try c.decode([String: JSONValue].self, forKey: .lineOverrides)
+            lineOverrides = value; lineOverridesPatch = .replace(value)
+        }
+    }
+}
+
+/// Tri-state patch for the nullable lyrics override map. The backend uses
+/// Pydantic field presence to distinguish omitted (leave untouched) from null
+/// (clear all overrides), so an optional dictionary alone is insufficient.
+enum EditorCommitLyricsOverridesPatch: Equatable, Sendable {
+    case omitted
+    case remove
+    case replace([String: JSONValue])
+}
+
+/// Tri-state title patch. The editor endpoint treats an explicit JSON null as
+/// "clear the title" while an omitted title leaves it unchanged.
+enum EditorCommitTitlePatch: Equatable, Sendable {
+    case omitted
+    case remove
+    case replace(String)
+}
+
+enum EditorCarouselMomentPatch: Equatable, Sendable {
+    case omitted
+    case remove
+    case replace([String: JSONValue])
+}
+
+struct EditorCommitRequest: Codable, Sendable {
+    // Optionals are intentional: nil means “section omitted/untouched”, while
+    // [] means “replace this section with empty”.
+    var timelineSlots: [JSONValue]?
+    var textElements: [JSONValue]?
+    var captionCues: [JSONValue]?
+    var captionMeta: [String: JSONValue]?
+    var mix: [String: JSONValue]?
+    var musicTrackID: String?
+    var removeMusic: Bool
+    var musicWindow: EditorCommitMusicWindow?
+    var backgroundMusic: EditorCommitBackgroundMusic?
+    var lyrics: EditorCommitLyrics?
+    var orientation: String?
+    var soundEffects: [JSONValue]?
+    var mediaOverlays: [JSONValue]?
+    var visualBlocks: [JSONValue]?
+    var motionScenes: [JSONValue]?
+    var motionRuntimeHash: String?
+    var cameraEffects: [JSONValue]?
+    var carouselMoment: EditorCarouselMomentPatch
+    var title: String?
+    var titlePatch: EditorCommitTitlePatch
+    var acceptedSuggestionIDs: [String]?
+    var copilotReceiptIDs: [UUID]
+    var guidedRevision: [String: JSONValue]?
+    var guidedRevisionNumber: Int?
+    var retryGuidedRevision: Bool
+    var baseGeneration: String
+
+    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, title: String? = nil, titlePatch: EditorCommitTitlePatch = .omitted, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, baseGeneration: String) {
+        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.lyrics = lyrics; self.orientation = orientation; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title; self.titlePatch = titlePatch; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.baseGeneration = baseGeneration
+    }
+
+    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case lyrics; case orientation; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case baseGeneration = "base_generation" }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(timelineSlots, forKey: .timelineSlots); try c.encodeIfPresent(textElements, forKey: .textElements); try c.encodeIfPresent(captionCues, forKey: .captionCues); try c.encodeIfPresent(captionMeta, forKey: .captionMeta); try c.encodeIfPresent(mix, forKey: .mix); try c.encodeIfPresent(musicTrackID, forKey: .musicTrackID); try c.encode(removeMusic, forKey: .removeMusic); try c.encodeIfPresent(musicWindow, forKey: .musicWindow); try c.encodeIfPresent(backgroundMusic, forKey: .backgroundMusic); try c.encodeIfPresent(lyrics, forKey: .lyrics); try c.encodeIfPresent(orientation, forKey: .orientation); try c.encodeIfPresent(soundEffects, forKey: .soundEffects); try c.encodeIfPresent(mediaOverlays, forKey: .mediaOverlays); try c.encodeIfPresent(visualBlocks, forKey: .visualBlocks); try c.encodeIfPresent(motionScenes, forKey: .motionScenes); try c.encodeIfPresent(motionRuntimeHash, forKey: .motionRuntimeHash); try c.encodeIfPresent(cameraEffects, forKey: .cameraEffects)
+        switch carouselMoment { case .omitted: break; case .remove: try c.encodeNil(forKey: .carouselMoment); case let .replace(value): try c.encode(value, forKey: .carouselMoment) }
+        switch titlePatch { case .omitted: try c.encodeIfPresent(title, forKey: .title); case .remove: try c.encodeNil(forKey: .title); case let .replace(value): try c.encode(value, forKey: .title) }
+        try c.encodeIfPresent(acceptedSuggestionIDs, forKey: .acceptedSuggestionIDs); if !copilotReceiptIDs.isEmpty { try c.encode(copilotReceiptIDs, forKey: .copilotReceiptIDs) }; try c.encodeIfPresent(guidedRevision, forKey: .guidedRevision); try c.encodeIfPresent(guidedRevisionNumber, forKey: .guidedRevisionNumber); if retryGuidedRevision { try c.encode(retryGuidedRevision, forKey: .retryGuidedRevision) }; try c.encode(baseGeneration, forKey: .baseGeneration)
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; if !c.contains(.title) { title = nil; titlePatch = .omitted } else if try c.decodeNil(forKey: .title) { title = nil; titlePatch = .remove } else { let value = try c.decode(String.self, forKey: .title); title = value; titlePatch = .replace(value) }; acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
+    }
+}
+
+struct EditorCommitSections: Codable, Sendable, Equatable {
+    var textElements: Bool; var captionMeta: Bool; var timeline: Bool; var mix: Bool; var captionCues: Bool; var music: Bool; var backgroundMusic: Bool; var lyrics: Bool; var orientation: Bool; var soundEffects: Bool; var mediaOverlays: Bool; var visualBlocks: Bool; var motionScenes: Bool; var cameraEffects: Bool; var carouselMoment: Bool; var title: Bool
+    init(textElements: Bool, captionMeta: Bool, timeline: Bool, mix: Bool, captionCues: Bool = false, music: Bool = false, backgroundMusic: Bool = false, lyrics: Bool = false, orientation: Bool = false, soundEffects: Bool = false, mediaOverlays: Bool = false, visualBlocks: Bool = false, motionScenes: Bool = false, cameraEffects: Bool = false, carouselMoment: Bool = false, title: Bool = false) { self.textElements = textElements; self.captionMeta = captionMeta; self.timeline = timeline; self.mix = mix; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.lyrics = lyrics; self.orientation = orientation; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title }
+    private enum CodingKeys: String, CodingKey { case textElements = "text_elements"; case captionMeta = "caption_meta"; case timeline, mix; case captionCues = "caption_cues"; case music; case backgroundMusic = "background_music"; case lyrics, orientation; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title }
+    init(from decoder: Decoder) throws { let c = try decoder.container(keyedBy: CodingKeys.self); textElements = try c.decodeIfPresent(Bool.self, forKey: .textElements) ?? false; captionMeta = try c.decodeIfPresent(Bool.self, forKey: .captionMeta) ?? false; timeline = try c.decodeIfPresent(Bool.self, forKey: .timeline) ?? false; mix = try c.decodeIfPresent(Bool.self, forKey: .mix) ?? false; captionCues = try c.decodeIfPresent(Bool.self, forKey: .captionCues) ?? false; music = try c.decodeIfPresent(Bool.self, forKey: .music) ?? false; backgroundMusic = try c.decodeIfPresent(Bool.self, forKey: .backgroundMusic) ?? false; lyrics = try c.decodeIfPresent(Bool.self, forKey: .lyrics) ?? false; orientation = try c.decodeIfPresent(Bool.self, forKey: .orientation) ?? false; soundEffects = try c.decodeIfPresent(Bool.self, forKey: .soundEffects) ?? false; mediaOverlays = try c.decodeIfPresent(Bool.self, forKey: .mediaOverlays) ?? false; visualBlocks = try c.decodeIfPresent(Bool.self, forKey: .visualBlocks) ?? false; motionScenes = try c.decodeIfPresent(Bool.self, forKey: .motionScenes) ?? false; cameraEffects = try c.decodeIfPresent(Bool.self, forKey: .cameraEffects) ?? false; carouselMoment = try c.decodeIfPresent(Bool.self, forKey: .carouselMoment) ?? false; title = try c.decodeIfPresent(Bool.self, forKey: .title) ?? false }
 }
 struct EditorCommitResponse: Codable, Sendable {
     let ok: Bool

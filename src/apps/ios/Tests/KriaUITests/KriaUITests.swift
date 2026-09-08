@@ -6,11 +6,24 @@ final class KriaUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["What kind of video are we making?"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Open projects"].exists)
-        XCTAssertTrue(app.textFields["Message Kria"].exists)
-        XCTAssertTrue(app.staticTexts["Montage"].exists)
-        XCTAssertTrue(app.staticTexts["Narrated"].exists)
+        // The chat workspace performs its initial project read before showing
+        // the first format stage. Keep the product assertion, but allow the
+        // offline/slow API fixture to settle instead of racing that task. A
+        // persisted ready project is also a valid prior-run state; create a
+        // fresh draft through the real Projects drawer so this launch remains
+        // deterministic without weakening the assertion below.
+        let prompt = app.staticTexts["What kind of video are we making?"]
+        if !prompt.waitForExistence(timeout: 12) {
+            XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
+            app.buttons["Open projects"].tap()
+            XCTAssertTrue(app.buttons["New video"].waitForExistence(timeout: 3))
+            app.buttons["New video"].tap()
+        }
+        XCTAssertTrue(prompt.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Montage"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Narrated"].waitForExistence(timeout: 3))
 
         app.buttons["Open projects"].tap()
         XCTAssertTrue(app.staticTexts["RECENT"].waitForExistence(timeout: 2))
@@ -126,6 +139,19 @@ final class KriaUITests: XCTestCase {
         expectation(for: NSPredicate(format: "value != %@", originalValue), evaluatedWith: clip)
         waitForExpectations(timeout: 2)
         XCTAssertGreaterThan(Self.clipDuration(clip), originalDuration)
+    }
+
+    func testNativeEditorNamedFixturesLaunchWithoutAnAccount() {
+        for shape in ["two-text", "boundary", "all-lanes", "stress-71", "unknown-sections"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-\(shape)"]
+            app.launch()
+
+            let marker = app.descendants(matching: .any)["native-editor-fixture-\(shape)"]
+            XCTAssertTrue(marker.waitForExistence(timeout: 8), "Fixture \(shape) did not launch")
+            XCTAssertTrue(app.staticTexts["Edit video"].exists)
+            app.terminate()
+        }
     }
 
     private static func clipDuration(_ clip: XCUIElement) -> Double {

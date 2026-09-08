@@ -205,6 +205,81 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 1); XCTAssertEqual(fake.lastRequest?.baseGeneration, "generation-1"); XCTAssertEqual(session.saveState, .previewPending); XCTAssertFalse(session.hasUnsavedChanges)
     }
 
+    func testCanonicalDocumentTracksTextEditAndDirtySection() {
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        session.addText(content: "Hook")
+        XCTAssertEqual(session.document.textElements.first?.text, "Hook")
+        XCTAssertTrue(session.isDirty(.text))
+        session.undo()
+        XCTAssertTrue(session.document.textElements.isEmpty)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testCaptionMetadataUsesCaptionMetaCommitSection() async {
+        let threadID = UUID()
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: UUID().uuidString, baseGenerationID: "g1", snapshot: ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["captions_enabled": .bool(false), "caption_style": .string("word")])])], canUndo: false, createdAt: .now),
+            authoritativeVariant: ["resolved_archetype": .string("subtitled"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true)]), "captions_enabled": .bool(false), "caption_style": .string("word")],
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: true, timeline: false, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        session.setCaptionStyle("karaoke")
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.captionMeta?["style"], JSONValue.string("karaoke"))
+        XCTAssertNil(fake.lastRequest?.captionCues)
+        XCTAssertFalse(session.isDirty(.captionMeta))
+    }
+
+    func testTypedTextMutationsKeepWireKeysAndOneGestureUndo() {
+        let textID = UUID()
+        let draft = EditorDraft(projectID: UUID(), clips: [], text: [TextLayer(id: textID, content: "old", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0)
+        let session = NativeEditorSession(draft: draft)
+        session.beginTransaction()
+        session.updateTextContent(id: textID, content: "new")
+        session.updateTextTiming(id: textID, startS: 1, endS: 3)
+        session.setTextSize(id: textID.uuidString, sizePX: 88)
+        session.setTextWidth(id: textID.uuidString, width: 0)
+        session.setTextAlignment(id: textID.uuidString, alignment: "center")
+        session.setTextAnimation(id: textID.uuidString, animation: "pop")
+        session.setTextColor(id: textID.uuidString, color: "#fff")
+        session.setTextHighlightColor(id: textID.uuidString, color: "#0f0")
+        session.setTextShadow(id: textID.uuidString, enabled: true)
+        session.setTextStroke(id: textID.uuidString, width: 4)
+        session.setTextBehindSubject(id: textID.uuidString, behind: true)
+        session.setTextPosition(id: textID, x: 0.2, y: 0.8)
+        session.endTransaction()
+        let payload = Self.object(session.document.encodeSnapshot()["editor_payload"]); let sections = Self.object(payload?["sections"])
+        let text = Self.object(Self.array(sections?["text_elements"]).first)
+        XCTAssertEqual(text?["text"], .string("new")); XCTAssertEqual(text?["start_s"], .number(1)); XCTAssertEqual(text?["end_s"], .number(3))
+        XCTAssertEqual(text?["size_px"], .number(88)); XCTAssertEqual(text?["max_width_frac"], .number(0.2)); XCTAssertEqual(text?["effect"], .string("pop")); XCTAssertNil(text?["font_size_px"]); XCTAssertNil(text?["width"]); XCTAssertNil(text?["animation"])
+        XCTAssertEqual(text?["behind_subject"], .bool(true)); XCTAssertTrue(session.canUndo)
+        session.undo(); XCTAssertFalse(session.hasUnsavedChanges)
+        session.redo(); session.beginTransaction(); session.setTextColor(id: textID.uuidString, color: "#000"); session.endTransaction(); XCTAssertFalse(session.canRedo)
+    }
+
+    func testCaptionCueMetadataAndMusicMutationsUseSeparateDirtySections() async {
+        let threadID = UUID(); let trackID = UUID(); let cueID = "cue-1"
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["caption_meta": .object(["enabled": .bool(true), "style": .string("word")]), "caption_cues": .array([.object(["id": .string(cueID), "start_s": .number(0), "end_s": .number(1), "text": .string("old")])]), "music_track_id": .string(trackID.uuidString), "music_window": .object(["start_s": .number(0), "alignment": .string("preserve_cuts")]), "audio_mix": .object(["music_level": .number(0.5), "original_level": .number(1)])])])]
+        let response = EditorCommitResponse(ok: false, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: true, timeline: false, mix: true, captionCues: true, music: true), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now), authoritativeVariant: ["resolved_archetype": .string("subtitled"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(true)])], commitResponse: response)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        session.updateCaptionCue(id: cueID, text: "new", startS: 0.25, endS: 1.25); session.setCaptionHighlightColor("#0f0")
+        session.setMusicWindow(startS: 2, alignment: "beat"); session.setMusicLevel(0.8); session.setOriginalMixLevel(0.6)
+        XCTAssertTrue(session.isDirty(.captions)); XCTAssertTrue(session.isDirty(.captionMeta)); XCTAssertTrue(session.isDirty(.music)); XCTAssertTrue(session.isDirty(.mix))
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.captionCues?.count, 1); XCTAssertEqual(fake.lastRequest?.captionMeta?["highlight_color"], .string("#0f0")); XCTAssertEqual(fake.lastRequest?.musicWindow?.startS, 2); XCTAssertEqual(fake.lastRequest?.mix?["music_level"], .number(0.8)); XCTAssertEqual(fake.lastRequest?.mix?["original_level"], .number(0.6)); XCTAssertEqual(session.saveState, .failed("The edit was saved, but its new preview could not be rendered."))
+    }
+
+    func testCapabilityReasonIsExposedAndDisablesTypedMutation() {
+        let textID = UUID(); let snapshot: [String: JSONValue] = ["editor_capabilities": .object(["text_elements": .object(["editable": .bool(false), "reason": .string("renderer locked")])]), "editor_payload": .object(["sections": .object(["text_elements": .array([.object(["id": .string(textID.uuidString), "text": .string("old"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let draft = EditorDraft(projectID: UUID(), clips: [], text: [TextLayer(id: textID, content: "old", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0, serverSnapshot: snapshot)
+        let session = NativeEditorSession(draft: draft)
+        XCTAssertEqual(session.capabilityReason("text_elements"), "renderer locked"); XCTAssertFalse(session.canEdit(.text)); session.updateTextContent(id: textID, content: "new"); XCTAssertEqual(session.document.textElements.first?.text, "old")
+    }
+
+
     private static func object(_ value: JSONValue?) -> [String: JSONValue]? { if case let .object(value) = value { value } else { nil } }
     private static func array(_ value: JSONValue?) -> [JSONValue] { if case let .array(value) = value { value } else { [] } }
 
@@ -226,14 +301,16 @@ private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     let draftSnapshot: DraftSnapshot
     let openReceipt: OpenInEditorResponse?
     let authoritativeVariant: [String: JSONValue]?
+    let commitResponse: EditorCommitResponse?
     var commitCount = 0
     var lastRequest: EditorCommitRequest?
     var openedJobID: UUID?
     var lastItemID: String?
-    init(draftSnapshot: DraftSnapshot, openReceipt: OpenInEditorResponse? = nil, authoritativeVariant: [String: JSONValue]? = nil) {
+    init(draftSnapshot: DraftSnapshot, openReceipt: OpenInEditorResponse? = nil, authoritativeVariant: [String: JSONValue]? = nil, commitResponse: EditorCommitResponse? = nil) {
         self.draftSnapshot = draftSnapshot
         self.openReceipt = openReceipt
         self.authoritativeVariant = authoritativeVariant
+        self.commitResponse = commitResponse
     }
     func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
     func project(threadID: UUID) async throws -> CreationThread { throw APIError.unsupported }
@@ -257,7 +334,7 @@ private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     }
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse {
         commitCount += 1; lastRequest = request; lastItemID = itemID
-        return EditorCommitResponse(ok: true, generation: "next", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        return commitResponse ?? EditorCommitResponse(ok: true, generation: "next", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { throw APIError.unsupported }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }

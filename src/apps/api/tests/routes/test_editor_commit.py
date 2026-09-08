@@ -4624,6 +4624,7 @@ def test_endpoint_media_motion_loads_asset_pool_without_visual_block_edit(
 
     assert resp.status_code == 200, resp.text
     assert job.assembly_plan["variants"][0]["motion_scenes"] == [scene]
+    assert resp.json()["sections"]["motion_scenes"] is True
     # Initial + locked PlanItem reads, owned Persona read, and asset-pool read.
     assert db.execute.await_count == 4
     regen.apply_async.assert_called_once()

@@ -43,7 +43,7 @@ struct NativeEditorView: View {
                         if newMode == .chat { onChat() }
                     }
 
-                NativeEditorHeaderRow(title: session.selectedClipID == nil ? "Edit video" : "Edit clip", session: session)
+                NativeEditorHeaderRow(title: contextTitle, session: session)
                 NativeEditorSaveBanner(session: session)
 
                 ScrollView {
@@ -73,7 +73,7 @@ struct NativeEditorView: View {
                 .scrollDismissesKeyboard(.interactively)
 
                 NativeEditorToolRail(selected: $selectedTool) { tool in
-                    inspector = NativeEditorInspector(tool: tool)
+                    inspector = .tool(tool)
                 }
             }
             .frame(width: viewport.size.width, height: viewport.size.height)
@@ -83,6 +83,19 @@ struct NativeEditorView: View {
             .navigationBarBackButtonHidden(true)
             .sheet(item: $inspector) { inspector in
                 NativeEditorInspectorView(inspector: inspector, session: session)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+            .onChange(of: session.selection) { _, selection in
+                // Timeline taps are an explicit request to inspect that object.
+                // Keep tool-driven sheets intact while the user edits; a later
+                // selection then routes to the matching object inspector.
+                guard let selection else { return }
+                // Clip selection keeps the timeline handles and context strip
+                // directly reachable. The explicit Adjust action presents the
+                // clip inspector without covering the trim gesture surface.
+                guard selection.kind != .clip else { return }
+                inspector = .selection(selection)
             }
             .task {
                 #if DEBUG
@@ -96,23 +109,55 @@ struct NativeEditorView: View {
             }
         }
     }
+
+    private var contextTitle: String {
+        guard let selection = session.selection else { return "Edit video" }
+        switch selection.kind {
+        case .clip: return "Edit clip"
+        case .text: return "Edit text"
+        case .captionCue: return "Edit caption"
+        case .music: return "Edit music"
+        case .soundEffect: return "Edit sound"
+        case .mediaOverlay: return "Edit overlay"
+        case .visualBlock, .motionScene, .cameraEffect: return "Edit visual"
+        case .carousel: return "Edit carousel"
+        }
+    }
 }
 
-private enum NativeEditorInspector: String, Identifiable {
-    case kria, text, captions, visuals, sounds, overlays, styles, adjust
+private enum NativeEditorInspector: Identifiable {
+    case tool(NativeEditorTool)
+    case selection(EditorSelection)
+    case adjust
 
-    var id: String { rawValue }
+    var id: String {
+        switch self {
+        case .tool(let tool): return "tool-\(tool.rawValue)"
+        case .selection(let selection): return "selection-\(selection.kind.rawValue)-\(selection.id)"
+        case .adjust: return "adjust"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .tool(let tool): return tool.rawValue
+        case .selection(let selection):
+            switch selection.kind {
+            case .clip: return "Clip"
+            case .text: return "Text"
+            case .captionCue: return "Caption"
+            case .music: return "Music"
+            case .soundEffect: return "Sound effect"
+            case .mediaOverlay: return "Overlay"
+            case .visualBlock, .motionScene, .cameraEffect: return "Visual"
+            case .carousel: return "Carousel"
+            }
+        case .adjust: return "Adjust"
+        }
+    }
 
     init(tool: NativeEditorTool) {
-        switch tool {
-        case .kria: self = .kria
-        case .text: self = .text
-        case .captions: self = .captions
-        case .visuals: self = .visuals
-        case .sounds: self = .sounds
-        case .overlays: self = .overlays
-        case .styles: self = .styles
-        }
+        self = .tool(tool)
     }
 }
 
@@ -125,17 +170,19 @@ private struct NativeEditorInspectorView: View {
         NavigationStack {
             Group {
                 switch inspector {
-                case .kria: NativeKriaInspector(session: session)
-                case .text: NativeTextInspector(session: session)
-                case .captions: NativeCaptionsInspector(session: session)
-                case .visuals: NativeEditorUnavailableView(title: "Visuals", reason: "Visual transforms are intentionally not exposed in this first native editor pass. Your original framing stays untouched.", systemImage: "camera.filters")
-                case .sounds: NativeSoundsInspector(session: session)
-                case .overlays: NativeEditorUnavailableView(title: "Overlays", reason: "Media cards and cutaway overlays need their renderer contract before they can be edited safely. They are not hidden; this explains why the tool is unavailable.", systemImage: "square.on.square")
-                case .styles: NativeStylesInspector(session: session)
+                case .tool(.kria): NativeKriaInspector(session: session)
+                case .tool(.text): NativeTextInspector(session: session)
+                case .tool(.captions): NativeCaptionsInspector(session: session)
+                case .tool(.visuals): NativeEditorUnavailableView(title: "Visuals", reason: "Visual transforms are intentionally not exposed in this first native editor pass. Your original framing stays untouched.", systemImage: "camera.filters")
+                case .tool(.sounds): NativeSoundsInspector(session: session)
+                case .tool(.overlays): NativeEditorUnavailableView(title: "Overlays", reason: "Media cards and cutaway overlays need their renderer contract before they can be edited safely. They are not hidden; this explains why the tool is unavailable.", systemImage: "square.on.square")
+                case .tool(.styles): NativeStylesInspector(session: session)
+                case .tool: NativeEditorUnavailableView(title: "Editor", reason: "This tool is not available for the current render.", systemImage: "lock")
+                case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
                 }
             }
-            .navigationTitle(inspector.rawValue.capitalized)
+            .navigationTitle(inspector.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

@@ -293,23 +293,23 @@ No failure may be silent, destructive, or erase an untouched lane.
 
 ## Implementation Tasks
 
-- [ ] **T1 (P1, human: ~1 day / CC: ~45 min)** — Test foundation — Add deterministic two-text, boundary, all-lanes, stress, and unknown-section fixtures plus reusable API stubs.
+- [x] **T1 (P1, human: ~1 day / CC: ~45 min)** — Test foundation — Add deterministic two-text, boundary, all-lanes, stress, and unknown-section fixtures plus reusable API stubs.
   - Surfaced by: Test review — existing tests do not characterize all lanes or raw preservation.
   - Files: `src/apps/ios/Tests/**`, fixture launch wiring.
   - Verify: targeted `KriaTests` and `KriaUITests` fixture launch.
-- [ ] **T2 (P1, human: ~3 days / CC: ~2 h)** — Document contract — Add the canonical typed editor document, capability/revision models, raw-preserving codec, and complete commit DTOs.
+- [x] **T2 (P1, human: ~3 days / CC: ~2 h)** — Document contract — Add the canonical typed editor document, capability/revision models, raw-preserving codec, and complete commit DTOs.
   - Surfaced by: Architecture — current `EditorDraft` and mapper drop timing, styling, and entire lanes.
   - Files: `src/apps/ios/Kria/Core/**`, `src/apps/ios/Tests/KriaTests/EditorDocumentTests.swift`.
   - Verify: canonical/legacy/full-lane/no-op/one-lane round-trip tests.
-- [ ] **T3 (P1, human: ~2 days / CC: ~90 min)** — State spine — Replace clip-only selection and four-section dirty tracking with cross-kind selection, interaction math, complete dirty state, history, and conflict-safe rebase.
+- [x] **T3 (P1, human: ~2 days / CC: ~90 min)** — State spine — Replace clip-only selection and four-section dirty tracking with cross-kind selection, interaction math, complete dirty state, history, and conflict-safe rebase.
   - Surfaced by: Architecture/code quality — tool and clip state currently compete and cannot identify non-video objects.
   - Files: `NativeEditorSession.swift`, `NativeEditorInteraction.swift`, session/interaction tests.
   - Verify: selection, visibility, overlap, geometry, history, and conflict tests.
-- [ ] **T4 (P1, human: ~3 days / CC: ~2 h)** — Preview and timeline — Render active timed layers, enable preview hit testing/cycling, and replace treatment bars with cached typed lanes and accessible hit regions.
+- [x] **T4 (P1, human: ~3 days / CC: ~2 h)** — Preview and timeline — Render active timed layers, enable preview hit testing/cycling, and replace treatment bars with cached typed lanes and accessible hit regions.
   - Surfaced by: Regression — all native text currently renders for the full video and only the first item appears in the timeline.
   - Files: `NativeEditorMediaViews.swift` plus extracted preview/timeline views and tests.
   - Verify: two-text regression, selection synchronization, 44pt targets, 71-slot stress.
-- [ ] **T5 (P1, human: ~4 days / CC: ~3 h)** — Core inspectors and persistence — Ship complete clip/text/caption/music inspectors, selection routing, partial saves, reload, and conflict/error recovery.
+- [x] **T5 (P1, human: ~4 days / CC: ~3 h)** — Core inspectors and persistence — Ship complete clip/text/caption/music inspectors, selection routing, partial saves, reload, and conflict/error recovery.
   - Surfaced by: Product parity — P1 objects lack complete property editing and durable recovery.
   - Files: `NativeEditorView.swift`, `NativeEditorComponents.swift`, inspector views, services/session/UI tests.
   - Verify: edit/undo/redo/save/reload/conflict flows for every P1 object.
@@ -321,7 +321,7 @@ No failure may be silent, destructive, or erase an untouched lane.
   - Surfaced by: Audit — advanced temporal objects are silently absent today.
   - Files: native document, timeline, preview, inspectors, and tests.
   - Verify: every server-supported object is selectable and editable or explicitly read-only.
-- [ ] **T8 (P2, human: ~1 day / CC: ~45 min)** — Web duration contract — Diagnose and correct ruler/transport divergence with a 71-slot regression fixture.
+- [x] **T8 (P2, human: ~1 day / CC: ~45 min)** — Web duration contract — Diagnose and correct ruler/transport divergence with a 71-slot regression fixture.
   - Surfaced by: Audit screenshot — ruler reaches 0:59 while rendered transport reports 0:30.
   - Files: web virtual timeline/player/timeline components and Jest tests.
   - Verify: targeted Jest plus `npx tsc --noEmit`.

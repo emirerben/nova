@@ -60,6 +60,10 @@ private struct NativeEditorUITestHost: View {
     @State private var showsEditor = true
     @State private var showsProjects = false
 
+    private var fixture: NativeEditorUITestFixtures.Fixture {
+        NativeEditorUITestFixtures.current
+    }
+
     var body: some View {
         ZStack {
             Color.white.ignoresSafeArea()
@@ -76,7 +80,7 @@ private struct NativeEditorUITestHost: View {
                 NavigationStack {
                     NativeEditorView(
                         project: PreviewFixtures.editorProject,
-                        initialDraft: PreviewFixtures.editorDraft,
+                        initialDraft: fixture.draft,
                         initialPlaybackURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"),
                         onProjects: {
                             showsEditor = false
@@ -85,6 +89,7 @@ private struct NativeEditorUITestHost: View {
                         onChat: { showsEditor = false }
                     )
                 }
+                .accessibilityIdentifier("native-editor-fixture-\(fixture.shape.rawValue)")
             }
         }
     }
