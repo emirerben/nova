@@ -212,6 +212,24 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe("EditorShell linked text-card deletion", () => {
+  it("refuses a visual text card at the text budget without mutating the visual lane", async () => {
+    const captionLane = Array.from({ length: 50 }, (_unused, index) =>
+      linkedText(`caption-${index + 1}`, `Caption ${index + 1}`),
+    );
+    await renderShell(makeVariant(captionLane));
+
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    expect(screen.getAllByRole("button", { name: /^Text card$/ })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Text card" }));
+
+    expect(screen.getAllByRole("button", { name: /^Text card$/ })).toHaveLength(1);
+    expect(mockToast).toHaveBeenCalledWith(
+      "This edit has reached its text limit.",
+      expect.objectContaining({ duration: 2600 }),
+    );
+  });
+
   it("deletes the parent card with its final linked text, restores both with Undo, and saves both sections", async () => {
     await renderShell(makeVariant([linkedText("title-1", "Card title")]));
 

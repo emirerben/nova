@@ -4416,6 +4416,20 @@ export default function EditorShell({
     });
   }, []);
 
+  const canAddTextElements = useCallback((count = 1) => {
+    const currentElements = barsToTextElements(state.bars, originalsRef.current, {
+      includeLyrics: lyricsOptionalActive,
+    });
+    const newElementCount = currentElements.filter((row) => !originalsRef.current.has(row.id)).length;
+    if (count <= remainingTextCompositionCapacity(currentElements.length, capabilities?.text_elements_max, newElementCount)) {
+      return true;
+    }
+    notify(currentElements.length + count > (capabilities?.text_elements_max ?? 50)
+      ? "This edit has reached its text limit."
+      : "Save these changes before adding more text.");
+    return false;
+  }, [state.bars, lyricsOptionalActive, capabilities?.text_elements_max, notify]);
+
   const addTextAtPlayhead = useCallback(
     (preset: TextPreset = DEFAULT_TEXT_PRESET) => {
       if (readOnly) return null;
@@ -4426,16 +4440,7 @@ export default function EditorShell({
         notify(textElementsLockedCopy(capabilities));
         return null;
       }
-      const currentElements = barsToTextElements(state.bars, originalsRef.current, {
-        includeLyrics: lyricsOptionalActive,
-      });
-      const newElementCount = currentElements.filter((row) => !originalsRef.current.has(row.id)).length;
-      if (remainingTextCompositionCapacity(currentElements.length, capabilities?.text_elements_max, newElementCount) === 0) {
-        notify(currentElements.length >= (capabilities?.text_elements_max ?? 50)
-          ? "This edit has reached its text limit."
-          : "Save these changes before adding more text.");
-        return null;
-      }
+      if (!canAddTextElements()) return null;
       history.record();
       setTextDirty(true);
       const bar = newTextBar({
@@ -4456,6 +4461,7 @@ export default function EditorShell({
       return bar.id;
     },
     [
+      canAddTextElements,
       currentTime,
       duration,
       selectText,
@@ -4659,6 +4665,7 @@ export default function EditorShell({
   const addTextCard = useCallback(
     (preset: "card" | "quote" | "statistic" | "transition") => {
       if (readOnly || !visualBlocksAllowed) return;
+      if (!canAddTextElements()) return;
       const { start, end } = nextVisualBlockWindow(2.5);
       if (end - start < 0.75) {
         notify("There isn't enough open timeline space for a text card.");
@@ -4710,6 +4717,7 @@ export default function EditorShell({
       seekPlaybackTo(baseToOutputTimeRef.current(start));
     },
     [
+      canAddTextElements,
       visualBlocksAllowed,
       history,
       nextVisualBlockWindow,
@@ -4884,6 +4892,7 @@ export default function EditorShell({
   const addVisualBlockText = useCallback(
     (blockId: string) => {
       if (readOnly || textElementsLocked) return;
+      if (!canAddTextElements()) return;
       const block = localVisualBlocks.find(
         (candidate) => candidate.id === blockId && candidate.kind === "text_card",
       );
@@ -4911,6 +4920,7 @@ export default function EditorShell({
       seekPlaybackTo(baseToOutputTimeRef.current(block.start_s));
     },
     [
+      canAddTextElements,
       history,
       localVisualBlocks,
       readOnly,
@@ -5026,6 +5036,10 @@ export default function EditorShell({
       if (readOnly || !visualBlocksAllowed) return;
       const source = localVisualBlocks.find((block) => block.id === id);
       if (!source) return;
+      const linkedText = source.kind === "text_card"
+        ? state.bars.filter((bar) => bar.visual_block_id === source.id)
+        : [];
+      if (!canAddTextElements(linkedText.length)) return;
       const durationS = source.end_s - source.start_s;
       const { start, end } = nextVisualBlockWindow(durationS);
       if (end - start < durationS - 1 / 30) {
@@ -5072,27 +5086,26 @@ export default function EditorShell({
       setVisualBlocksDirty(true);
       if (source.kind === "text_card") {
         const sourceDuration = Math.max(0.001, source.end_s - source.start_s);
-        state.bars
-          .filter((bar) => bar.visual_block_id === source.id)
-          .forEach((bar) => {
-            const relativeStart = (bar.start_s - source.start_s) / sourceDuration;
-            const relativeEnd = (bar.end_s - source.start_s) / sourceDuration;
-            dispatch({
-              type: "ADD_TEXT",
-              bar: {
-                ...bar,
-                id: crypto.randomUUID(),
-                visual_block_id: newId,
-                start_s: start + relativeStart * (end - start),
-                end_s: start + relativeEnd * (end - start),
-              },
-            });
+        linkedText.forEach((bar) => {
+          const relativeStart = (bar.start_s - source.start_s) / sourceDuration;
+          const relativeEnd = (bar.end_s - source.start_s) / sourceDuration;
+          dispatch({
+            type: "ADD_TEXT",
+            bar: {
+              ...bar,
+              id: crypto.randomUUID(),
+              visual_block_id: newId,
+              start_s: start + relativeStart * (end - start),
+              end_s: start + relativeEnd * (end - start),
+            },
           });
+        });
         setTextDirty(true);
       }
       seekPlaybackTo(baseToOutputTimeRef.current(start));
     },
     [
+      canAddTextElements,
       visualBlocksAllowed,
       history,
       localVisualBlocks,
