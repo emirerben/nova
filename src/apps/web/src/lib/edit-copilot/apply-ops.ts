@@ -1366,8 +1366,17 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "text bar no longer exists"));
         continue;
       }
-      if (bar.role === "lyric_line") {
-        rejected.push(reject(op.op, labelForOp(op), "unsupported_field", "Lyric timing is locked to the vocal."));
+      if (bar.role === "lyric_line" || snap.timing_locked === true) {
+        rejected.push(
+          reject(
+            op.op,
+            labelForOp(op),
+            "unsupported_field",
+            bar.role === "lyric_line"
+              ? "Lyric timing is locked to the vocal."
+              : "Caption timing is locked to the source caption cue.",
+          ),
+        );
         continue;
       }
       const fields: Array<"start_s" | "end_s"> = [

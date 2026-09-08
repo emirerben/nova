@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.72.3.0] — 2026-09-08
+
+### Added
+- **The editor AI sees the full component context.** Text, captions, images, clips, motion, sound effects, and music carry their current timing, identity, available descriptions, and creator notes. Selection and playhead help resolve references, while explicit requests take precedence. Components remain visible for inspection when their editing tools are unavailable.
+
+### Fixed
+- **Selective timing changes preserve unrelated components in caption-heavy edits.** The editor negotiates a larger context budget and reports oversized snapshots instead of silently omitting components. Locked caption timing remains protected, and unavailable edits receive an honest explanation.
+
+## [0.72.2.0] — 2026-09-08
+
+### Changed
+- **Personalization is now a simpler editable list.** Creators can add a preference directly, edit or remove each remembered instruction, and return to the content plan without navigating category sections or approval, metadata, Undo, and update-notice UI.
+
+### Fixed
+- **Preference controls remain reliable during errors and overlapping updates.** Failed clears keep their confirmation open, failed toggles do not overwrite newer preferences, rule enforcement survives text edits, and keyboard focus returns to a visible control after a row changes.
+
+## [0.72.0.0] — 2026-09-08
+
+### Added
+- **Kria now has a native iOS foundation.** The iOS 18 SwiftUI app includes Apple and Google sign-in seams, adaptive project and creation flows, consent-aware background uploads that attach footage to its project, live render status, result playback, Photos save, and native sharing. The editor diagnostic remains internal until its exact approval-to-render handoff is complete.
+- **Native editing uses a versioned recipe instead of renderer internals.** A checked mobile OpenAPI surface and `EditRecipeV1` adapter keep CreationThread, runtime-v2, jobs, drafts, and cloud rendering server-authoritative while the standalone AVFoundation package develops local preview and export capabilities.
+
+### Internal
+- Mobile sessions use verified provider identities, transaction-serialized account linking, 15-minute access tokens, rotating single-use refresh families, revocation, and recent-auth account linking. Temporary media receives owned cleanup receipts, cancellation, a bounded sweeper, and a 24-hour lifecycle backstop; project footage follows the authenticated project-retention contract.
+- XcodeGen, simulator CI, contract drift checks, SwiftData recovery state, instrumented media diagnostics, and Swift/media/backend regression suites establish the physical-device and TestFlight hardening path. Local export remains internal until golden parity and iPhone performance gates pass.
+
 ## [0.71.3.0] — 2026-09-08
 
 ### Fixed

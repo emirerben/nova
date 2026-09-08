@@ -1,5 +1,6 @@
 """Tests for the GCS credential chain in storage._get_client()."""
 
+import datetime
 import json
 from unittest.mock import MagicMock, patch
 
@@ -155,6 +156,7 @@ def test_signed_put_url_pins_exact_content_type():
     fake_bucket.blob.assert_called_once_with("dev-user/u/generative/batch/clip.mov")
     kwargs = fake_blob.generate_signed_url.call_args.kwargs
     assert kwargs["method"] == "PUT"
+    assert kwargs["expiration"] == datetime.timedelta(minutes=15)
     assert kwargs["content_type"] == "video/quicktime"
     assert kwargs["headers"] == {
         "content-length": "12345",

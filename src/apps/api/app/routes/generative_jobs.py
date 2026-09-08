@@ -29,7 +29,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -46,11 +46,20 @@ from app.agents._schemas.text_element import (
     merge_projected_text_elements_for_variant,
 )
 from app.agents._schemas.visual_block import VisualBlock
-from app.auth import CurrentUserOrSynthetic, ensure_job_owner
+from app.auth import CurrentUser, CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
-from app.models import AgentRun, ContentPlan, Job, MusicTrack, PlanItem, PlanItemAsset, User
+from app.models import (
+    AgentRun,
+    ContentPlan,
+    Job,
+    MusicTrack,
+    PlanItem,
+    PlanItemAsset,
+    TemporaryMediaUpload,
+    User,
+)
 from app.pipeline.look_presets import (
     EDIT_WIDE_LOOK_PRESETS,
     LOOK_PRESETS,
@@ -77,10 +86,12 @@ from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
     load_owned_plan_persona,
 )
+from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS
 from app.services.generative_upload_paths import (
     DIRECT_CLIP_PREFIX,
     DIRECT_VOICEOVER_PREFIX,
+    PURPOSE_PREFIXES,
     direct_clip_owner,
     direct_clip_path,
     direct_voiceover_path,
@@ -236,12 +247,19 @@ class CreateGenerativeJobRequest(BaseModel):
         # The current direct-upload path is lifecycle-managed under dev-user/.
         # Older clients still produce music-uploads/ and slot-uploads/ paths, so
         # keep those through the shared validator during the rollout window.
-        legacy_paths = [path for path in v if not path.startswith(DIRECT_CLIP_PREFIX)]
+        purpose_paths = tuple(PURPOSE_PREFIXES.values())
+        legacy_paths = [
+            path
+            for path in v
+            if not path.startswith(DIRECT_CLIP_PREFIX) and not path.startswith(purpose_paths)
+        ]
         if legacy_paths:
             _validate_clip_path_prefixes(legacy_paths)
         for path in v:
             if path.startswith(DIRECT_CLIP_PREFIX) and direct_clip_owner(path) is None:
                 raise ValueError("Invalid direct-upload clip path")
+            if path.startswith(purpose_paths) and direct_clip_owner(path) is None:
+                raise ValueError("Invalid purpose upload path")
         return v
 
     @field_validator("voiceover_gcs_path")
@@ -259,6 +277,9 @@ class GenerativeUploadUrlRequest(BaseModel):
     filename: str
     content_type: str = "application/octet-stream"
     file_size_bytes: int = Field(gt=0, le=_DIRECT_UPLOAD_MAX_BYTES)
+    # Optional native-client purpose. Omitted retains the historical path and
+    # response exactly; purpose paths use dedicated 24-hour lifecycle prefixes.
+    purpose: Literal["analysis_proxy", "cloud_render_source"] | None = None
 
 
 class GenerativeUploadUrlResponse(BaseModel):
@@ -267,6 +288,14 @@ class GenerativeUploadUrlResponse(BaseModel):
     kind: Literal["video", "image", "audio"]
     content_type: str
     upload_headers: dict[str, str]
+    purpose: Literal["analysis_proxy", "cloud_render_source"] | None = None
+    reservation_id: str | None = None
+    retention_expires_at: str | None = None
+
+
+class TemporaryUploadCancellationResponse(BaseModel):
+    reservation_id: str
+    status: Literal["cleanup_pending", "deleted"]
 
 
 async def validate_direct_uploads(
@@ -291,6 +320,13 @@ async def validate_direct_uploads(
     for path in req.clip_gcs_paths:
         if path.startswith(DIRECT_CLIP_PREFIX):
             if not path.startswith(expected_clip_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
+                )
+            direct.append((path, "clip"))
+            continue
+        if any(path.startswith(prefix) for prefix in PURPOSE_PREFIXES.values()):
+            if direct_clip_owner(path) != user_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
                 )
@@ -411,6 +447,7 @@ class EditorCapabilitiesOut(BaseModel):
 
     music_window: MusicWindowCapabilityOut | None = None
     copilot_snapshot_wire_version: Literal[1] | None = None
+    copilot_snapshot_max_bytes: int | None = None
 
     model_config = {"extra": "allow"}
 
@@ -906,6 +943,7 @@ class TimelineClipOut(BaseModel):
     media_id: str | None = None
     generation: str | None = None
     kind: Literal["image", "video"] | None = None
+    context: dict[str, str] | None = None
 
 
 class TimelineResponse(BaseModel):
@@ -5714,6 +5752,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "timeline": bool(revision is not None),
                 "timeline_max_slots": _TIMELINE_MAX_SLOTS,
                 "copilot_snapshot_wire_version": 1,
+                "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
                 "split_clips": bool(revision is not None),
                 "clips": clips,
                 "music_operations": music_operations,
@@ -5807,6 +5846,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             "timeline": False,
             "timeline_max_slots": _TIMELINE_MAX_SLOTS,
             "copilot_snapshot_wire_version": 1,
+            "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
             "split_clips": False,
             "automatic_cut": False,
             "automatic_cut_reason": reason,
@@ -5936,6 +5976,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "timeline": timeline_ok,
         "timeline_max_slots": _TIMELINE_MAX_SLOTS,
         "copilot_snapshot_wire_version": 1,
+        "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
         # Splitting a clip is a timeline-override operation — same eligibility.
         "split_clips": timeline_ok,
         "automatic_cut": automatic_cut,
@@ -6474,6 +6515,42 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         return None
 
 
+def _guided_source_context(assembly: dict, source: dict) -> dict[str, str]:
+    """Expose approved media meaning without copying storage or analysis payloads.
+
+    Context belongs to the exact approved generation, not whichever upload now
+    happens to have the same display name or media ID. It is read-only and never
+    becomes part of the revision source digest or renderer input.
+    """
+    guided = assembly.get("guided_edit")
+    if not isinstance(guided, dict):
+        return {}
+    proposal = guided.get("approved_proposal")
+    if not isinstance(proposal, dict):
+        return {}
+    media = proposal.get("media")
+    if not isinstance(media, list):
+        return {}
+    for row in media:
+        if not isinstance(row, dict) or any(
+            row.get(key) != source.get(key)
+            for key in ("media_id", "generation", "gcs_path", "lane")
+        ):
+            continue
+        analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+        values = {
+            "label": row.get("source_filename"),
+            "user_context": row.get("user_context"),
+            "description": analysis.get("description"),
+            "subject": analysis.get("subject"),
+            "on_screen_text": analysis.get("on_screen_text"),
+        }
+        return {
+            key: value for key, value in values.items() if isinstance(value, str) and value.strip()
+        }
+    return {}
+
+
 def _guided_v2_timeline_projection(
     job: Job,
     variant: dict,
@@ -6513,6 +6590,7 @@ def _guided_v2_timeline_projection(
                 "media_id": source.get("media_id"),
                 "generation": source.get("generation"),
                 "kind": source.get("kind"),
+                "context": _guided_source_context(job.assembly_plan or {}, source),
             }
         )
     slots: list[dict] = []
@@ -9378,8 +9456,11 @@ async def create_generative_upload_url(
     request: Request,
     req: GenerativeUploadUrlRequest,
     current_user: CurrentUserOrSynthetic,
+    db: AsyncSession = Depends(get_db),
 ) -> GenerativeUploadUrlResponse:
     """Mint one just-in-time signed PUT URL for a generative clip/voiceover."""
+    from app.auth import SYNTHETIC_USER_ID  # noqa: PLC0415
+
     kind = classify_slot_kind(req.filename, req.content_type)
     content_type = req.content_type.split(";", 1)[0].strip().lower()
     if not content_type:
@@ -9387,11 +9468,16 @@ async def create_generative_upload_url(
     ext = Path(req.filename).suffix.lower()
     upload_id = uuid.uuid4().hex
     user_id = str(current_user.id)
+    if req.purpose and current_user.id == SYNTHETIC_USER_ID:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Temporary mobile uploads require authentication",
+        )
     if kind == "audio":
         object_path = direct_voiceover_path(user_id, upload_id, ext or ".webm")
     else:
         default_ext = ".mp4" if kind == "video" else ".jpg"
-        object_path = direct_clip_path(user_id, upload_id, ext or default_ext)
+        object_path = direct_clip_path(user_id, upload_id, ext or default_ext, req.purpose)
     try:
         upload_url = storage.signed_put_url(
             object_path,
@@ -9404,12 +9490,81 @@ async def create_generative_upload_url(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Upload service unavailable — try again",
         ) from exc
+    retention_expires_at = (
+        datetime.now(UTC) + timedelta(hours=settings.mobile_upload_retention_hours)
+        if req.purpose
+        else None
+    )
+    reservation: TemporaryMediaUpload | None = None
+    if req.purpose and retention_expires_at is not None:
+        reservation = TemporaryMediaUpload(
+            user_id=current_user.id,
+            object_path=object_path,
+            purpose=req.purpose,
+            retention_expires_at=retention_expires_at,
+        )
+        db.add(reservation)
+        await db.commit()
+        await db.refresh(reservation)
     return GenerativeUploadUrlResponse(
         upload_url=upload_url,
         gcs_path=object_path,
         kind=kind,
         content_type=content_type,
         upload_headers={"x-goog-if-generation-match": "0"},
+        purpose=req.purpose,
+        reservation_id=str(reservation.id) if reservation else None,
+        retention_expires_at=(retention_expires_at.isoformat() if retention_expires_at else None),
+    )
+
+
+@router.delete(
+    "/uploads/{reservation_id}",
+    response_model=TemporaryUploadCancellationResponse,
+)
+async def cancel_temporary_upload(
+    reservation_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TemporaryUploadCancellationResponse:
+    """Cancel one owned native upload and durably request object cleanup."""
+    try:
+        identifier = uuid.UUID(reservation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="bad id") from exc
+    row = (
+        await db.execute(
+            select(TemporaryMediaUpload)
+            .where(
+                TemporaryMediaUpload.id == identifier,
+                TemporaryMediaUpload.user_id == current_user.id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Upload reservation not found")
+    if row.deleted_at is not None:
+        return TemporaryUploadCancellationResponse(
+            reservation_id=reservation_id,
+            status="deleted",
+        )
+    row.status = "cleanup_pending"
+    row.cleanup_claimed_at = datetime.now(UTC)
+    await db.commit()
+
+    deleted = await asyncio.to_thread(storage.delete_object_best_effort, row.object_path)
+    if deleted:
+        row.status = "deleted"
+        row.deleted_at = datetime.now(UTC)
+        row.last_error = None
+    else:
+        row.delete_attempts = int(row.delete_attempts or 0) + 1
+        row.last_error = "storage_unavailable"
+    await db.commit()
+    return TemporaryUploadCancellationResponse(
+        reservation_id=reservation_id,
+        status="deleted" if deleted else "cleanup_pending",
     )
 
 

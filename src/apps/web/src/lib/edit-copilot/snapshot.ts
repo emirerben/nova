@@ -27,6 +27,10 @@ import {
 import creatorBlockAiCatalog from "@nova/motion-runtime/ai-catalog";
 
 export const COPILOT_SNAPSHOT_MAX_BYTES = 18000;
+/** Hard request bound shared by the negotiated API contract. */
+export const COPILOT_SNAPSHOT_HARD_MAX_BYTES = 524288;
+/** Keep a small envelope for request metadata and split-deploy overhead. */
+export const COPILOT_SNAPSHOT_RESERVE_BYTES = 2048;
 export const COPILOT_BEAT_MARKS_MAX = 60;
 /** Tighter fallback applied by trimSnapshotToBudget when the snapshot exceeds
  * the byte budget — a second, coarser sampling of the already-capped list. */
@@ -52,6 +56,11 @@ const RENDER_STEP_LABEL_MAX = 80;
 export const COPILOT_RECENT_EDIT_HISTORY_MAX = 6;
 const RECENT_EDIT_HISTORY_TRIM_MAX = 3;
 const RECENT_EDIT_HISTORY_ENTRY_MAX = 160;
+const COMPONENT_PROVENANCE_MAX = 8;
+const COMPONENT_PROVENANCE_KEY_MAX = 60;
+const COMPONENT_PROVENANCE_STRING_MAX = 160;
+const COMPONENT_PROVENANCE_UNSAFE_KEY_RE = /(?:url|uri|path|token|secret|password|credential|filename|gcs)/i;
+const COMPONENT_PROVENANCE_URL_RE = /(?:https?|gs|s3):\/\/|www\./i;
 
 function stableMutationValue(value: unknown): unknown {
   if (value === undefined) return { __nova_undefined__: true };
@@ -145,6 +154,7 @@ function strideCapBeatMarks(marks: number[], cap: number): number[] {
 }
 
 export interface CopilotClipLike {
+  context?: Record<string, string> | null;
   source_duration_s?: number | null;
   duration_s?: number | null;
   durationS?: number | null;
@@ -161,7 +171,94 @@ export interface CopilotClipLike {
   gcs_path?: string | null;
 }
 
+/** Grounded component context. Values are data, never instructions or asset URLs. */
+export interface CopilotComponentContext {
+  semantic_role?: string;
+  source?: string;
+  source_text?: string;
+  label?: string;
+  description?: string;
+  user_context?: string;
+  on_screen_text?: string;
+  asset_id?: string;
+  source_asset_id?: string;
+  source_timeline_id?: string;
+  group_id?: string;
+  subject?: string;
+  /** Bounded scalar provenance copied from a component's source metadata. */
+  provenance?: Record<string, string | number | boolean>;
+}
+
+function componentProvenance(value: unknown): Record<string, string | number | boolean> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const provenance: Record<string, string | number | boolean> = {};
+  for (const [rawKey, rawValue] of Object.entries(value as Record<string, unknown>)
+    .filter(([key, item]) => key.trim() && !COMPONENT_PROVENANCE_UNSAFE_KEY_RE.test(key) && (
+      typeof item === "string" || typeof item === "boolean" ||
+      (typeof item === "number" && Number.isFinite(item))
+    ) && !(typeof item === "string" && COMPONENT_PROVENANCE_URL_RE.test(item)))
+    .sort(([left], [right]) => left.localeCompare(right))) {
+    const key = rawKey.slice(0, COMPONENT_PROVENANCE_KEY_MAX);
+    if (!key || Object.prototype.hasOwnProperty.call(provenance, key)) continue;
+    if (typeof rawValue === "string") {
+      const text = rawValue.trim().slice(0, COMPONENT_PROVENANCE_STRING_MAX);
+      if (!text) continue;
+      provenance[key] = text;
+    } else if (typeof rawValue === "boolean") {
+      provenance[key] = rawValue;
+    } else if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      provenance[key] = rawValue;
+    } else {
+      continue;
+    }
+    if (Object.keys(provenance).length >= COMPONENT_PROVENANCE_MAX) break;
+  }
+  return Object.keys(provenance).length ? provenance : undefined;
+}
+
+function componentContext(
+  input: Record<string, unknown>,
+  provenance?: Record<string, string | number | boolean>,
+): CopilotComponentContext | undefined {
+  const context: Partial<CopilotComponentContext> = {};
+  for (const key of ["semantic_role", "source", "source_text", "label", "description",
+    "user_context", "on_screen_text", "asset_id", "source_asset_id", "source_timeline_id", "group_id", "subject"]) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim()) {
+      (context as Record<string, unknown>)[key] = value;
+    }
+  }
+  if (provenance) context.provenance = provenance;
+  return Object.keys(context).length ? context : undefined;
+}
+
+function visualDetails(block: VisualBlock, assets: PoolAsset[]): Record<string, unknown> {
+  const shot = (value: Extract<VisualBlock, { kind: "montage" }>["shots"][number]) => ({
+    id: value.id, asset_id: value.asset_id, kind: value.kind, start_offset_s: value.start_offset_s,
+    duration_s: value.duration_s, trim_start_s: value.trim_start_s, crop: value.crop,
+    motion: value.motion, sync_anchor: value.sync_anchor,
+    context: assets.find((asset) => asset.id === value.asset_id)
+      ? assetContext(assets.find((asset) => asset.id === value.asset_id)!) : undefined,
+  });
+  if (block.kind === "media") return {
+    asset_id: block.asset_id, media_kind: block.media_kind, display_mode: block.display_mode,
+    x_frac: block.x_frac, y_frac: block.y_frac, scale: block.scale, z: block.z,
+    transform: block.transform, trim_start_s: block.trim_start_s, trim_end_s: block.trim_end_s,
+  };
+  if (block.kind === "montage") return { shots: block.shots.map(shot) };
+  return { style_preset_id: block.style_preset_id, background: block.background.type === "asset"
+    ? { type: "asset", shot: shot(block.background.shot) } : block.background };
+}
+
+function assetContext(asset: PoolAsset): CopilotComponentContext | undefined {
+  return componentContext({ asset_id: asset.id, subject: asset.subject,
+    label: asset.source_filename, description: asset.nova_description,
+    user_context: asset.user_context, on_screen_text: asset.nova_on_screen_text,
+    source: asset.source_type });
+}
+
 export interface CopilotTextSnapshotBar {
+  context?: CopilotComponentContext;
   index: number;
   id: string;
   text: string;
@@ -182,11 +279,16 @@ export interface CopilotTextSnapshotBar {
   position: string;
   x_frac: number | null;
   y_frac: number | null;
+  /** Safe semantic label hint copied only from source_params. */
+  narration_label_kind?: "score" | "topic" | "participant";
+  /** True only for narration caption cues and legacy locked lyric bars. */
+  timing_locked?: true;
   /** Opaque, local stale-target guard; never rendered into model prose. */
   mutation_fingerprint?: string;
 }
 
 export interface CopilotSlotSnapshot {
+  context?: CopilotComponentContext;
   index: number;
   key: string;
   slot_id: string | null;
@@ -214,6 +316,7 @@ export interface CopilotSlotSnapshot {
 }
 
 export interface CopilotCameraEffectSnapshot {
+  context?: CopilotComponentContext;
   index: number;
   id: string;
   start_s: number;
@@ -224,6 +327,8 @@ export interface CopilotCameraEffectSnapshot {
 }
 
 export interface CopilotVisualBlockSnapshot {
+  details?: Record<string, unknown>;
+  context?: CopilotComponentContext;
   index: number;
   id: string;
   kind: VisualBlock["kind"];
@@ -234,6 +339,7 @@ export interface CopilotVisualBlockSnapshot {
 }
 
 export interface CopilotMotionBlockSnapshot {
+  context?: CopilotComponentContext;
   id: string;
   preset_id: MotionPresetInstance["preset_id"];
   label: string;
@@ -284,6 +390,7 @@ export interface CopilotMotionCatalogSnapshot {
 }
 
 export interface CopilotSfxPlacementSnapshot {
+  context?: CopilotComponentContext;
   index: number;
   id: string;
   label: string | null;
@@ -329,6 +436,7 @@ export interface CopilotSpeechSnapshot {
 }
 
 export interface CopilotOverlayCardSnapshot {
+  context?: CopilotComponentContext;
   index: number;
   id: string;
   kind: "image" | "video";
@@ -345,6 +453,7 @@ export interface CopilotOverlayCardSnapshot {
 }
 
 export interface CopilotOverlayAssetSnapshot {
+  context?: CopilotComponentContext;
   id: string;
   kind: "image" | "video";
   subject: string | null;
@@ -359,6 +468,7 @@ export interface CopilotOverlaySuggestionSnapshot {
 }
 
 export interface CopilotCaptionCueSnapshot {
+  context?: CopilotComponentContext;
   index: number;
   id: string;
   text: string;
@@ -449,7 +559,21 @@ export interface CopilotCarouselSnapshot {
   n_clips: number;
 }
 
+export interface CopilotEditorFocus {
+  playhead_s: number | null;
+  selected: { kind: "text" | "caption" | "clip" | "sfx" | "overlay" | "visual" | "motion" | "camera" | "music" | "carousel";
+    id: string; index?: number } | null;
+}
+
 export interface CopilotSnapshot {
+  /** All supplied component rows are inspectable, including read-only lanes. */
+  component_context_version?: 1;
+  editor_focus?: CopilotEditorFocus;
+  asset_context_status?: "loading" | "ready" | "unavailable";
+  /** Asset metadata only; never signed URLs, storage keys, or analysis payloads. */
+  source_assets?: Array<{ clip_index: number; media_id: string | null; generation: string | null; kind: string | null;
+    used: boolean; status: string | null; context?: CopilotComponentContext }>;
+
   text_bars: CopilotTextSnapshotBar[];
   slots: CopilotSlotSnapshot[];
   has_narrated_captions: boolean;
@@ -545,7 +669,7 @@ export interface CopilotSnapshot {
     };
     catalog: CopilotMotionCatalogSnapshot[];
     blocks: CopilotMotionBlockSnapshot[];
-    asset_pool: Array<{ id: string; subject: string | null }>;
+    asset_pool: Array<{ id: string; subject: string | null; context?: CopilotComponentContext }>;
   };
   open_tools?: Array<"text" | "visuals" | "sounds" | "overlays" | "styles">;
   /** Last ≤8 humanized steps for the current job (label + status only — never
@@ -613,6 +737,8 @@ export interface CaptionCueLike {
 }
 
 export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
+  editorFocus?: { playhead_s?: number; selected?: CopilotEditorFocus["selected"] };
+  assetContextStatus?: "loading" | "ready" | "unavailable";
   guidedRevision?: {
     revision_number: number;
     base_generation: string;
@@ -743,8 +869,13 @@ export function allowedOpFamiliesFromCapabilities(
   return families;
 }
 
+function sourceForSlot(slot: DraftSlot, clips: CopilotClipLike[]): CopilotClipLike | undefined {
+  return clips.find((clip) => clip.clip_index === slot.clipIndex) ??
+    clips.find((clip, index) => clip.clip_index == null && index === slot.clipIndex);
+}
+
 function sourceDurationForSlot(slot: DraftSlot, clips: CopilotClipLike[]): number | null {
-  const clip = clips[slot.clipIndex];
+  const clip = sourceForSlot(slot, clips);
   const source = clip?.source_duration_s ?? clip?.duration_s ?? clip?.durationS ?? null;
   return typeof source === "number" && Number.isFinite(source) ? source : null;
 }
@@ -812,6 +943,37 @@ function compactByteLength(value: unknown): number {
   return encodeURIComponent(json).replace(/%[0-9A-F]{2}/g, "x").length;
 }
 
+export class CopilotSnapshotTooLargeError extends Error {
+  constructor() {
+    super("The editor context is too large to inspect in one request.");
+    this.name = "CopilotSnapshotTooLargeError";
+  }
+}
+
+type SnapshotBudget = {
+  maxBytes: number;
+  negotiated: boolean;
+};
+
+function snapshotBudget(capabilities: EditorCapabilities | null | undefined): SnapshotBudget {
+  const advertised = capabilities?.copilot_snapshot_max_bytes;
+  // Do not trust malformed, fractional, too-small, or future server values.
+  // A negotiated budget must never make the long-standing 18 KiB contract
+  // smaller, and the client leaves a small envelope below the server bound.
+  if (
+    typeof advertised === "number" &&
+    Number.isSafeInteger(advertised) &&
+    advertised >= COPILOT_SNAPSHOT_MAX_BYTES + COPILOT_SNAPSHOT_RESERVE_BYTES &&
+    advertised <= COPILOT_SNAPSHOT_HARD_MAX_BYTES
+  ) {
+    return {
+      maxBytes: advertised - COPILOT_SNAPSHOT_RESERVE_BYTES,
+      negotiated: true,
+    };
+  }
+  return { maxBytes: COPILOT_SNAPSHOT_MAX_BYTES, negotiated: false };
+}
+
 function makeLocalOnly(target: object, keys: readonly string[]): void {
   const record = target as Record<string, unknown>;
   for (const key of keys) {
@@ -862,9 +1024,10 @@ function compactTimelineForWire(snapshot: CopilotSnapshot): void {
   }
 }
 
-function compactTextBarsForWire(snapshot: CopilotSnapshot): void {
+function compactTextBarsForWire(snapshot: CopilotSnapshot, preserveTextState: boolean): void {
   if (snapshot.text_bars.length === 0) return;
   markWireCompact(snapshot, "text_bars");
+  if (preserveTextState) return;
   for (const bar of snapshot.text_bars) {
     // IDs and effective default style values are only needed by the local
     // applier. Keep legacy lyric IDs on the wire because the API uses their
@@ -885,7 +1048,7 @@ function compactTextBarsForWire(snapshot: CopilotSnapshot): void {
   }
 }
 
-function dropOptionalFamilySections(snapshot: CopilotSnapshot): void {
+function dropOptionalFamilySections(snapshot: CopilotSnapshot, budgetBytes: number): void {
   const drops: Array<{ family: CopilotOpFamily; remove: () => void }> = [
     { family: "motion", remove: () => { delete snapshot.motion; } },
     { family: "overlay", remove: () => { delete snapshot.overlays; } },
@@ -899,101 +1062,117 @@ function dropOptionalFamilySections(snapshot: CopilotSnapshot): void {
     { family: "tool", remove: () => { delete snapshot.open_tools; } },
   ];
   for (const drop of drops) {
-    if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return;
+    if (compactByteLength(snapshot) <= budgetBytes) return;
     if (!snapshot.allowed_op_families.includes(drop.family)) continue;
     snapshot.allowed_op_families = snapshot.allowed_op_families.filter((family) => family !== drop.family);
     drop.remove();
   }
 }
 
-function trimSnapshotToBudget(snapshot: CopilotSnapshot, allowWireCompaction: boolean): CopilotSnapshot {
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+function trimSnapshotToBudget(
+  snapshot: CopilotSnapshot,
+  allowWireCompaction: boolean,
+  budgetBytes: number,
+  negotiated: boolean,
+): CopilotSnapshot {
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   // Orientation context (steps/history) trims first — never worth crowding
   // out addressable editable state (captions, overlays, sfx, ...) below.
   if (snapshot.recent_edit_history && snapshot.recent_edit_history.length > RECENT_EDIT_HISTORY_TRIM_MAX) {
     snapshot.recent_edit_history = snapshot.recent_edit_history.slice(-RECENT_EDIT_HISTORY_TRIM_MAX);
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.recent_edit_history) {
     delete snapshot.recent_edit_history;
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.history_state) {
     delete snapshot.history_state;
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.render_step_summary && snapshot.render_step_summary.length > RENDER_STEP_SUMMARY_TRIM_MAX) {
     snapshot.render_step_summary = snapshot.render_step_summary.slice(-RENDER_STEP_SUMMARY_TRIM_MAX);
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.render_step_summary) {
     delete snapshot.render_step_summary;
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
+  if (negotiated) {
+    if (allowWireCompaction) compactMotionCatalogForWire(snapshot);
+    if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
+    throw new CopilotSnapshotTooLargeError();
+  }
   if (snapshot.captions && snapshot.captions.cues.length > 24) {
     snapshot.captions.cues = snapshot.captions.cues.slice(0, 24);
     snapshot.captions.truncated = true;
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.overlays && snapshot.overlays.asset_pool.length > 6) {
     snapshot.overlays.asset_pool = snapshot.overlays.asset_pool.slice(0, 6);
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.sfx && snapshot.sfx.catalog.length > 12) {
     snapshot.sfx.catalog = snapshot.sfx.catalog.slice(0, 12);
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.music && snapshot.music.candidates.length > 10) {
     snapshot.music.candidates = snapshot.music.candidates.slice(0, 10);
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.beat_marks && snapshot.beat_marks.length > BEAT_MARKS_TRIM_MAX) {
     snapshot.beat_marks = strideCapBeatMarks(snapshot.beat_marks, BEAT_MARKS_TRIM_MAX);
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.overlays && snapshot.overlays.pending_suggestions.length > 3) {
     snapshot.overlays.pending_suggestions = snapshot.overlays.pending_suggestions.slice(0, 3);
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   // Speech trims are staged: head-cap words (hook window survives) → drop words
   // but keep pauses (pause placement stays possible) → drop the section.
   if (snapshot.speech && snapshot.speech.words.length > SPEECH_WORDS_TRIM_MAX) {
     snapshot.speech.words = snapshot.speech.words.slice(0, SPEECH_WORDS_TRIM_MAX);
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.speech && snapshot.speech.words.length > 0) {
     snapshot.speech.words = [];
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   if (snapshot.speech) {
     delete snapshot.speech;
   }
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   snapshot.slots = snapshot.slots.map((slot) => ({
     ...slot,
     moment: slot.moment == null ? null : slot.moment.slice(0, 40),
   }));
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   // Split-deploy safety: an older API does not understand sparse timeline or
   // catalog rows. Only emit the v1 compact protocol after the capabilities
   // response explicitly advertises support.
-  if (!allowWireCompaction) return snapshot;
+  if (!allowWireCompaction) {
+    if (negotiated) throw new CopilotSnapshotTooLargeError();
+    return snapshot;
+  }
   compactMotionCatalogForWire(snapshot);
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   compactTimelineForWire(snapshot);
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
-  compactTextBarsForWire(snapshot);
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
+  compactTextBarsForWire(snapshot, negotiated);
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   // Last-resort degradation is capability-safe: a section is never removed
   // while its operation family remains advertised. Core clip rows stay
   // addressable; optional lanes yield before the request can hit API 422.
-  dropOptionalFamilySections(snapshot);
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (!negotiated) {
+    dropOptionalFamilySections(snapshot, budgetBytes);
+  }
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
+  if (negotiated) throw new CopilotSnapshotTooLargeError();
   snapshot.allowed_op_families = snapshot.allowed_op_families.filter(
     (family) => family !== "text" && family !== "title",
   );
   makeLocalOnly(snapshot, ["text_bars"]);
-  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  if (compactByteLength(snapshot) <= budgetBytes) return snapshot;
   // A future expansion can still grow the bounded envelope around the 120
   // compact rows. Fail closed on editable families, not on the HTTP request:
   // keep the complete arrays locally, but do not advertise operations whose
@@ -1022,38 +1201,64 @@ export function buildCopilotSnapshot(
   maybeOptions?: BuildCopilotSnapshotOptions,
 ): CopilotSnapshot {
   const { grid, options } = optionsFromGridArg(gridOrOptions, maybeOptions);
+  const budget = snapshotBudget(capabilities);
+  const inspectAll = budget.negotiated;
+  const take = <T,>(rows: T[], legacyLimit: number): T[] => inspectAll ? rows : rows.slice(0, legacyLimit);
   const visibleBars = bars.filter(
     (bar): bar is TextElementBar & { role: Exclude<TextElementBar["role"], "narrated_caption"> } =>
       bar.role !== "narrated_caption",
   );
-  const textBars: CopilotTextSnapshotBar[] = visibleBars.map((bar, index) => ({
-    index,
-    id: bar.id,
-    text: bar.text,
-    start_s: roundCopilotNumber(bar.start_s),
-    end_s: roundCopilotNumber(bar.end_s),
-    role: bar.role,
-    font_family: bar.font_family ?? "PlayfairDisplay-Bold",
-    size_px: effectiveSizePx(bar),
-    color: bar.color ?? "#FFFFFF",
-    highlight_color: bar.highlight_color ?? null,
-    effect: bar.effect ?? "static",
-    alignment: bar.alignment ?? "center",
-    text_case: bar.text_case ?? "none",
-    letter_spacing: resolveLetterSpacingEm(bar.letter_spacing),
-    line_spacing: resolveLineSpacing(bar.line_spacing),
-    max_width_frac: resolveMaxWidthFrac(bar.max_width_frac),
-    stroke_width: bar.stroke_width ?? 0,
-    position: bar.position ?? "middle",
-    x_frac: bar.x_frac ?? null,
-    y_frac: bar.y_frac ?? null,
-  }));
+  const textBars: CopilotTextSnapshotBar[] = visibleBars.map((bar, index) => {
+    const sourceParams = bar.source_params;
+    const provenance = componentProvenance(sourceParams);
+    const rawLabelKind = sourceParams?.narration_label_kind;
+    const narrationLabelKind =
+      rawLabelKind === "score" || rawLabelKind === "topic" || rawLabelKind === "participant"
+        ? rawLabelKind
+        : undefined;
+    const timingLocked =
+      bar.role === "lyric_line" ||
+      bar.id.startsWith("lyric_") ||
+      sourceParams?.source === "caption_cue";
+    return {
+      index,
+      id: bar.id,
+      text: bar.text,
+      start_s: roundCopilotNumber(bar.start_s),
+      end_s: roundCopilotNumber(bar.end_s),
+      role: bar.role,
+      font_family: bar.font_family ?? "PlayfairDisplay-Bold",
+      size_px: effectiveSizePx(bar),
+      color: bar.color ?? "#FFFFFF",
+      highlight_color: bar.highlight_color ?? null,
+      effect: bar.effect ?? "static",
+      alignment: bar.alignment ?? "center",
+      text_case: bar.text_case ?? "none",
+      letter_spacing: resolveLetterSpacingEm(bar.letter_spacing),
+      line_spacing: resolveLineSpacing(bar.line_spacing),
+      max_width_frac: resolveMaxWidthFrac(bar.max_width_frac),
+      stroke_width: bar.stroke_width ?? 0,
+      position: bar.position ?? "middle",
+      x_frac: bar.x_frac ?? null,
+      y_frac: bar.y_frac ?? null,
+      ...(inspectAll ? { context: componentContext({
+        semantic_role: sourceParams?.narration_label_kind ?? sourceParams?.semantic_role ?? bar.smart_role,
+        source: sourceParams?.source, source_text: sourceParams?.source_text,
+        label: sourceParams?.label, description: sourceParams?.description,
+        source_asset_id: sourceParams?.source_asset_id,
+        source_timeline_id: sourceParams?.source_timeline_id,
+        group_id: bar.visual_block_id ?? sourceParams?.effect_group_id ?? sourceParams?.group_id,
+      }, provenance) } : {}),
+      ...(narrationLabelKind ? { narration_label_kind: narrationLabelKind } : {}),
+      ...(timingLocked ? { timing_locked: true as const } : {}),
+    };
+  });
 
   const layout = sequentialSlotLayout(slots, grid);
   const snapSlots: CopilotSlotSnapshot[] = slots.map((slot, index) => {
     const win = layout.windows[index];
     const durationS = roundCopilotNumber(win?.durationS ?? slot.durationS ?? 0);
-    const source = clips.find((clip) => clip.clip_index === slot.clipIndex) ?? clips[slot.clipIndex];
+    const source = sourceForSlot(slot, clips);
     const outputStartS = win?.startS == null ? null : roundCopilotNumber(win.startS);
     return {
       index,
@@ -1066,8 +1271,8 @@ export function buildCopilotSnapshot(
       source_duration_s: sourceDurationForSlot(slot, clips),
       moment:
         slot.momentDescription ??
-        clips[slot.clipIndex]?.moment ??
-        clips[slot.clipIndex]?.moment_description ??
+        source?.moment ??
+        source?.moment_description ??
         null,
       output_start_s: outputStartS,
       output_end_s: outputStartS == null ? null : roundCopilotNumber(outputStartS + durationS),
@@ -1081,11 +1286,16 @@ export function buildCopilotSnapshot(
       media_id: source?.media_id ?? null,
       media_kind: source?.kind ?? null,
       generation: source?.generation ?? null,
+      ...(inspectAll ? { context: componentContext({
+        ...source?.context,
+        source_timeline_id: slot.slotId ?? slot.key,
+        asset_id: source?.media_id, description: slot.momentDescription ?? source?.moment ?? source?.moment_description ?? source?.context?.description,
+      }) } : {}),
     };
   });
 
   const captionBars = bars.filter((bar) => bar.role === "narrated_caption");
-  const captionCues = options.captionCues ?? captionBars.map((bar) => ({
+  const captionCues = (!inspectAll && options.captionCuesEditable === false ? [] : options.captionCues) ?? captionBars.map((bar) => ({
     id: bar.id,
     text: bar.text,
     start_s: bar.start_s,
@@ -1142,6 +1352,29 @@ export function buildCopilotSnapshot(
     }
   }
   const snapshot: CopilotSnapshot = {
+    ...(inspectAll ? { component_context_version: 1 as const,
+      source_assets: sourceRowsForDigest.map((row, index) => ({
+        clip_index: typeof row.clip_index === "number" ? row.clip_index : index,
+        media_id: typeof row.media_id === "string" ? row.media_id : null,
+        generation: typeof row.generation === "string" ? row.generation : null,
+        kind: row.kind === "image" || row.kind === "video" ? row.kind : null,
+        used: activeClipIndexes.has(typeof row.clip_index === "number" ? row.clip_index : index),
+        status: typeof row.status === "string" ? row.status : null,
+        context: (() => {
+          const clip = clips.find((candidate) => candidate.media_id === row.media_id && candidate.generation === row.generation);
+          const asset = options.poolAssets?.find((candidate) => candidate.id === row.media_id || candidate.gcs_path === row.gcs_path);
+          return componentContext({ ...(asset ? assetContext(asset) : {}), ...clip?.context,
+            asset_id: row.media_id,
+            ...(typeof row.subject === "string" ? { subject: row.subject } : {}),
+            ...(typeof row.source_filename === "string" ? { label: row.source_filename } : {}),
+            ...(typeof (row.moment_description ?? row.moment ?? row.nova_description) === "string"
+              ? { description: row.moment_description ?? row.moment ?? row.nova_description } : {}),
+            ...(typeof row.user_context === "string" ? { user_context: row.user_context } : {}),
+            ...(typeof row.nova_on_screen_text === "string" ? { on_screen_text: row.nova_on_screen_text } : {}),
+          });
+        })(),
+      })),
+    } : {}),
     text_bars: textBars,
     slots: snapSlots,
     has_narrated_captions: captionBars.length > 0,
@@ -1177,9 +1410,9 @@ export function buildCopilotSnapshot(
   }
   if (options.speechMap && options.speechMap.words.length > 0) {
     const speechWords = options.speechMap.words
-      .slice(0, COPILOT_SPEECH_WORDS_MAX)
+      .slice(0, inspectAll ? undefined : COPILOT_SPEECH_WORDS_MAX)
       .map((w) => ({
-        text: truncate(w.w, 40) ?? "",
+        text: inspectAll ? w.w : truncate(w.w, 40) ?? "",
         start_s: roundCopilotNumber(w.s),
         end_s: roundCopilotNumber(w.e),
       }))
@@ -1189,51 +1422,54 @@ export function buildCopilotSnapshot(
         source: options.speechMap.source,
         words: speechWords,
         pauses: (options.speechMap.pauses ?? [])
-          .slice(0, COPILOT_PAUSE_MARKS_MAX)
+          .slice(0, inspectAll ? undefined : COPILOT_PAUSE_MARKS_MAX)
           .map((p) => ({
             start_s: roundCopilotNumber(p.s),
             end_s: roundCopilotNumber(p.e),
-            after: p.after == null ? null : truncate(p.after, 40),
+            after: p.after == null ? null : inspectAll ? p.after : truncate(p.after, 40),
           })),
       };
     }
   }
   if (
-    allowed.has("sfx") &&
+    (inspectAll || allowed.has("sfx")) &&
     (options.sfxPlacements || options.sfxCatalog || options.sfxSuggestions?.length)
   ) {
     snapshot.sfx = {
-      placements: (options.sfxPlacements ?? []).slice(0, 15).map((placement, index) => ({
+      placements: take((options.sfxPlacements ?? []), 15).map((placement, index) => ({
         index,
         id: placement.id,
-        label: truncate(placement.label, 60),
+        label: inspectAll ? placement.label ?? null : truncate(placement.label, 60),
+        ...(inspectAll ? { context: componentContext({ group_id: placement.effect_group_id,
+          asset_id: placement.sound_effect_id, label: placement.label,
+          semantic_role: placement.smart_role, source: placement.source }) } : {}),
         at_s: roundCopilotNumber(placement.at_s),
         gain: roundCopilotNumber(placement.gain),
         duration_s: placement.duration_s == null ? null : roundCopilotNumber(placement.duration_s),
         effect_group_id: placement.effect_group_id ?? null,
       })),
-      catalog: (options.sfxCatalog ?? []).slice(0, 20).map((effect) => ({
+      catalog: take(options.sfxCatalog ?? [], 20).map((effect) => ({
         id: effect.id,
-        name: truncate(effect.name, 32) ?? "",
+        name: inspectAll ? effect.name : truncate(effect.name, 32) ?? "",
         duration_s: effect.duration_s == null ? null : roundCopilotNumber(effect.duration_s),
-        ...(effect.role_tags?.length ? { role_tags: effect.role_tags.slice(0, 6) } : {}),
+        ...(effect.role_tags?.length ? { role_tags: take(effect.role_tags, 6) } : {}),
       })),
     };
     const sfxSuggestions = (options.sfxSuggestions ?? [])
-      .slice(0, COPILOT_SFX_SUGGESTIONS_MAX)
+      .slice(0, inspectAll ? undefined : COPILOT_SFX_SUGGESTIONS_MAX)
       .map((s) => ({
         effect_id: s.effect_id,
         at_s: roundCopilotNumber(s.at_s),
         gain: s.gain == null ? null : roundCopilotNumber(s.gain),
-        reason: truncate(s.reason ?? "", 80) ?? "",
+        reason: inspectAll ? s.reason ?? "" : truncate(s.reason ?? "", 80) ?? "",
       }));
     if (sfxSuggestions.length > 0) {
       snapshot.sfx.suggestions = sfxSuggestions;
     }
   }
-  if (allowed.has("overlay") && (options.overlayCards || options.poolAssets || options.pendingSuggestions)) {
+  if ((inspectAll || allowed.has("overlay")) && (options.overlayCards || options.poolAssets || options.pendingSuggestions)) {
     snapshot.overlays = {
-      cards: (options.overlayCards ?? []).slice(0, 12).map((card, index) => ({
+      cards: take((options.overlayCards ?? []), 12).map((card, index) => ({
         index,
         id: card.id,
         kind: card.kind,
@@ -1245,39 +1481,51 @@ export function buildCopilotSnapshot(
         scale: roundCopilotNumber(card.scale),
         display_mode: card.display_mode ?? "pip",
         source: card.source ?? null,
+        ...(inspectAll ? { context: (() => {
+          const asset = options.poolAssets?.find((candidate) => candidate.gcs_path === card.src_gcs_path);
+          return componentContext({ ...(asset ? assetContext(asset) : {}),
+            source: card.source, group_id: card.effect_group_id });
+        })() } : {}),
         effect_group_id: card.effect_group_id ?? null,
       })),
       asset_pool: (options.poolAssets ?? [])
         .filter((asset) => asset.status === "ready")
-        .slice(0, 12)
+        .slice(0, inspectAll ? undefined : 12)
         .map((asset) => ({
           id: asset.id,
           kind: asset.kind,
-          subject: truncate(asset.subject, 60),
+          subject: inspectAll ? asset.subject : truncate(asset.subject, 60),
+          ...(inspectAll ? { context: assetContext(asset) } : {}),
           duration_s: asset.duration_s == null ? null : roundCopilotNumber(asset.duration_s),
         })),
-      pending_suggestions: (options.pendingSuggestions ?? []).slice(0, 6).map((suggestion) => ({
+      pending_suggestions: take(options.pendingSuggestions ?? [], 6).map((suggestion) => ({
         id: suggestion.id,
-        reason: truncate(suggestion.reason, 80) ?? "",
+        reason: inspectAll ? suggestion.reason : truncate(suggestion.reason, 80) ?? "",
         start_s: roundCopilotNumber(suggestion.overlay.start_s),
         end_s: roundCopilotNumber(suggestion.overlay.end_s),
       })),
     };
   }
-  if (allowed.has("visual") && options.visualBlocks) {
-    snapshot.visual_blocks = options.visualBlocks.slice(0, 20).map((block, index) => ({
+  if ((inspectAll || allowed.has("visual")) && options.visualBlocks) {
+    snapshot.visual_blocks = take(options.visualBlocks, 20).map((block, index) => ({
       index,
       id: block.id,
       kind: block.kind,
+      ...(inspectAll ? { details: visualDetails(block, options.poolAssets ?? []),
+        context: componentContext({ description: block.rationale, source: block.origin,
+          ...(block.kind === "media" ? { asset_id: block.asset_id, group_id: block.effect_group_id,
+            ...(() => { const asset = options.poolAssets?.find((item) => item.id === block.asset_id);
+              return asset ? assetContext(asset) : {}; })() } : {}) }),
+      } : {}),
       start_s: roundCopilotNumber(block.start_s),
       end_s: roundCopilotNumber(block.end_s),
       transition_in: block.transition_in,
       transition_out: block.transition_out,
     }));
   }
-  if (allowed.has("motion")) {
+  if (allowed.has("motion") || (inspectAll && !!options.motionScenes?.length)) {
     snapshot.motion = {
-      available: true,
+      available: allowed.has("motion"),
       limits: {
         max_blocks: MOTION_MAX_INSTANCES,
         max_active_union_s: MOTION_MAX_ACTIVE_FRAMES / MOTION_FPS,
@@ -1312,7 +1560,7 @@ export function buildCopilotSnapshot(
             ...(definition.values === undefined ? {} : { values: [...definition.values] }),
           })),
       })),
-      blocks: (options.motionScenes ?? []).slice(0, MOTION_MAX_INSTANCES).map((scene) => ({
+      blocks: take((options.motionScenes ?? []), MOTION_MAX_INSTANCES).map((scene) => ({
         id: scene.id,
         preset_id: scene.preset_id,
         label: scene.preset_id === "route_trace" ? "Route trace" : creatorBlockEntry(scene.preset_id).label,
@@ -1333,24 +1581,25 @@ export function buildCopilotSnapshot(
       })),
       asset_pool: (options.poolAssets ?? [])
         .filter(isBoundedCreatorImageAsset)
-        .slice(0, 20)
-        .map((asset) => ({ id: asset.id, subject: truncate(asset.subject, 60) })),
+        .slice(0, inspectAll ? undefined : 20)
+        .map((asset) => ({ id: asset.id, subject: inspectAll ? asset.subject : truncate(asset.subject, 60),
+          ...(inspectAll ? { context: assetContext(asset) } : {}) })),
     };
   }
   const captionCuesEditable = options.captionCuesEditable !== false;
   if (
-    allowed.has("caption") &&
+    (inspectAll || allowed.has("caption")) &&
     options.captionMeta &&
     (captionCues.length > 0 || !captionCuesEditable)
   ) {
     snapshot.captions = {
       total_cues: options.captionTotalCues ?? captionCues.length,
-      truncated: captionCues.length > 40,
+      truncated: (options.captionTotalCues ?? captionCues.length) > take(captionCues, 40).length,
       cues_editable: captionCuesEditable,
-      cues: captionCues.slice(0, 40).map((cue, index) => ({
+      cues: take(captionCues, 40).map((cue, index) => ({
         index,
         id: cue.id ?? `caption-${index}`,
-        text: cue.text.slice(0, 80),
+        text: inspectAll ? cue.text : cue.text.slice(0, 80),
         start_s: roundCopilotNumber(cue.start_s),
         end_s: roundCopilotNumber(cue.end_s),
         smart_role: cue.smart_role ?? null,
@@ -1375,19 +1624,19 @@ export function buildCopilotSnapshot(
       },
     };
   }
-  if (allowed.has("music") && options.musicState) {
+  if ((inspectAll || allowed.has("music")) && options.musicState) {
     snapshot.music = {
       swappable: options.musicState.swappable,
       removable: options.musicState.removable ?? false,
       current_track_id: options.musicState.currentTrackId,
-      current_track_title: truncate(options.musicState.currentTrackTitle, 40),
-      candidates: options.musicState.candidates.slice(0, 20).map((track) => ({
+      current_track_title: inspectAll ? options.musicState.currentTrackTitle : truncate(options.musicState.currentTrackTitle, 40),
+      candidates: take(options.musicState.candidates, 20).map((track) => ({
         id: track.id,
-        title: truncate(track.title, 40) ?? "",
+        title: inspectAll ? track.title : truncate(track.title, 40) ?? "",
       })),
     };
   }
-  if (allowed.has("music") && options.mixLevel !== undefined) {
+  if ((inspectAll || allowed.has("music")) && options.mixLevel !== undefined) {
     snapshot.mix = {
       music_level: options.mixLevel == null ? null : roundCopilotNumber(options.mixLevel),
     };
@@ -1395,26 +1644,27 @@ export function buildCopilotSnapshot(
   if (options.intro) {
     snapshot.intro = {
       ...options.intro,
-      text: truncate(options.intro.text, 300),
+      text: inspectAll ? options.intro.text : truncate(options.intro.text, 300),
     };
   }
   if (options.carousel) {
     snapshot.carousel = {
       ...options.carousel,
-      reason: truncate(options.carousel.reason, 200),
+      reason: inspectAll ? options.carousel.reason : truncate(options.carousel.reason, 200),
     };
   }
-  if (allowed.has("title") && options.title != null) {
-    snapshot.title = options.title.slice(0, 300);
+  if ((inspectAll || allowed.has("title")) && options.title != null) {
+    snapshot.title = inspectAll ? options.title : options.title.slice(0, 300);
   }
-  if (allowed.has("effect")) {
-    snapshot.camera_effects = (options.cameraEffects ?? []).slice(0, 20).map((effect, index) => ({
+  if (inspectAll || allowed.has("effect")) {
+    snapshot.camera_effects = take((options.cameraEffects ?? []), 20).map((effect, index) => ({
       index,
       id: effect.id,
       start_s: roundCopilotNumber(effect.start_s),
       end_s: roundCopilotNumber(effect.end_s),
       intensity: roundCopilotNumber(effect.intensity),
       effect_group_id: effect.effect_group_id ?? null,
+      ...(inspectAll ? { context: componentContext({ group_id: effect.effect_group_id }) } : {}),
     }));
   }
   if (allowed.has("tool") && options.openTools) {
@@ -1449,9 +1699,37 @@ export function buildCopilotSnapshot(
         truncate(options.historyState.last_turn_summary, RECENT_EDIT_HISTORY_ENTRY_MAX) ?? null,
     };
   }
+  if (inspectAll) {
+    snapshot.asset_context_status = options.assetContextStatus ?? (options.poolAssets ? "ready" : "unavailable");
+    const requested = options.editorFocus?.selected;
+    const collections: Record<string, Array<{ id?: string; key?: string; slot_id?: string | null }>> = {
+      text: snapshot.text_bars, clip: snapshot.slots, sfx: snapshot.sfx?.placements ?? [],
+      overlay: snapshot.overlays?.cards ?? [], visual: snapshot.visual_blocks ?? [],
+      motion: snapshot.motion?.blocks ?? [], camera: snapshot.camera_effects ?? [],
+    };
+    let selected: CopilotEditorFocus["selected"] = null;
+    if (requested) {
+      const index = collections[requested.kind]?.findIndex((row) =>
+        row.id === requested.id || row.key === requested.id || row.slot_id === requested.id) ?? -1;
+      if (index >= 0) selected = { kind: requested.kind, id: requested.id, index };
+      else if ((requested.kind === "music" && snapshot.music) || (requested.kind === "carousel" && snapshot.carousel)) {
+        selected = { kind: requested.kind, id: requested.id };
+      }
+      // Narrated captions share the editor's text selection surface but use their own op indices.
+      if (!selected && requested.kind === "text") {
+        const cueIndex = snapshot.captions?.cues.findIndex((cue) => cue.id === requested.id) ?? -1;
+        if (cueIndex >= 0) selected = { kind: "caption", id: requested.id, index: cueIndex };
+      }
+    }
+    const playhead = options.editorFocus?.playhead_s;
+    snapshot.editor_focus = { selected, playhead_s: typeof playhead === "number" && Number.isFinite(playhead)
+      ? roundCopilotNumber(Math.min(total, Math.max(0, playhead))) : null };
+  }
   const trimmed = trimSnapshotToBudget(
     snapshot,
     capabilities?.copilot_snapshot_wire_version === 1,
+    budget.maxBytes,
+    budget.negotiated,
   );
   const textById = new Map(visibleBars.map((bar) => [bar.id, bar]));
   for (const item of trimmed.text_bars) {

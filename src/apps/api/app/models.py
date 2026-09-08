@@ -122,6 +122,15 @@ class User(Base):
 
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
     oauth_tokens: Mapped[list["OAuthToken"]] = relationship(back_populates="user")
+    mobile_identities: Mapped[list["MobileIdentity"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    mobile_sessions: Mapped[list["MobileSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    temporary_media_uploads: Mapped[list["TemporaryMediaUpload"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
     tiktok_publications: Mapped[list["TikTokPublication"]] = relationship(back_populates="user")
     # 1:1 — the user's onboarding persona (NULL until onboarding starts).
     persona: Mapped["Persona | None"] = relationship(back_populates="user", uselist=False)
@@ -176,6 +185,7 @@ class OAuthToken(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
+
     platform: Mapped[str] = mapped_column(Text, nullable=False)  # instagram|youtube|tiktok
     access_token: Mapped[bytes | None] = mapped_column(BYTEA, nullable=True)  # Fernet
     refresh_token: Mapped[bytes | None] = mapped_column(BYTEA)
@@ -208,6 +218,93 @@ class OAuthToken(Base):
             "platform_account_id",
             unique=True,
             postgresql_where="platform_account_id IS NOT NULL AND status = 'active'",
+        ),
+    )
+
+
+class MobileIdentity(Base):
+    """Verified native sign-in identity, keyed by provider subject."""
+
+    __tablename__ = "mobile_identities"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    issuer: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="mobile_identities")
+
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_mobile_identity_provider_subject"),
+        Index("idx_mobile_identity_user", "user_id"),
+    )
+
+
+class MobileSession(Base):
+    """Refresh-token family member used for one-use rotation and replay detection."""
+
+    __tablename__ = "mobile_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    replaced_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mobile_sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="mobile_sessions")
+
+    __table_args__ = (
+        Index("idx_mobile_session_user", "user_id"),
+        Index("idx_mobile_session_family", "family_id"),
+        Index("idx_mobile_session_expiry", "expires_at"),
+    )
+
+
+class TemporaryMediaUpload(Base):
+    """Durable cleanup receipt for native analysis and cloud-render uploads."""
+
+    __tablename__ = "temporary_media_uploads"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    object_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="reserved")
+    retention_expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    cleanup_claimed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    delete_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="temporary_media_uploads")
+
+    __table_args__ = (
+        Index("idx_temporary_media_upload_user", "user_id"),
+        Index(
+            "idx_temporary_media_upload_cleanup",
+            "status",
+            "retention_expires_at",
         ),
     )
 

@@ -1215,6 +1215,75 @@ def test_playback_url_refresh_is_owner_fenced_and_hides_foreign_jobs() -> None:
     assert "jobs.user_id" in str(compiled)
 
 
+def test_edit_recipe_is_owner_fenced_and_projects_only_portable_fields() -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        assembly_plan={
+            "secret": "must-not-escape",
+            "variants": [
+                {
+                    "variant_id": "selected",
+                    "user_timeline": {
+                        "slots": [
+                            {
+                                "slot_id": "slot-1",
+                                "clip_index": 4,
+                                "in_s": 1.25,
+                                "duration_s": 2.5,
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+    )
+    db = _db([_scalar(job)])
+    _override(user, db)
+
+    response = client.get(f"/me/jobs/{job.id}/edit-recipe?variant_id=selected")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == 1
+    assert body["tracks"][0]["clips"][0]["source_asset_id"] == "4"
+    assert "assembly_plan" not in body
+    assert "secret" not in response.text
+
+
+def test_edit_recipe_hides_foreign_jobs() -> None:
+    user = _user()
+    job_id = uuid.uuid4()
+    db = _db([_scalar(None)])
+    _override(user, db)
+
+    response = client.get(f"/me/jobs/{job_id}/edit-recipe")
+
+    assert response.status_code == 404
+    statement = db.execute.await_args.args[0]
+    compiled = statement.compile()
+    assert job_id in compiled.params.values()
+    assert user.id in compiled.params.values()
+
+
+def test_edit_recipe_rejects_bad_id_and_handles_job_without_assembly_plan() -> None:
+    user = _user()
+    db = _db([])
+    _override(user, db)
+
+    response = client.get("/me/jobs/not-a-uuid/edit-recipe")
+    assert response.status_code == 400
+    db.execute.assert_not_awaited()
+
+    job = _job(user_id=user.id)
+    job.assembly_plan = None
+    db.execute = AsyncMock(return_value=_scalar(job))
+    response = client.get(f"/me/jobs/{job.id}/edit-recipe")
+    assert response.status_code == 200
+    assert response.json()["assets"] == []
+    assert response.json()["tracks"] == []
+
+
 def test_playback_url_refresh_rejects_not_ready_job_without_signing(monkeypatch) -> None:
     user = _user()
     job = _job(

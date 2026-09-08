@@ -14,6 +14,7 @@ from app.agents.edit_director import (
     EditDirectorInput,
 )
 from app.routes import _director
+from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 
 
 def _snapshot() -> dict:
@@ -504,6 +505,33 @@ async def test_director_omni_requires_server_and_client_capability(
     )
 
     assert observed == [expected]
+
+
+@pytest.mark.asyncio
+async def test_director_accepts_context_larger_than_legacy_20kib_limit(monkeypatch) -> None:
+    output = _parse(_valid_suggestions()[:1])
+    observed: list[dict] = []
+
+    def primary(self, agent_input, *, ctx=None):  # noqa: ANN001, ARG001
+        observed.append(agent_input.variant_snapshot)
+        return output
+
+    monkeypatch.setattr(_director.EditDirectorAgent, "run", primary)
+    snapshot = _snapshot()
+    snapshot["component_context"] = "x" * (32 * 1024)
+    encoded_size = len(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode())
+    assert 20 * 1024 < encoded_size < COPILOT_SNAPSHOT_MAX_BYTES
+
+    response = await _director.run_director(
+        _director.DirectorSuggestionsBody(
+            snapshot=snapshot,
+            snapshot_revision="revision-large-context",
+        ),
+        job_id=uuid.uuid4(),
+    )
+
+    assert response.suggestions
+    assert observed[0]["component_context"] == snapshot["component_context"]
 
 
 @pytest.mark.asyncio

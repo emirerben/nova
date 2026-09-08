@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "renderer_version": "kria-ios-1",
+  "canvas": {"width": 1080, "height": 1920},
+  "frame_rate": 30,
+  "assets": [
+    {
+      "id": "media-1",
+      "relative_path": "media-1",
+      "fingerprint": {"algorithm": "sha256", "hex": "abc123", "byte_count": 3},
+      "duration": 2,
+      "orientation_degrees": 0,
+      "is_proxy_available": true
+    }
+  ],
+  "tracks": [
+    {
+      "id": "video",
+      "kind": "video",
+      "clips": [
+        {
+          "id": "clip-1",
+          "source_asset_id": "media-1",
+          "source_start": 0,
+          "source_duration": 2,
+          "timeline_start": 0,
+          "rate": 1,
+          "transform": {"scale": 1, "rotation_degrees": 0, "position_x": 0, "position_y": 0},
+          "transition": null,
+          "text": null,
+          "volume": 1
+        }
+      ]
+    }
+  ],
+  "audio": {
+    "music_asset_id": null,
+    "music_volume": 1,
+    "original_volume": 1,
+    "fade_in": 0,
+    "fade_out": 0,
+    "duck_original_during_music": false
+  },
+  "required_capabilities": ["basicComposition", "local1080Export"]
+}

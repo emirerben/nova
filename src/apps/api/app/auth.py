@@ -21,11 +21,13 @@ import uuid
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import User
+from app.models import MobileSession, User
+from app.services.mobile_auth import MobileAuthError, decode_access_token
 
 SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
@@ -82,23 +84,53 @@ async def get_current_user(
     already verified the NextAuth session server-side).  Returns the User
     row; raises 401 if missing or not found.
     """
-    _verify_internal_key(authorization)
-
-    if not x_user_id:
+    # Preserve the existing web proxy contract exactly.  Only the exact
+    # configured internal bearer plus X-User-Id enters this branch; a mobile
+    # access token can never impersonate a proxy request.
+    if authorization == f"Bearer {settings.internal_api_key}" and settings.internal_api_key:
+        if not x_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+            )
+        try:
+            uid = uuid.UUID(x_user_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user id",
+            )
+    elif (
+        authorization
+        and authorization.startswith("Bearer ")
+        and settings.mobile_jwt_secret
+        and not x_user_id
+    ):
+        try:
+            access = decode_access_token(authorization[7:])
+        except MobileAuthError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=exc.code) from exc
+        session = (
+            await db.execute(
+                select(MobileSession).where(
+                    MobileSession.id == access.session_id,
+                    MobileSession.user_id == access.user_id,
+                    MobileSession.revoked_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if session is None or session.token_version != access.token_version:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_access_token"
+            )
+        uid = access.user_id
+    else:
+        # Retain the fail-closed error for all non-mobile callers, including
+        # deployments where INTERNAL_API_KEY is unset.
+        _verify_internal_key(authorization)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
         )
-
-    try:
-        uid = uuid.UUID(x_user_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid user id",
-        )
-
-    from sqlalchemy import select
 
     row = (await db.execute(select(User).where(User.id == uid))).scalar_one_or_none()
     if row is None:
@@ -119,7 +151,9 @@ async def get_current_user_or_synthetic(
     Legacy public routes (generative/template/music jobs) use this so
     unauthenticated callers keep working during the auth rollout.
     """
-    if not x_user_id:
+    if not x_user_id and not (
+        authorization and authorization.startswith("Bearer ") and settings.mobile_jwt_secret
+    ):
         # No auth header — return the synthetic dev user without a DB hit.
         from app.models import User as UserModel
 

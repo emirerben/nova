@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.director",
-  "prompt_version": "2026-08-11-v6",
+  "prompt_version": "2026-09-08-v7",
   "input": {
     "variant_snapshot": {
       "allowed_op_families": ["text", "timeline", "effect", "transition", "sfx"],

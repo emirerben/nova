@@ -2,11 +2,14 @@ import { describe, expect, it } from "@jest/globals";
 import {
   allowedOpFamiliesFromCapabilities,
   buildCopilotSnapshot,
+  CopilotSnapshotTooLargeError,
+  COPILOT_SNAPSHOT_HARD_MAX_BYTES,
   COPILOT_SNAPSHOT_MAX_BYTES,
+  COPILOT_SNAPSHOT_RESERVE_BYTES,
 } from "@/lib/edit-copilot/snapshot";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
-import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
+import type { EditorCapabilities, MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
 import {
   CREATOR_MOTION_RUNTIME_HASH_V4,
   EDITOR_MAX_TIMELINE_SLOTS,
@@ -139,6 +142,35 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.text_bars).toHaveLength(1);
     expect(snapshot.text_bars[0].id).toBe("text");
     expect(snapshot.has_narrated_captions).toBe(true);
+  });
+
+  it("exposes bounded generic text provenance in negotiated context", () => {
+    const snapshot = buildCopilotSnapshot(
+      [
+        bar({
+          id: "score",
+          text: "six four",
+          role: "generative_sequence",
+          source_params: {
+            custom_role: "arbitrary-label",
+            metric_value: 4,
+            transcript_grounded: true,
+            nested_renderer_state: [{ text: "six four" }],
+            signed_url: "https://example.test/private.mp4",
+          },
+        }),
+      ],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true, copilot_snapshot_max_bytes: 524288 },
+    );
+
+    expect(snapshot.component_context_version).toBe(1);
+    expect(snapshot.text_bars[0].context?.provenance).toEqual({
+      custom_role: "arbitrary-label",
+      metric_value: 4,
+      transcript_grounded: true,
+    });
   });
 
   it("4b: surfaces smart_role/smart_emphasis on each caption cue", () => {
@@ -1122,6 +1154,185 @@ describe("render_step_summary + recent_edit_history", () => {
     expect(byteLength(snapshot)).toBeGreaterThan(COPILOT_SNAPSHOT_MAX_BYTES);
   });
 
+  it("negotiates the larger context budget and preserves guided narration state", () => {
+    const captionBars = Array.from({ length: 150 }, (_, index) => bar({
+      id: `caption-${index}`,
+      text: `caption ${index} ${"spoken words ".repeat(4)}`,
+      start_s: index * 0.3,
+      end_s: index * 0.3 + 0.3,
+      role: "generative_sequence",
+      source_params: { source: "caption_cue" },
+    }));
+    const scoreBars = [
+      bar({
+        id: "score-1",
+        text: "six four",
+        start_s: 2.4,
+        end_s: 3.2,
+        role: "generative_sequence",
+        source_params: { narration_label_kind: "score" },
+      }),
+      bar({
+        id: "score-2",
+        text: "one nil",
+        start_s: 8.1,
+        end_s: 8.9,
+        role: "generative_sequence",
+        source_params: { narration_label_kind: "score" },
+      }),
+    ];
+    const slots = Array.from({ length: 39 }, (_, index) => slot({
+      key: `slot-${index}`,
+      slotId: `slot-${index}`,
+      clipIndex: index,
+      momentDescription: `guided moment ${index}`,
+    }));
+    const clips = slots.map((_, index) => ({
+      clip_index: index,
+      media_id: `media-${index}`,
+      kind: "video" as const,
+      generation: `generation-${index}`,
+      source_duration_s: 8,
+      used: true,
+      status: "ready",
+    }));
+
+    const legacy = buildCopilotSnapshot(
+      [...captionBars, ...scoreBars],
+      slots,
+      clips,
+      { text_elements: true, timeline: true, copilot_snapshot_wire_version: 1 },
+    );
+    const legacyWire = JSON.parse(JSON.stringify(legacy)) as Partial<typeof legacy>;
+    expect(legacyWire.allowed_op_families).not.toContain("text");
+    expect(legacyWire.text_bars).toBeUndefined();
+
+    const snapshot = buildCopilotSnapshot(
+      [...captionBars, ...scoreBars],
+      slots,
+      clips,
+      {
+        text_elements: true,
+        timeline: true,
+        copilot_snapshot_wire_version: 1,
+        copilot_snapshot_max_bytes: COPILOT_SNAPSHOT_HARD_MAX_BYTES,
+      },
+    );
+    const wire = JSON.parse(JSON.stringify(snapshot)) as typeof snapshot;
+
+    expect(byteLength(wire)).toBeLessThanOrEqual(
+      COPILOT_SNAPSHOT_HARD_MAX_BYTES - COPILOT_SNAPSHOT_RESERVE_BYTES,
+    );
+    expect(wire.allowed_op_families).toContain("text");
+    expect(wire.text_bars).toHaveLength(152);
+    expect(wire.text_bars[0]).toMatchObject({
+      id: "caption-0",
+      text: captionBars[0].text,
+      start_s: 0,
+      end_s: 0.3,
+      timing_locked: true,
+    });
+    expect(wire.text_bars[150]).toMatchObject({
+      id: "score-1",
+      text: "six four",
+      start_s: 2.4,
+      end_s: 3.2,
+      narration_label_kind: "score",
+    });
+    expect(wire.text_bars[150]).not.toHaveProperty("timing_locked");
+    expect(wire.text_bars[151]).toMatchObject({ id: "score-2", narration_label_kind: "score" });
+    expect(wire.slots).toHaveLength(39);
+    expect(wire.slots[38]).toMatchObject({ key: "slot-38", clip_index: 38, duration_s: 3 });
+  });
+
+  it("copies only allowlisted narration kinds and marks only known timing locks", () => {
+    const snapshot = buildCopilotSnapshot(
+      [
+        bar({
+          id: "score",
+          source_params: { narration_label_kind: "score", narrated_storyboard: "score:0" },
+        }),
+        bar({
+          id: "topic",
+          source_params: { narration_label_kind: "topic" },
+        }),
+        bar({
+          id: "participant",
+          source_params: { narration_label_kind: "participant" },
+        }),
+        bar({
+          id: "invalid",
+          source_params: { narration_label_kind: "other", narrated_storyboard: "score:1" },
+        }),
+        bar({ id: "caption-cue", source_params: { source: "caption_cue" } }),
+        bar({ id: "lyric_legacy", role: "lyric_line" }),
+        bar({ id: "ordinary", text: "words only" }),
+      ],
+      [],
+      [],
+      { text_elements: true, timeline: true },
+    );
+    const wire = JSON.parse(JSON.stringify(snapshot)) as typeof snapshot;
+
+    expect(wire.text_bars[0]).toMatchObject({ narration_label_kind: "score" });
+    expect(wire.text_bars[1]).toMatchObject({ narration_label_kind: "topic" });
+    expect(wire.text_bars[2]).toMatchObject({ narration_label_kind: "participant" });
+    expect(wire.text_bars[3]).not.toHaveProperty("narration_label_kind");
+    expect(wire.text_bars[3]).not.toHaveProperty("timing_locked");
+    expect(wire.text_bars[4]).toMatchObject({ timing_locked: true });
+    expect(wire.text_bars[5]).toMatchObject({ timing_locked: true });
+    expect(wire.text_bars[6]).not.toHaveProperty("timing_locked");
+  });
+
+  it("rejects an oversized negotiated snapshot without removing its capabilities", () => {
+    expect(() => buildCopilotSnapshot(
+      [bar({ text: "x".repeat(30000) })],
+      [],
+      [],
+      {
+        text_elements: true,
+        timeline: true,
+        copilot_snapshot_wire_version: 1,
+        copilot_snapshot_max_bytes: COPILOT_SNAPSHOT_MAX_BYTES + COPILOT_SNAPSHOT_RESERVE_BYTES,
+      },
+    )).toThrow(CopilotSnapshotTooLargeError);
+  });
+
+  it.each([0, 1, COPILOT_SNAPSHOT_HARD_MAX_BYTES + 1, 12.5, "524288"]) (
+    "falls back to the legacy contract for invalid negotiated budget %p",
+    (advertised) => {
+      const bars = Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, (_, index) => bar({
+        id: `bar-${index}`,
+        text: `text-${index}-${"t".repeat(300)}`,
+        start_s: index * 0.5,
+        end_s: index * 0.5 + 0.5,
+      }));
+      const slots = Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, (_, index) => slot({
+        key: `slot-${index}`,
+        slotId: `slot-${index}`,
+        clipIndex: index,
+        durationS: 0.5,
+        momentDescription: `moment-${index}-${"m".repeat(120)}`,
+      }));
+      const snapshot = buildCopilotSnapshot(
+        bars,
+        slots,
+        Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, () => ({ source_duration_s: 8 })),
+        {
+          text_elements: true,
+          timeline: true,
+          copilot_snapshot_wire_version: 1,
+          copilot_snapshot_max_bytes: advertised,
+        } as unknown as EditorCapabilities,
+      );
+      const wire = JSON.parse(JSON.stringify(snapshot)) as Partial<typeof snapshot>;
+
+      expect(byteLength(wire)).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+      expect(wire.allowed_op_families).not.toContain("text");
+      expect(wire.text_bars).toBeUndefined();
+    },
+  );
+
   it("removes a family with its section before pathological state can exceed the wire budget", () => {
     const slots = Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, (_, index) => slot({
       key: `slot-${index}`,
@@ -1166,6 +1377,7 @@ describe("render_step_summary + recent_edit_history", () => {
       text: `text-${index}-${"t".repeat(60)}`,
       start_s: index * 0.5,
       end_s: index * 0.5 + 0.5,
+      ...(index === 2 ? { source_params: { narration_label_kind: "score" } } : {}),
     }));
     const snapshot = buildCopilotSnapshot(
       bars,
@@ -1184,7 +1396,9 @@ describe("render_step_summary + recent_edit_history", () => {
     expect(byteLength(wire)).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
     expect(wire.wire_compact?.text_bars).toBe(true);
     expect(wire.text_bars[0].id).toBe("lyric_0");
+    expect(wire.text_bars[0].timing_locked).toBe(true);
     expect(wire.text_bars[1].id).toBe("guided-title");
+    expect(wire.text_bars[2]).toMatchObject({ narration_label_kind: "score" });
     expect(wire.text_bars[2]).not.toHaveProperty("id");
   });
 });
@@ -1283,4 +1497,131 @@ describe("Creator Block snapshot", () => {
     expect(on.motion?.catalog.find((entry) => entry.preset_id === "evolving_type")?.preset_version)
       .toBe(2);
   });
+});
+
+describe("complete component context", () => {
+  const capabilities = { copilot_snapshot_max_bytes: 524288, copilot_snapshot_wire_version: 1 as const };
+  const asset: PoolAsset = {
+    id: "asset-menu", kind: "image", status: "ready", source_filename: "menu.png",
+    duration_s: null, aspect: 1, subject: "Cafe menu", user_context: "Use with the price labels",
+    nova_description: "A menu listing coffee and cake", nova_on_screen_text: "Coffee £4; cake £6",
+    display_url: "https://private.invalid/signed-token", deduped: false, gcs_path: "private/object-key",
+  };
+  const overlay: MediaOverlay = {
+    id: "menu-overlay", kind: "image", src_gcs_path: asset.gcs_path,
+    position: "center", x_frac: 0.5, y_frac: 0.5, scale: 0.5,
+    start_s: 2, end_s: 4, z: 1, effect_group_id: "menu-scene",
+  };
+
+  it("exposes arbitrary text semantics, asset descriptions and explicit group links without raw payloads", () => {
+    const snapshot = buildCopilotSnapshot([
+      bar({ text: "£4", visual_block_id: "menu-scene", source_params: {
+        narration_label_kind: "price", source_text: "Coffee costs four pounds",
+        source_timeline_id: "clip-coffee", private_payload: { token: "never-expose" },
+      } }),
+    ], [], [], capabilities, { overlayCards: [overlay], poolAssets: [asset], videoDurationS: 10 });
+    expect(snapshot.text_bars[0].context).toEqual({ semantic_role: "price",
+      source_text: "Coffee costs four pounds", source_timeline_id: "clip-coffee", group_id: "menu-scene",
+      provenance: { narration_label_kind: "price", source_text: "Coffee costs four pounds",
+        source_timeline_id: "clip-coffee" } });
+    expect(snapshot.overlays?.cards[0].context).toMatchObject({ asset_id: "asset-menu",
+      subject: "Cafe menu", user_context: "Use with the price labels",
+      on_screen_text: "Coffee £4; cake £6", group_id: "menu-scene" });
+    const wire = JSON.stringify(snapshot);
+    for (const secret of ["private/object-key", "signed-token", "private_payload", "never-expose"]) {
+      expect(wire).not.toContain(secret);
+    }
+  });
+
+  it("keeps late components inspectable even when their mutation families are disabled", () => {
+    const snapshot = buildCopilotSnapshot([], [], [], capabilities, {
+      readOnly: true, videoDurationS: 60,
+      overlayCards: Array.from({ length: 16 }, (_, i) => ({ ...overlay, id: `overlay-${i}` })),
+      sfxPlacements: Array.from({ length: 18 }, (_, i) => ({ id: `sfx-${i}`, src_gcs_path: "private/sfx",
+        at_s: i, gain: 1, label: `Sound ${i}`, duration_s: 0.5 })),
+      visualBlocks: Array.from({ length: 23 }, (_, i) => ({ id: `visual-${i}`, kind: "text_card" as const, version: 1 as const, timing_mode: "manual" as const,
+        origin: "user" as const, audio_policy: { base: "continue" as const, sfx: "continue" as const },
+        background: { type: "solid" as const, color: "#000000" },
+        start_s: i, end_s: i + 1, transition_in: "cut" as const, transition_out: "cut" as const })),
+      captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.8 },
+      captionCuesEditable: false,
+      captionCues: Array.from({ length: 65 }, (_, i) => ({ id: `cue-${i}`, text: `Late caption ${i}`,
+        start_s: i / 2, end_s: i / 2 + 0.5 })),
+    });
+    expect(snapshot.allowed_op_families).toEqual([]);
+    expect(snapshot.overlays?.cards.at(-1)?.id).toBe("overlay-15");
+    expect(snapshot.sfx?.placements.at(-1)?.id).toBe("sfx-17");
+    expect(snapshot.visual_blocks?.at(-1)?.id).toBe("visual-22");
+    expect(snapshot.captions?.cues.at(-1)?.text).toBe("Late caption 64");
+    expect(snapshot.captions?.cues_editable).toBe(false);
+    expect(snapshot.captions?.truncated).toBe(false);
+  });
+
+  it("keeps source identity and metadata after source reorder and omits credentials", () => {
+    const snapshot = buildCopilotSnapshot([], [slot({ clipIndex: 7, momentDescription: null })], [
+      { clip_index: 7, media_id: "media-menu", moment_description: "Cafe menu on a table", kind: "image" },
+    ], capabilities, { sourcePool: [{ clip_index: 7, media_id: "media-menu", kind: "image", status: "ready",
+      subject: "Cafe menu", user_context: "Show the menu before ordering", gcs_path: "private/source" }] });
+    expect(snapshot.slots[0].moment).toBe("Cafe menu on a table");
+    expect(snapshot.source_assets?.[0]).toMatchObject({ clip_index: 7, used: true,
+      context: { subject: "Cafe menu", user_context: "Show the menu before ordering" } });
+    expect(JSON.stringify(snapshot)).not.toContain("private/source");
+  });
+
+  it("fails explicitly instead of losing late captions or image context under pressure", () => {
+    expect(() => buildCopilotSnapshot([], [], [], { ...capabilities, copilot_snapshot_max_bytes: 22000 }, {
+      overlayCards: [overlay], poolAssets: [{ ...asset, nova_description: "Detailed menu ".repeat(3000) }],
+    })).toThrow(CopilotSnapshotTooLargeError);
+  });
+});
+
+describe("component focus and nested visual context", () => {
+  const capabilities = { copilot_snapshot_max_bytes: 524288, copilot_snapshot_wire_version: 1 as const };
+  it("resolves selection to its current authoritative index after reordering, and discards stale selection", () => {
+    const bars = [bar({ id: "second" }), bar({ id: "first" })];
+    const focused = buildCopilotSnapshot(bars, [], [], capabilities, {
+      videoDurationS: 10, editorFocus: { playhead_s: 12, selected: { kind: "text", id: "first" } },
+    });
+    expect(focused.editor_focus).toEqual({ playhead_s: 10, selected: { kind: "text", id: "first", index: 1 } });
+    const stale = buildCopilotSnapshot(bars, [], [], capabilities, {
+      editorFocus: { selected: { kind: "text", id: "deleted" } },
+    });
+    expect(stale.editor_focus?.selected).toBeNull();
+  });
+
+  it("maps a caption selection to cue indices rather than text bar indices", () => {
+    const snapshot = buildCopilotSnapshot([bar(), bar({ id: "caption", role: "narrated_caption" })], [], [], capabilities, {
+      captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.8 },
+      editorFocus: { selected: { kind: "text", id: "caption" } }, assetContextStatus: "loading",
+    });
+    expect(snapshot.editor_focus?.selected).toEqual({ kind: "caption", id: "caption", index: 0 });
+    expect(snapshot.asset_context_status).toBe("loading");
+  });
+
+  it("exposes nested shot identities and relationships without storage paths", () => {
+    const snapshot = buildCopilotSnapshot([], [], [], capabilities, {
+      visualBlocks: [{ id: "montage", kind: "montage", version: 1, timing_mode: "manual", origin: "ai",
+        rationale: "Show the cafe before the price labels", start_s: 0, end_s: 5,
+        transition_in: "cut", transition_out: "fade", audio_policy: { base: "continue", sfx: "continue" },
+        shots: [{ id: "shot-menu", asset_id: "menu", src_gcs_path: "private/menu", kind: "image",
+          start_offset_s: 0, duration_s: 5, crop: { x_frac: 0.5, y_frac: 0.5, scale: 1 }, motion: "zoom_in",
+          sync_anchor: { type: "keyword", time_s: 2, label: "menu" } }],
+      }],
+    });
+    expect(snapshot.visual_blocks?.[0].context?.description).toBe("Show the cafe before the price labels");
+    expect(snapshot.visual_blocks?.[0].details).toMatchObject({ shots: [{ id: "shot-menu", asset_id: "menu",
+      motion: "zoom_in", sync_anchor: { type: "keyword", time_s: 2, label: "menu" } }] });
+    expect(JSON.stringify(snapshot)).not.toContain("private/menu");
+  });
+});
+
+it("uses exact source indices for both durations and generation-tagged context", () => {
+  const snapshot = buildCopilotSnapshot([], [slot({ clipIndex: 7 }), slot({ key: "missing", clipIndex: 0 })], [
+    { clip_index: 7, media_id: "media-7", generation: "generation-2", duration_s: 11, kind: "video" },
+  ], { copilot_snapshot_max_bytes: 524288, copilot_snapshot_wire_version: 1 }, {
+    sourcePool: [{ media_id: "media-7", generation: "generation-2", kind: "video", clip_index: 7 }],
+  });
+  expect(snapshot.slots[0].source_duration_s).toBe(11);
+  expect(snapshot.slots[1].source_duration_s).toBeNull();
+  expect(snapshot.source_assets?.[0].generation).toBe("generation-2");
 });

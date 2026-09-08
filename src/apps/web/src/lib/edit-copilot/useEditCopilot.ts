@@ -344,7 +344,14 @@ export function outcomeAuthoritativeReply({
       : explanation;
   }
   if (outcome === "unsupported") {
-    return rejectionReasons?.find((reason) => reason.detail)?.detail ?? "That kind of edit isn't available for this draft yet.";
+    const detail = rejectionReasons?.find((reason) => reason.detail)?.detail;
+    if (detail) return detail;
+    const explanation = modelReply.trim();
+    const claimsSuccess =
+      /\b(done|stored|changed|updated|applied|staged|edited|trimmed|removed|swapped|made|set|punchier)\b/i.test(explanation);
+    return explanation && !claimsSuccess
+      ? explanation
+      : "That kind of edit isn't available for this draft yet.";
   }
   if (outcome === "stale") {
     return "That edit is based on an older draft. Refresh the editor and try again.";
@@ -495,18 +502,19 @@ export function useEditCopilot(
     setMessages(optimisticMessages);
     activeTurnRef.current = { id: turnId, text: trimmed, userMessageId };
 
-    // messagesRef.current at this point already includes the optimistic
-    // pending user message set above — deriveRecentEditHistory only reads
-    // assistant turns, so the in-flight turn itself is naturally excluded.
-    const snapshot = optsRef.current.buildSnapshot({
-      renderStepSummary: optsRef.current.renderStepSummary,
-      recentEditHistory: deriveRecentEditHistory(messagesRef.current),
-    });
     let succeeded = false;
     let receiptResponse: EditCopilotTurnResponse | null = null;
     let receiptReported = false;
+    let failedRevisionHash: string | null = null;
 
     try {
+      // Snapshot construction can reject an oversized draft. Treat that as
+      // a retryable context error, retaining the request and releasing Send.
+      const snapshot = optsRef.current.buildSnapshot({
+        renderStepSummary: optsRef.current.renderStepSummary,
+        recentEditHistory: deriveRecentEditHistory(messagesRef.current),
+      });
+      failedRevisionHash = snapshotRevisionHash(snapshot);
       const response = await editCopilotTurn(
         optsRef.current.itemId,
         optsRef.current.variantId,
@@ -595,7 +603,7 @@ export function useEditCopilot(
       succeeded = true;
     } catch (err) {
       if (receiptResponse?.receipt_id && !receiptReported) {
-        const beforeRevisionHash = snapshotRevisionHash(snapshot);
+        const beforeRevisionHash = failedRevisionHash;
         receiptReported = true;
         void reportCopilotExecution(
           optsRef.current.itemId,

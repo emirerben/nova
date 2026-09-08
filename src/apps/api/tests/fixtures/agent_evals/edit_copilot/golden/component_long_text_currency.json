@@ -1,0 +1,60 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-08-v39",
+  "input": {
+    "utterance": "Extend only the text ending in 'Sale price $4' to 8 seconds.",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "component_context_version": 1,
+      "allowed_op_families": [
+        "text"
+      ],
+      "total_duration_s": 10,
+      "slots": [],
+      "text_bars": [
+        {
+          "index": 0,
+          "id": "component-0",
+          "text": "More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. Regular price $6",
+          "role": "generative_sequence",
+          "start_s": 0,
+          "end_s": 4
+        },
+        {
+          "index": 1,
+          "id": "component-1",
+          "text": "More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. More information. Sale price $4",
+          "role": "generative_sequence",
+          "start_s": 0,
+          "end_s": 4
+        }
+      ]
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_text_timing\", \"bar_index\": 1, \"end_s\": 8}], \"confidence\": 0.95, \"reply\": \"Extended the Sale price $4 text to eight seconds.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_text_timing",
+        "bar_index": 1,
+        "end_s": 8
+      }
+    ],
+    "confidence": 0.95,
+    "reply": "Extended the Sale price $4 text to eight seconds.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "component_long_text_currency",
+    "exact_component_ops": [
+      {
+        "op": "set_text_timing",
+        "bar_index": 1,
+        "end_s": 8
+      }
+    ]
+  }
+}

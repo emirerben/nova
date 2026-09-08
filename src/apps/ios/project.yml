@@ -1,0 +1,111 @@
+name: Kria
+options:
+  minimumXcodeGenVersion: 2.38.0
+  deploymentTarget:
+    iOS: "18.0"
+  groupSortPosition: top
+  createIntermediateGroups: true
+  developmentLanguage: en
+configs:
+  Debug: debug
+  Staging: debug
+  Release: release
+configFiles:
+  Debug: Config/Development.xcconfig
+  Staging: Config/Staging.xcconfig
+  Release: Config/Production.xcconfig
+packages:
+  KriaMediaEngine:
+    path: Packages/KriaMediaEngine
+  SwiftOpenAPIGenerator:
+    url: https://github.com/apple/swift-openapi-generator
+    exactVersion: 1.13.1
+  SwiftOpenAPIRuntime:
+    url: https://github.com/apple/swift-openapi-runtime
+    exactVersion: 1.12.1
+  SwiftOpenAPIURLSession:
+    url: https://github.com/apple/swift-openapi-urlsession
+    exactVersion: 1.3.1
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    DEVELOPMENT_TEAM: ""
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+    SWIFT_EMIT_LOC_STRINGS: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+  configs:
+    Debug:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG"
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+targets:
+  Kria:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Kria
+      - path: ../web/public/fonts/Fraunces-Bold.ttf
+        buildPhase: resources
+      - path: ../web/public/fonts/Inter-Regular.ttf
+        buildPhase: resources
+      - path: ../web/public/fonts/Inter-Medium.ttf
+        buildPhase: resources
+      - path: ../web/public/fonts/Inter-Bold.ttf
+        buildPhase: resources
+    dependencies:
+      - package: KriaMediaEngine
+        product: KriaMediaEngine
+      - package: SwiftOpenAPIRuntime
+        product: OpenAPIRuntime
+      - package: SwiftOpenAPIURLSession
+        product: OpenAPIURLSession
+    buildToolPlugins:
+      - plugin: OpenAPIGenerator
+        package: SwiftOpenAPIGenerator
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kria.app.dev
+        PRODUCT_NAME: Kria
+        INFOPLIST_FILE: Kria/Support/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_STRICT_CONCURRENCY: complete
+      configs:
+        Staging:
+          PRODUCT_BUNDLE_IDENTIFIER: com.kria.app.staging
+        Release:
+          PRODUCT_BUNDLE_IDENTIFIER: com.kria.app
+    scheme:
+      testTargets:
+        - KriaTests
+        - KriaUITests
+      gatherCoverageData: true
+  KriaTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Tests/KriaTests
+    dependencies:
+      - target: Kria
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kria.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+  KriaUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Tests/KriaUITests
+    dependencies:
+      - target: Kria
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kria.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Kria

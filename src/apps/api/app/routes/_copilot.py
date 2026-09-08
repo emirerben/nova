@@ -23,10 +23,11 @@ from app.agents.edit_copilot import (
     EditCopilotInput,
     EditCopilotOutput,
 )
+from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 
 log = structlog.get_logger()
 
-_MAX_SNAPSHOT_BYTES = 20 * 1024
+_MAX_SNAPSHOT_BYTES = COPILOT_SNAPSHOT_MAX_BYTES
 
 
 class CopilotTurnBody(BaseModel):
@@ -118,7 +119,13 @@ def _honest_outcome(
         return outcome, "That edit is based on an older draft. Refresh the editor and try again."
     if outcome == "unsupported":
         detail = next((item.get("detail") for item in reasons if item.get("detail")), None)
-        return outcome, detail or "That kind of edit isn't available for this draft yet."
+        if detail:
+            return outcome, detail
+        # With no supported operation, a negation elsewhere in the sentence
+        # must not excuse a separate claim that something was changed.
+        if reply and not _SUCCESS_WORDS.search(reply):
+            return outcome, reply
+        return outcome, "That kind of edit isn't available for this draft yet."
     if outcome == "failed":
         return outcome, "I couldn't build a valid draft change for that request. Try again."
     if reply and not _claims_success(reply):
@@ -151,7 +158,7 @@ async def run_copilot_turn(
     if _snapshot_size_bytes(body.snapshot) > _MAX_SNAPSHOT_BYTES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="snapshot exceeds 20KB",
+            detail="The editor context is too large to inspect in one request.",
         )
 
     agent_input = EditCopilotInput(

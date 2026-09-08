@@ -3241,3 +3241,53 @@ describe("Creator Block operations", () => {
     expect(result.rejected).toMatchObject([{ reason: "capability_disabled" }]);
   });
 });
+
+describe("selective component edits", () => {
+  const capabilities = { text_elements: true, timeline: true,
+    copilot_snapshot_max_bytes: 524288, copilot_snapshot_wire_version: 1 as const };
+  const bars = [
+    bar({ id: "price-coffee", text: "£4", start_s: 1, end_s: 2,
+      source_params: { narration_label_kind: "price" } }),
+    bar({ id: "caption", text: "£4", start_s: 1, end_s: 2,
+      source_params: { source: "caption_cue" } }),
+    bar({ id: "price-cake", text: "£6", start_s: 5, end_s: 6,
+      source_params: { narration_label_kind: "price" } }),
+    bar({ id: "warning", text: "Hot surface", start_s: 0, end_s: 8,
+      source_params: { narration_label_kind: "warning" } }),
+  ];
+  const ops = [
+    { op: "set_text_timing", bar_index: 0, end_s: 3 },
+    { op: "set_text_timing", bar_index: 2, end_s: 7 },
+  ];
+
+  it("changes only the selected label endpoints, retaining copy, styling and other components", () => {
+    const context = ctx({ bars, capabilities });
+    const before = JSON.stringify({ bars: context.bars, slots: context.slots });
+    const result = applyCopilotOpsAtomic(ops, context);
+    expect(result.rejected).toEqual([]);
+    expect(result.textActions).toEqual([
+      { type: "PATCH_BAR", id: "price-coffee", patch: { start_s: 1, end_s: 3 } },
+      { type: "PATCH_BAR", id: "price-cake", patch: { start_s: 5, end_s: 7 } },
+    ]);
+    expect(result.nextSlots).toBeNull();
+    expect(result.nextOverlays).toBeUndefined();
+    expect(JSON.stringify({ bars: context.bars, slots: context.slots })).toBe(before);
+  });
+
+  it("rejects the entire edit if a targeted endpoint changed after the AI inspected it", () => {
+    const context = ctx({ bars, capabilities });
+    context.bars = bars.map((row) => row.id === "price-cake" ? { ...row, end_s: 6.5 } : row);
+    const result = applyCopilotOpsAtomic(ops, context);
+    expect(result.textActions).toEqual([]);
+    expect(result.applied).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+  });
+
+  it("does not make narration-synced captions retimeable merely by exposing them", () => {
+    const result = applyCopilotOpsAtomic([
+      ...ops, { op: "set_text_timing", bar_index: 1, end_s: 4 },
+    ], ctx({ bars, capabilities }));
+    expect(result.textActions).toEqual([]);
+    expect(result.rejected).toEqual([expect.objectContaining({ reason: "unsupported_field" })]);
+  });
+});

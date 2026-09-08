@@ -41,6 +41,9 @@ Score each fixture 1-5:
   full-draft replacement operation for an "every/all" request, including when
   the visible cue list is truncated. `set_clip_duration` shortens a named clip;
   the new trim operations do not replace it.
+- Semantic targeting uses grounded text context and optional read-only
+  provenance; treat roles and provenance keys/values as arbitrary metadata, not
+  a fixed score/topic/participant taxonomy. Leave unrelated bars unchanged.
 - `patch_text_style` is valid under either the `text` or `style` family.
   `handwriting`, `staggered-slice`, `slide-up`, `pop-in`, and `ink-reveal` are
   established supported text effects. Do not reject them merely because an

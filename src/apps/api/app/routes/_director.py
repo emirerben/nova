@@ -11,7 +11,7 @@ from typing import Literal
 
 import structlog
 from fastapi import HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalError
@@ -23,9 +23,9 @@ from app.agents.edit_director import (
     EditorSuggestion,
 )
 from app.config import settings
+from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 
 log = structlog.get_logger()
-_MAX_SNAPSHOT_BYTES = 20 * 1024
 _MAX_DIRECTOR_LOCKS = 512
 _director_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
 _latest_revision_by_job: dict[str, str] = {}
@@ -36,6 +36,13 @@ class DirectorSuggestionsBody(BaseModel):
     snapshot_revision: str = Field(min_length=1, max_length=128)
     dismissed_suggestion_ids: list[str] = Field(default_factory=list, max_length=30)
     omni_enabled: bool = False
+
+    @field_validator("snapshot")
+    @classmethod
+    def _validate_snapshot_size(cls, snapshot: dict) -> dict:
+        if _snapshot_size(snapshot) > COPILOT_SNAPSHOT_MAX_BYTES:
+            raise ValueError("snapshot exceeds 512KiB")
+        return snapshot
 
 
 class DirectorSuggestionsResponse(BaseModel):
@@ -104,10 +111,10 @@ async def _run_director_once(
     job_id: uuid.UUID,
     authoritative_speech_cut: dict | None = None,
 ) -> DirectorSuggestionsResponse:
-    if _snapshot_size(body.snapshot) > _MAX_SNAPSHOT_BYTES:
+    if _snapshot_size(body.snapshot) > COPILOT_SNAPSHOT_MAX_BYTES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="snapshot exceeds 20KB",
+            detail="snapshot exceeds 512KiB",
         )
     director_snapshot = copy.deepcopy(body.snapshot)
     # Client snapshots are prompt context, never authorization. Replace every
