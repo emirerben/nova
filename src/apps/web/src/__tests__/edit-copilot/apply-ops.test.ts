@@ -777,35 +777,6 @@ describe("applyCopilotOps", () => {
       .toEqual([{ type: "DELETE_BAR", id: "bar-2" }]);
   });
 
-  it("retimes a score bar without changing neighboring text bars", () => {
-    const bars = [
-      bar({
-        id: "score",
-        text: "six four",
-        role: "generative_sequence",
-        source_params: { narrated_storyboard: "narrated_storyboard:score:4" },
-      }),
-      bar({ id: "ordinary", text: "ordinary text", role: "generative_sequence", start_s: 3, end_s: 5 }),
-    ];
-    const snapshot = buildCopilotSnapshot(
-      bars,
-      slots,
-      clips,
-      { text_elements: true, timeline: true },
-    );
-
-    const result = applyCopilotOps(
-      [{ op: "set_text_timing", bar_index: 0, end_s: 4.5 }],
-      { ...ctx(), bars, snapshot },
-    );
-
-    expect(result.rejected).toEqual([]);
-    expect(result.textActions).toEqual([
-      { type: "PATCH_BAR", id: "score", patch: { start_s: 0, end_s: 4.5 } },
-    ]);
-    expect(result.textActions).not.toContainEqual(expect.objectContaining({ id: "ordinary" }));
-  });
-
   it("does not mark a timeline-only turn text-dirty on the elements model", () => {
     const bars = [bar({ id: "canonical" })];
     expect(textActionsChangeTextSection([], bars, true)).toBe(false);

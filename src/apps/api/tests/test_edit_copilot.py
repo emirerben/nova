@@ -3516,6 +3516,39 @@ def test_format_snapshot_exposes_timeline_media_identity_and_kind() -> None:
     assert "media_kind='image'" in rendered
 
 
+def test_format_snapshot_renders_generic_component_provenance_safely() -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    snap = _snapshot(allowed=["text"])
+    snap["component_context_version"] = 1
+    snap["text_bars"] = [
+        {
+            "id": "bar-1",
+            "role": "generative_sequence",
+            "text": "six four",
+            "start_s": 0,
+            "end_s": 2,
+            "context": {
+                "provenance": {
+                    "custom_role": "arbitrary-label",
+                    "metric_value": 4,
+                    "transcript_grounded": True,
+                    "nested_renderer_state": {"text": "ignored"},
+                    "signed_url": "https://example.test/private.mp4",
+                }
+            },
+        }
+    ]
+
+    rendered = _format_snapshot(snap)
+
+    assert (
+        "provenance={'custom_role'='arbitrary-label', 'metric_value'=4, 'transcript_grounded'=True}"
+    ) in rendered
+    assert "nested_renderer_state" not in rendered
+    assert "https://example.test/private.mp4" not in rendered
+
+
 def test_honest_outcome_rejection_precedes_clarification_hint() -> None:
     output = EditCopilotOutput(
         intent="edit",
@@ -4100,11 +4133,12 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # guided timeline capacity, then (2026-08-28-v36) to make stack_images a
     # consecutive individual-clip slideshow with no implicit Creator Block, then
     # (2026-08-28-v37) so only the newest assistant turn can provide structured
-    # clarification and pending-action context — update this pin whenever
+    # clarification and pending-action context, then (2026-09-08-v40) for
+    # bounded generic component provenance in negotiated context — update this pin whenever
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-08-v39"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-08-v40"
 
 
 def _motion_snapshot() -> dict:

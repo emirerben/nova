@@ -144,7 +144,7 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.has_narrated_captions).toBe(true);
   });
 
-  it("exposes text provenance so semantic bars can be targeted safely", () => {
+  it("exposes bounded generic text provenance in negotiated context", () => {
     const snapshot = buildCopilotSnapshot(
       [
         bar({
@@ -152,36 +152,25 @@ describe("buildCopilotSnapshot", () => {
           text: "six four",
           role: "generative_sequence",
           source_params: {
-            narrated_storyboard: "narrated_storyboard:score:4",
+            custom_role: "arbitrary-label",
+            metric_value: 4,
             transcript_grounded: true,
-            burn_dicts: [{ text: "six four" }],
+            nested_renderer_state: [{ text: "six four" }],
+            signed_url: "https://example.test/private.mp4",
           },
-        }),
-        bar({
-          id: "ordinary",
-          text: "ordinary text",
-          role: "generative_sequence",
-          source_params: { source: "manual", internal: { ignored: true } },
         }),
       ],
       [slot()],
       [{ source_duration_s: 8 }],
-      { text_elements: true, timeline: true },
+      { text_elements: true, timeline: true, copilot_snapshot_max_bytes: 524288 },
     );
 
-    expect(snapshot.text_bars[0]).toMatchObject({
-      source_kind: "narrated_score",
-      source_params: {
-        narrated_storyboard: "narrated_storyboard:score:4",
-        transcript_grounded: true,
-      },
+    expect(snapshot.component_context_version).toBe(1);
+    expect(snapshot.text_bars[0].context?.provenance).toEqual({
+      custom_role: "arbitrary-label",
+      metric_value: 4,
+      transcript_grounded: true,
     });
-    expect(snapshot.text_bars[0].source_params).not.toHaveProperty("burn_dicts");
-    expect(snapshot.text_bars[1]).toMatchObject({
-      source_params: { source: "manual" },
-    });
-    expect(snapshot.text_bars[1].source_kind).toBeUndefined();
-    expect(snapshot.text_bars[1].source_params).not.toHaveProperty("internal");
   });
 
   it("4b: surfaces smart_role/smart_emphasis on each caption cue", () => {
