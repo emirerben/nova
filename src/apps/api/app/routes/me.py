@@ -2863,6 +2863,11 @@ async def confirm_account_deletion(
          PlanItemAsset), and any remaining VideoFeedback all cascade from here
          via direct ondelete=CASCADE FKs to users.id.
 
+    Explicit child deletes are bound to the IDs captured under lock. If a
+    concurrent writer commits another no-CASCADE child after the snapshot, the
+    final users.id delete fails its FK and rolls this transaction back; erasure
+    never silently drops an unseen Job, storage manifest, or token revoke.
+
     GCS bytes are swept afterward by tasks.purge_user_storage — see that
     task's docstring for why it's async and why the ids are captured here
     first (the DB row is gone by the time that task runs).
@@ -2885,8 +2890,7 @@ async def confirm_account_deletion(
         )
 
     # Follow the repository mutation order before taking any Job lock. Plan
-    # editors acquire ContentPlan -> Persona -> PlanItem -> Job; account
-    # erasure must not invert that order while it snapshots durable storage.
+    # editors acquire ContentPlan -> Persona -> PlanItem -> Job.
     locked_plan_ids = (
         (
             await db.execute(
@@ -2922,6 +2926,7 @@ async def confirm_account_deletion(
     job_uuid_ids = [job.id for job in jobs]
     clips_by_job: dict[uuid.UUID, list[JobClip]] = {job.id: [] for job in jobs}
     publications_by_job: dict[uuid.UUID, list[TikTokPublication]] = {job.id: [] for job in jobs}
+    publication_ids: list[uuid.UUID] = []
     existing_outboxes: dict[uuid.UUID, JobStorageDeletion] = {}
     if job_uuid_ids:
         clips = (
@@ -2948,6 +2953,7 @@ async def confirm_account_deletion(
         )
         for publication in publications:
             publications_by_job.setdefault(publication.job_id, []).append(publication)
+            publication_ids.append(publication.id)
         outbox_rows = (
             (
                 await db.execute(
@@ -2960,6 +2966,20 @@ async def confirm_account_deletion(
             .all()
         )
         existing_outboxes = {row.job_id: row for row in outbox_rows}
+
+    # TikTok copies each publication to this deterministic key after first
+    # committing processing_status="snapshotting". Account erasure can delete
+    # that row while the copy is in flight and before snapshot_object_path is
+    # persisted, so the path must be derived from the captured publication id
+    # rather than from nullable state. The delayed account outbox below owns
+    # these keys after every 120s publication task has quiesced.
+    late_tiktok_snapshot_paths = list(
+        dict.fromkeys(
+            f"tiktok-publish/{publication.id}.mp4"
+            for publications in publications_by_job.values()
+            for publication in publications
+        )
+    )
 
     # Account erasure cannot wait for an in-flight renderer. Externalize every
     # exact path, private attempt receipt, and conservative job root before the
@@ -3018,7 +3038,7 @@ async def confirm_account_deletion(
     account_prefix_outbox = JobStorageDeletion(
         id=uuid.uuid4(),
         job_id=uuid.uuid4(),
-        object_paths=[],
+        object_paths=late_tiktok_snapshot_paths,
         object_prefixes=[f"users/{user.id}/"],
         next_attempt_at=datetime.now(UTC) + ACCOUNT_ERASURE_LATE_UPLOAD_QUIESCENCE,
     )
@@ -3028,21 +3048,24 @@ async def confirm_account_deletion(
     # 1. Sever job → plan_item back-refs before the content_plan cascade fires.
     await db.execute(
         update(Job)
-        .where(Job.user_id == user.id, Job.content_plan_item_id.is_not(None))
+        .where(Job.id.in_(job_uuid_ids), Job.content_plan_item_id.is_not(None))
         .values(content_plan_item_id=None)
     )
-    # 2. Revoke + clear TikTok connection, delete publication rows.
-    tiktok_tokens = (
+    # 2. Revoke + clear TikTok connection, delete only snapshotted rows.
+    # Target-bound deletes are intentional: if a concurrent writer commits a
+    # new no-CASCADE child after these snapshots, DELETE users.id must fail its
+    # FK and roll the entire erasure back. Broad owner predicates could silently
+    # delete an unseen Job/token without its storage manifest or revoke step.
+    oauth_tokens = (
         (
             await db.execute(
-                select(OAuthToken).where(
-                    OAuthToken.user_id == user.id, OAuthToken.platform == "tiktok"
-                )
+                select(OAuthToken).where(OAuthToken.user_id == user.id).with_for_update()
             )
         )
         .scalars()
         .all()
     )
+    tiktok_tokens = [token for token in oauth_tokens if token.platform == "tiktok"]
     for token_row in tiktok_tokens:
         if token_row.access_token:
             try:
@@ -3051,11 +3074,11 @@ async def confirm_account_deletion(
                 )
             except Exception:  # noqa: BLE001 — local erasure must still proceed
                 pass
-    await db.execute(delete(TikTokPublication).where(TikTokPublication.user_id == user.id))
+    await db.execute(delete(TikTokPublication).where(TikTokPublication.id.in_(publication_ids)))
     # 3. Remaining OAuth tokens (instagram/youtube — no revoke API wired yet).
-    await db.execute(delete(OAuthToken).where(OAuthToken.user_id == user.id))
+    await db.execute(delete(OAuthToken).where(OAuthToken.id.in_([row.id for row in oauth_tokens])))
     # 4. Jobs — cascades AgentRun + VideoFeedback automatically.
-    await db.execute(delete(Job).where(Job.user_id == user.id))
+    await db.execute(delete(Job).where(Job.id.in_(job_uuid_ids)))
     # Invalidate memory extraction leases before erasing the owner. A worker
     # that wakes after this transaction can only observe a missing User and
     # safely no-op; it must never recreate memory state.
