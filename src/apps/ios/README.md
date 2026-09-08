@@ -43,8 +43,8 @@ ISO-8601 compatibility.
 `Config/Production.xcconfig` are the only checked-in environment defaults.
 They provide `API_BASE_URL` and `KRIA_GOOGLE_*` build settings; put real client
 configuration in a local override or CI secret store. `Kria/Generated/openapi.yaml`
-and the XcodeGen OpenAPI plugin keep the native endpoint surface checked
-against the server contract during builds.
+is generated from the server's Pydantic models; `make ios-verify` rejects
+contract drift before XcodeGen builds the OpenAPI plugin output.
 
 For a developer-specific Debug configuration, create the git-ignored
 `Config/Local.xcconfig`. `Development.xcconfig` includes it when present, so it
