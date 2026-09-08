@@ -2,10 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.72.1.0] — 2026-09-08
+## [0.72.3.0] — 2026-09-08
 
 ### Fixed
 - **Copilot can now target narrated score labels precisely.** Score provenance travels with the editor snapshot, so requests to retime a score change the intended label without shifting nearby text.
+
+## [0.72.2.0] — 2026-09-08
+
+### Changed
+- **Personalization is now a simpler editable list.** Creators can add a preference directly, edit or remove each remembered instruction, and return to the content plan without navigating category sections or approval, metadata, Undo, and update-notice UI.
+
+### Fixed
+- **Preference controls remain reliable during errors and overlapping updates.** Failed clears keep their confirmation open, failed toggles do not overwrite newer preferences, rule enforcement survives text edits, and keyboard focus returns to a visible control after a row changes.
 
 ## [0.72.0.0] — 2026-09-08
 
