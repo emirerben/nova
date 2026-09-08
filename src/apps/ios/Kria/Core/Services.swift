@@ -79,6 +79,7 @@ struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ statu
 protocol KriaAPIClient: Sendable {
     func projects() async throws -> [ProjectSummary]
     func project(threadID: UUID) async throws -> CreationThread
+    func creationCapabilities() async throws -> CreationCapabilities
     func library() async throws -> [ProjectSummary]
     func createThread(message: String?) async throws -> CreationThread
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession
@@ -90,6 +91,7 @@ protocol KriaAPIClient: Sendable {
     func draft(threadID: UUID) async throws -> DraftSnapshot
     func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse
+    func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]]
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue]
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
@@ -107,6 +109,8 @@ protocol KriaAPIClient: Sendable {
 /// editor saves fail explicitly when the production commit endpoint is not
 /// implemented by a substitute.
 extension KriaAPIClient {
+    func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
+
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
         _ = jobID
         throw APIError.unsupported
@@ -117,6 +121,11 @@ extension KriaAPIClient {
         throw APIError.unsupported
     }
 
+    func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]] {
+        _ = jobID
+        throw APIError.unsupported
+    }
+
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse {
         _ = itemID; _ = variantID; _ = request
         throw APIError.unsupported
@@ -124,6 +133,13 @@ extension KriaAPIClient {
 }
 
 struct TurnAccepted: Codable, Sendable { let turnID: String; let threadRevision: Int; let status: String; enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status } }
+struct CreationFormatCapability: Codable, Equatable, Sendable {
+    let id: String
+    let editFormat: String
+    let maxClips: Int
+    enum CodingKeys: String, CodingKey { case id; case editFormat = "edit_format"; case maxClips = "max_clips" }
+}
+struct CreationCapabilities: Codable, Equatable, Sendable { let formats: [CreationFormatCapability] }
 struct CreationThread: Codable, Identifiable, Sendable {
     let id: String
     let title: String
@@ -131,21 +147,80 @@ struct CreationThread: Codable, Identifiable, Sendable {
     let revision: Int
     let runtimeVersion: Int
     let activeJobID: String?
+    let activePlanItemID: String?
     let job: CreationJob?
     let updatedAt: Date
     let state: [String: JSONValue]?
-    enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case updatedAt = "updated_at" }
+    /// Full projections include the conversation transcript. List summaries
+    /// from older servers may omit it, so decoding treats a missing value as
+    /// an empty transcript.
+    let events: [ThreadEvent]
+    enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state, events; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case activePlanItemID = "active_plan_item_id"; case updatedAt = "updated_at" }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        status = try values.decode(String.self, forKey: .status)
+        revision = try values.decode(Int.self, forKey: .revision)
+        runtimeVersion = try values.decodeIfPresent(Int.self, forKey: .runtimeVersion) ?? 1
+        activeJobID = try values.decodeIfPresent(String.self, forKey: .activeJobID)
+        activePlanItemID = try values.decodeIfPresent(String.self, forKey: .activePlanItemID)
+        job = try values.decodeIfPresent(CreationJob.self, forKey: .job)
+        updatedAt = try values.decode(Date.self, forKey: .updatedAt)
+        state = try values.decodeIfPresent([String: JSONValue].self, forKey: .state)
+        events = try values.decodeIfPresent([ThreadEvent].self, forKey: .events) ?? []
+    }
+
     var summary: ProjectSummary {
-        ProjectSummary(
+        let playableVariant = selectedPlayableVariant
+        let outputVariantID: String?
+        if let playableVariant {
+            outputVariantID = playableVariant.variantID
+        } else {
+            outputVariantID = selectedVariantID
+        }
+        return ProjectSummary(
             id: UUID(uuidString: id) ?? UUID(),
             title: title,
             status: projectStatus,
             updatedAt: updatedAt,
-            posterURL: nil,
+            posterURL: playableVariant?.posterURL,
+            outputURL: playableVariant?.outputURL,
+            outputVariantID: outputVariantID,
             runtimeVersion: runtimeVersion,
             serverRevision: revision,
-            activeJobID: activeJobID.flatMap(UUID.init(uuidString:))
+            activeJobID: activeJobID.flatMap(UUID.init(uuidString:)),
+            activePlanItemID: activePlanItemID
         )
+    }
+
+    /// List projections intentionally omit media URLs, but their state and
+    /// variant lifecycle still identify the edit the user selected.
+    private var selectedVariantID: String? {
+        let variants = job?.variants ?? []
+        if let selectedID = state?["selected_variant_id"]?.stringValue,
+           variants.contains(where: { $0.variantID == selectedID }) {
+            return selectedID
+        }
+        return variants.first {
+            guard let status = $0.renderStatus?.lowercased() else { return false }
+            return status == "ready" && $0.variantID != nil
+        }?.variantID
+    }
+
+    /// Prefer the server-selected variant, but only when it has media. A
+    /// selected variant can be absent from list projections' URL-free payload;
+    /// in that case, fall back to the first playable variant in the full
+    /// projection. Ready and terminal-failure variants may carry a last-good
+    /// URL; an in-flight variant must not displace the currently playable cut.
+    private var selectedPlayableVariant: CreationVariant? {
+        let variants = job?.variants ?? []
+        if let selectedID = state?["selected_variant_id"]?.stringValue,
+           let selected = variants.first(where: { $0.variantID == selectedID && $0.isPlayable }) {
+            return selected
+        }
+        return variants.first(where: \.isPlayable)
     }
     private var projectStatus: ProjectStatus {
         guard activeJobID != nil else { return .draft }
@@ -155,7 +230,53 @@ struct CreationThread: Codable, Identifiable, Sendable {
         return .rendering
     }
 }
-struct CreationJob: Codable, Sendable { let id: String; let status: String }
+struct CreationVariant: Codable, Sendable {
+    let variantID: String?
+    let renderStatus: String?
+    let renderGenerationID: String?
+    let renderFinishedAt: String?
+    let outputURL: URL?
+    let posterURL: URL?
+    let failureReason: String?
+
+    var isPlayable: Bool {
+        guard outputURL != nil, let status = renderStatus?.lowercased() else { return false }
+        return ["ready", "failed", "error", "render_failed"].contains(status)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case variantID = "variant_id"
+        case renderStatus = "render_status"
+        case renderGenerationID = "render_generation_id"
+        case renderFinishedAt = "render_finished_at"
+        case outputURL = "output_url"
+        case posterURL = "poster_url"
+        case failureReason = "failure_reason"
+    }
+}
+
+struct CreationJob: Codable, Sendable {
+    let id: String
+    let status: String
+    let currentPhase: String?
+    let failureReason: String?
+    let variants: [CreationVariant]
+
+    enum CodingKeys: String, CodingKey {
+        case id, status, variants
+        case currentPhase = "current_phase"
+        case failureReason = "failure_reason"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        status = try values.decode(String.self, forKey: .status)
+        currentPhase = try values.decodeIfPresent(String.self, forKey: .currentPhase)
+        failureReason = try values.decodeIfPresent(String.self, forKey: .failureReason)
+        variants = try values.decodeIfPresent([CreationVariant].self, forKey: .variants) ?? []
+    }
+}
 struct ThreadDelta: Codable, Sendable { let threadID: String; let runtimeVersion: Int; let status: String; let threadRevision: Int; let events: [ThreadEvent]; let afterSequence: Int; let nextAfterSequence: Int; let hasMore: Bool; enum CodingKeys: String, CodingKey { case threadID = "thread_id"; case runtimeVersion = "runtime_version"; case status; case threadRevision = "thread_revision"; case events; case afterSequence = "after_sequence"; case nextAfterSequence = "next_after_sequence"; case hasMore = "has_more" } }
 struct ThreadEvent: Codable, Identifiable, Sendable { let id: String; let sequence: Int; let revision: Int; let role: String; let eventType: String; let content: String?; let payload: [String: JSONValue]?; let createdAt: Date; enum CodingKeys: String, CodingKey { case id, sequence, revision, role, content, payload; case eventType = "event_type"; case createdAt = "created_at" } }
 struct DraftSnapshot: Codable, Sendable {
@@ -182,10 +303,15 @@ struct OpenInEditorResponse: Codable, Sendable, Equatable {
     }
 }
 
+enum EditorMusicAlignment: String, Codable, Equatable, Sendable {
+    case preserveCuts = "preserve_cuts"
+    case resyncBeats = "resync_beats"
+}
+
 struct EditorCommitMusicWindow: Codable, Equatable, Sendable {
     var startS: Double
-    var alignment: String
-    init(startS: Double, alignment: String = "preserve_cuts") { self.startS = startS; self.alignment = alignment }
+    var alignment: EditorMusicAlignment
+    init(startS: Double, alignment: EditorMusicAlignment = .preserveCuts) { self.startS = startS; self.alignment = alignment }
     private enum CodingKeys: String, CodingKey { case startS = "start_s"; case alignment }
 }
 
@@ -242,14 +368,6 @@ enum EditorCommitLyricsOverridesPatch: Equatable, Sendable {
     case replace([String: JSONValue])
 }
 
-/// Tri-state title patch. The editor endpoint treats an explicit JSON null as
-/// "clear the title" while an omitted title leaves it unchanged.
-enum EditorCommitTitlePatch: Equatable, Sendable {
-    case omitted
-    case remove
-    case replace(String)
-}
-
 enum EditorCarouselMomentPatch: Equatable, Sendable {
     case omitted
     case remove
@@ -278,7 +396,6 @@ struct EditorCommitRequest: Codable, Sendable {
     var cameraEffects: [JSONValue]?
     var carouselMoment: EditorCarouselMomentPatch
     var title: String?
-    var titlePatch: EditorCommitTitlePatch
     var acceptedSuggestionIDs: [String]?
     var copilotReceiptIDs: [UUID]
     var guidedRevision: [String: JSONValue]?
@@ -286,8 +403,8 @@ struct EditorCommitRequest: Codable, Sendable {
     var retryGuidedRevision: Bool
     var baseGeneration: String
 
-    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, title: String? = nil, titlePatch: EditorCommitTitlePatch = .omitted, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, baseGeneration: String) {
-        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.lyrics = lyrics; self.orientation = orientation; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title; self.titlePatch = titlePatch; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.baseGeneration = baseGeneration
+    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, title: String? = nil, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, baseGeneration: String) {
+        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.lyrics = lyrics; self.orientation = orientation; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.baseGeneration = baseGeneration
     }
 
     private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case lyrics; case orientation; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case baseGeneration = "base_generation" }
@@ -295,12 +412,12 @@ struct EditorCommitRequest: Codable, Sendable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(timelineSlots, forKey: .timelineSlots); try c.encodeIfPresent(textElements, forKey: .textElements); try c.encodeIfPresent(captionCues, forKey: .captionCues); try c.encodeIfPresent(captionMeta, forKey: .captionMeta); try c.encodeIfPresent(mix, forKey: .mix); try c.encodeIfPresent(musicTrackID, forKey: .musicTrackID); try c.encode(removeMusic, forKey: .removeMusic); try c.encodeIfPresent(musicWindow, forKey: .musicWindow); try c.encodeIfPresent(backgroundMusic, forKey: .backgroundMusic); try c.encodeIfPresent(lyrics, forKey: .lyrics); try c.encodeIfPresent(orientation, forKey: .orientation); try c.encodeIfPresent(soundEffects, forKey: .soundEffects); try c.encodeIfPresent(mediaOverlays, forKey: .mediaOverlays); try c.encodeIfPresent(visualBlocks, forKey: .visualBlocks); try c.encodeIfPresent(motionScenes, forKey: .motionScenes); try c.encodeIfPresent(motionRuntimeHash, forKey: .motionRuntimeHash); try c.encodeIfPresent(cameraEffects, forKey: .cameraEffects)
         switch carouselMoment { case .omitted: break; case .remove: try c.encodeNil(forKey: .carouselMoment); case let .replace(value): try c.encode(value, forKey: .carouselMoment) }
-        switch titlePatch { case .omitted: try c.encodeIfPresent(title, forKey: .title); case .remove: try c.encodeNil(forKey: .title); case let .replace(value): try c.encode(value, forKey: .title) }
+        try c.encodeIfPresent(title, forKey: .title)
         try c.encodeIfPresent(acceptedSuggestionIDs, forKey: .acceptedSuggestionIDs); if !copilotReceiptIDs.isEmpty { try c.encode(copilotReceiptIDs, forKey: .copilotReceiptIDs) }; try c.encodeIfPresent(guidedRevision, forKey: .guidedRevision); try c.encodeIfPresent(guidedRevisionNumber, forKey: .guidedRevisionNumber); if retryGuidedRevision { try c.encode(retryGuidedRevision, forKey: .retryGuidedRevision) }; try c.encode(baseGeneration, forKey: .baseGeneration)
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; if !c.contains(.title) { title = nil; titlePatch = .omitted } else if try c.decodeNil(forKey: .title) { title = nil; titlePatch = .remove } else { let value = try c.decode(String.self, forKey: .title); title = value; titlePatch = .replace(value) }; acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
+        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; title = try c.decodeIfPresent(String.self, forKey: .title); acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
     }
 }
 
@@ -446,15 +563,25 @@ struct KriaAPI: KriaAPIClient {
     /// refresh/retry behavior; endpoint DTO drift still fails this target.
     private let checkedClient: Client
     private let refreshCoordinator: MobileSessionRefreshCoordinator
+    /// Compile-time sentinels: removing any critical native route from the
+    /// server-owned mobile OpenAPI subset must break the iOS build.
+    private static let checkedEditorOperationIDs = [
+        Operations.applyCreationAction.id,
+        Operations.openLibraryJobInEditor.id,
+        Operations.getGenerativeJobStatus.id,
+        Operations.commitPlanItemEditor.id,
+    ]
     init(baseURL: URL = AppConfiguration.current.apiBaseURL, tokenStore: TokenStore = KeychainTokenStore(), session: URLSession = .shared) {
         self.baseURL = baseURL
         self.tokenStore = tokenStore
         self.session = session
         self.checkedClient = Client(serverURL: baseURL, transport: URLSessionTransport())
         self.refreshCoordinator = MobileSessionRefreshCoordinator()
+        _ = Self.checkedEditorOperationIDs
     }
     func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
+    func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
     func library() async throws -> [ProjectSummary] { try await request(path: "me/jobs", method: "GET", bodyData: nil, decode: LibraryResponse.self).jobs.map { $0.summary } }
     func createThread(message: String?) async throws -> CreationThread { try await request(path: "creation-threads", method: "POST", bodyData: try JSONEncoder().encode(CreateThreadRequest(message: message, clientEventID: UUID().uuidString, runtimeVersion: 2)), decode: CreationThread.self) }
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession { try await request(path: "auth/mobile/exchange", method: "POST", bodyData: try JSONEncoder().encode(["id_token": credential.token, "provider": provider, "nonce": credential.nonce]), decode: MobileSession.self) }
@@ -475,9 +602,11 @@ struct KriaAPI: KriaAPIClient {
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
         try await request(path: "me/jobs/\(jobID.uuidString)/open-in-editor", method: "POST", bodyData: nil, decode: OpenInEditorResponse.self)
     }
+    func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]] {
+        try await request(path: "generative-jobs/\(jobID.uuidString)/status", method: "GET", bodyData: nil, decode: EditorStatusEnvelope.self).variants
+    }
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
-        let status = try await request(path: "generative-jobs/\(jobID.uuidString)/status", method: "GET", bodyData: nil, decode: EditorStatusEnvelope.self)
-        guard let variant = status.variants.first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
+        guard let variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
         return variant
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
@@ -743,7 +872,7 @@ extension DraftSnapshot {
                 "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
-                "camera_effects", "carousel_moment",
+                "motion_runtime_hash", "camera_effects", "carousel_moment",
             ]
             for key in directKeys where authoritativeVariant[key] != nil {
                 sections[key] = authoritativeVariant[key]
@@ -767,9 +896,19 @@ extension DraftSnapshot {
             if let title = authoritativeVariant["track_title"] {
                 sections["music_track_title"] = title
             }
-            if let timeline = Self.object(authoritativeVariant["user_timeline"] ?? authoritativeVariant["ai_timeline"]),
+            // Match the server's `user_timeline or ai_timeline` semantics:
+            // legacy variants can persist an empty object, which is not an
+            // intentional delete-all edit and must not hide the AI slots.
+            let userTimeline = Self.object(authoritativeVariant["user_timeline"])
+            let timeline = userTimeline?.isEmpty == false
+                ? userTimeline
+                : Self.object(authoritativeVariant["ai_timeline"])
+            if let timeline,
                let slotValue = timeline["slots"], case let .array(slots) = slotValue {
                 sections["timeline_slots"] = .array(slots)
+            } else if authoritativeVariant["resolved_archetype"] == .string("narrated") {
+                let slots = Self.narratedTimelineSlots(authoritativeVariant)
+                if !slots.isEmpty { sections["timeline_slots"] = .array(slots) }
             }
             editorPayload["base_generation"] =
                 authoritativeVariant["render_generation_id"]
@@ -779,6 +918,12 @@ extension DraftSnapshot {
                 ?? .string("")
             editorPayload["sections"] = .object(sections)
             document["editor_payload"] = .object(editorPayload)
+            // Capabilities are status-time policy, not draft state. Always
+            // replace a stale/missing draft copy with the authoritative map so
+            // advanced lanes do not stay permanently fail-closed after load.
+            if let capabilities = authoritativeVariant["editor_capabilities"] {
+                document["editor_capabilities"] = capabilities
+            }
         }
 
         let editorPayload = Self.object(document["editor_payload"]) ?? [:]
@@ -835,6 +980,42 @@ extension DraftSnapshot {
     private static func number(_ value: JSONValue?) -> Double? { if case let .number(number) = value { number } else { nil } }
     private static func integer(_ value: JSONValue?) -> Int? { if case let .number(number) = value, number.rounded() == number { Int(number) } else { nil } }
     private static func uuid(_ value: JSONValue?) -> UUID? { value?.stringValue.flatMap(UUID.init(uuidString:)) }
+
+    /// Narrated renders deliberately have no editable `ai_timeline`. Their exact
+    /// visual cut is persisted as paired timings and clip assignments instead.
+    /// Project that pair into canonical slots so native can show the read-only
+    /// filmstrip without claiming the montage timeline is editable.
+    private static func narratedTimelineSlots(_ variant: [String: JSONValue]) -> [JSONValue] {
+        let timings = array(variant["narrated_timings"])
+        let assignments = array(variant["narrated_clip_assignments"])
+        guard !timings.isEmpty, !assignments.isEmpty else { return [] }
+
+        return timings.compactMap { timingValue in
+            guard let timing = object(timingValue),
+                  let stepID = timing["step_id"]?.stringValue,
+                  let start = number(timing["start_s"]),
+                  let end = number(timing["end_s"]),
+                  end > start,
+                  let assignmentIndex = assignments.firstIndex(where: {
+                      object($0)?["step_id"]?.stringValue == stepID
+                  }),
+                  let assignment = object(assignments[assignmentIndex]) else { return nil }
+            let sourceStart = max(0, number(assignment["source_start_s"]) ?? 0)
+            let duration = end - start
+            let clipID = assignment["clip_id"]?.stringValue ?? ""
+            let sourceIndex = clipID.hasPrefix("clip_")
+                ? Int(clipID.dropFirst("clip_".count)) ?? assignmentIndex
+                : assignmentIndex
+            return .object([
+                "slot_id": .string(stepID),
+                "clip_index": .number(Double(sourceIndex)),
+                "in_s": .number(sourceStart),
+                "duration_s": .number(duration),
+                "source_duration_s": .number(sourceStart + duration),
+                "removed": .bool(false),
+            ])
+        }
+    }
 }
 
 enum UploadConsentError: Error, LocalizedError { case required; var errorDescription: String? { "Please confirm that you want Kria to use this cloud footage." } }

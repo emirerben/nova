@@ -9,7 +9,20 @@ enum NativeEditorSaveState: Equatable, Sendable {
     case saved
     case previewPending
     case conflict
+    case loadFailed(String)
+    case previewFailed(String)
     case failed(String)
+}
+
+enum NativeEditorLoadState: Equatable, Sendable {
+    case idle
+    case loading
+    case loaded
+    case failed(String)
+}
+
+@MainActor final class NativeEditorPlaybackClock: ObservableObject {
+    @Published var currentTime: TimeInterval = 0
 }
 
 /// Local-first state for the Paper native editor. Every edit is a synchronous
@@ -17,17 +30,31 @@ enum NativeEditorSaveState: Equatable, Sendable {
 @MainActor final class NativeEditorSession: ObservableObject {
     /// Canonical mutable editor state. The legacy `draft` accessor below is a
     /// compatibility projection for first-pass views and test fixtures.
-    @Published private(set) var document: EditorDocument
+    @Published private(set) var document: EditorDocument {
+        didSet {
+            draftProjectionCache = nil
+            timelineItemsCache = nil
+            timelineClipsCache = nil
+            timelineProjectionCache = nil
+            previewTextCache = nil
+        }
+    }
     /// Cross-kind selection is the source of truth. `selectedClipID` below is
     /// a source-compatible adapter for the first-pass clip views.
     @Published private(set) var selection: EditorSelection?
-    @Published var currentTime: TimeInterval = 0
+    let playbackClock = NativeEditorPlaybackClock()
+    var currentTime: TimeInterval {
+        get { playbackClock.currentTime }
+        set { playbackClock.currentTime = newValue }
+    }
     @Published var duration: TimeInterval = 0
     @Published var isPlaying = false
     @Published var isSaving = false
     @Published var hasUnsavedChanges = false
     @Published var saveState: NativeEditorSaveState = .idle
+    @Published private(set) var loadState: NativeEditorLoadState = .loaded
     @Published var player: AVPlayer?
+    @Published private(set) var isDirectManipulating = false
     @Published private(set) var canEditTimeline = true
     @Published private(set) var canEditText = true
     @Published private(set) var canEditCaptions = false
@@ -39,6 +66,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
 
     var draft: EditorDraft {
         get {
+            if let draftProjectionCache { return draftProjectionCache }
             var projected = projectedDraft(from: document)
             if api == nil, itemID == nil {
                 for index in projected.clips.indices {
@@ -49,6 +77,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
                 }
                 projected.serverSnapshot = compatibilitySnapshot
             }
+            draftProjectionCache = projected
             return projected
         }
         set {
@@ -63,6 +92,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
     }
 
     private let minimumClipDuration: TimeInterval = 0.1
+    private let historyLimit = 100
     private var undoStack: [EditorDocument] = []
     private var redoStack: [EditorDocument] = []
     private var cleanDocument: EditorDocument
@@ -72,6 +102,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
     private var variantKey: String?
     private var jobID: UUID?
     private var previewRefreshTask: Task<Void, Never>?
+    private var pendingPreviewGeneration: String?
     private var changedSections: Set<EditorSection> = []
     private var explicitlyDirtySections: Set<EditorSection> = []
     private var clipIDsBySlot: [String: UUID] = [:]
@@ -79,12 +110,41 @@ enum NativeEditorSaveState: Equatable, Sendable {
     private var compatibilitySnapshot: [String: JSONValue] = [:]
     private var activeTrim: ActiveTrim?
     private var transactionBaseline: EditorDocument?
+    private var draftProjectionCache: EditorDraft?
+    private var activeTimedEdit: ActiveTimedEdit?
+    private var timelineItemsCache: [NativeEditorTimelineItem]?
+    private var timelineClipsCache: [EditorClip]?
+    private var timelineProjectionCache: NativeEditorTimelineProjection?
+    private var previewTextCache: [TextLayer]?
+    /// The local timeline is optimistic while the rendered variant and its
+    /// AVPlayerItem arrive asynchronously. Keep those duration sources
+    /// separate so a stale projection cannot hide the rendered tail.
+    private var authoritativeDuration: TimeInterval?
+    private var mediaDuration: TimeInterval?
+    /// Duration-changing edits temporarily use the optimistic local
+    /// projection. Keep the last rendered durations so undoing back to the
+    /// clean document restores the exact playable boundary.
+    private var durationSourcesInvalidated = false
+    private(set) var timelineProjectionBuildCount = 0
     nonisolated(unsafe) private var timeObserver: Any?
     nonisolated(unsafe) private var observingPlayer: AVPlayer?
+    nonisolated(unsafe) private var endObserver: NSObjectProtocol?
+    private var durationLoadTask: Task<Void, Never>?
+    private let playbackEndTolerance: TimeInterval = 0.05
 
     private struct ActiveTrim {
         let clipID: UUID
         let edge: NativeTrimEdge
+        let baseline: EditorDocument
+        let redoBaseline: [EditorDocument]
+        var recordedUndo = false
+    }
+
+    private enum TimedEditKind { case move, trim }
+    private struct ActiveTimedEdit {
+        let selection: EditorSelection
+        let edge: NativeTrimEdge?
+        let kind: TimedEditKind
         let baseline: EditorDocument
         let redoBaseline: [EditorDocument]
         var recordedUndo = false
@@ -105,7 +165,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
         self.operations = operations
         rememberClipIDs(from: draft, in: initialDocument)
         rememberCompatibilityMetadata(from: draft)
-        duration = draft.clips.map(\.end).max() ?? 0
+        duration = timelineProjection.totalDuration
         // Deterministic UI fixtures exercise every implemented local control.
         // Real projects replace these optimistic defaults from status caps.
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
@@ -118,7 +178,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
     }
 
     convenience init(project: ProjectSummary, operations: any EditorOperations = LocalEditorOperations()) {
-        self.init(draft: EditorDraft(projectID: project.id, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0), operations: operations)
+        self.init(draft: EditorDraft(projectID: project.id, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0), operations: operations, initialPlaybackURL: project.outputURL)
         // A production editor starts fail-closed until the authoritative
         // variant advertises its renderer capabilities. The draft initializer
         // remains locally editable for deterministic fixtures and unit tests.
@@ -126,11 +186,14 @@ enum NativeEditorSaveState: Equatable, Sendable {
         canEditText = false
         canEditCaptions = false
         canEditMix = false
+        loadState = .idle
     }
 
     deinit {
         previewRefreshTask?.cancel()
+        durationLoadTask?.cancel()
         if let timeObserver, let observingPlayer { observingPlayer.removeTimeObserver(timeObserver) }
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -150,7 +213,10 @@ enum NativeEditorSaveState: Equatable, Sendable {
     func capabilityReason(_ key: String) -> String? { document.capabilities[key]?.reason }
     func canEdit(_ key: String) -> Bool { document.capabilities[key]?.editable ?? false }
     func canEdit(_ section: EditorSection) -> Bool { canEditSection(section) }
-    func capability(for section: EditorSection) -> EditorCapability? { document.capabilities[section.rawValue] ?? document.capabilities[sectionCapabilityKey(section)] }
+    func capability(for section: EditorSection) -> EditorCapability? {
+        for key in sectionCapabilityKeys(section) { if let capability = document.capabilities[key] { return capability } }
+        return nil
+    }
     func selectedObject() -> EditorSelection? { selection }
     func inspectorSelection() -> EditorSelection? { selection }
     func inspectorRoute() -> EditorSelectionKind? { selection?.kind }
@@ -164,12 +230,34 @@ enum NativeEditorSaveState: Equatable, Sendable {
     }
     func endTransaction() {
         if let baseline = transactionBaseline, document != baseline {
-            undoStack.append(baseline); redoStack.removeAll()
+            appendUndo(baseline); redoStack.removeAll()
         }
         transactionBaseline = nil
     }
+
+    private func appendUndo(_ value: EditorDocument) {
+        undoStack.append(value)
+        if undoStack.count > historyLimit {
+            undoStack.removeFirst(undoStack.count - historyLimit)
+        }
+    }
+
+    private func appendRedo(_ value: EditorDocument) {
+        redoStack.append(value)
+        if redoStack.count > historyLimit {
+            redoStack.removeFirst(redoStack.count - historyLimit)
+        }
+    }
     func beginEditTransaction() { beginTransaction() }
     func endEditTransaction() { endTransaction() }
+    func beginDirectManipulation() {
+        isDirectManipulating = true
+        beginTransaction()
+    }
+    func endDirectManipulation() {
+        endTransaction()
+        isDirectManipulating = false
+    }
 
     /// Selects any timeline/preview object. Selection seeks without changing
     /// playback state; callers can opt out for compatibility with old clip
@@ -191,74 +279,240 @@ enum NativeEditorSaveState: Equatable, Sendable {
     }
 
     var timelineItems: [NativeEditorTimelineItem] {
-        var items: [NativeEditorTimelineItem] = draft.clips.enumerated().map { index, clip in
-            NativeEditorTimelineItem(selection: EditorSelection(kind: .clip, id: clip.id.uuidString), start: clip.start, end: clip.end, sourceIndex: index)
+        if let timelineItemsCache { return timelineItemsCache }
+        timelineProjectionBuildCount += 1
+        let projection = timelineProjection
+        var items: [NativeEditorTimelineItem] = timelineClips.enumerated().map { index, clip in
+            NativeEditorTimelineItem(
+                selection: EditorSelection(kind: .clip, id: clip.id.uuidString),
+                start: clip.start,
+                end: clip.end,
+                sourceIndex: index
+            )
         }
-        items += document.textElements.enumerated().map { index, item in NativeEditorTimelineItem(selection: EditorSelection(kind: .text, id: item.id), start: item.startS, end: item.endS, zIndex: 300, sourceIndex: index) }
-        items += document.captionCues.enumerated().map { index, item in NativeEditorTimelineItem(selection: EditorSelection(kind: .captionCue, id: item.id), start: item.startS, end: item.endS, zIndex: 400, sourceIndex: index) }
-        items += document.soundEffects.enumerated().map { index, item in NativeEditorTimelineItem(selection: EditorSelection(kind: .soundEffect, id: item.id), start: item.startS, end: item.endS, zIndex: 100, sourceIndex: index) }
-        items += document.mediaOverlays.enumerated().map { index, item in NativeEditorTimelineItem(selection: EditorSelection(kind: .mediaOverlay, id: item.id), start: item.startS, end: item.endS, zIndex: 200, sourceIndex: index) }
-        items += document.visualBlocks.enumerated().map { index, item in NativeEditorTimelineItem(selection: EditorSelection(kind: .visualBlock, id: item.id), start: item.startS, end: item.endS, zIndex: 150, sourceIndex: index) }
-        items += document.motionScenes.enumerated().map { index, item in NativeEditorTimelineItem(selection: EditorSelection(kind: .motionScene, id: item.id), start: item.startS, end: item.endS, zIndex: 250, sourceIndex: index) }
-        items += document.cameraEffects.enumerated().map { index, item in NativeEditorTimelineItem(selection: EditorSelection(kind: .cameraEffect, id: item.id), start: item.startS, end: item.endS, zIndex: 260, sourceIndex: index) }
-        if let music = document.music { items.append(NativeEditorTimelineItem(selection: EditorSelection(kind: .music, id: music.trackID), start: music.startS, end: max(duration, music.startS + duration), zIndex: 50, sourceIndex: 0)) }
+        func projected(
+            _ selection: EditorSelection,
+            start: TimeInterval,
+            end: TimeInterval,
+            zIndex: Int,
+            sourceIndex: Int
+        ) -> NativeEditorTimelineItem {
+            let range = projection.projectBaseInterval(start: start, end: end)
+            return NativeEditorTimelineItem(
+                selection: selection,
+                start: range.start,
+                end: range.end,
+                zIndex: zIndex,
+                sourceIndex: sourceIndex
+            )
+        }
+        items += document.textElements.enumerated().map { index, item in projected(EditorSelection(kind: .text, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 300 + index), sourceIndex: index) }
+        items += document.captionCues.enumerated().map { index, item in projected(EditorSelection(kind: .captionCue, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 400 + index), sourceIndex: index) }
+        items += document.soundEffects.enumerated().map { index, item in projected(EditorSelection(kind: .soundEffect, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 100 + index), sourceIndex: index) }
+        items += document.mediaOverlays.enumerated().map { index, item in projected(EditorSelection(kind: .mediaOverlay, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 200 + index), sourceIndex: index) }
+        items += document.visualBlocks.enumerated().map { index, item in projected(EditorSelection(kind: .visualBlock, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 150 + index), sourceIndex: index) }
+        items += document.motionScenes.enumerated().map { index, item in projected(EditorSelection(kind: .motionScene, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 250 + index), sourceIndex: index) }
+        items += document.cameraEffects.enumerated().map { index, item in projected(EditorSelection(kind: .cameraEffect, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 260 + index), sourceIndex: index) }
+        if let carousel = projection.carouselItem { items.append(carousel) }
+        if let music = document.music {
+            items.append(
+                NativeEditorTimelineItem(
+                    selection: EditorSelection(kind: .music, id: music.trackID),
+                    start: 0,
+                    end: max(minimumClipDuration, projection.totalDuration),
+                    zIndex: 50,
+                    sourceIndex: 0
+                )
+            )
+        }
+        timelineItemsCache = items
         return items
     }
 
-    func load(api: any KriaAPIClient, threadID: UUID) async {
-        self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving
+    var timelineProjection: NativeEditorTimelineProjection {
+        if let timelineProjectionCache { return timelineProjectionCache }
+        let value = NativeEditorInteraction.timelineProjection(
+            slots: document.clips,
+            carousel: document.carouselMoment
+        )
+        timelineProjectionCache = value
+        return value
+    }
+
+    /// Canonical clip projection for timeline/media views. This deliberately
+    /// avoids the compatibility `draft` encoder on playback-clock ticks.
+    var timelineClips: [EditorClip] {
+        if let timelineClipsCache { return timelineClipsCache }
+        let clips = timelineProjection.clipWindows.compactMap { window -> EditorClip? in
+            guard document.clips.indices.contains(window.sourceIndex) else { return nil }
+            let slot = document.clips[window.sourceIndex]
+            let id = clipID(for: slot.id)
+            let duration = max(minimumClipDuration, window.end - window.start)
+            let sourceStart = max(0, slot.inS)
+            let sourceDuration = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
+            let assetID = slot.raw["asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? id
+            return EditorClip(
+                id: id,
+                assetID: assetID,
+                sourceClipIndex: slot.clipIndex,
+                start: window.start,
+                end: window.end,
+                trimIn: sourceStart,
+                trimOut: sourceStart + duration,
+                sourceDuration: sourceDuration,
+                muted: slot.raw["muted"] == .bool(true),
+                slotID: slot.id
+            )
+        }
+        timelineClipsCache = clips
+        return clips
+    }
+
+    /// Text projection used by the preview without serializing the document.
+    var previewTextLayers: [TextLayer] {
+        if let previewTextCache { return previewTextCache }
+        let layers = document.textElements.compactMap { item -> TextLayer? in
+            guard let id = UUID(uuidString: item.id) else { return nil }
+            let x = Self.number(item.raw["x_frac"] ?? item.raw["x"]) ?? 0.5
+            let y = Self.number(item.raw["y_frac"] ?? item.raw["y"]) ?? 0.5
+            let style = item.raw["font_family"]?.stringValue ?? item.raw["style"]?.stringValue ?? "Fraunces"
+            return TextLayer(id: id, content: item.text, position: CGPoint(x: x, y: y), style: style)
+        }
+        previewTextCache = layers
+        return layers
+    }
+
+    func load(api: any KriaAPIClient, threadID: UUID, variantID: String? = nil, allowPlaybackFallback: Bool = true) async {
+        self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
         defer { isSaving = false }
         do {
             let snapshot = try await api.draft(threadID: threadID)
             let jobID = snapshot.baseJobID.flatMap(UUID.init)
             self.jobID = jobID
             let authoritativeVariant: [String: JSONValue]?
-            if let jobID { authoritativeVariant = try? await api.editorVariant(jobID: jobID, variantID: snapshot.variantKey) }
+            let requestedVariantKey = variantID ?? snapshot.variantKey
+            if let jobID { authoritativeVariant = try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) }
             else { authoritativeVariant = nil }
             draft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
             configureCapabilities(from: authoritativeVariant)
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
-            itemID = snapshot.itemID; variantKey = snapshot.variantKey
-            duration = draft.clips.map(\.end).max() ?? 0
+            itemID = snapshot.itemID; variantKey = requestedVariantKey
+            durationSourcesInvalidated = false
+            setAuthoritativeDuration(Self.number(authoritativeVariant?["duration_s"]))
+            refreshDuration()
             if let output = authoritativeVariant?["output_url"]?.stringValue, let url = URL(string: output) {
-                installPlayer(url: url)
-            } else if let jobID, let url = try? await api.playbackURL(jobID: jobID) {
-                installPlayer(url: url)
+                installPlayer(url: url, preferredDuration: authoritativeDuration)
+            } else if allowPlaybackFallback, let jobID, let url = try? await api.playbackURL(jobID: jobID) {
+                installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
+            loadState = .loaded
         } catch {
-            saveState = .failed(error.localizedDescription)
+            saveState = .loadFailed(error.localizedDescription)
+            loadState = .failed(error.localizedDescription)
         }
     }
 
     func load(project: ProjectSummary, api: any KriaAPIClient) async {
-        await load(api: api, threadID: project.id)
-        if player == nil, let jobID = project.activeJobID, let url = try? await api.playbackURL(jobID: jobID) { installPlayer(url: url) }
+        loadState = .loading
+        var resolvedProject = project
+        if project.activeJobID != nil,
+           (project.activePlanItemID == nil || project.outputVariantID == nil),
+           let refreshed = try? await api.project(threadID: project.id) {
+            resolvedProject = refreshed.summary
+        }
+        if let jobID = resolvedProject.activeJobID,
+           let itemID = resolvedProject.activePlanItemID,
+           let variantID = resolvedProject.outputVariantID {
+            await load(
+                editorJobID: jobID,
+                planItemID: itemID,
+                preferredVariantID: variantID,
+                threadID: project.id,
+                api: api
+            )
+        } else if let jobID = resolvedProject.activeJobID {
+            await load(
+                editorJobID: jobID,
+                planItemID: resolvedProject.activePlanItemID,
+                preferredVariantID: resolvedProject.outputVariantID,
+                threadID: project.id,
+                api: api
+            )
+        } else {
+            await load(api: api, threadID: project.id, variantID: resolvedProject.outputVariantID, allowPlaybackFallback: resolvedProject.outputURL == nil)
+        }
+        if player == nil, let url = resolvedProject.outputURL {
+            installPlayer(url: url, preferredDuration: authoritativeDuration)
+        } else if player == nil, let jobID = resolvedProject.activeJobID, let url = try? await api.playbackURL(jobID: jobID) {
+            installPlayer(url: url, preferredDuration: authoritativeDuration)
+        }
     }
 
     /// Gallery rows are render jobs, not creation-thread IDs. Promote the job
     /// through the server's idempotent editor route, then project its live
     /// variant into the same local draft model used by conversation projects.
     func load(libraryJobID: UUID, api: any KriaAPIClient) async {
+        await load(editorJobID: libraryJobID, planItemID: nil, preferredVariantID: nil, threadID: nil, api: api)
+    }
+
+    private func load(
+        editorJobID: UUID,
+        planItemID: String?,
+        preferredVariantID: String?,
+        threadID: UUID?,
+        api: any KriaAPIClient
+    ) async {
         self.api = api
-        threadID = nil
-        jobID = libraryJobID
+        self.threadID = threadID
+        jobID = editorJobID
         isSaving = true
         saveState = .saving
+        loadState = .loading
         defer { isSaving = false }
         do {
-            let receipt = try await api.openJobInEditor(jobID: libraryJobID)
-            let variant = try await api.editorVariant(jobID: libraryJobID, variantID: receipt.variantID)
+            let receipt: OpenInEditorResponse? = if planItemID == nil {
+                try await api.openJobInEditor(jobID: editorJobID)
+            } else {
+                nil
+            }
+            guard let resolvedPlanItemID = planItemID ?? receipt?.planItemID else {
+                throw APIError.invalidResponse
+            }
+            let resolved: (variantID: String, variant: [String: JSONValue])
+            if let requestedVariantID = preferredVariantID ?? receipt?.variantID {
+                do {
+                    resolved = (
+                        requestedVariantID,
+                        try await api.editorVariant(jobID: editorJobID, variantID: requestedVariantID)
+                    )
+                } catch where receipt != nil && requestedVariantID != receipt?.variantID {
+                    resolved = (
+                        receipt!.variantID,
+                        try await api.editorVariant(jobID: editorJobID, variantID: receipt!.variantID)
+                    )
+                }
+            } else {
+                let variants = try await api.editorVariants(jobID: editorJobID)
+                guard let variant = variants.first(where: {
+                    $0["render_status"]?.stringValue == "ready" && $0["variant_id"]?.stringValue != nil
+                }) ?? variants.first(where: { $0["variant_id"]?.stringValue != nil }),
+                      let variantID = variant["variant_id"]?.stringValue else {
+                    throw APIError.invalidResponse
+                }
+                resolved = (variantID, variant)
+            }
+            let variant = resolved.variant
             let generation = variant["render_generation_id"]?.stringValue
                 ?? variant["render_finished_at"]?.stringValue
                 ?? ""
             let snapshot = DraftSnapshot(
-                draftID: "gallery-\(libraryJobID.uuidString)",
-                itemID: receipt.planItemID,
-                variantKey: receipt.variantID,
+                draftID: "job-\(editorJobID.uuidString)",
+                itemID: resolvedPlanItemID,
+                variantKey: resolved.variantID,
                 draftRevision: 0,
                 snapshotHash: "",
                 etag: "",
-                baseJobID: libraryJobID.uuidString,
+                baseJobID: editorJobID.uuidString,
                 baseGenerationID: generation,
                 snapshot: [:],
                 canUndo: false,
@@ -273,23 +527,38 @@ enum NativeEditorSaveState: Equatable, Sendable {
             explicitlyDirtySections.removeAll()
             hasUnsavedChanges = false
             saveState = .idle
-            itemID = receipt.planItemID
-            variantKey = receipt.variantID
+            itemID = resolvedPlanItemID
+            variantKey = resolved.variantID
+            durationSourcesInvalidated = false
+            setAuthoritativeDuration(Self.number(variant["duration_s"]))
             refreshDuration()
             if let output = variant["output_url"]?.stringValue, let url = URL(string: output) {
-                installPlayer(url: url)
-            } else if let url = try? await api.playbackURL(jobID: libraryJobID) {
-                installPlayer(url: url)
+                installPlayer(url: url, preferredDuration: authoritativeDuration)
+            } else if let url = try? await api.playbackURL(jobID: editorJobID) {
+                installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
+            loadState = .loaded
         } catch {
-            saveState = .failed(error.localizedDescription)
+            saveState = .loadFailed(error.localizedDescription)
+            loadState = .failed(error.localizedDescription)
         }
     }
 
     func togglePlayback() {
         guard let player else { isPlaying = false; return }
-        if isPlaying { player.pause() } else { player.play() }
-        isPlaying.toggle()
+        if isPlaying {
+            player.pause()
+            isPlaying = false
+            return
+        }
+        // AVPlayer does not automatically restart after an end notification.
+        // Make replay deterministic and keep clock and transport in lockstep.
+        if duration > 0, currentTime >= duration - playbackEndTolerance {
+            player.seek(to: .zero)
+            currentTime = 0
+        }
+        player.play()
+        isPlaying = true
     }
 
     func seek(to time: TimeInterval) {
@@ -359,14 +628,14 @@ enum NativeEditorSaveState: Equatable, Sendable {
                 active.recordedUndo = false
             }
         } else if !active.recordedUndo {
-            undoStack.append(active.baseline)
+            appendUndo(active.baseline)
             redoStack.removeAll()
             active.recordedUndo = true
         }
         document = next
         activeTrim = active
-        refreshDuration()
         refreshDirtyState()
+        refreshDuration()
     }
 
     func endTrim() {
@@ -392,11 +661,15 @@ enum NativeEditorSaveState: Equatable, Sendable {
     // MARK: - Typed clip inspector mutations
 
     func setClipLookPreset(clipID: String, preset: String?) {
-        mutateClip(clipID: clipID) { $0.lookPreset = preset }
+        let value = preset ?? "none"
+        guard NativeEditorWireContract.lookPresets.contains(value) else { return }
+        mutateClip(clipID: clipID) { $0.lookPreset = value }
     }
     func setClipLookPreset(clipID: UUID, preset: String?) { setClipLookPreset(clipID: clipID.uuidString, preset: preset) }
     func updateClipLook(clipID: String, preset: String?, adjustments: [String: JSONValue]? = nil) {
-        mutateClip(clipID: clipID) { slot in slot.lookPreset = preset; if let adjustments { slot.lookAdjustments = adjustments } }
+        let value = preset ?? "none"
+        guard NativeEditorWireContract.lookPresets.contains(value) else { return }
+        mutateClip(clipID: clipID) { slot in slot.lookPreset = value; if let adjustments { slot.lookAdjustments = adjustments } }
     }
     func updateClipLook(clipID: UUID, preset: String?, adjustments: [String: JSONValue]? = nil) { updateClipLook(clipID: clipID.uuidString, preset: preset, adjustments: adjustments) }
     func setClipLookAdjustments(clipID: String, adjustments: [String: JSONValue]?) {
@@ -404,7 +677,9 @@ enum NativeEditorSaveState: Equatable, Sendable {
     }
     func setClipLookAdjustments(clipID: UUID, adjustments: [String: JSONValue]?) { setClipLookAdjustments(clipID: clipID.uuidString, adjustments: adjustments) }
     func setClipTransition(clipID: String, transition: String, durationS: Double? = nil) {
-        mutateClip(clipID: clipID) { $0.transitionAfter = transition; $0.transitionDurationS = durationS }
+        guard NativeEditorWireContract.transitions.contains(transition) else { return }
+        let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 1) }
+        mutateClip(clipID: clipID) { $0.transitionAfter = transition; $0.transitionDurationS = duration }
     }
     func setClipTransition(clipID: UUID, transition: String, durationS: Double? = nil) { setClipTransition(clipID: clipID.uuidString, transition: transition, durationS: durationS) }
     func setClipTiming(clipID: String, inS: Double? = nil, durationS: Double? = nil, durationBeats: Int? = nil) {
@@ -492,7 +767,11 @@ enum NativeEditorSaveState: Equatable, Sendable {
     func setTextSize(id: String, sizePX: Double?) { setTextRaw(id: id, key: "size_px", value: sizePX.map(JSONValue.number) ?? .null) }
     func setTextWidth(id: String, width: Double?) { setTextRaw(id: id, key: "max_width_frac", value: width.map { .number(min(max(0.2, $0), 1)) } ?? .null) }
     func setTextAlignment(id: String, alignment: String?) { setTextRaw(id: id, key: "alignment", value: alignment.map(JSONValue.string) ?? .null) }
-    func setTextAnimation(id: String, animation: String?) { setTextRaw(id: id, key: "effect", value: animation.map(JSONValue.string) ?? .null) }
+    func setTextAnimation(id: String, animation: String?) {
+        let value = animation ?? "none"
+        guard NativeEditorWireContract.textAnimations.contains(value) else { return }
+        setTextRaw(id: id, key: "effect", value: .string(value))
+    }
     func setTextColor(id: String, color: String?) { setTextRaw(id: id, key: "color", value: color.map(JSONValue.string) ?? .null) }
     func setTextHighlightColor(id: String, color: String?) { setTextRaw(id: id, key: "highlight_color", value: color.map(JSONValue.string) ?? .null) }
     func setTextShadow(id: String, enabled: Bool) { setTextRaw(id: id, key: "shadow_enabled", value: .bool(enabled)) }
@@ -517,6 +796,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
         transactDocument(section: .captionMeta) { $0.captionMeta["enabled"] = .bool(!enabled) }
     }
     func setCaptionStyle(_ style: String) {
+        guard ["sentence", "word"].contains(style) else { return }
         guard canEditSection(.captionMeta) else { return }
         transactDocument(section: .captionMeta) { $0.captionMeta["style"] = .string(style) }
     }
@@ -528,13 +808,20 @@ enum NativeEditorSaveState: Equatable, Sendable {
         guard canEditSection(.captionMeta) else { return }
         transactDocument(section: .captionMeta) { $0.captionMeta[key] = value ?? .null }
     }
-    func setCaptionFont(_ font: String?) { setCaptionMeta(key: "font", value: font.map(JSONValue.string)) }
-    func setCaptionSize(_ sizePX: Double?) { setCaptionMeta(key: "size_px", value: sizePX.map(JSONValue.number)) }
+    func setCaptionFont(_ font: String?) {
+        if let font, !NativeEditorWireContract.captionFonts.contains(font) { return }
+        guard canEditSection(.captionMeta) else { return }
+        transactDocument(section: .captionMeta) {
+            $0.captionMeta["font"] = font.map(JSONValue.string) ?? .null
+            $0.captionMeta["font_set"] = .bool(true)
+        }
+    }
+    func setCaptionSize(_ sizePX: Double?) { setCaptionMeta(key: "size_px", value: sizePX.map { .number(min(max(36, $0.rounded()), 160)) }) }
     func setCaptionColor(_ color: String?) { setCaptionMeta(key: "color", value: color.map(JSONValue.string)) }
     func setCaptionHighlightColor(_ color: String?) { setCaptionMeta(key: "highlight_color", value: color.map(JSONValue.string)) }
     func setCaptionStrokeWidth(_ width: Double?) { setCaptionMeta(key: "stroke_width", value: width.map(JSONValue.number)) }
     func setCaptionShadowEnabled(_ enabled: Bool) { setCaptionMeta(key: "shadow_enabled", value: .bool(enabled)) }
-    func setCaptionPositionY(_ y: Double?) { setCaptionMeta(key: "y_frac", value: y.map { .number(min(max(0, $0), 1)) }) }
+    func setCaptionPositionY(_ y: Double?) { setCaptionMeta(key: "y_frac", value: y.map { .number(min(max(0.30, $0), 0.90)) }) }
 
     func updateCaptionCue(id: String, text: String? = nil, startS: Double? = nil, endS: Double? = nil) {
         guard canEditSection(.captions) else { return }
@@ -547,6 +834,186 @@ enum NativeEditorSaveState: Equatable, Sendable {
     }
     func updateCaptionCue(id: UUID, text: String? = nil, startS: Double? = nil, endS: Double? = nil) { updateCaptionCue(id: id.uuidString, text: text, startS: startS, endS: endS) }
 
+    // MARK: - Timed visual and sound lanes
+
+    func setSoundEffectTiming(id: String, atS: Double? = nil, startS: Double? = nil, endS: Double? = nil) {
+        mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.timing", "sfx.timing", "sound_effects.timing", "lanes.sfx"]) { effect in
+            if let atS { effect.pointS = max(0, atS); effect.startS = max(0, atS) }
+            if let startS { effect.startS = max(0, startS); if effect.pointS != nil { effect.pointS = effect.startS } }
+            if let endS { effect.endS = max(effect.startS + minimumClipDuration, endS) }
+            effect.endS = max(effect.startS + minimumClipDuration, effect.endS)
+        }
+    }
+    func setSoundEffectTrim(id: String, trimStartS: Double? = nil, trimEndS: Double? = nil) {
+        mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.trim", "sfx.trim", "sound_effects.trim", "lanes.sfx"]) { effect in
+            if let trimStartS { effect.raw["trim_start_s"] = .number(max(0, trimStartS)) }
+            if let trimEndS { effect.raw["trim_end_s"] = .number(max(0, trimEndS)) }
+        }
+    }
+    func setSoundEffectGain(id: String, gain: Double) {
+        mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.gain", "sfx.gain", "sound_effects.gain", "lanes.sfx"]) { $0.raw["gain"] = .number(min(max(0, gain), 2)) }
+    }
+    func removeSoundEffect(id: String) {
+        guard canEditOperation(["lanes.sfx.remove", "sfx.remove", "sound_effects.remove", "lanes.sfx"], section: .soundEffects) else { return }
+        transactDocument(section: .soundEffects) { $0.soundEffects.removeAll { $0.id == id } }
+    }
+
+    func setMediaOverlayTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
+        mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.timing", "overlays.timing", "media_overlays.timing", "lanes.overlays"]) { effect in
+            if let startS { effect.startS = max(0, startS) }
+            if let endS { effect.endS = max(effect.startS + minimumClipDuration, endS) }
+        }
+    }
+    func setMediaOverlayPosition(id: String, x: Double, y: Double) {
+        mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.position", "overlays.position", "media_overlays.position", "lanes.overlays"]) { effect in
+            effect.raw["x_frac"] = .number(min(max(0, x), 1)); effect.raw["y_frac"] = .number(min(max(0, y), 1))
+        }
+    }
+    func setMediaOverlayScale(id: String, scale: Double) {
+        mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.scale", "overlays.scale", "media_overlays.scale", "lanes.overlays"]) { $0.raw["scale"] = .number(min(max(0.05, scale), 1)) }
+    }
+    func setMediaOverlayDisplayMode(id: String, mode: String) {
+        mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.display_mode", "overlays.display_mode", "media_overlays.display_mode", "lanes.overlays"]) { $0.raw["display_mode"] = .string(mode) }
+    }
+    func setMediaOverlayZIndex(id: String, z: Double) {
+        mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["layers.reorder", "layer_order", "lanes.overlays.z_order", "lanes.overlays"]) { $0.raw["z"] = .number(z) }
+    }
+    func removeMediaOverlay(id: String) {
+        guard canEditOperation(["lanes.overlays.remove", "overlays.remove", "media_overlays.remove", "lanes.overlays"], section: .mediaOverlays) else { return }
+        transactDocument(section: .mediaOverlays) { $0.mediaOverlays.removeAll { $0.id == id } }
+    }
+
+    func setVisualBlockTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
+        guard canEditOperation(["lanes.visual_blocks.timing", "visual_blocks.timing", "lanes.visual_blocks"], section: .visualBlocks),
+              let index = document.visualBlocks.firstIndex(where: { $0.id == id }),
+              document.visualBlocks[index].kind != "montage" else { return }
+        transactDocument(section: .visualBlocks) { document in
+            var value = document.visualBlocks[index]
+            if let startS { value.startS = max(0, startS) }
+            if let endS { value.endS = max(value.startS + minimumClipDuration, endS) }
+            if value.kind == "text_card" {
+                value.endS = min(value.endS, value.startS + 10)
+            } else if value.kind == "media",
+                      value.raw["media_kind"]?.stringValue == "video" {
+                let sourceDuration = Self.number(value.raw["source_duration_s"])
+                let trimStart = Self.number(value.raw["trim_start_s"]) ?? 0
+                let trimEnd = Self.number(value.raw["trim_end_s"]) ?? sourceDuration
+                if let trimEnd {
+                    value.endS = min(value.endS, value.startS + max(minimumClipDuration, trimEnd - trimStart))
+                }
+            }
+            document.visualBlocks[index] = value
+        }
+    }
+    func setVisualBlockPreset(id: String, preset: String?) {
+        guard document.visualBlocks.first(where: { $0.id == id })?.kind == "text_card" else { return }
+        mutateVisualBlock(id: id, operationKeys: ["lanes.visual_blocks.style_preset_id", "visual_blocks.style_preset_id", "lanes.visual_blocks"]) { block in
+            block.raw["style_preset_id"] = preset.map(JSONValue.string) ?? .null
+            block.raw.removeValue(forKey: "preset")
+        }
+    }
+    func setVisualBlockTransform(
+        id: String,
+        fitMode: String? = nil,
+        focalX: Double? = nil,
+        focalY: Double? = nil,
+        zoom: Double? = nil
+    ) {
+        guard document.visualBlocks.first(where: { $0.id == id })?.kind == "media" else { return }
+        mutateVisualBlock(id: id, operationKeys: ["lanes.visual_blocks.transform", "visual_blocks.transform", "lanes.visual_blocks"]) { block in
+            var transform = Self.object(block.raw["transform"]) ?? [:]
+            if let fitMode, ["contain", "cover"].contains(fitMode) { transform["fit_mode"] = .string(fitMode) }
+            if let focalX { transform["focal_x"] = .number(min(max(0, focalX), 1)) }
+            if let focalY { transform["focal_y"] = .number(min(max(0, focalY), 1)) }
+            if let zoom { transform["zoom"] = .number(min(max(1, zoom), 4)) }
+            block.raw["transform"] = .object(transform)
+            block.raw.removeValue(forKey: "rotation")
+        }
+    }
+    func setVisualBlockOverlayLayout(id: String, x: Double? = nil, y: Double? = nil, scale: Double? = nil) {
+        guard document.visualBlocks.first(where: { $0.id == id })?.kind == "media" else { return }
+        mutateVisualBlock(id: id, operationKeys: ["lanes.visual_blocks.transform", "visual_blocks.transform", "lanes.visual_blocks"]) { block in
+            if let x { block.raw["x_frac"] = .number(min(max(0, x), 1)) }
+            if let y { block.raw["y_frac"] = .number(min(max(0, y), 1)) }
+            if let scale { block.raw["scale"] = .number(min(max(0.05, scale), 1)) }
+        }
+    }
+    func setVisualBlockDisplayMode(id: String, mode: String) {
+        guard document.visualBlocks.first(where: { $0.id == id })?.kind == "media",
+              ["fullscreen", "overlay"].contains(mode) else { return }
+        mutateVisualBlock(id: id, operationKeys: ["lanes.visual_blocks.transform", "visual_blocks.transform", "lanes.visual_blocks"]) {
+            $0.raw["display_mode"] = .string(mode)
+        }
+    }
+    func removeVisualBlock(id: String) {
+        guard canEditOperation(["lanes.visual_blocks.remove", "visual_blocks.remove", "lanes.visual_blocks"], section: .visualBlocks) else { return }
+        transactDocument(section: .visualBlocks) { $0.visualBlocks.removeAll { $0.id == id } }
+    }
+
+    func setMotionSceneTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
+        guard canEditMotionScene(id: id, keys: ["lanes.motion_scenes.timing", "motion_scenes.timing", "lanes.motion_scenes"]), let index = document.motionScenes.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .motionScenes) { document in
+            var value = document.motionScenes[index]
+            if let startS { value.startS = Self.roundToMotionFrame(max(0, startS)) }
+            if let endS { value.endS = Self.roundToMotionFrame(max(value.startS + 1.0 / 30.0, endS)) }
+            value.endS = min(value.endS, value.startS + 8)
+            document.motionScenes[index] = value
+        }
+    }
+    func motionRuntimeMismatchReason(id: String) -> String? {
+        guard document.motionScenes.contains(where: { $0.id == id }), runtimeMismatch() else { return nil }
+        return document.capabilities["motion_scenes"]?.reason ?? "motion_runtime_mismatch"
+    }
+    func isMotionSceneReadOnly(id: String) -> Bool {
+        document.motionScenes.contains(where: { $0.id == id }) && runtimeMismatch()
+    }
+
+    func setCameraEffectTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
+        guard canEditOperation(["camera_effects.timing", "lanes.camera_effects.timing", "camera_effects"], section: .cameraEffects), let index = document.cameraEffects.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .cameraEffects) { document in
+            var value = document.cameraEffects[index]
+            if let startS { value.startS = max(0, startS) }
+            if let endS { value.endS = endS }
+            value.endS = min(value.startS + 2, max(value.startS + 0.4, value.endS))
+            document.cameraEffects[index] = value
+        }
+    }
+    func setCameraEffectIntensity(id: String, intensity: Double) {
+        mutateCameraEffect(id: id, keys: ["camera_effects.intensity", "lanes.camera_effects.intensity", "camera_effects"]) { $0.raw["intensity"] = .number(min(max(0, intensity), 0.08)) }
+    }
+    func setCameraEffectEasing(id: String, easing: String) { mutateCameraEffect(id: id, keys: ["camera_effects.easing", "lanes.camera_effects.easing", "camera_effects"]) { $0.raw["easing"] = .string(easing) } }
+
+    func setCarouselMomentPosition(_ position: String) {
+        guard canEditOperation(["carousel.position", "carousel", "carousel_moment"], section: .carouselMoment) else { return }
+        transactDocument(section: .carouselMoment) { doc in var value = doc.carouselMoment ?? [:]; value["position"] = .string(position); doc.carouselMoment = value }
+    }
+    func setCarouselPosition(_ position: String) { setCarouselMomentPosition(position) }
+    func removeCarouselMoment() {
+        guard canEditOperation(["carousel.remove", "carousel", "carousel_moment"], section: .carouselMoment) else { return }
+        transactDocument(section: .carouselMoment) { $0.carouselMoment = nil }
+    }
+
+    // A single baseline is shared by all timed-lane body and edge gestures.
+    func beginTimedBodyMove(kind: EditorSelectionKind, id: String) { beginTimedEdit(selection: EditorSelection(kind: kind, id: id), kind: .move, edge: nil) }
+    func updateTimedBodyMove(by translation: TimeInterval) { updateTimedEdit(by: translation) }
+    func endTimedBodyMove() { endTimedEdit() }
+    func beginTimedEdgeTrim(kind: EditorSelectionKind, id: String, edge: NativeTrimEdge) { beginTimedEdit(selection: EditorSelection(kind: kind, id: id), kind: .trim, edge: edge) }
+    func beginTimedEdgeTrim(selection: EditorSelection, edge: NativeTrimEdge) { beginTimedEdit(selection: selection, kind: .trim, edge: edge) }
+    func updateTimedEdgeTrim(by translation: TimeInterval) { updateTimedEdit(by: translation) }
+    func endTimedEdgeTrim() { endTimedEdit() }
+
+    func reorderLayer(selection: EditorSelection, to destination: Int) {
+        guard canEditOperation(["layers.reorder", "layer_order", "lanes.layer_order"], section: .timeline) else { return }
+        let layers = orderedLayers(); guard let current = layers.firstIndex(where: { $0.selection == selection }) else { return }
+        let target = min(max(0, destination), layers.count - 1); guard target != current else { return }
+        var reordered = layers; let item = reordered.remove(at: current); reordered.insert(item, at: target)
+        let touched = Set(reordered.compactMap { section(for: $0.selection.kind) })
+        transactDocument(sections: touched) { doc in
+            for (z, item) in reordered.enumerated() { setLayerZ(item.selection, z: Double(z), in: &doc) }
+        }
+    }
+    func moveLayer(selection: EditorSelection, by offset: Int) { guard let index = orderedLayers().firstIndex(where: { $0.selection == selection }) else { return }; reorderLayer(selection: selection, to: index + offset) }
+
     func setMusicVolume(_ volume: Double) {
         setMusicLevel(volume)
     }
@@ -558,9 +1025,9 @@ enum NativeEditorSaveState: Equatable, Sendable {
         guard canEditSection(.mix) else { return }
         transactDocument(section: .mix) { $0.mix["original_level"] = .number(min(max(0, level), 1)) }
     }
-    func setOriginalVolume(_ level: Double) { setOriginalMixLevel(level) }
     func setMusicWindow(startS: Double? = nil, alignment: String? = nil) {
         guard canEditSection(.music), document.music != nil else { return }
+        if let alignment, !NativeEditorWireContract.musicAlignments.contains(alignment) { return }
         transactDocument(section: .music) { music in
             guard var value = music.music else { return }
             if let startS { value.startS = max(0, startS) }; if let alignment { value.alignment = alignment }; music.music = value
@@ -568,7 +1035,8 @@ enum NativeEditorSaveState: Equatable, Sendable {
     }
     func setMusic(trackID: String, startS: Double = 0, alignment: String? = nil) {
         guard canEditSection(.music) else { return }
-        transactDocument(section: .music) { $0.music = EditorMusic(trackID: trackID, startS: max(0, startS), alignment: alignment) }
+        let canonicalAlignment = alignment.flatMap(EditorMusicAlignment.init(rawValue:))?.rawValue ?? EditorMusicAlignment.preserveCuts.rawValue
+        transactDocument(section: .music) { $0.music = EditorMusic(trackID: trackID, startS: max(0, startS), alignment: canonicalAlignment) }
     }
     func setMusic(trackID: UUID, title: String = "Music", startS: Double = 0) {
         guard canEditSection(.music) else { return }
@@ -589,12 +1057,12 @@ enum NativeEditorSaveState: Equatable, Sendable {
 
     func undo() {
         guard let previous = undoStack.popLast() else { return }
-        redoStack.append(document); document = previous; refreshDuration(); refreshDirtyState()
+        appendRedo(document); document = previous; refreshDirtyState(); refreshDuration()
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
-        undoStack.append(document); document = next; refreshDuration(); refreshDirtyState()
+        appendUndo(document); document = next; refreshDirtyState(); refreshDuration()
     }
 
     func save() async {
@@ -602,32 +1070,302 @@ enum NativeEditorSaveState: Equatable, Sendable {
         guard let api, let itemID, let variantKey else { saveState = .failed("Load the project before saving edits."); return }
         isSaving = true; saveState = .saving
         defer { isSaving = false }
+        let submittedDocument = document
+        let submittedUndoCount = undoStack.count
         let snapshot = document.encodeSnapshot()
         let payload = Self.object(snapshot["editor_payload"]); let sections = Self.object(payload?["sections"])
         let request = commitRequest(sections: sections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
         do {
             let response = try await api.editorCommit(itemID: itemID, variantID: variantKey, request: request)
             let acknowledged = acknowledgedSections(response.sections)
+            let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
+            let hasPostSubmitEdits = document != submittedDocument
             document.revision.number = response.revisionNumber ?? document.revision.number
             document.revision.hash = response.revisionHash ?? document.revision.hash
-            acknowledge(acknowledged, generation: response.generation)
-            undoStack.removeAll(); redoStack.removeAll()
+            if response.ok, let expectedDuration = response.expectedDuration {
+                durationSourcesInvalidated = false
+                setAuthoritativeDuration(expectedDuration)
+                refreshDuration()
+            }
+            acknowledge(acknowledged, generation: response.generation, submittedDocument: submittedDocument)
+            if hasPostSubmitEdits {
+                let acknowledgedRevision = document.revision
+                undoStack = postSubmitUndo.map { value in
+                    var rebased = value
+                    rebased.revision = acknowledgedRevision
+                    return rebased
+                }
+                redoStack.removeAll()
+            } else {
+                undoStack.removeAll(); redoStack.removeAll()
+            }
             saveState = response.ok ? .previewPending : .failed("The edit was saved, but its new preview could not be rendered.")
-            if response.ok, !acknowledged.isEmpty { startPreviewRefresh(generation: response.generation) }
+            if response.ok { startPreviewRefresh(generation: response.generation) }
         } catch APIError.conflict { saveState = .conflict }
         catch { saveState = .failed(error.localizedDescription) }
     }
 
+    /// Refresh a conflicted baseline without discarding the creator's local
+    /// work. The latest renderer-owned document becomes clean, then only the
+    /// locally dirty sections are replayed on top as one undoable change.
+    func rebaseAfterConflict() async {
+        guard saveState == .conflict, !isSaving,
+              let api, let jobID, let variantKey, let itemID else { return }
+        isSaving = true
+        defer { isSaving = false }
+        let localDocument = document
+        let localSections = changedSections
+        let localExplicitSections = explicitlyDirtySections
+        let selected = selection
+        do {
+            let variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+            let generation = variant["render_generation_id"]?.stringValue
+                ?? variant["render_finished_at"]?.stringValue
+                ?? document.revision.baseGeneration
+            let snapshot = DraftSnapshot(
+                draftID: "conflict-\(projectID.uuidString)",
+                itemID: itemID,
+                variantKey: variantKey,
+                draftRevision: document.revision.number ?? 0,
+                snapshotHash: "",
+                etag: etag,
+                baseJobID: jobID.uuidString,
+                baseGenerationID: generation,
+                snapshot: [:],
+                canUndo: false,
+                createdAt: .now
+            )
+            let latestDraft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+            var latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
+            latestClean.revision.baseGeneration = generation
+            var rebased = latestClean
+            for section in localSections {
+                copy(section, from: localDocument, into: &rebased)
+            }
+            document = rebased
+            cleanDocument = latestClean
+            changedSections = localSections
+            explicitlyDirtySections = localExplicitSections.intersection(localSections)
+            redoStack.removeAll()
+            configureCapabilities(from: variant)
+            refreshDirtyState()
+            undoStack = hasUnsavedChanges ? [latestClean] : []
+            if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
+            durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
+            setAuthoritativeDuration(Self.number(variant["duration_s"]))
+            refreshDuration()
+            saveState = .idle
+        } catch {
+            saveState = .failed("Your edits are still here, but the latest version couldn’t be loaded. \(error.localizedDescription)")
+        }
+    }
+
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
         var next = draft; body(&next); guard next != draft else { return }
-        if transactionBaseline == nil { undoStack.append(document); redoStack.removeAll() }
-        replace(with: next); changedSections.insert(section); refreshDuration(); refreshDirtyState()
+        invalidateDurationSources(for: Set([section]))
+        if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
+        replace(with: next); changedSections.insert(section); refreshDirtyState(); refreshDuration()
     }
 
     private func transactDocument(section: EditorSection, _ body: (inout EditorDocument) -> Void) {
+        transactDocument(sections: [section], body)
+    }
+
+    private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
         var next = document; body(&next); guard next != document else { return }
-        if transactionBaseline == nil { undoStack.append(document); redoStack.removeAll() }
-        document = next; changedSections.insert(section); refreshDuration(); refreshDirtyState()
+        invalidateDurationSources(for: sections)
+        if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
+        document = next; changedSections.formUnion(sections); refreshDirtyState(); refreshDuration()
+    }
+
+    private func canEditOperation(_ keys: [String], section: EditorSection) -> Bool {
+        for key in keys {
+            if let capability = document.capabilities[key] { return capability.editable }
+        }
+        return canEditSection(section)
+    }
+
+    func operationCapability(_ key: String) -> EditorCapability? { document.capabilities[key] }
+    func operationCapabilityReason(_ key: String) -> String? { document.capabilities[key]?.reason }
+    func readOnlyReason(forOperation key: String) -> String? { operationCapabilityReason(key) }
+
+    private func mutateTimedEffect(kind: EditorSelectionKind, id: String, section: EditorSection, operationKeys: [String], _ body: (inout EditorTimedEffect) -> Void) {
+        guard canEditOperation(operationKeys, section: section) else { return }
+        transactDocument(section: section) { doc in
+            switch kind {
+            case .soundEffect:
+                guard let index = doc.soundEffects.firstIndex(where: { $0.id == id }) else { return }; body(&doc.soundEffects[index])
+            case .mediaOverlay:
+                guard let index = doc.mediaOverlays.firstIndex(where: { $0.id == id }) else { return }; body(&doc.mediaOverlays[index])
+            default: break
+            }
+        }
+    }
+
+    private func mutateVisualBlock(id: String, operationKeys: [String], _ body: (inout EditorVisualBlock) -> Void) {
+        guard canEditOperation(operationKeys, section: .visualBlocks), let index = document.visualBlocks.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .visualBlocks) { doc in body(&doc.visualBlocks[index]) }
+    }
+
+    private func mutateCameraEffect(id: String, keys: [String], _ body: (inout EditorCameraEffect) -> Void) {
+        guard canEditOperation(keys, section: .cameraEffects), let index = document.cameraEffects.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .cameraEffects) { doc in body(&doc.cameraEffects[index]) }
+    }
+
+    private func canEditMotionScene(id: String, keys: [String]) -> Bool {
+        canEditOperation(keys, section: .motionScenes) && !isMotionSceneReadOnly(id: id)
+    }
+
+    private func runtimeMismatch() -> Bool {
+        guard let capability = document.capabilities["motion_scenes"] else { return false }
+        return !capability.editable && capability.reason == "motion_runtime_mismatch"
+    }
+
+    private func orderedLayers() -> [(selection: EditorSelection, z: Double)] {
+        var layers: [(EditorSelection, Double, Int)] = []
+        for (index, item) in document.textElements.enumerated() { layers.append((EditorSelection(kind: .text, id: item.id), Self.number(item.raw["z"] ?? item.raw["z_index"]) ?? 300 + Double(index), 0)) }
+        for (index, item) in document.visualBlocks.enumerated() { layers.append((EditorSelection(kind: .visualBlock, id: item.id), Self.number(item.raw["z"] ?? item.raw["z_index"]) ?? 150 + Double(index), 1)) }
+        for (index, item) in document.mediaOverlays.enumerated() { layers.append((EditorSelection(kind: .mediaOverlay, id: item.id), Self.number(item.raw["z"] ?? item.raw["z_index"]) ?? 200 + Double(index), 2)) }
+        return layers.sorted { lhs, rhs in lhs.1 == rhs.1 ? lhs.2 < rhs.2 : lhs.1 < rhs.1 }.map { ($0.0, $0.1) }
+    }
+
+    private func section(for kind: EditorSelectionKind) -> EditorSection? {
+        switch kind {
+        case .text: return .text
+        case .soundEffect: return .soundEffects
+        case .visualBlock: return .visualBlocks
+        case .mediaOverlay: return .mediaOverlays
+        case .motionScene: return .motionScenes
+        case .cameraEffect: return .cameraEffects
+        default: return nil
+        }
+    }
+
+    private func setLayerZ(_ selection: EditorSelection, z: Double, in document: inout EditorDocument) {
+        switch selection.kind {
+        case .text:
+            guard let index = document.textElements.firstIndex(where: { $0.id == selection.id }) else { return }; document.textElements[index].raw["z"] = .number(z)
+        case .visualBlock:
+            guard let index = document.visualBlocks.firstIndex(where: { $0.id == selection.id }) else { return }; document.visualBlocks[index].raw["z"] = .number(z)
+        case .mediaOverlay:
+            guard let index = document.mediaOverlays.firstIndex(where: { $0.id == selection.id }) else { return }; document.mediaOverlays[index].raw["z"] = .number(z)
+        default: break
+        }
+    }
+
+    private func beginTimedEdit(selection: EditorSelection, kind: TimedEditKind, edge: NativeTrimEdge?) {
+        let operation = kind == .move ? "timing" : "trim"
+        guard activeTimedEdit == nil,
+              let section = section(for: selection.kind),
+              canEditOperation(["\(section.rawValue).\(operation)", section.rawValue], section: section),
+              timedObjectExists(selection),
+              supportsTimedGesture(selection) else { return }
+        activeTimedEdit = ActiveTimedEdit(selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack)
+    }
+
+    private func updateTimedEdit(by translation: TimeInterval) {
+        guard translation.isFinite, var active = activeTimedEdit else { return }
+        var next = active.baseline
+        guard let section = section(for: active.selection.kind) else { return }
+        guard let bounds = timedBounds(active.selection, in: next) else { return }
+        let minimum = minimumClipDuration
+        let totalDuration = max(duration, 0)
+        var start = bounds.start; var end = bounds.end
+        switch active.kind {
+        case .move:
+            let length = max(minimum, end - start)
+            let maxStart = totalDuration > 0 ? max(0, totalDuration - length) : .greatestFiniteMagnitude
+            start = min(max(0, start + translation), maxStart); end = start + length
+        case .trim:
+            guard let edge = active.edge else { return }
+            if edge == .leading { start = min(max(0, start + translation), end - minimum) }
+            else { end = max(start + minimum, min(totalDuration > 0 ? totalDuration : .greatestFiniteMagnitude, end + translation)) }
+        }
+        if active.kind == .trim, active.selection.kind == .soundEffect {
+            setSoundEffectTrimBounds(active.selection.id, edge: active.edge ?? .trailing, translation: translation, in: &next)
+        } else {
+            setTimedBounds(active.selection, start: start, end: end, in: &next)
+        }
+        guard next != active.baseline else {
+            if active.recordedUndo {
+                undoStack.removeLast()
+                redoStack = active.redoBaseline
+                active.recordedUndo = false
+            }
+            document = active.baseline
+            refreshDirtyState()
+            refreshDuration()
+            activeTimedEdit = active
+            return
+        }
+        if !active.recordedUndo { appendUndo(active.baseline); redoStack.removeAll(); active.recordedUndo = true }
+        document = next; changedSections.insert(section); refreshDirtyState(); refreshDuration(); activeTimedEdit = active
+    }
+
+    private func endTimedEdit() { activeTimedEdit = nil }
+
+    private func timedObjectExists(_ selection: EditorSelection) -> Bool { timedBounds(selection, in: document) != nil }
+
+    private func timedBounds(_ selection: EditorSelection, in document: EditorDocument) -> (start: Double, end: Double)? {
+        switch selection.kind {
+        case .soundEffect: guard let item = document.soundEffects.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
+        case .mediaOverlay: guard let item = document.mediaOverlays.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
+        case .visualBlock: guard let item = document.visualBlocks.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
+        case .motionScene: guard let item = document.motionScenes.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
+        case .cameraEffect: guard let item = document.cameraEffects.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
+        default: return nil
+        }
+    }
+
+    private func setTimedBounds(_ selection: EditorSelection, start: Double, end: Double, in document: inout EditorDocument) {
+        switch selection.kind {
+        case .soundEffect:
+            guard let index = document.soundEffects.firstIndex(where: { $0.id == selection.id }) else { return }; document.soundEffects[index].startS = start; document.soundEffects[index].endS = end; if document.soundEffects[index].pointS != nil { document.soundEffects[index].pointS = start }
+        case .mediaOverlay: guard let index = document.mediaOverlays.firstIndex(where: { $0.id == selection.id }) else { return }; document.mediaOverlays[index].startS = start; document.mediaOverlays[index].endS = end
+        case .visualBlock:
+            guard let index = document.visualBlocks.firstIndex(where: { $0.id == selection.id }), document.visualBlocks[index].kind != "montage" else { return }
+            var value = document.visualBlocks[index]
+            value.startS = start
+            value.endS = end
+            if value.kind == "text_card" { value.endS = min(value.endS, value.startS + 10) }
+            if value.kind == "media", value.raw["media_kind"]?.stringValue == "video" {
+                let trimStart = Self.number(value.raw["trim_start_s"]) ?? 0
+                let trimEnd = Self.number(value.raw["trim_end_s"]) ?? Self.number(value.raw["source_duration_s"])
+                if let trimEnd { value.endS = min(value.endS, value.startS + max(minimumClipDuration, trimEnd - trimStart)) }
+            }
+            document.visualBlocks[index] = value
+        case .motionScene:
+            guard let index = document.motionScenes.firstIndex(where: { $0.id == selection.id }) else { return }
+            document.motionScenes[index].startS = Self.roundToMotionFrame(start)
+            document.motionScenes[index].endS = Self.roundToMotionFrame(min(end, start + 8))
+        case .cameraEffect:
+            guard let index = document.cameraEffects.firstIndex(where: { $0.id == selection.id }) else { return }
+            document.cameraEffects[index].startS = start
+            document.cameraEffects[index].endS = min(start + 2, max(start + 0.4, end))
+        default: break
+        }
+    }
+
+    private func supportsTimedGesture(_ selection: EditorSelection) -> Bool {
+        if selection.kind == .visualBlock {
+            return document.visualBlocks.first(where: { $0.id == selection.id })?.kind != "montage"
+        }
+        return true
+    }
+
+    private func setSoundEffectTrimBounds(_ id: String, edge: NativeTrimEdge, translation: Double, in document: inout EditorDocument) {
+        guard let index = document.soundEffects.firstIndex(where: { $0.id == id }) else { return }
+        var effect = document.soundEffects[index]
+        let sourceDuration = max(minimumClipDuration, Self.number(effect.raw["duration_s"]) ?? max(minimumClipDuration, effect.endS - effect.startS))
+        let trimStart = max(0, Self.number(effect.raw["trim_start_s"]) ?? 0)
+        let trimEnd = min(sourceDuration, Self.number(effect.raw["trim_end_s"]) ?? sourceDuration)
+        switch edge {
+        case .leading:
+            effect.raw["trim_start_s"] = .number(min(max(0, trimStart + translation), trimEnd - minimumClipDuration))
+        case .trailing:
+            effect.raw["trim_end_s"] = .number(max(trimStart + minimumClipDuration, min(sourceDuration, trimEnd + translation)))
+        }
+        document.soundEffects[index] = effect
     }
 
     private func sectionCapabilityKey(_ section: EditorSection) -> String {
@@ -639,6 +1377,17 @@ enum NativeEditorSaveState: Equatable, Sendable {
         default: return section.rawValue
         }
     }
+    private func sectionCapabilityKeys(_ section: EditorSection) -> [String] {
+        switch section {
+        case .soundEffects: return ["sound_effects", "sfx", "lanes.sfx"]
+        case .mediaOverlays: return ["media_overlays", "overlays", "lanes.overlays"]
+        case .visualBlocks: return ["visual_blocks", "lanes.visual_blocks"]
+        case .motionScenes: return ["motion_scenes", "lanes.motion_scenes"]
+        case .cameraEffects: return ["camera_effects", "lanes.camera_effects"]
+        case .carouselMoment: return ["carousel_moment", "carousel"]
+        default: return [section.rawValue, sectionCapabilityKey(section)]
+        }
+    }
     private func canEditSection(_ section: EditorSection) -> Bool {
         if let capability = capability(for: section) { return capability.editable }
         switch section {
@@ -646,7 +1395,8 @@ enum NativeEditorSaveState: Equatable, Sendable {
         case .text: return canEditText
         case .captions, .captionMeta: return canEditCaptions
         case .mix, .music, .backgroundMusic: return canEditMix
-        default: return true
+        case .soundEffects, .mediaOverlays, .visualBlocks, .motionScenes, .cameraEffects,
+             .carouselMoment, .lyrics, .orientation, .title: return false
         }
     }
 
@@ -680,10 +1430,15 @@ enum NativeEditorSaveState: Equatable, Sendable {
             else if !explicitlyDirtySections.contains(section) { changedSections.remove(section) }
         }
         hasUnsavedChanges = !changedSections.isEmpty
+        durationSourcesInvalidated = changedSections.contains(.timeline) || changedSections.contains(.carouselMoment)
     }
 
     private func legacyDraft(from value: EditorDocument) -> EditorDraft {
         projectedDraft(from: value)
+    }
+
+    private func timelineZ(_ raw: [String: JSONValue], fallback: Int) -> Int {
+        Int((Self.number(raw["z"] ?? raw["z_index"]) ?? Double(fallback)).rounded())
     }
 
     private static func snapshotPreservingClipMetadata(_ draft: EditorDraft) -> [String: JSONValue] {
@@ -722,8 +1477,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
         ).editorDraft(projectID: projectID)
         for (index, slot) in value.clips.enumerated() where projected.clips.indices.contains(index) {
             guard let slotID = slot.id else { continue }
-            let stableID = clipIDsBySlot[slotID] ?? UUID(uuidString: slotID) ?? UUID()
-            clipIDsBySlot[slotID] = stableID
+            let stableID = clipID(for: slotID)
             let clip = projected.clips[index]
             projected.clips[index] = EditorClip(id: stableID, assetID: clip.assetID, sourceClipIndex: clip.sourceClipIndex, start: clip.start, end: clip.end, trimIn: clip.trimIn, trimOut: clip.trimOut, sourceDuration: clip.sourceDuration, muted: clip.muted, slotID: slotID)
         }
@@ -731,6 +1485,17 @@ enum NativeEditorSaveState: Equatable, Sendable {
         projected.captions.style = value.captionMeta["style"]?.stringValue ?? projected.captions.style
         if var music = projected.music, let level = Self.number(value.mix["music_level"]) { music.volume = level; projected.music = music }
         return projected
+    }
+
+    /// Keeps legacy UUID-backed views attached to canonical string slot IDs.
+    /// Existing draft metadata wins; otherwise UUID slot IDs are reused and
+    /// opaque server IDs receive a session-stable adapter ID.
+    private func clipID(for slotID: String?) -> UUID {
+        guard let slotID else { return UUID() }
+        if let id = clipIDsBySlot[slotID] { return id }
+        let id = UUID(uuidString: slotID) ?? UUID()
+        clipIDsBySlot[slotID] = id
+        return id
     }
 
     private func replace(with value: EditorDraft) {
@@ -775,7 +1540,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
             musicTrackID: changedSections.contains(.music) ? value["music_track_id"]?.stringValue : nil,
             removeMusic: changedSections.contains(.music) && document.music == nil,
             musicWindow: changedSections.contains(.music) && document.music != nil
-                ? EditorCommitMusicWindow(startS: Self.number(musicObject?["start_s"]) ?? document.music?.startS ?? 0, alignment: musicObject?["alignment"]?.stringValue ?? document.music?.alignment ?? "preserve_cuts") : nil,
+                ? EditorCommitMusicWindow(startS: Self.number(musicObject?["start_s"]) ?? document.music?.startS ?? 0, alignment: EditorMusicAlignment(rawValue: musicObject?["alignment"]?.stringValue ?? document.music?.alignment ?? "preserve_cuts") ?? .preserveCuts) : nil,
             backgroundMusic: changedSections.contains(.backgroundMusic) ? (backgroundObject.map { EditorCommitBackgroundMusic(trackID: $0["track_id"]?.stringValue, enabled: Self.bool($0["enabled"]) ?? true, startS: Self.number($0["start_s"]), endS: Self.number($0["end_s"]), gainDB: Self.number($0["gain_db"]), muted: Self.bool($0["muted"]) ?? false) } ?? EditorCommitBackgroundMusic(enabled: false)) : nil,
             lyrics: changedSections.contains(.lyrics) ? (lyricsObject.map { EditorCommitLyrics(enabled: Self.bool($0["enabled"]), lineOverrides: Self.object($0["line_overrides"])) } ?? EditorCommitLyrics(enabled: false)) : nil,
             orientation: changedSections.contains(.orientation) ? value["orientation"]?.stringValue : nil,
@@ -783,7 +1548,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
             mediaOverlays: array("media_overlays", .mediaOverlays),
             visualBlocks: array("visual_blocks", .visualBlocks),
             motionScenes: array("motion_scenes", .motionScenes),
-            motionRuntimeHash: changedSections.contains(.motionScenes) ? document.motionScenes.first?.runtimeHash : nil,
+            motionRuntimeHash: changedSections.contains(.motionScenes) ? document.motionRuntimeHash : nil,
             cameraEffects: array("camera_effects", .cameraEffects),
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
@@ -804,36 +1569,41 @@ enum NativeEditorSaveState: Equatable, Sendable {
         return result.intersection(changedSections)
     }
 
-    private func acknowledge(_ sections: Set<EditorSection>, generation: String) {
+    private func acknowledge(_ sections: Set<EditorSection>, generation: String, submittedDocument: EditorDocument) {
         guard !sections.isEmpty else { return }
         document.revision.baseGeneration = generation
         let acknowledgedRevision = document.revision
-        let current = document.encodeSnapshot()
-        var baseline = cleanDocument.encodeSnapshot()
-        let currentPayload = Self.object(current["editor_payload"]) ?? [:]
-        let currentSections = Self.object(currentPayload["sections"]) ?? [:]
-        var baselinePayload = Self.object(baseline["editor_payload"]) ?? [:]
-        var baselineSections = Self.object(baselinePayload["sections"]) ?? [:]
         for section in sections {
-            for key in wireKeys(for: section) { if let value = currentSections[key] { baselineSections[key] = value } else { baselineSections.removeValue(forKey: key) } }
+            copy(section, from: submittedDocument, into: &cleanDocument)
         }
-        baselinePayload["base_generation"] = .string(generation); baselinePayload["sections"] = .object(baselineSections); baseline["editor_payload"] = .object(baselinePayload)
-        cleanDocument = EditorDocument(snapshot: baseline)
         cleanDocument.revision = acknowledgedRevision
         changedSections.subtract(sections)
         explicitlyDirtySections.subtract(sections)
-        hasUnsavedChanges = !changedSections.isEmpty
+        refreshDirtyState()
     }
 
-    private func wireKeys(for section: EditorSection) -> [String] {
-        if section == .music { return ["music_track_id", "music_window", "music"] }
+    private func copy(_ section: EditorSection, from submitted: EditorDocument, into baseline: inout EditorDocument) {
         switch section {
-        case .timeline: return ["timeline_slots"]; case .text: return ["text_elements"]; case .captions: return ["caption_cues"]
-        case .captionMeta: return ["caption_meta"]; case .mix: return ["mix", "audio_mix"]; case .backgroundMusic: return ["background_music"]
-        case .lyrics: return ["lyrics"]; case .orientation: return ["orientation"]; case .soundEffects: return ["sound_effects"]
-        case .mediaOverlays: return ["media_overlays"]; case .visualBlocks: return ["visual_blocks"]; case .motionScenes: return ["motion_scenes"]
-        case .cameraEffects: return ["camera_effects"]; case .carouselMoment: return ["carousel_moment"]; case .title: return ["title"]
-        case .music: return ["music_track_id", "music_window"]
+        case .timeline:
+            baseline.clips = submitted.clips
+            baseline.tombstones = submitted.tombstones
+        case .text: baseline.textElements = submitted.textElements
+        case .captions: baseline.captionCues = submitted.captionCues
+        case .captionMeta: baseline.captionMeta = submitted.captionMeta
+        case .mix: baseline.mix = submitted.mix
+        case .music: baseline.music = submitted.music
+        case .backgroundMusic: baseline.backgroundMusic = submitted.backgroundMusic
+        case .lyrics: baseline.lyrics = submitted.lyrics
+        case .orientation: baseline.orientation = submitted.orientation
+        case .soundEffects: baseline.soundEffects = submitted.soundEffects
+        case .mediaOverlays: baseline.mediaOverlays = submitted.mediaOverlays
+        case .visualBlocks: baseline.visualBlocks = submitted.visualBlocks
+        case .motionScenes:
+            baseline.motionScenes = submitted.motionScenes
+            baseline.motionRuntimeHash = submitted.motionRuntimeHash
+        case .cameraEffects: baseline.cameraEffects = submitted.cameraEffects
+        case .carouselMoment: baseline.carouselMoment = submitted.carouselMoment
+        case .title: baseline.title = submitted.title
         }
     }
     private func reflow(_ clips: inout [EditorClip], from index: Int) {
@@ -844,27 +1614,70 @@ enum NativeEditorSaveState: Equatable, Sendable {
     private func reflowSlots(_ clips: inout [EditorTimelineSlot], from index: Int) {
         _ = clips; _ = index
     }
-    private func installPlayer(url: URL) {
+    private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil) {
         if let timeObserver, let observingPlayer { observingPlayer.removeTimeObserver(timeObserver) }
-        let item = AVPlayerItem(url: url); let next = AVPlayer(playerItem: item); player = next
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        durationLoadTask?.cancel()
+        mediaDuration = nil
+        durationSourcesInvalidated = false
+
+        let item = AVPlayerItem(url: url)
+        let next = AVPlayer(playerItem: item)
+        player = next
         observingPlayer = next
-        let itemDuration = item.asset.duration.seconds
-        if draft.clips.isEmpty, itemDuration.isFinite, itemDuration > 0 { duration = itemDuration }
-        timeObserver = next.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.05, preferredTimescale: 600), queue: .main) { [weak self] time in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.currentTime = min(max(0, time.seconds), max(0, self.duration))
-                self.isPlaying = next.timeControlStatus == .playing
+        if let preferredDuration, preferredDuration.isFinite, preferredDuration > 0 {
+            authoritativeDuration = preferredDuration
+        }
+        refreshDuration()
+
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { [weak self, weak next] _ in
+            guard let next else { return }
+            Task { @MainActor [weak self, weak next] in
+                guard let self, let next, self.player === next else { return }
+                self.finishPlayback(for: next)
             }
         }
+        timeObserver = next.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.05, preferredTimescale: 600), queue: .main) { [weak self] time in
+            MainActor.assumeIsolated {
+                guard let self, self.player === next else { return }
+                let seconds = time.seconds
+                if seconds.isFinite {
+                    self.currentTime = min(max(0, seconds), max(0, self.duration))
+                }
+                self.reconcilePlaybackState(next.timeControlStatus == .playing)
+            }
+        }
+
+        // AVAsset.duration is commonly indefinite immediately after creating
+        // the item. Await the asset load before reconciling the timeline.
+        durationLoadTask = Task { @MainActor [weak self, weak next] in
+            guard let next else { return }
+            guard let loaded = try? await next.currentItem?.asset.load(.duration) else { return }
+            guard let self, self.player === next else { return }
+            let seconds = loaded.seconds
+            guard seconds.isFinite, seconds > 0 else { return }
+            self.mediaDuration = seconds
+            self.refreshDuration()
+        }
+    }
+    func reconcilePlaybackState(_ nextIsPlaying: Bool) {
+        guard isPlaying != nextIsPlaying else { return }
+        isPlaying = nextIsPlaying
     }
     private static func object(_ value: JSONValue?) -> [String: JSONValue]? { if case let .object(value) = value { value } else { nil } }
     private static func array(_ value: JSONValue?) -> [JSONValue] { if case let .array(value) = value { value } else { [] } }
     private static func number(_ value: JSONValue?) -> Double? { if case let .number(value) = value { value } else { nil } }
     private static func bool(_ value: JSONValue?) -> Bool? { if case let .bool(value) = value { value } else { nil } }
+    private static func roundToMotionFrame(_ value: TimeInterval) -> TimeInterval {
+        (value * 30).rounded() / 30
+    }
 
     private func startTime(for selection: EditorSelection) -> TimeInterval? {
-        if selection.kind == .clip, let id = UUID(uuidString: selection.id) { return draft.clips.first(where: { $0.id == id })?.start }
+        if selection.kind == .clip, let id = UUID(uuidString: selection.id) { return timelineClips.first(where: { $0.id == id })?.start }
         return timelineItems.first(where: { $0.selection == selection })?.start
     }
 
@@ -874,8 +1687,31 @@ enum NativeEditorSaveState: Equatable, Sendable {
     func timelineTime(for x: CGFloat, width: CGFloat) -> TimeInterval { NativeEditorInteraction.time(forX: x, duration: duration, width: width) }
 
     private func refreshDuration() {
-        duration = draft.clips.map(\.end).max() ?? 0
+        let timelineDuration = timelineProjection.totalDuration
+        duration = durationSourcesInvalidated ? timelineDuration : (authoritativeDuration ?? mediaDuration ?? timelineDuration)
+        if !duration.isFinite || duration < 0 { duration = max(0, timelineDuration) }
+        timelineItemsCache = nil
         if currentTime > duration { seek(to: duration) }
+    }
+
+    private func setAuthoritativeDuration(_ value: TimeInterval?) {
+        guard let value, value.isFinite, value > 0 else {
+            authoritativeDuration = nil
+            return
+        }
+        authoritativeDuration = value
+    }
+
+    private func invalidateDurationSources(for sections: Set<EditorSection>) {
+        guard sections.contains(.timeline) || sections.contains(.carouselMoment) else { return }
+        durationSourcesInvalidated = true
+    }
+
+    private func finishPlayback(for endedPlayer: AVPlayer) {
+        guard player === endedPlayer else { return }
+        endedPlayer.pause()
+        currentTime = max(0, duration)
+        isPlaying = false
     }
 
     private func configureCapabilities(from variant: [String: JSONValue]?) {
@@ -898,12 +1734,24 @@ enum NativeEditorSaveState: Equatable, Sendable {
 
     private func startPreviewRefresh(generation: String) {
         previewRefreshTask?.cancel()
-        guard let api, let jobID, let variantKey else { return }
+        pendingPreviewGeneration = generation
+        guard let api, let jobID, let variantKey else {
+            saveState = .previewFailed("Your edit is saved, but this device cannot check the new preview yet.")
+            return
+        }
         previewRefreshTask = Task { [weak self] in
-            for _ in 0..<120 {
+            var hadNetworkFailure = false
+            for _ in 0..<300 {
                 guard !Task.isCancelled else { return }
                 try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, let variant = try? await api.editorVariant(jobID: jobID, variantID: variantKey) else { continue }
+                guard !Task.isCancelled else { return }
+                let variant: [String: JSONValue]
+                do {
+                    variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+                } catch {
+                    hadNetworkFailure = true
+                    continue
+                }
                 let currentGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
                 guard currentGeneration == generation else { continue }
                 let status = variant["render_status"]?.stringValue
@@ -911,15 +1759,28 @@ enum NativeEditorSaveState: Equatable, Sendable {
                     guard let self else { return }
                     self.rebaseCleanDraft(from: variant)
                     self.installPlayer(url: url)
+                    self.pendingPreviewGeneration = nil
                     self.saveState = .saved
                     return
                 }
                 if status == "failed" {
-                    self?.saveState = .failed("The edit was saved, but its new preview could not be rendered.")
+                    self?.saveState = .previewFailed("Your edit is saved, but its new preview could not be rendered.")
                     return
                 }
             }
+            guard !Task.isCancelled, let self, self.pendingPreviewGeneration == generation else { return }
+            self.saveState = .previewFailed(
+                hadNetworkFailure
+                    ? "Your edit is saved, but Kria could not finish checking the preview. Check your connection and try again."
+                    : "Your edit is saved, but the preview is taking longer than expected. Try checking again."
+            )
         }
+    }
+
+    func retryPreviewRefresh() {
+        guard let generation = pendingPreviewGeneration else { return }
+        saveState = .previewPending
+        startPreviewRefresh(generation: generation)
     }
 
     /// The renderer may quantize requested durations to a 0.5-second or beat
@@ -954,6 +1815,8 @@ enum NativeEditorSaveState: Equatable, Sendable {
         hasUnsavedChanges = false
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
         configureCapabilities(from: variant)
+        durationSourcesInvalidated = false
+        setAuthoritativeDuration(Self.number(variant["duration_s"]))
         refreshDuration()
         return true
     }

@@ -3,26 +3,28 @@ import SwiftUI
 struct NativeEditorView: View {
     let project: ProjectSummary
     let libraryJobID: UUID?
-    let onProjects: () -> Void
-    let onChat: () -> Void
+    let onBack: () -> Void
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var session: NativeEditorSession
-    @State private var mode: NativeEditorMode = .editor
     @State private var selectedTool: NativeEditorTool?
     @State private var inspector: NativeEditorInspector?
+    @State private var showsUnsavedExit = false
+
+    private var shouldReduceMotion: Bool {
+        reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
+    }
 
     init(
         project: ProjectSummary,
         initialDraft: EditorDraft? = nil,
         initialPlaybackURL: URL? = nil,
         libraryJobID: UUID? = nil,
-        onProjects: @escaping () -> Void,
-        onChat: @escaping () -> Void
+        onBack: @escaping () -> Void
     ) {
         self.project = project
         self.libraryJobID = libraryJobID
-        self.onProjects = onProjects
-        self.onChat = onChat
+        self.onBack = onBack
         _session = StateObject(
             wrappedValue: initialDraft.map {
                 NativeEditorSession(
@@ -37,43 +39,26 @@ struct NativeEditorView: View {
 
     var body: some View {
         GeometryReader { viewport in
-            VStack(spacing: 0) {
-                NativeEditorTopBar(projectTitle: project.title, mode: $mode, onBack: onProjects)
-                    .onChange(of: mode) { _, newMode in
-                        if newMode == .chat { onChat() }
-                    }
-
-                NativeEditorHeaderRow(title: contextTitle, session: session)
-                NativeEditorSaveBanner(session: session)
-
-                ScrollView {
-                    VStack(spacing: 0) {
-                        NativeVideoPreview(session: session)
-                            .aspectRatio(9 / 16, contentMode: .fit)
-                            .frame(maxHeight: 334)
-                            .frame(maxWidth: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 5)
-                            .accessibilityIdentifier("native-editor-preview")
-
-                        NativeEditorTimeline(session: session)
-
-                        if session.selectedClipID != nil {
-                            NativeEditorContextStrip(session: session, onAdjust: { inspector = .adjust })
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                        } else {
-                            Color.clear.frame(height: 10)
-                        }
-                    }
-                    // A vertical ScrollView otherwise accepts the timeline's
-                    // large ideal width and recenters the entire editor offscreen.
-                    .frame(width: viewport.size.width)
-                }
-                .scrollDismissesKeyboard(.interactively)
-
-                NativeEditorToolRail(selected: $selectedTool) { tool in
-                    inspector = .tool(tool)
+            Group {
+                switch session.loadState {
+                case .loaded:
+                    editor(viewport: viewport)
+                case .idle, .loading:
+                    NativeEditorLoadSurface(
+                        title: "Opening the editor…",
+                        detail: "Loading the latest cut and its editing controls.",
+                        isLoading: true,
+                        onBack: requestBack,
+                        retry: nil
+                    )
+                case .failed(let message):
+                    NativeEditorLoadSurface(
+                        title: "The editor couldn’t open",
+                        detail: message,
+                        isLoading: false,
+                        onBack: requestBack,
+                        retry: { Task { await loadEditor() } }
+                    )
                 }
             }
             .frame(width: viewport.size.width, height: viewport.size.height)
@@ -91,37 +76,110 @@ struct NativeEditorView: View {
                 // Keep tool-driven sheets intact while the user edits; a later
                 // selection then routes to the matching object inspector.
                 guard let selection else { return }
+                guard !session.isDirectManipulating else { return }
                 // Clip selection keeps the timeline handles and context strip
                 // directly reachable. The explicit Adjust action presents the
                 // clip inspector without covering the trim gesture surface.
                 guard selection.kind != .clip else { return }
                 inspector = .selection(selection)
             }
-            .task {
-                #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") { return }
-                #endif
-                if let libraryJobID {
-                    await session.load(libraryJobID: libraryJobID, api: model.api)
-                } else {
-                    await session.load(project: project, api: model.api)
-                }
+            .interactiveDismissDisabled(session.hasUnsavedChanges)
+            .confirmationDialog(
+                "Save your changes before leaving?",
+                isPresented: $showsUnsavedExit,
+                titleVisibility: .visible
+            ) {
+                Button("Save and exit") { Task { await saveAndExit() } }
+                Button("Discard changes", role: .destructive, action: onBack)
+                Button("Stay", role: .cancel) {}
+            } message: {
+                Text("Unsaved editor changes are stored only on this device until you save.")
+            }
+            .task { await loadEditor() }
+        }
+    }
+
+    @ViewBuilder private func editor(viewport: GeometryProxy) -> some View {
+        let previewHeight = min(260, max(196, viewport.size.height * 0.29))
+        VStack(spacing: 0) {
+            NativeEditorTopBar(onBack: requestBack)
+            NativeEditorSaveBanner(session: session)
+
+            NativeVideoPreview(session: session)
+                .frame(width: previewHeight * 9 / 16, height: previewHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .accessibilityIdentifier("native-editor-preview")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 5)
+
+            NativeEditorTimeline(session: session)
+                .frame(maxHeight: .infinity)
+                .layoutPriority(1)
+
+            if session.selectedClipID != nil {
+                NativeEditorContextStrip(session: session, onAdjust: { inspector = .adjust })
+                    .transition(shouldReduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
+            }
+
+            NativeEditorToolRail(selected: $selectedTool) { tool in
+                inspector = .tool(tool)
             }
         }
     }
 
-    private var contextTitle: String {
-        guard let selection = session.selection else { return "Edit video" }
-        switch selection.kind {
-        case .clip: return "Edit clip"
-        case .text: return "Edit text"
-        case .captionCue: return "Edit caption"
-        case .music: return "Edit music"
-        case .soundEffect: return "Edit sound"
-        case .mediaOverlay: return "Edit overlay"
-        case .visualBlock, .motionScene, .cameraEffect: return "Edit visual"
-        case .carousel: return "Edit carousel"
+    private func loadEditor() async {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") { return }
+        #endif
+        if let libraryJobID {
+            await session.load(libraryJobID: libraryJobID, api: model.api)
+        } else {
+            await session.load(project: project, api: model.api)
         }
+    }
+
+    private func requestBack() {
+        if session.hasUnsavedChanges { showsUnsavedExit = true }
+        else { onBack() }
+    }
+
+    private func saveAndExit() async {
+        await session.save()
+        guard !session.hasUnsavedChanges else { return }
+        switch session.saveState {
+        case .conflict, .loadFailed, .failed:
+            return
+        default:
+            onBack()
+        }
+    }
+}
+
+private struct NativeEditorLoadSurface: View {
+    let title: String
+    let detail: String
+    let isLoading: Bool
+    let onBack: () -> Void
+    let retry: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            NativeEditorTopBar(onBack: onBack)
+            VStack(alignment: .leading, spacing: 14) {
+                if isLoading { ProgressView().tint(KriaColor.limeText) }
+                Text(title).font(KriaFont.display(29))
+                Text(detail).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+                if let retry {
+                    Button("Try again", action: retry)
+                        .buttonStyle(KriaPrimaryButtonStyle())
+                        .accessibilityIdentifier("native-editor-load-retry")
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
+        }
+        .background(KriaColor.paper)
+        .accessibilityIdentifier(isLoading ? "native-editor-loading" : "native-editor-load-failed")
     }
 }
 
@@ -173,9 +231,9 @@ private struct NativeEditorInspectorView: View {
                 case .tool(.kria): NativeKriaInspector(session: session)
                 case .tool(.text): NativeTextInspector(session: session)
                 case .tool(.captions): NativeCaptionsInspector(session: session)
-                case .tool(.visuals): NativeEditorUnavailableView(title: "Visuals", reason: "Visual transforms are intentionally not exposed in this first native editor pass. Your original framing stays untouched.", systemImage: "camera.filters")
+                case .tool(.visuals): NativeEffectBrowserInspector(session: session, kinds: [.visualBlock, .motionScene, .cameraEffect, .carousel], title: "Visual lanes")
                 case .tool(.sounds): NativeSoundsInspector(session: session)
-                case .tool(.overlays): NativeEditorUnavailableView(title: "Overlays", reason: "Media cards and cutaway overlays need their renderer contract before they can be edited safely. They are not hidden; this explains why the tool is unavailable.", systemImage: "square.on.square")
+                case .tool(.overlays): NativeEffectBrowserInspector(session: session, kinds: [.mediaOverlay], title: "Overlays")
                 case .tool(.styles): NativeStylesInspector(session: session)
                 case .tool: NativeEditorUnavailableView(title: "Editor", reason: "This tool is not available for the current render.", systemImage: "lock")
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
@@ -214,6 +272,7 @@ private struct NativeKriaInspector: View {
                     if !session.draft.captions.enabled { session.toggleCaptions() }
                 }
                 .disabled(!session.canEditCaptions)
+                NativeDocumentInspector(session: session)
             }
             .padding(24)
         }
@@ -341,23 +400,36 @@ private struct NativeCaptionsInspector: View {
 private struct NativeSoundsInspector: View {
     @ObservedObject var session: NativeEditorSession
     @State private var volume = 0.75
+    @State private var trackID = ""
 
     var body: some View {
         Form {
             Section("Music") {
-                HStack {
-                    Image(systemName: "speaker.wave.2")
-                    Slider(value: $volume, in: 0...1) { Text("Music volume") }
+                if session.document.music == nil {
+                    TextField("Music track ID", text: $trackID)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("native-editor-music-track-input")
+                    Button("Add music lane") {
+                        session.setMusic(trackID: trackID.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    .disabled(!session.canEdit(.music) || trackID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("native-editor-add-music")
+                } else {
+                    HStack {
+                        Image(systemName: "speaker.wave.2")
+                        NativeEditorSlider(session: session, value: $volume, in: 0...1) { Text("Music volume") }
                         .onChange(of: volume) { _, newValue in session.setMusicVolume(newValue) }
-                    Text("\(Int(volume * 100))%")
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(width: 42, alignment: .trailing)
+                        Text("\(Int(volume * 100))%")
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 42, alignment: .trailing)
+                    }
+                    .accessibilityIdentifier("native-editor-music-volume")
+                    .disabled(!session.canEditMix)
+                    Text(session.draft.music?.title ?? "Music")
+                        .font(KriaFont.body(13))
+                        .foregroundStyle(KriaColor.zinc)
                 }
-                .accessibilityIdentifier("native-editor-music-volume")
-                .disabled(!session.canEditMix)
-                Text(session.draft.music?.title ?? "No music selected yet")
-                    .font(KriaFont.body(13))
-                    .foregroundStyle(KriaColor.zinc)
             }
             if !session.canEditMix {
                 Section { Label("Music level is unavailable for this edit. Existing audio stays unchanged.", systemImage: "lock") }

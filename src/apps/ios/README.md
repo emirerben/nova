@@ -22,10 +22,14 @@ being held as a separate native flow. If an account has no thread, the shell
 creates one and restores that active project on the next launch.
 
 `Kria/Core` owns API, auth, secure token storage, SwiftData cache models, upload
-consent, background upload recovery, and an internal editor diagnostic. The
-diagnostic persists preview state only and is intentionally not exposed in the
-production navigation until native edits can create an exact server approval
-and renderer commit. `Kria/DesignSystem` owns the paper/ink/lime
+consent, background upload recovery, and the lossless native editor document.
+Ready projects open `NativeEditorView` from the production workspace. The
+editor loads the active plan item and selected render variant, gates each lane
+from server capabilities, batches local mutations into one undoable document,
+and submits one atomic renderer commit when the user taps Save. It keeps the
+saved state while the replacement preview renders, then reloads the new
+generation without discarding unrelated server-owned fields.
+`Kria/DesignSystem` owns the paper/ink/lime
 tokens and accessible controls. `Kria/Features` owns the adaptive phone-first
 shells and flow surfaces. `Packages/KriaMediaEngine` is a local package seam;
 the app does not duplicate its timeline or render rules.
@@ -33,9 +37,12 @@ the app does not duplicate its timeline or render rules.
 The API adapter follows the existing contracts: `/auth/mobile/exchange` and
 `/auth/mobile/refresh` and `/auth/mobile/revoke` for native sessions, `/me/jobs` and its playback URL for
 the library, and `/creation-threads` plus runtime-v2 turns/delta/draft/approval
-operations for creation. The production app does not advertise a native
-"Save and render" action: rendering remains approval-driven through the Kria
-conversation until that handoff is wired end to end. Footage uses the creation thread's reservation and
+operations for creation. Format choices come from
+`/creation-threads/capabilities`, so disabled archetypes are never offered.
+Native editor entry resolves an existing plan item directly or promotes a
+library job through `/me/jobs/{id}/open-in-editor`; variant state comes from
+`/generative-jobs/{id}/status`, and Save posts the full changed-section batch to
+`/plan-items/{item_id}/variants/{variant_id}/editor-commit`. Footage uses the creation thread's reservation and
 attachment endpoints, so a successful background PUT becomes part of the
 server-owned project instead of an unattached temporary blob. Access tokens are refreshed once on a 401; refresh
 token rotation remains server-authoritative and concurrent 401s share one

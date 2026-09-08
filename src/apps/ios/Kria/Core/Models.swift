@@ -15,9 +15,19 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
     var status: ProjectStatus
     var updatedAt: Date
     var posterURL: URL?
+    /// Fresh-signed playback URL for the selected render variant, when the
+    /// creation-thread response includes full media projection.
+    var outputURL: URL?
+    /// Variant identity paired with ``outputURL``. This must travel with the
+    /// URL so editor callers do not accidentally select a different variant.
+    var outputVariantID: String?
     var runtimeVersion: Int
     var serverRevision: Int
     var activeJobID: UUID?
+    /// Existing plan-item ownership for creation-thread projects. Keeping this
+    /// identity lets the editor load its authoritative job directly without
+    /// trying to promote the same video through the Gallery route.
+    var activePlanItemID: String?
 
     init(
         id: UUID,
@@ -25,18 +35,24 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
         status: ProjectStatus,
         updatedAt: Date,
         posterURL: URL?,
+        outputURL: URL? = nil,
+        outputVariantID: String? = nil,
         runtimeVersion: Int = 2,
         serverRevision: Int = 0,
-        activeJobID: UUID? = nil
+        activeJobID: UUID? = nil,
+        activePlanItemID: String? = nil
     ) {
         self.id = id
         self.title = title
         self.status = status
         self.updatedAt = updatedAt
         self.posterURL = posterURL
+        self.outputURL = outputURL
+        self.outputVariantID = outputVariantID
         self.runtimeVersion = runtimeVersion
         self.serverRevision = serverRevision
         self.activeJobID = activeJobID
+        self.activePlanItemID = activePlanItemID
     }
 }
 
@@ -81,8 +97,10 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
     var runtimeVersion: Int
     var serverRevision: Int
     var activeJobID: UUID?
+    var outputVariantID: String?
+    var activePlanItemID: String?
     init(id: UUID, title: String, status: ProjectStatus = .draft, updatedAt: Date = .now, posterURL: URL? = nil) {
-        self.id = id; self.title = title; self.statusRaw = status.rawValue; self.updatedAt = updatedAt; self.posterURLString = posterURL?.absoluteString; self.runtimeVersion = 2; self.serverRevision = 0
+        self.id = id; self.title = title; self.statusRaw = status.rawValue; self.updatedAt = updatedAt; self.posterURLString = posterURL?.absoluteString; self.runtimeVersion = 2; self.serverRevision = 0; self.outputVariantID = nil; self.activePlanItemID = nil
     }
     var status: ProjectStatus { ProjectStatus(rawValue: statusRaw) ?? .draft }
     var posterURL: URL? { posterURLString.flatMap(URL.init(string:)) }
@@ -93,9 +111,11 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
             status: status,
             updatedAt: updatedAt,
             posterURL: posterURL,
+            outputVariantID: outputVariantID,
             runtimeVersion: runtimeVersion,
             serverRevision: serverRevision,
-            activeJobID: activeJobID
+            activeJobID: activeJobID,
+            activePlanItemID: activePlanItemID
         )
     }
 }
@@ -153,10 +173,10 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
             let id = project.id
             let descriptor = FetchDescriptor<CachedProject>(predicate: #Predicate { $0.id == id })
             if let cached = try context.fetch(descriptor).first {
-                cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID
+                cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID
             } else {
                 let cached = CachedProject(id: id, title: project.title, status: project.status, updatedAt: project.updatedAt, posterURL: project.posterURL)
-                cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID
+                cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID
                 context.insert(cached)
             }
         }
@@ -172,7 +192,7 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
             try upsert([project]); return
         }
         guard cached.serverRevision == expectedServerRevision else { throw CacheConflictError.staleProject(expected: expectedServerRevision, actual: cached.serverRevision) }
-        cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID
+        cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID
         try context.save()
     }
     func projects() throws -> [CachedProject] { try context.fetch(FetchDescriptor<CachedProject>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)])) }

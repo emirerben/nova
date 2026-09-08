@@ -33,6 +33,7 @@ from app.routes.auth import (
     MobileUserOut,
 )
 from app.routes.creation_threads import (
+    ActionBody,
     AttachBody,
     CreateBody,
     CreationThreadOut,
@@ -40,11 +41,19 @@ from app.routes.creation_threads import (
     UploadTarget,
 )
 from app.routes.generative_jobs import (
+    EditorCommitRequest,
+    EditorCommitResponse,
+    GenerativeJobStatusResponse,
     GenerativeUploadUrlRequest,
     GenerativeUploadUrlResponse,
     TemporaryUploadCancellationResponse,
 )
-from app.routes.me import LibraryPlaybackResponse, LibraryResponse
+from app.routes.me import (
+    LibraryPlaybackResponse,
+    LibraryResponse,
+    OpenInEditorBody,
+    OpenInEditorResponse,
+)
 from app.routes.personas import PersonaResponse, QuestionnaireBody
 
 DEFAULT_SNAPSHOT = Path(__file__).parents[2] / "tests" / "fixtures" / "kria_turns" / "tools.json"
@@ -80,6 +89,7 @@ MOBILE_API_MODELS = (
     UploadBody,
     UploadTarget,
     AttachBody,
+    ActionBody,
     PersonaResponse,
     QuestionnaireBody,
     LibraryResponse,
@@ -87,6 +97,11 @@ MOBILE_API_MODELS = (
     GenerativeUploadUrlRequest,
     GenerativeUploadUrlResponse,
     TemporaryUploadCancellationResponse,
+    OpenInEditorBody,
+    OpenInEditorResponse,
+    GenerativeJobStatusResponse,
+    EditorCommitRequest,
+    EditorCommitResponse,
     *API_MODELS,
 )
 
@@ -214,9 +229,9 @@ def _openapi30_schema(value: Any) -> Any:
     return translated
 
 
-def _json_request(model: type) -> dict[str, Any]:
+def _json_request(model: type, *, required: bool = True) -> dict[str, Any]:
     return {
-        "required": True,
+        "required": required,
         "content": {"application/json": {"schema": _schema_ref(model)}},
     }
 
@@ -258,6 +273,24 @@ def mobile_openapi_json() -> str:
         "in": "path",
         "required": True,
         "schema": {"type": "string", "format": "uuid"},
+    }
+    job_id = {
+        "name": "job_id",
+        "in": "path",
+        "required": True,
+        "schema": {"type": "string", "format": "uuid"},
+    }
+    item_id = {
+        "name": "item_id",
+        "in": "path",
+        "required": True,
+        "schema": {"type": "string", "format": "uuid"},
+    }
+    variant_id = {
+        "name": "variant_id",
+        "in": "path",
+        "required": True,
+        "schema": {"type": "string", "maxLength": 160},
     }
     document: dict[str, Any] = {
         "openapi": "3.0.3",
@@ -338,6 +371,15 @@ def mobile_openapi_json() -> str:
                     "security": bearer,
                     "requestBody": _json_request(SubmitTurnBody),
                     "responses": _json_responses(TurnAccepted, status_code="202"),
+                },
+            },
+            "/creation-threads/{thread_id}/actions": {
+                "parameters": [thread_id],
+                "post": {
+                    "operationId": "applyCreationAction",
+                    "security": bearer,
+                    "requestBody": _json_request(ActionBody),
+                    "responses": _json_responses(CreationThreadOut),
                 },
             },
             "/creation-threads/{thread_id}": {
@@ -483,14 +525,7 @@ def mobile_openapi_json() -> str:
                 }
             },
             "/me/jobs/{job_id}/playback-url": {
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": True,
-                        "schema": {"type": "string", "format": "uuid"},
-                    }
-                ],
+                "parameters": [job_id],
                 "get": {
                     "operationId": "refreshPlaybackURL",
                     "security": bearer,
@@ -498,14 +533,7 @@ def mobile_openapi_json() -> str:
                 },
             },
             "/me/jobs/{job_id}/edit-recipe": {
-                "parameters": [
-                    {
-                        "name": "job_id",
-                        "in": "path",
-                        "required": True,
-                        "schema": {"type": "string", "format": "uuid"},
-                    }
-                ],
+                "parameters": [job_id],
                 "get": {
                     "operationId": "getEditRecipe",
                     "security": bearer,
@@ -518,6 +546,15 @@ def mobile_openapi_json() -> str:
                         }
                     ],
                     "responses": _json_responses(EditRecipeV1),
+                },
+            },
+            "/me/jobs/{job_id}/open-in-editor": {
+                "parameters": [job_id],
+                "post": {
+                    "operationId": "openLibraryJobInEditor",
+                    "security": bearer,
+                    "requestBody": _json_request(OpenInEditorBody, required=False),
+                    "responses": _json_responses(OpenInEditorResponse),
                 },
             },
             "/generative-jobs/upload-url": {
@@ -541,6 +578,23 @@ def mobile_openapi_json() -> str:
                     "operationId": "cancelTemporaryUpload",
                     "security": bearer,
                     "responses": _json_responses(TemporaryUploadCancellationResponse),
+                },
+            },
+            "/generative-jobs/{job_id}/status": {
+                "parameters": [job_id],
+                "get": {
+                    "operationId": "getGenerativeJobStatus",
+                    "security": bearer,
+                    "responses": _json_responses(GenerativeJobStatusResponse),
+                },
+            },
+            "/plan-items/{item_id}/variants/{variant_id}/editor-commit": {
+                "parameters": [item_id, variant_id],
+                "post": {
+                    "operationId": "commitPlanItemEditor",
+                    "security": bearer,
+                    "requestBody": _json_request(EditorCommitRequest),
+                    "responses": _json_responses(EditorCommitResponse),
                 },
             },
         },

@@ -123,19 +123,54 @@ final class EditorDocumentTests: XCTestCase {
         XCTAssertEqual(clearedSections["motion_runtime_hash"], .null)
     }
 
+    func testMotionScenesUseFrameWireShapeAndReplaceRowsWithoutDuplicates() throws {
+        let snapshot: [String: JSONValue] = [
+            "editor_payload": .object(["sections": .object([
+                "motion_scenes": .array([.object([
+                    "id": .string("scene"),
+                    "start_frame": .number(15),
+                    "end_frame_exclusive": .number(75),
+                    "preset_id": .string("route_trace"),
+                    "runtime_compatibility_hash": .string("runtime-v1"),
+                    "future_motion": .string("keep"),
+                ])]),
+            ])]),
+        ]
+
+        var document = EditorDocument.decode(snapshot: snapshot)
+        XCTAssertEqual(document.motionScenes.first?.startS, 0.5)
+        XCTAssertEqual(document.motionScenes.first?.endS, 2.5)
+        XCTAssertEqual(document.motionScenes.first?.preset, "route_trace")
+        document.motionScenes[0].startS = 1
+        document.motionScenes[0].preset = "push"
+
+        let encoded = document.encodeSnapshot()
+        let sections = try XCTUnwrap(Self.object(Self.object(encoded["editor_payload"])?["sections"]))
+        let rows = try XCTUnwrap(Self.array(sections["motion_scenes"]))
+        XCTAssertEqual(rows.count, 1)
+        let row = try XCTUnwrap(Self.object(rows[0]))
+        XCTAssertEqual(row["start_frame"], .number(30))
+        XCTAssertEqual(row["end_frame_exclusive"], .number(75))
+        XCTAssertEqual(row["preset_id"], .string("push"))
+        XCTAssertNil(row["start_s"])
+        XCTAssertNil(row["end_s"])
+        XCTAssertNil(row["preset"])
+        XCTAssertEqual(row["runtime_compatibility_hash"], .string("runtime-v1"))
+        XCTAssertEqual(row["future_motion"], .string("keep"))
+    }
+
     func testEditorCommitPreservesOmittedEmptyAndCarouselNullSemantics() throws {
         let omitted = EditorCommitRequest(baseGeneration: "g")
         let empty = EditorCommitRequest(timelineSlots: [], textElements: [], soundEffects: [], baseGeneration: "g")
-        let remove = EditorCommitRequest(removeMusic: true, carouselMoment: .remove, titlePatch: .remove, baseGeneration: "g")
+        let remove = EditorCommitRequest(removeMusic: true, carouselMoment: .remove, baseGeneration: "g")
         let encoder = JSONEncoder()
         let omittedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(omitted)) as? [String: Any])
         let emptyObject = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(empty)) as? [String: Any])
         let removeObject = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(remove)) as? [String: Any])
         XCTAssertNil(omittedObject["timeline_slots"]); XCTAssertEqual((emptyObject["timeline_slots"] as? [Any])?.count, 0)
-        XCTAssertTrue(removeObject["carousel_moment"] is NSNull); XCTAssertTrue(removeObject["title"] is NSNull); XCTAssertEqual(removeObject["remove_music"] as? Bool, true)
+        XCTAssertTrue(removeObject["carousel_moment"] is NSNull); XCTAssertNil(removeObject["title"]); XCTAssertEqual(removeObject["remove_music"] as? Bool, true)
         let decoded = try JSONDecoder().decode(EditorCommitRequest.self, from: encoder.encode(remove))
         if case .remove = decoded.carouselMoment {} else { XCTFail("explicit carousel null was lost") }
-        if case .remove = decoded.titlePatch {} else { XCTFail("explicit title null was lost") }
 
         let lyricClear = EditorCommitRequest(
             lyrics: EditorCommitLyrics(lineOverridesPatch: .remove),
@@ -145,6 +180,24 @@ final class EditorDocumentTests: XCTestCase {
         XCTAssertTrue((lyricObject["lyrics"] as? [String: Any])?["line_overrides"] is NSNull)
         let decodedLyrics = try JSONDecoder().decode(EditorCommitRequest.self, from: encoder.encode(lyricClear)).lyrics
         if case .remove = decodedLyrics?.lineOverridesPatch {} else { XCTFail("explicit lyric override null was lost") }
+    }
+
+    func testRemovingLoadedCarouselEncodesExplicitNull() throws {
+        let snapshot: [String: JSONValue] = [
+            "editor_payload": .object(["sections": .object([
+                "carousel_moment": .object([
+                    "id": .string("carousel"),
+                    "position": .string("middle"),
+                    "duration_s": .number(3),
+                ]),
+            ])]),
+        ]
+        var document = EditorDocument.decode(snapshot: snapshot)
+        document.carouselMoment = nil
+
+        let payload = try XCTUnwrap(Self.object(document.encodeSnapshot()["editor_payload"]))
+        let sections = try XCTUnwrap(Self.object(payload["sections"]))
+        XCTAssertEqual(sections["carousel_moment"], .null)
     }
 
     func testCapabilitiesDecodeBooleanAndReasonObject() throws {

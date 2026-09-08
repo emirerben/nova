@@ -24,6 +24,14 @@ enum EditorSection: String, Codable, CaseIterable, Hashable, Sendable {
     case carouselMoment = "carousel_moment", title
 }
 
+enum NativeEditorWireContract {
+    static let lookPresets = ["none", "stadium_diffusion", "olive_film", "smoky_split_tone", "golden_hour", "faded_analog"]
+    static let transitions = ["cut", "crossfade", "dip_to_black", "flash"]
+    static let textAnimations = ["none", "fade-in", "pop-in", "slide-in"]
+    static let musicAlignments = ["preserve_cuts", "resync_beats"]
+    static let captionFonts = ["Inter", "Fraunces", "Space Grotesk"]
+}
+
 struct EditorCapability: Codable, Equatable, Sendable {
     var editable: Bool
     var reason: String?
@@ -61,22 +69,9 @@ struct EditorRevision: Codable, Equatable, Sendable {
     }
 }
 
-struct EditorDirtyState: Equatable, Sendable {
-    private(set) var sections: Set<EditorSection> = []
-    var isDirty: Bool { !sections.isEmpty }
-    mutating func mark(_ section: EditorSection) { sections.insert(section) }
-    mutating func mark<S: Sequence>(_ values: S) where S.Element == EditorSection { sections.formUnion(values) }
-    mutating func clear(_ section: EditorSection) { sections.remove(section) }
-    mutating func clearAll() { sections.removeAll() }
-}
-
 // MARK: - Lossless lane records
 
-private protocol NativeEditorRawRecord {
-    var raw: [String: JSONValue] { get }
-}
-
-struct EditorTimelineSlot: Codable, Equatable, Sendable, NativeEditorRawRecord {
+struct EditorTimelineSlot: Codable, Equatable, Sendable {
     var id: String?
     var parentSegmentID: String?
     var clipIndex: Int
@@ -95,7 +90,7 @@ struct EditorTimelineSlot: Codable, Equatable, Sendable, NativeEditorRawRecord {
     }
 }
 
-struct EditorTextElement: Codable, Equatable, Sendable, NativeEditorRawRecord {
+struct EditorTextElement: Codable, Equatable, Sendable {
     var id: String
     var text: String
     var startS: Double
@@ -107,7 +102,7 @@ struct EditorTextElement: Codable, Equatable, Sendable, NativeEditorRawRecord {
     }
 }
 
-struct EditorCaptionCue: Codable, Equatable, Sendable, NativeEditorRawRecord {
+struct EditorCaptionCue: Codable, Equatable, Sendable {
     var id: String
     var startS: Double
     var endS: Double
@@ -118,7 +113,7 @@ struct EditorCaptionCue: Codable, Equatable, Sendable, NativeEditorRawRecord {
     }
 }
 
-struct EditorMusic: Codable, Equatable, Sendable, NativeEditorRawRecord {
+struct EditorMusic: Codable, Equatable, Sendable {
     var trackID: String
     var startS: Double
     var alignment: String?
@@ -128,7 +123,7 @@ struct EditorMusic: Codable, Equatable, Sendable, NativeEditorRawRecord {
     }
 }
 
-struct EditorBackgroundMusic: Codable, Equatable, Sendable, NativeEditorRawRecord {
+struct EditorBackgroundMusic: Codable, Equatable, Sendable {
     var trackID: String?
     var enabled: Bool
     var startS: Double?
@@ -144,7 +139,7 @@ struct EditorBackgroundMusic: Codable, Equatable, Sendable, NativeEditorRawRecor
 /// SFX and media overlays intentionally share a tolerant envelope. The API
 /// accepts evolving dictionaries, so known timing fields are typed while all
 /// effect-specific fields remain lossless in `raw`.
-struct EditorTimedEffect: Codable, Equatable, Sendable, NativeEditorRawRecord {
+struct EditorTimedEffect: Codable, Equatable, Sendable {
     var id: String
     var startS: Double
     var endS: Double
@@ -159,7 +154,7 @@ struct EditorTimedEffect: Codable, Equatable, Sendable, NativeEditorRawRecord {
     }
 }
 
-struct EditorVisualBlock: Codable, Equatable, Sendable, NativeEditorRawRecord {
+struct EditorVisualBlock: Codable, Equatable, Sendable {
     var id: String
     var kind: String
     var startS: Double
@@ -170,7 +165,7 @@ struct EditorVisualBlock: Codable, Equatable, Sendable, NativeEditorRawRecord {
     }
 }
 
-struct EditorMotionScene: Codable, Equatable, Sendable, NativeEditorRawRecord {
+struct EditorMotionScene: Codable, Equatable, Sendable {
     var id: String
     var startS: Double
     var endS: Double
@@ -182,7 +177,7 @@ struct EditorMotionScene: Codable, Equatable, Sendable, NativeEditorRawRecord {
     }
 }
 
-struct EditorCameraEffect: Codable, Equatable, Sendable, NativeEditorRawRecord {
+struct EditorCameraEffect: Codable, Equatable, Sendable {
     var id: String
     var startS: Double
     var endS: Double
@@ -324,8 +319,10 @@ struct EditorDocument: Equatable, Sendable {
             else if sections["motion_runtime_hash"] != nil { sections["motion_runtime_hash"] = .null }
         }
         writeSection(&sections, .cameraEffects, values: cameraEffects, original: Self.array(rawSections[EditorSection.cameraEffects.wireKey]), encode: encodeCamera, id: { Self.string($0["id"]) }, nonEmpty: !cameraEffects.isEmpty)
-        if let carouselMoment { sections[EditorSection.carouselMoment.wireKey] = .object(carouselMoment) }
-        else if sectionPresence[.carouselMoment] == .null { sections[EditorSection.carouselMoment.wireKey] = .null }
+        if sectionChanged(.carouselMoment) {
+            if let carouselMoment { sections[EditorSection.carouselMoment.wireKey] = .object(carouselMoment) }
+            else { sections[EditorSection.carouselMoment.wireKey] = .null }
+        }
         if sectionChanged(.lyrics) {
             if let lyrics { sections[EditorSection.lyrics.wireKey] = .object(lyrics) }
             else if sectionPresence[.lyrics] != .absent { sections[EditorSection.lyrics.wireKey] = .null }
@@ -387,6 +384,10 @@ struct EditorDocument: Equatable, Sendable {
     }
 }
 
+private enum NativeEditorMotionCodec {
+    static let fps = 30.0
+}
+
 private extension EditorSection {
     var wireKey: String {
         switch self { case .timeline: "timeline_slots"; case .text: "text_elements"; case .captions: "caption_cues"; case .captionMeta: "caption_meta"; case .mix: "mix"; case .music: "music"; case .backgroundMusic: "background_music"; case .lyrics: "lyrics"; case .orientation: "orientation"; case .soundEffects: "sound_effects"; case .mediaOverlays: "media_overlays"; case .visualBlocks: "visual_blocks"; case .motionScenes: "motion_scenes"; case .cameraEffects: "camera_effects"; case .carouselMoment: "carousel_moment"; case .title: "title" }
@@ -423,18 +424,19 @@ private extension EditorDocument {
         guard sectionChanged(section) else { return }
         guard nonEmpty || sectionPresence[section] != .absent else { return }
         let encoded = values.map { encode($0) }
-        var consumed = Set<Int>()
         let opaqueIndices = Set(opaqueRecords[section, default: []].map(\.index))
         var result: [JSONValue] = []
+        var nextEncodedIndex = encoded.startIndex
         for (index, row) in (original ?? []).enumerated() {
-            guard !opaqueIndices.contains(index), let originalObject = Self.object(row), let identity = id(originalObject) else {
+            guard !opaqueIndices.contains(index), let originalObject = Self.object(row), id(originalObject) != nil else {
                 result.append(row); continue
             }
-            if let replacementIndex = encoded.indices.first(where: { !consumed.contains($0) && Self.object(encoded[$0]).flatMap(id) == identity }) {
-                result.append(encoded[replacementIndex]); consumed.insert(replacementIndex)
+            if nextEncodedIndex < encoded.endIndex {
+                result.append(encoded[nextEncodedIndex])
+                encoded.formIndex(after: &nextEncodedIndex)
             }
         }
-        result.append(contentsOf: encoded.enumerated().compactMap { index, value in consumed.contains(index) ? nil : value })
+        result.append(contentsOf: encoded[nextEncodedIndex...])
         sections[key] = .array(result)
     }
 
@@ -469,7 +471,10 @@ private extension EditorDocument {
         case .captions: return Self.string(value["id"]) != nil && Self.number(value["start_s"]) != nil && Self.number(value["end_s"]) != nil
         case .soundEffects, .mediaOverlays: return Self.string(value["id"]) != nil && (Self.number(value["start_s"] ?? value["start"] ?? value["at_s"]) != nil) && (Self.number(value["end_s"] ?? value["end"] ?? value["at_s"]) != nil)
         case .visualBlocks: return Self.string(value["id"]) != nil && Self.string(value["kind"]) != nil && Self.number(value["start_s"]) != nil && Self.number(value["end_s"]) != nil
-        case .motionScenes: return Self.string(value["id"]) != nil && Self.number(value["start_s"]) != nil && Self.number(value["end_s"]) != nil
+        case .motionScenes:
+            let hasSeconds = Self.number(value["start_s"]) != nil && Self.number(value["end_s"]) != nil
+            let hasFrames = Self.number(value["start_frame"]) != nil && Self.number(value["end_frame_exclusive"]) != nil
+            return Self.string(value["id"]) != nil && (hasSeconds || hasFrames)
         case .cameraEffects: return Self.string(value["id"]) != nil && Self.number(value["start_s"]) != nil && Self.number(value["end_s"]) != nil
         default: return true
         }
@@ -551,7 +556,11 @@ private extension EditorDocument {
     }
 
     func merged(_ raw: [String: JSONValue], _ known: [String: JSONValue]) -> [String: JSONValue] { raw.merging(known) { _, newer in newer } }
-    func encodeSlot(_ item: EditorTimelineSlot) -> JSONValue { .object(merged(item.raw, ["slot_id": item.id.map(JSONValue.string) ?? .null, "clip_index": .number(Double(item.clipIndex)), "in_s": .number(item.inS), "duration_beats": item.durationBeats.map { .number(Double($0)) } ?? .null, "duration_s": item.durationS.map(JSONValue.number) ?? .null, "removed": .bool(item.removed), "transition_after": .string(item.transitionAfter), "transition_duration_s": item.transitionDurationS.map(JSONValue.number) ?? .null, "parent_segment_id": item.parentSegmentID.map(JSONValue.string) ?? .null, "look_preset": item.lookPreset.map(JSONValue.string) ?? .null, "look_adjustments": item.lookAdjustments.map(JSONValue.object) ?? .null])) }
+    func encodeSlot(_ item: EditorTimelineSlot) -> JSONValue {
+        var known: [String: JSONValue] = ["slot_id": item.id.map(JSONValue.string) ?? .null, "clip_index": .number(Double(item.clipIndex)), "in_s": .number(item.inS), "duration_beats": item.durationBeats.map { .number(Double($0)) } ?? .null, "duration_s": item.durationS.map(JSONValue.number) ?? .null, "removed": .bool(item.removed), "transition_after": .string(item.transitionAfter), "transition_duration_s": item.transitionDurationS.map(JSONValue.number) ?? .null, "parent_segment_id": item.parentSegmentID.map(JSONValue.string) ?? .null, "look_adjustments": item.lookAdjustments.map(JSONValue.object) ?? .null]
+        if let lookPreset = item.lookPreset { known["look_preset"] = .string(lookPreset) }
+        return .object(merged(item.raw, known))
+    }
     func encodeText(_ item: EditorTextElement) -> JSONValue { .object(merged(item.raw, ["id": .string(item.id), "text": .string(item.text), "start_s": .number(item.startS), "end_s": .number(item.endS), "role": item.role.map(JSONValue.string) ?? .null])) }
     func encodeCaption(_ item: EditorCaptionCue) -> JSONValue { .object(merged(item.raw, ["id": .string(item.id), "start_s": .number(item.startS), "end_s": .number(item.endS), "text": .string(item.text)])) }
     func encodeMusic(_ item: EditorMusic) -> [String: JSONValue] { merged(item.raw, ["track_id": .string(item.trackID), "start_s": .number(item.startS), "alignment": item.alignment.map(JSONValue.string) ?? .null]) }
@@ -567,7 +576,16 @@ private extension EditorDocument {
         return .object(merged(item.raw, known))
     }
     func encodeVisual(_ item: EditorVisualBlock) -> JSONValue { .object(merged(item.raw, ["id": .string(item.id), "kind": .string(item.kind), "start_s": .number(item.startS), "end_s": .number(item.endS)])) }
-    func encodeMotion(_ item: EditorMotionScene) -> JSONValue { .object(merged(item.raw, ["id": .string(item.id), "start_s": .number(item.startS), "end_s": .number(item.endS), "preset": item.preset.map(JSONValue.string) ?? .null, "runtime_hash": item.runtimeHash.map(JSONValue.string) ?? .null])) }
+    func encodeMotion(_ item: EditorMotionScene) -> JSONValue {
+        var value = merged(item.raw, [
+            "id": .string(item.id),
+            "start_frame": .number((item.startS * NativeEditorMotionCodec.fps).rounded()),
+            "end_frame_exclusive": .number((item.endS * NativeEditorMotionCodec.fps).rounded()),
+            "preset_id": item.preset.map(JSONValue.string) ?? .null,
+        ])
+        value.removeValue(forKey: "start_s"); value.removeValue(forKey: "end_s"); value.removeValue(forKey: "preset")
+        return .object(value)
+    }
     func encodeCamera(_ item: EditorCameraEffect) -> JSONValue { .object(merged(item.raw, ["id": .string(item.id), "start_s": .number(item.startS), "end_s": .number(item.endS), "effect": item.effect.map(JSONValue.string) ?? .null])) }
 }
 
@@ -597,7 +615,15 @@ private extension EditorDocument {
         }
     }
     static func decodeVisual(_ rows: [JSONValue]) -> [EditorVisualBlock] { rows.compactMap { value in guard let o = object(value), let id = string(o["id"]), let kind = string(o["kind"]), let start = number(o["start_s"]), let end = number(o["end_s"]) else { return nil }; return EditorVisualBlock(id: id, kind: kind, startS: start, endS: end, raw: o) } }
-    static func decodeMotion(_ rows: [JSONValue]) -> [EditorMotionScene] { rows.compactMap { value in guard let o = object(value), let id = string(o["id"]), let start = number(o["start_s"]), let end = number(o["end_s"]) else { return nil }; return EditorMotionScene(id: id, startS: start, endS: end, preset: string(o["preset"]), runtimeHash: string(o["runtime_hash"] ?? o["runtime_compatibility_hash"]), raw: o) } }
+    static func decodeMotion(_ rows: [JSONValue]) -> [EditorMotionScene] {
+        rows.compactMap { value in
+            guard let o = object(value), let id = string(o["id"]) else { return nil }
+            let start = number(o["start_s"]) ?? number(o["start_frame"]).map { $0 / NativeEditorMotionCodec.fps }
+            let end = number(o["end_s"]) ?? number(o["end_frame_exclusive"]).map { $0 / NativeEditorMotionCodec.fps }
+            guard let start, let end else { return nil }
+            return EditorMotionScene(id: id, startS: start, endS: end, preset: string(o["preset_id"] ?? o["preset"]), runtimeHash: string(o["runtime_hash"] ?? o["runtime_compatibility_hash"]), raw: o)
+        }
+    }
     static func decodeCamera(_ rows: [JSONValue]) -> [EditorCameraEffect] { rows.compactMap { value in guard let o = object(value), let id = string(o["id"]), let start = number(o["start_s"]), let end = number(o["end_s"]) else { return nil }; return EditorCameraEffect(id: id, startS: start, endS: end, effect: string(o["effect"] ?? o["type"]), raw: o) } }
     static func decodeMusic(_ value: [String: JSONValue]?, fallbackTrack: String?, fallbackWindow: [String: JSONValue]?) -> EditorMusic? {
         var value = value

@@ -23,6 +23,58 @@ struct NativeEditorTimelineLane: Equatable, Sendable {
     let lane: Int
 }
 
+struct NativeEditorClipWindow: Equatable, Sendable {
+    let sourceIndex: Int
+    let start: TimeInterval
+    let end: TimeInterval
+    let overlapBefore: TimeInterval
+}
+
+/// One immutable output-clock projection shared by the filmstrip, timed
+/// lanes, preview visibility, ruler, transport, and inverse scrubbing. Timed
+/// records remain stored in the server's clip-only base clock; an inserted
+/// Carousel is projected only at these view/playback boundaries.
+struct NativeEditorTimelineProjection: Equatable, Sendable {
+    let baseClipWindows: [NativeEditorClipWindow]
+    let clipWindows: [NativeEditorClipWindow]
+    let carouselItem: NativeEditorTimelineItem?
+    let baseInsertionTime: TimeInterval?
+    let downstreamShift: TimeInterval
+    let totalDuration: TimeInterval
+
+    func projectBaseTime(_ time: TimeInterval) -> TimeInterval {
+        let safe = max(0, time)
+        guard let baseInsertionTime, downstreamShift > 0 else { return roundedMillis(safe) }
+        // Exact insertion-boundary points are right-biased.
+        return roundedMillis(safe < baseInsertionTime ? safe : safe + downstreamShift)
+    }
+
+    func projectBaseInterval(start: TimeInterval, end: TimeInterval) -> (start: TimeInterval, end: TimeInterval) {
+        let safeStart = max(0, start)
+        let safeEnd = max(safeStart, end)
+        guard let baseInsertionTime, downstreamShift > 0 else {
+            return (roundedMillis(safeStart), roundedMillis(safeEnd))
+        }
+        let projectedStart = safeStart < baseInsertionTime ? safeStart : safeStart + downstreamShift
+        // Crossing intervals keep their authored start and extend their end.
+        let projectedEnd = safeEnd < baseInsertionTime ? safeEnd : safeEnd + downstreamShift
+        return (roundedMillis(projectedStart), roundedMillis(projectedEnd))
+    }
+
+    func unprojectOutputTime(_ time: TimeInterval) -> TimeInterval {
+        let safe = max(0, time)
+        guard let baseInsertionTime, downstreamShift > 0 else { return roundedMillis(safe) }
+        let carouselStart = carouselItem?.start ?? baseInsertionTime
+        if safe < carouselStart { return roundedMillis(safe) }
+        if safe < baseInsertionTime + downstreamShift { return roundedMillis(baseInsertionTime) }
+        return roundedMillis(safe - downstreamShift)
+    }
+
+    private func roundedMillis(_ value: TimeInterval) -> TimeInterval {
+        (value * 1_000).rounded() / 1_000
+    }
+}
+
 enum NativeEditorInteraction {
     static let minimumHitTarget: CGFloat = 44
 
@@ -87,5 +139,148 @@ enum NativeEditorInteraction {
             if lane == laneEnds.count { laneEnds.append(item.end) } else { laneEnds[lane] = item.end }
             return NativeEditorTimelineLane(item: item, lane: lane)
         }
+    }
+
+    /// Mirrors the server/web slot walk: transition overlap is owned by the
+    /// left clip, capped to 30% of both neighbors and ignored below 100 ms.
+    static func transitionOverlap(
+        left: EditorTimelineSlot,
+        leftDuration: TimeInterval,
+        rightDuration: TimeInterval
+    ) -> TimeInterval {
+        guard left.transitionAfter != "cut" else { return 0 }
+        let requested = left.transitionDurationS ?? 0.3
+        let overlap = min(0.3, requested, leftDuration * 0.3, rightDuration * 0.3)
+        return overlap >= 0.1 ? roundedMillis(overlap) : 0
+    }
+
+    static func timelineProjection(
+        slots: [EditorTimelineSlot],
+        carousel: [String: JSONValue]?
+    ) -> NativeEditorTimelineProjection {
+        var baseWindows: [NativeEditorClipWindow] = []
+        var cursor: TimeInterval = 0
+        var previous: (slot: EditorTimelineSlot, duration: TimeInterval)?
+        for (index, slot) in slots.enumerated() where !slot.removed {
+            let duration = max(0.1, slot.durationS ?? 0.1)
+            let overlap = previous.map {
+                transitionOverlap(left: $0.slot, leftDuration: $0.duration, rightDuration: duration)
+            } ?? 0
+            let start = roundedMillis(cursor - overlap)
+            let end = roundedMillis(start + duration)
+            baseWindows.append(
+                NativeEditorClipWindow(
+                    sourceIndex: index,
+                    start: start,
+                    end: end,
+                    overlapBefore: overlap
+                )
+            )
+            cursor = end
+            previous = (slot, duration)
+        }
+
+        let baseDuration = baseWindows.last?.end ?? 0
+        guard let carousel,
+              let carouselDuration = carouselDuration(carousel),
+              carouselDuration > 0 else {
+            return NativeEditorTimelineProjection(
+                baseClipWindows: baseWindows,
+                clipWindows: baseWindows,
+                carouselItem: nil,
+                baseInsertionTime: nil,
+                downstreamShift: 0,
+                totalDuration: baseDuration
+            )
+        }
+
+        let position = carousel["position"]?.stringValue ?? "intro"
+        let insertionIndex: Int
+        switch position {
+        case "outro": insertionIndex = baseWindows.count
+        case "middle": insertionIndex = baseWindows.count / 2
+        default: insertionIndex = 0
+        }
+        let before = insertionIndex > 0 ? baseWindows[insertionIndex - 1] : nil
+        let after = insertionIndex < baseWindows.count ? baseWindows[insertionIndex] : nil
+        let baseInsertion = after?.start ?? before?.end ?? 0
+        let incoming = carouselBoundaryOverlap(
+            kind: carousel["transition_in"]?.stringValue,
+            requested: carousel["transition_in_duration_s"]?.numberValue,
+            beforeDuration: before.map { $0.end - $0.start },
+            afterDuration: carouselDuration
+        )
+        let outgoing = carouselBoundaryOverlap(
+            kind: carousel["transition_out"]?.stringValue,
+            requested: carousel["transition_out_duration_s"]?.numberValue,
+            beforeDuration: carouselDuration,
+            afterDuration: after.map { $0.end - $0.start }
+        )
+        // Carousel timing is positional. Persisted absolute timestamps are
+        // stale after clip edits and are not part of the ripple-v1 contract;
+        // derive the splice from the active clip windows every time.
+        let carouselStart = roundedMillis(before.map { $0.end - incoming } ?? 0)
+        let carouselEnd = roundedMillis(carouselStart + carouselDuration)
+        let shift = max(
+            0,
+            roundedMillis(
+                after.map { carouselStart + carouselDuration - outgoing - $0.start }
+                    ?? (carouselDuration - incoming)
+            )
+        )
+        let projectedWindows = baseWindows.enumerated().map { index, window in
+            guard index >= insertionIndex else { return window }
+            return NativeEditorClipWindow(
+                sourceIndex: window.sourceIndex,
+                start: roundedMillis(window.start + shift),
+                end: roundedMillis(window.end + shift),
+                overlapBefore: index == insertionIndex ? outgoing : window.overlapBefore
+            )
+        }
+        let carouselItem = NativeEditorTimelineItem(
+            selection: EditorSelection(
+                kind: .carousel,
+                id: carousel["id"]?.stringValue ?? "carousel-block"
+            ),
+            start: carouselStart,
+            end: carouselEnd,
+            zIndex: 180,
+            sourceIndex: insertionIndex
+        )
+        return NativeEditorTimelineProjection(
+            baseClipWindows: baseWindows,
+            clipWindows: projectedWindows,
+            carouselItem: carouselItem,
+            baseInsertionTime: baseInsertion,
+            downstreamShift: shift,
+            totalDuration: max(carouselItem.end, projectedWindows.last?.end ?? 0)
+        )
+    }
+
+    private static func carouselDuration(_ raw: [String: JSONValue]) -> TimeInterval? {
+        if let duration = raw["duration_s"]?.numberValue ?? raw["duration"]?.numberValue {
+            return duration
+        }
+        if let start = raw["start_s"]?.numberValue, let end = raw["end_s"]?.numberValue {
+            return end - start
+        }
+        return nil
+    }
+
+    private static func carouselBoundaryOverlap(
+        kind: String?,
+        requested: TimeInterval?,
+        beforeDuration: TimeInterval?,
+        afterDuration: TimeInterval?
+    ) -> TimeInterval {
+        guard kind == "crossfade", let beforeDuration, let afterDuration else { return 0 }
+        let roundedRequest = ((requested ?? 0.4) * 10).rounded() / 10
+        return roundedMillis(
+            min(max(0.1, min(roundedRequest, 1)), beforeDuration * 0.3, afterDuration * 0.3)
+        )
+    }
+
+    private static func roundedMillis(_ value: TimeInterval) -> TimeInterval {
+        (value * 1_000).rounded() / 1_000
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 struct CanonicalPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     var fill = KriaColor.ink
     var foreground = Color.white
 
@@ -13,11 +14,12 @@ struct CanonicalPrimaryButtonStyle: ButtonStyle {
             .padding(.horizontal, 16)
             .background(fill)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .opacity(configuration.isPressed ? 0.72 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.45)
     }
 }
 
 struct CanonicalSecondaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(KriaFont.body(14).weight(.semibold))
@@ -30,7 +32,7 @@ struct CanonicalSecondaryButtonStyle: ButtonStyle {
                     .stroke(KriaColor.line, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .opacity(configuration.isPressed ? 0.65 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.45)
     }
 }
 
@@ -169,17 +171,40 @@ struct ProjectsDrawer: View {
 
                     ScrollView {
                         LazyVStack(spacing: 2) {
-                            ForEach(model.projects) { project in
-                                Button {
-                                    model.selectProject(project)
-                                    close()
-                                } label: {
-                                    ProjectDrawerRow(
-                                        project: project,
-                                        isSelected: project.id == model.selectedProject?.id
-                                    )
+                            if model.projects.isEmpty {
+                                switch model.projectsState {
+                                case .idle, .loading:
+                                    ProgressView("Loading projects…")
+                                        .tint(KriaColor.limeText)
+                                        .frame(maxWidth: .infinity, minHeight: 96)
+                                case .failed:
+                                    VStack(spacing: 8) {
+                                        Text("Projects couldn’t load.")
+                                            .font(KriaFont.body(13))
+                                            .foregroundStyle(KriaColor.zinc)
+                                        Button("Try again") { Task { await model.loadProjects() } }
+                                            .font(KriaFont.body(12).weight(.semibold))
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: 96)
+                                case .empty, .loaded:
+                                    Text("No projects yet")
+                                        .font(KriaFont.body(13))
+                                        .foregroundStyle(KriaColor.zinc)
+                                        .frame(maxWidth: .infinity, minHeight: 96)
                                 }
-                                .buttonStyle(.plain)
+                            } else {
+                                ForEach(model.projects) { project in
+                                    Button {
+                                        model.selectProject(project)
+                                        close()
+                                    } label: {
+                                        ProjectDrawerRow(
+                                            project: project,
+                                            isSelected: project.id == model.selectedProject?.id
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
                         }
                         .padding(.horizontal, 10)
@@ -217,13 +242,16 @@ private struct ProjectDrawerRow: View {
 
     var body: some View {
         HStack(spacing: 11) {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(project.status == .ready ? KriaColor.limeSoft : KriaColor.softZinc)
+            ProjectPosterView(project: project)
                 .frame(width: 34, height: 42)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay {
-                    Image(systemName: project.status == .ready ? "play.fill" : "film")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(project.status == .ready ? KriaColor.limeText : KriaColor.zinc)
+                    if project.status == .ready {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(KriaColor.lime)
+                            .shadow(color: .black.opacity(0.35), radius: 2)
+                    }
                 }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -256,15 +284,26 @@ struct ChatMessageRow: View {
                 Text(message.content)
                     .font(KriaFont.body(14).weight(.medium))
                     .lineSpacing(2)
+                    .multilineTextAlignment(.leading)
                     .foregroundStyle(Color.white)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(KriaColor.ink)
-                    .clipShape(Capsule())
+                    .background {
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 18,
+                            bottomLeadingRadius: 18,
+                            bottomTrailingRadius: 6,
+                            topTrailingRadius: 18,
+                            style: .continuous
+                        )
+                        .fill(KriaColor.ink)
+                    }
                     .opacity(message.isPending ? 0.68 : 1)
+                    .accessibilityLabel("You: \(message.content)")
+                    .accessibilityIdentifier("chat-message-\(message.id)")
             }
             .frame(maxWidth: .infinity)
-            .accessibilityLabel("You: \(message.content)")
         } else {
             VStack(alignment: .leading, spacing: 7) {
                 Text("Kria")
@@ -305,6 +344,7 @@ private struct AssistantHeading: View {
 }
 
 struct FormatStage: View {
+    let formats: [CreationFormat]
     let isBusy: Bool
     let select: (CreationFormat) -> Void
 
@@ -317,7 +357,7 @@ struct FormatStage: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(CreationFormat.allCases) { format in
+                    ForEach(formats) { format in
                         Button { select(format) } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 BundledPosterImage(name: format.imageName)
@@ -351,7 +391,9 @@ struct FootageStage: View {
     let continueWithFootage: () -> Void
     let changeFormat: () -> Void
 
-    private var displayedCount: Int { max(mediaCount, uploads.count) }
+    private var readiness: FootageReadiness {
+        FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -387,26 +429,35 @@ struct FootageStage: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("choose-videos")
 
-            if displayedCount > 0 {
+            if readiness.attachedCount > 0 {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("\(displayedCount) \(displayedCount == 1 ? "clip" : "clips") ready")
+                    Text("\(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips") ready")
                         .font(KriaFont.body(12).weight(.medium))
                         .foregroundStyle(KriaColor.zinc)
 
                     HStack(spacing: 8) {
-                        ForEach(0..<min(displayedCount, 5), id: \.self) { index in
+                        ForEach(0..<min(readiness.attachedCount, 5), id: \.self) { index in
                             FootageThumbnail(index: index)
-                        }
-                        if let active = uploads.first {
-                            ProgressView(value: progress[active.id] ?? 0)
-                                .tint(KriaColor.limeText)
-                                .frame(maxWidth: 110)
                         }
                     }
                 }
 
-                Button("Continue with \(displayedCount) \(displayedCount == 1 ? "clip" : "clips")", action: continueWithFootage)
+                Button("Continue with \(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips")", action: continueWithFootage)
                     .buttonStyle(CanonicalPrimaryButtonStyle())
+            }
+
+            if readiness.pendingCount > 0 {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Uploading \(readiness.pendingCount) \(readiness.pendingCount == 1 ? "clip" : "clips")…")
+                        .font(KriaFont.body(12).weight(.medium))
+                        .foregroundStyle(KriaColor.zinc)
+                    if let active = uploads.first {
+                        ProgressView(value: progress[active.id] ?? 0)
+                            .tint(KriaColor.limeText)
+                            .frame(maxWidth: 160)
+                    }
+                }
+                .accessibilityIdentifier("footage-upload-progress")
             }
 
             Button("Change format", action: changeFormat)
@@ -415,6 +466,18 @@ struct FootageStage: View {
                 .frame(minHeight: 34)
         }
     }
+}
+
+struct FootageReadiness: Equatable, Sendable {
+    let attachedCount: Int
+    let pendingCount: Int
+
+    init(attachedCount: Int, pendingCount: Int) {
+        self.attachedCount = max(0, attachedCount)
+        self.pendingCount = max(0, pendingCount)
+    }
+
+    var canContinue: Bool { attachedCount > 0 }
 }
 
 private struct FootageThumbnail: View {
@@ -486,7 +549,7 @@ struct DirectionStage: View {
                 .foregroundStyle(KriaColor.zinc)
 
             Button("Create this video") { decide("approve") }
-                .buttonStyle(CanonicalPrimaryButtonStyle(fill: KriaColor.lime, foreground: KriaColor.ink))
+                .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy)
             Button("Change direction") { decide("deny") }
                 .buttonStyle(CanonicalSecondaryButtonStyle())
@@ -514,8 +577,6 @@ private struct DirectionRow: View {
 }
 
 struct RenderingStage: View {
-    let format: CreationFormat?
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             AssistantHeading(
@@ -524,18 +585,12 @@ struct RenderingStage: View {
             )
 
             VStack(alignment: .leading, spacing: 0) {
-                RenderStep(icon: "checkmark", isActive: false, title: "Footage understood", detail: "Clips reviewed")
-                RenderStep(icon: "checkmark", isActive: false, title: "Story assembled", detail: "Opening, pacing, music")
-                RenderStep(icon: nil, isActive: true, title: "Rendering final video", detail: "About 1 minute left")
-
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(KriaColor.softZinc).frame(height: 3)
-                        Capsule().fill(KriaColor.lime).frame(width: proxy.size.width * 0.68, height: 3)
-                    }
-                }
-                .frame(height: 3)
-                .padding(.top, 8)
+                RenderStep(
+                    icon: nil,
+                    isActive: true,
+                    title: "Rendering final video",
+                    detail: "Timing varies with footage length"
+                )
             }
             .padding(16)
             .background(Color.white)
@@ -602,6 +657,7 @@ private struct RenderStep: View {
 struct ReadyStage: View {
     let project: ProjectSummary
     let openEditor: () -> Void
+    let suggest: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -614,11 +670,16 @@ struct ReadyStage: View {
                 Group {
                     if let posterURL = project.posterURL {
                         AsyncImage(url: posterURL) { phase in
-                            if let image = phase.image { image.resizable().scaledToFill() }
-                            else { BundledPosterImage(name: "montage").scaledToFill() }
+                            if let image = phase.image {
+                                image.resizable().scaledToFill()
+                            } else if phase.error == nil {
+                                ProgressView().tint(KriaColor.limeText)
+                            } else {
+                                ProjectPosterPlaceholder()
+                            }
                         }
                     } else {
-                        BundledPosterImage(name: "montage").scaledToFill()
+                        ProjectPosterPlaceholder()
                     }
                 }
                 .frame(width: 76, height: 98)
@@ -658,22 +719,39 @@ struct ReadyStage: View {
                 .font(KriaFont.body(13).weight(.medium))
 
             HStack(spacing: 8) {
-                PromptChip(text: "Try a stronger opening")
-                PromptChip(text: "Make it warmer")
+                PromptChip(text: "Try a stronger opening", action: suggest)
+                PromptChip(text: "Make it warmer", action: suggest)
             }
         }
     }
 }
 
+private struct ProjectPosterPlaceholder: View {
+    var body: some View {
+        ZStack {
+            KriaColor.ink
+            Image(systemName: "film.stack")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(KriaColor.lime)
+        }
+        .accessibilityLabel("Video thumbnail loading")
+    }
+}
+
 private struct PromptChip: View {
     let text: String
+    let action: (String) -> Void
     var body: some View {
-        Text(text)
-            .font(KriaFont.body(11).weight(.medium))
-            .foregroundStyle(KriaColor.ink)
-            .padding(.horizontal, 11)
-            .frame(minHeight: 34)
-            .overlay(Capsule().stroke(KriaColor.border, lineWidth: 1))
+        Button { action(text) } label: {
+            Text(text)
+                .font(KriaFont.body(11).weight(.medium))
+                .foregroundStyle(KriaColor.ink)
+                .padding(.horizontal, 11)
+                .frame(minHeight: 44)
+                .overlay(Capsule().stroke(KriaColor.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Use suggestion: \(text)")
     }
 }
 
@@ -795,8 +873,7 @@ struct BundledPosterImage: View {
     let name: String
 
     var body: some View {
-        if let path = Bundle.main.path(forResource: name, ofType: "jpg"),
-           let image = UIImage(contentsOfFile: path) {
+        if let image = UIImage(named: name, in: .main, compatibleWith: nil) {
             Image(uiImage: image).resizable()
         } else {
             KriaColor.softZinc

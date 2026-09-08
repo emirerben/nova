@@ -2,6 +2,28 @@ import XCTest
 
 @MainActor
 final class KriaUITests: XCTestCase {
+    func testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat-bubbles"]
+        app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = "accessibility5"
+        app.launch()
+
+        let shortBubble = app.descendants(matching: .any)["chat-message-short"].firstMatch
+        let longBubble = app.descendants(matching: .any)["chat-message-long"].firstMatch
+        XCTAssertTrue(shortBubble.waitForExistence(timeout: 8))
+        XCTAssertTrue(longBubble.waitForExistence(timeout: 3))
+
+        let viewport = app.windows.firstMatch.frame
+        XCTAssertGreaterThan(longBubble.frame.height, shortBubble.frame.height)
+        XCTAssertGreaterThanOrEqual(shortBubble.frame.minX, viewport.minX + 54)
+        XCTAssertGreaterThanOrEqual(longBubble.frame.minX, viewport.minX + 54)
+        XCTAssertLessThanOrEqual(shortBubble.frame.maxX, viewport.maxX - 12)
+        XCTAssertLessThanOrEqual(longBubble.frame.maxX, viewport.maxX - 12)
+        XCTAssertEqual(shortBubble.frame.maxX, longBubble.frame.maxX, accuracy: 1)
+        XCTAssertTrue(shortBubble.label.contains("Montage works."))
+        XCTAssertTrue(longBubble.label.contains("ends on the wide sunset shot."))
+    }
+
     func testLaunchEntersChatFirstWorkspace() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
@@ -23,7 +45,9 @@ final class KriaUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Montage"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Narrated"].waitForExistence(timeout: 3))
+        // The offline UI fixture cannot fetch server capabilities, so the
+        // workspace must stay on its conservative Montage-only fallback.
+        XCTAssertFalse(app.staticTexts["Narrated"].exists)
 
         app.buttons["Open projects"].tap()
         XCTAssertTrue(app.staticTexts["RECENT"].waitForExistence(timeout: 2))
@@ -42,7 +66,10 @@ final class KriaUITests: XCTestCase {
         app.launchArguments = ["-ui-testing-editor"]
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Edit video"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["native-editor-back"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-project-title"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-workspace-switcher"].exists)
         XCTAssertTrue(app.staticTexts["Local preview"].exists)
         XCTAssertTrue(app.buttons["native-editor-tool-text"].exists)
 
@@ -66,20 +93,21 @@ final class KriaUITests: XCTestCase {
         app.buttons["native-editor-inspector-done"].tap()
 
         app.buttons["native-editor-tool-visuals"].tap()
-        XCTAssertTrue(app.staticTexts["Visual transforms are intentionally not exposed in this first native editor pass. Your original framing stays untouched."].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Select an existing lane to edit its timing and renderer-backed properties."].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["No visual lanes are present in this render."].exists)
     }
 
-    func testNativeEditorProjectsButtonOpensProjectsDrawer() {
+    func testNativeEditorBackButtonReturnsToPreviousSurface() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor"]
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Edit video"].waitForExistence(timeout: 8))
-        app.buttons["native-editor-projects"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+        app.buttons["native-editor-back"].tap()
 
         XCTAssertTrue(app.staticTexts["RECENT"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.buttons["New video"].exists)
-        XCTAssertFalse(app.staticTexts["Edit video"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview"].firstMatch.exists)
     }
 
     func testNativeEditorFixturePlaysAndAdvancesTheClock() {
@@ -103,6 +131,74 @@ final class KriaUITests: XCTestCase {
         play.tap()
         expectation(for: NSPredicate(format: "label == %@", "Play preview"), evaluatedWith: play)
         waitForExpectations(timeout: 2)
+    }
+
+    func testNativeEditorPlaysTheRenderedAssetThroughItsRealEndAndReplays() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor"]
+        app.launch()
+
+        let play = app.buttons["native-editor-play-pause"]
+        let clock = app.staticTexts["native-editor-current-time"]
+        let duration = app.staticTexts["native-editor-duration"]
+        XCTAssertTrue(play.waitForExistence(timeout: 8))
+        XCTAssertTrue(duration.exists)
+
+        // The fixture timeline deliberately claims 6.0s while the bundled
+        // rendered asset is 4.666…s. The transport must reconcile to the
+        // playable media instead of stopping before a fictional timeline end.
+        expectation(for: NSPredicate(format: "value == %@", "0:04.7"), evaluatedWith: duration)
+        waitForExpectations(timeout: 5)
+
+        play.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Play preview"), evaluatedWith: play)
+        waitForExpectations(timeout: 8)
+        XCTAssertEqual(clock.value as? String, "0:04.7")
+
+        play.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Pause preview"), evaluatedWith: play)
+        waitForExpectations(timeout: 2)
+        expectation(for: NSPredicate(format: "value != %@", "0:04.7"), evaluatedWith: clock)
+        waitForExpectations(timeout: 2)
+    }
+
+    func testNativeEditorLongTextEditPreservesDurationAndClipGeometry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor"]
+        app.launch()
+
+        let duration = app.staticTexts["native-editor-duration"]
+        XCTAssertTrue(duration.waitForExistence(timeout: 8))
+        expectation(for: NSPredicate(format: "value == %@", "0:04.7"), evaluatedWith: duration)
+        waitForExpectations(timeout: 5)
+
+        let firstClip = app.descendants(matching: .any)["native-editor-clip-1"]
+        let secondClip = app.descendants(matching: .any)["native-editor-clip-2"]
+        XCTAssertTrue(firstClip.exists)
+        XCTAssertTrue(secondClip.exists)
+        let originalFirstClip = firstClip.value as? String
+        let originalSecondClip = secondClip.value as? String
+
+        let text = app.descendants(matching: .any)["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"]
+        XCTAssertTrue(text.waitForExistence(timeout: 3))
+        text.tap()
+
+        let input = app.textFields["native-editor-selected-text-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        input.tap()
+        input.typeText(" that becomes a much longer multi-line title without changing the cut")
+        app.buttons["native-editor-selected-text-apply"].tap()
+        app.buttons["native-editor-inspector-done"].tap()
+
+        let updatedText = app.descendants(matching: .any)["native-editor-preview-text-00000000-0000-4000-8000-000000000100"]
+        expectation(
+            for: NSPredicate(format: "label CONTAINS %@", "much longer multi-line title"),
+            evaluatedWith: updatedText
+        )
+        waitForExpectations(timeout: 3)
+        XCTAssertEqual(duration.value as? String, "0:04.7")
+        XCTAssertEqual(firstClip.value as? String, originalFirstClip)
+        XCTAssertEqual(secondClip.value as? String, originalSecondClip)
     }
 
     func testNativeEditorTrimHandleShortensExtendsAndUndoesAsOneGesture() {
@@ -149,7 +245,7 @@ final class KriaUITests: XCTestCase {
 
             let marker = app.descendants(matching: .any)["native-editor-fixture-\(shape)"]
             XCTAssertTrue(marker.waitForExistence(timeout: 8), "Fixture \(shape) did not launch")
-            XCTAssertTrue(app.staticTexts["Edit video"].exists)
+            XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.exists)
             app.terminate()
         }
     }

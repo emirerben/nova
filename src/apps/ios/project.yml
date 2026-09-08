@@ -98,6 +98,8 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Tests/KriaTests
+      - path: Tests/Fixtures/editor-commit-picker-contract.json
+        buildPhase: resources
     dependencies:
       - target: Kria
     settings:

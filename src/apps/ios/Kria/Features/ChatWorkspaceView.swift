@@ -17,8 +17,10 @@ struct ChatWorkspaceView: View {
                         openAccount: { showsAccount = true }
                     )
                     .id(project.id)
-                } else if model.isLoading {
+                } else if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
                     WorkspaceLoadingView()
+                } else if model.projectsState == .empty {
+                    WorkspaceEmptyView { Task { await model.createProject() } }
                 } else {
                     WorkspaceRecoveryView { Task { await model.openWorkspace() } }
                 }
@@ -51,6 +53,27 @@ struct ChatWorkspaceView: View {
         .sheet(isPresented: $showsAccount) {
             NavigationStack { AccountView() }
         }
+    }
+}
+
+private struct WorkspaceEmptyView: View {
+    let create: () -> Void
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Start your first video.").font(KriaFont.display(29))
+            Text("Create a project, then tell Kria what you want the finished cut to feel like.")
+                .font(KriaFont.body(14))
+                .foregroundStyle(KriaColor.zinc)
+            if let error = model.errorMessage {
+                Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.failureText)
+            }
+            Button("New video", action: create).buttonStyle(CanonicalPrimaryButtonStyle())
+        }
+        .padding(24)
+        .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
+        .background(KriaColor.paper)
     }
 }
 
@@ -98,6 +121,8 @@ private struct CreationWorkspaceView: View {
     @State private var pendingMessages: [PendingChatMessage] = []
     @State private var approval: ApprovalSnapshot?
     @State private var selectedFormat: CreationFormat?
+    @State private var availableFormats: [CreationFormat] = [.montage]
+    @State private var capabilitiesAreAuthoritative = false
     @State private var isChoosingFormat = false
     @State private var threadState: [String: JSONValue] = [:]
     @State private var afterSequence = -1
@@ -200,7 +225,10 @@ private struct CreationWorkspaceView: View {
                 send: { Task { await send() } }
             )
         }
-        .task { await pollUntilDismissed() }
+        .task {
+            await refreshCapabilities()
+            await pollUntilDismissed()
+        }
         .sheet(isPresented: $showsAttachments) {
             AttachmentSheet(projectID: project.id)
                 .environmentObject(model)
@@ -209,11 +237,7 @@ private struct CreationWorkspaceView: View {
         .fullScreenCover(isPresented: $showsResult) {
             NativeEditorView(
                 project: currentProject,
-                onProjects: {
-                    showsResult = false
-                    openProjects()
-                },
-                onChat: { showsResult = false }
+                onBack: { showsResult = false }
             )
                 .environmentObject(model)
         }
@@ -222,7 +246,7 @@ private struct CreationWorkspaceView: View {
     @ViewBuilder private var stageContent: some View {
         switch workspaceStage {
         case .format:
-            FormatStage(isBusy: isActing, select: selectFormat).id("format-picker")
+            FormatStage(formats: availableFormats, isBusy: isActing, select: selectFormat).id("format-picker")
         case .footage:
             if transcript.last(where: { $0.role == .user }) == nil, let selectedFormat {
                 ChatMessageRow(message: .syntheticUser(selectedFormat.choiceSentence))
@@ -252,9 +276,14 @@ private struct CreationWorkspaceView: View {
                 .id("approval-\(approval.id)")
             }
         case .rendering:
-            RenderingStage(format: selectedFormat).id("rendering")
+            RenderingStage().id("rendering")
         case .ready:
-            ReadyStage(project: currentProject, openEditor: { showsResult = true }).id("ready")
+            ReadyStage(
+                project: currentProject,
+                openEditor: { showsResult = true },
+                suggest: { prompt = $0 }
+            )
+            .id("ready")
         case .failed:
             FailedStage(retry: { Task { await refreshNow() } }).id("failed")
         }
@@ -273,7 +302,7 @@ private struct CreationWorkspaceView: View {
         defer { isSending = false }
         do {
             let accepted = try await model.api.submitTurn(threadID: project.id, message: message, expectedRevision: threadRevision)
-            threadRevision = accepted.threadRevision
+            threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
             pendingMessages.append(PendingChatMessage(content: message))
             prompt = ""
             isThinking = true
@@ -300,9 +329,26 @@ private struct CreationWorkspaceView: View {
                 selectedFormat = CreationFormat(thread: thread) ?? format
                 isChoosingFormat = false
                 try await refreshDelta()
+            } catch let error as APIError where error == .conflict {
+                await refreshCapabilities()
+                await refreshNow()
+                errorMessage = "That format is no longer available. Choose one of the refreshed options."
             } catch {
                 errorMessage = "That format wasn’t saved. \(error.localizedDescription)"
             }
+        }
+    }
+
+    private func refreshCapabilities() async {
+        do {
+            let response = try await model.api.creationCapabilities()
+            let formats = response.formats.compactMap { CreationFormat(serverValue: $0.id) }
+            if !formats.isEmpty { availableFormats = formats }
+            capabilitiesAreAuthoritative = true
+        } catch {
+            capabilitiesAreAuthoritative = false
+            let projected = CreationFormat.available(in: events)
+            if !projected.isEmpty { availableFormats = projected }
         }
     }
 
@@ -330,7 +376,9 @@ private struct CreationWorkspaceView: View {
         do {
             let thread = try await model.api.project(threadID: project.id)
             apply(thread)
-            _ = try await refreshDelta()
+            if thread.runtimeVersion == 2 {
+                _ = try await refreshDelta()
+            }
         } catch {
             if !isUITesting {
                 errorMessage = "Kria couldn’t refresh this conversation. Check your connection and try again."
@@ -339,22 +387,54 @@ private struct CreationWorkspaceView: View {
     }
 
     private func apply(_ thread: CreationThread) {
-        threadRevision = thread.revision
+        let acceptsProjection = ThreadRevisionOrder.acceptsProjection(
+            current: threadRevision,
+            incoming: thread.revision
+        )
+        events = ChatTranscriptHistory.merge(events, with: thread.events)
+        if !capabilitiesAreAuthoritative {
+            let projected = CreationFormat.available(in: events)
+            if !projected.isEmpty { availableFormats = projected }
+        }
+        afterSequence = ChatTranscriptHistory.nextAfterSequence(
+            current: afterSequence,
+            response: afterSequence,
+            events: events
+        )
+        guard acceptsProjection else { return }
+        threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: thread.revision)
         threadState = thread.state ?? [:]
         selectedFormat = CreationFormat(thread: thread) ?? selectedFormat
         model.updateProject(thread.summary)
     }
 
     @discardableResult private func refreshDelta() async throws -> Bool {
+        // Runtime-v1 projects predate the delta endpoint but remain part of a
+        // creator's real project history. Poll their authoritative full
+        // projection so opening an older project never replaces its transcript
+        // with an empty chat or leaves a permanent connection error banner.
+        if currentProject.runtimeVersion != 2 {
+            let previousRevision = threadRevision
+            let previousEventIDs = events.map(\.id)
+            let thread = try await model.api.project(threadID: project.id)
+            apply(thread)
+            reconcilePendingMessages()
+            let changed = threadRevision != previousRevision || events.map(\.id) != previousEventIDs
+            if changed { errorMessage = nil }
+            return changed
+        }
         let delta = try await model.api.threadDelta(threadID: project.id, afterSequence: afterSequence)
-        threadRevision = delta.threadRevision
+        threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: delta.threadRevision)
         let known = Set(events.map(\.id))
         let fresh = delta.events.filter { !known.contains($0.id) }
-        events.append(contentsOf: fresh)
-        events.sort { $0.sequence < $1.sequence }
-        afterSequence = delta.nextAfterSequence
-        for event in fresh {
-            if let format = CreationFormat(event: event) { selectedFormat = format }
+        events = ChatTranscriptHistory.merge(events, with: fresh)
+        afterSequence = ChatTranscriptHistory.nextAfterSequence(
+            current: afterSequence,
+            response: delta.nextAfterSequence,
+            events: events
+        )
+        if let latestFormat = events.reversed().compactMap({ CreationFormat(event: $0) }).first {
+            selectedFormat = latestFormat
         }
         reconcilePendingMessages()
         let settledThinkingTypes: Set<String> = [
@@ -393,7 +473,13 @@ private struct CreationWorkspaceView: View {
             return
         }
         if approval?.approvalID != identifier.uuidString {
-            approval = try await model.api.approval(threadID: project.id, approvalID: identifier)
+            let fetched = try await model.api.approval(threadID: project.id, approvalID: identifier)
+            let requestStillCurrent = events.contains(where: {
+                $0.id == lastRequest.id && $0.sequence == lastRequest.sequence
+            }) && !events.contains(where: {
+                $0.sequence > lastRequest.sequence && terminalTypes.contains($0.eventType)
+            })
+            if requestStillCurrent { approval = fetched }
         }
     }
 
@@ -429,6 +515,34 @@ private struct CreationWorkspaceView: View {
 enum WorkspaceStage { case format, footage, direction, rendering, ready, failed }
 enum ChatMessageRole: Equatable { case user, assistant }
 
+/// Keeps append-only history stable while full projections and forward deltas
+/// overlap. Event IDs are authoritative; sequence determines display/cursor
+/// order, with the ID tie-breaker making equal-sequence responses deterministic.
+enum ChatTranscriptHistory {
+    static func merge(_ existing: [ThreadEvent], with incoming: [ThreadEvent]) -> [ThreadEvent] {
+        var byID: [String: ThreadEvent] = [:]
+        for event in existing + incoming {
+            byID[event.id] = event
+        }
+        return byID.values.sorted {
+            if $0.sequence != $1.sequence { return $0.sequence < $1.sequence }
+            return $0.id < $1.id
+        }
+    }
+
+    static func nextAfterSequence(current: Int, response: Int, events: [ThreadEvent]) -> Int {
+        max(current, response, events.map(\.sequence).max() ?? current)
+    }
+}
+
+/// Network requests overlap by design: a poll can start before a submit or
+/// action and finish after it. Event history is append-only and may always be
+/// merged, but mutable projections must never move back to an older revision.
+enum ThreadRevisionOrder {
+    static func advance(current: Int, incoming: Int) -> Int { max(current, incoming) }
+    static func acceptsProjection(current: Int, incoming: Int) -> Bool { incoming >= current }
+}
+
 struct ChatTranscriptMessage: Identifiable, Equatable {
     let id: String
     let role: ChatMessageRole
@@ -441,9 +555,10 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
 
     static func from(event: ThreadEvent) -> Self? {
         let conversationalAssistantEvents: Set<String> = [
-            "voiceover_prompt", "revision_queued", "status_update",
+            "format_prompt", "media_prompt", "upload_prompt", "voiceover_prompt",
+            "confirm_generation", "confirmation", "revision_queued", "status_update",
             "assistant_question", "assistant_response", "assistant_strategy",
-            "assistant_review", "assistant_error", "assistant_render_failed", "memory_updated",
+            "assistant_review", "draft_applied", "assistant_error", "assistant_render_failed", "memory_updated",
             "creator_memory_receipt", "agent_assistant_question", "agent_assistant_strategy",
             "agent_assistant_review", "agent_assistant_error", "agent_assistant_render_failed"
         ]
@@ -522,7 +637,13 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         } else { return nil }
     }
 
-    private init?(serverValue: String) {
+    static func available(in events: [ThreadEvent]) -> [CreationFormat] {
+        guard let prompt = events.last(where: { $0.eventType == "format_prompt" }),
+              case let .object(formats) = prompt.payload?["formats"] else { return [] }
+        return allCases.filter { formats[$0.serverValue] != nil }
+    }
+
+    init?(serverValue: String) {
         switch serverValue {
         case "montage": self = .montage
         case "narrated": self = .narrated

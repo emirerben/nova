@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **The native iOS editor now exposes the complete rendered composition.** Clips, text, captions, music, sound effects, media overlays, visual blocks, motion, camera effects, and Carousel moments share one selectable timeline and honest preview. Supported properties are editable with undo/redo and durable save/reload behavior; renderer-locked motion remains explicitly read-only.
+- **Canvas and timeline editing now work directly on iPhone.** Creators can move and resize supported preview objects, move and trim timed lanes, trim clip source windows, reorder layers, and remove components with one undo step per gesture. Stable accessibility identities, large hit targets, Dynamic Type, Reduce Motion, and a 71-slot stress fixture cover the mobile interaction surface.
+
+### Fixed
+- **Inserted Carousel moments no longer desynchronize editor timing.** Native and web editing now use the rendered timeline duration and the same right-biased ripple projection for clips, playhead, ruler, scrub mapping, preview visibility, and every persisted lane; continuous music spans the full output without being shifted.
+- **Mobile saves preserve every server-owned editor field.** The native document and commit contract round-trip unknown data and advanced lane payloads losslessly, use schema-valid motion frames and visual transforms, and keep local edits recoverable across render failures and revision conflicts.
+
 ## [0.73.8.1] — 2026-09-09
 
 ### Fixed
@@ -9,7 +19,6 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - Split source-audio loading from transport synchronization so playback ticks cannot restart an alternate audio file. Added deterministic resolver, component, recovery, and gated local-browser fixtures for audio-authority parity.
-
 ## [0.73.8.0] — 2026-09-09
 
 ### Fixed
@@ -60,7 +69,6 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **The editor preview keeps the selected frame after an edit.** Portrait and landscape videos now preserve their output aspect ratio instead of showing cropped footage or white bands, including narrow layouts, zoomed canvases, and clean or unsaved virtual previews. The exported video path is unchanged.
-
 ## [0.73.0.0] — 2026-09-08
 
 ### Changed

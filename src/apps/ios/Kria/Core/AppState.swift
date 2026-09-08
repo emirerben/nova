@@ -2,6 +2,14 @@ import Foundation
 import Combine
 import SwiftData
 
+enum ProjectCollectionState: Equatable, Sendable {
+    case idle
+    case loading
+    case loaded
+    case empty
+    case failed(String)
+}
+
 @MainActor final class AuthStore: ObservableObject {
     private static let invalidatedSessionKey = "kria.mobile-session.invalidated"
     @Published private(set) var isSignedIn = false
@@ -50,6 +58,8 @@ import SwiftData
     @Published var hasCompletedOnboarding: Bool
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published private(set) var projectsState: ProjectCollectionState = .idle
+    @Published private(set) var libraryState: ProjectCollectionState = .idle
     let api: KriaAPIClient
     let editorOperations: EditorOperations
     let uploads: BackgroundUploadCoordinator
@@ -64,6 +74,10 @@ import SwiftData
         self.uploads = BackgroundUploadCoordinator(api: api)
         self.cache = cache
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "kria.onboarding.complete")
+        if let cache, let cached = try? cache.projects(), !cached.isEmpty {
+            projects = cached.map(\.summary)
+            projectsState = .loaded
+        }
     }
     func completeOnboarding() { hasCompletedOnboarding = true; UserDefaults.standard.set(true, forKey: "kria.onboarding.complete") }
     func loadProjects() async {
@@ -71,9 +85,12 @@ import SwiftData
             projects = cached.map(\.summary)
         }
         isLoading = true
+        if projects.isEmpty { projectsState = .loading }
         defer { isLoading = false }
         do {
             projects = try await api.projects()
+            projectsState = projects.isEmpty ? .empty : .loaded
+            errorMessage = nil
             if let selectedProject,
                let refreshed = projects.first(where: { $0.id == selectedProject.id }) {
                 self.selectedProject = refreshed
@@ -82,41 +99,60 @@ import SwiftData
         }
         catch {
             #if DEBUG
-            if projects.isEmpty { projects = PreviewFixtures.projects }
+            if projects.isEmpty {
+                projects = PreviewFixtures.projects
+                projectsState = .loaded
+            }
             #else
-            errorMessage = APIError.requestFailed.localizedDescription
+            let message = APIError.requestFailed.localizedDescription
+            errorMessage = message
+            projectsState = projects.isEmpty ? .failed(message) : .loaded
             #endif
         }
     }
     func loadLibrary() async {
-        do { libraryProjects = try await api.library() }
+        if libraryProjects.isEmpty { libraryState = .loading }
+        do {
+            libraryProjects = try await api.library()
+            libraryState = libraryProjects.isEmpty ? .empty : .loaded
+            errorMessage = nil
+        }
         catch {
             #if DEBUG
             libraryProjects = PreviewFixtures.projects.filter { $0.status == .ready }
+            libraryState = libraryProjects.isEmpty ? .empty : .loaded
             #else
             errorMessage = error.localizedDescription
+            libraryState = libraryProjects.isEmpty ? .failed(error.localizedDescription) : .loaded
             #endif
         }
     }
     func createProject() async {
+        errorMessage = nil
         do {
             let thread = try await api.createThread(message: nil)
             let project = thread.summary
             projects.insert(project, at: 0)
+            projectsState = .loaded
             try? cache?.upsert([project])
             selectedProject = project
         } catch {
             #if DEBUG
             let project = ProjectSummary(id: UUID(), title: "Untitled project", status: .draft, updatedAt: .now, posterURL: nil)
-            projects.insert(project, at: 0); selectedProject = project
+            projects.insert(project, at: 0); selectedProject = project; projectsState = .loaded
             #else
             errorMessage = error.localizedDescription
             #endif
         }
     }
     func openWorkspace(preferredProjectID: UUID? = nil) async {
-        await uploads.restorePendingTasks()
+        selectWorkspaceProject(preferredProjectID: preferredProjectID)
+        async let uploadRecovery: Void = uploads.restorePendingTasks()
         await loadProjects()
+        selectWorkspaceProject(preferredProjectID: preferredProjectID)
+        await uploadRecovery
+    }
+    private func selectWorkspaceProject(preferredProjectID: UUID?) {
         if let preferredProjectID,
            let preferred = projects.first(where: { $0.id == preferredProjectID }) {
             selectedProject = preferred
@@ -125,8 +161,6 @@ import SwiftData
             self.selectedProject = refreshed
         } else if let newest = projects.first {
             selectedProject = newest
-        } else {
-            await createProject()
         }
     }
     func selectProject(_ project: ProjectSummary) {

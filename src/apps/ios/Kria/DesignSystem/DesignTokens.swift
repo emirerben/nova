@@ -11,6 +11,8 @@ enum KriaColor {
     static let lime = Color(red: 0.518, green: 0.80, blue: 0.086)
     static let limeText = Color(red: 0.247, green: 0.384, blue: 0.071)
     static let limeSoft = Color(red: 0.925, green: 0.988, blue: 0.796)
+    static let failureText = Color(red: 0.58, green: 0.20, blue: 0.20)
+    static let failureSoft = Color(red: 0.98, green: 0.94, blue: 0.94)
 }
 
 enum KriaFont {
@@ -19,6 +21,7 @@ enum KriaFont {
 }
 
 struct KriaPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     var fill = KriaColor.ink
     var usesLightText = true
     func makeBody(configuration: Configuration) -> some View {
@@ -29,11 +32,12 @@ struct KriaPrimaryButtonStyle: ButtonStyle {
             .padding(.horizontal, 22)
             .background(fill)
             .clipShape(Capsule())
-            .opacity(configuration.isPressed ? 0.78 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.45)
     }
 }
 
 struct KriaSecondaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(KriaFont.body(16).weight(.semibold))
@@ -43,7 +47,7 @@ struct KriaSecondaryButtonStyle: ButtonStyle {
             .background(KriaColor.paper)
             .overlay(Capsule().stroke(KriaColor.line, lineWidth: 1))
             .clipShape(Capsule())
-            .opacity(configuration.isPressed ? 0.65 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.45)
     }
 }
 
@@ -75,14 +79,33 @@ struct KriaEmptyState: View {
 }
 
 struct KriaStatusPill: View {
-    let text: String
+    let status: ProjectStatus
+
+    private var label: String {
+        switch status {
+        case .draft: "Draft"
+        case .rendering: "Rendering"
+        case .ready: "Ready"
+        case .failed: "Needs attention"
+        }
+    }
+
+    private var treatment: (foreground: Color, background: Color) {
+        switch status {
+        case .ready: (KriaColor.limeText, KriaColor.limeSoft)
+        case .draft, .rendering: (KriaColor.zinc, KriaColor.softZinc)
+        case .failed: (KriaColor.failureText, KriaColor.failureSoft)
+        }
+    }
+
     var body: some View {
-        Text(text)
+        Text(label)
             .font(KriaFont.body(12).weight(.semibold))
-            .foregroundStyle(KriaColor.limeText)
+            .foregroundStyle(treatment.foreground)
             .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(KriaColor.lime.opacity(0.38))
+            .background(treatment.background)
             .clipShape(Capsule())
+            .accessibilityLabel("Project status: \(label)")
     }
 }
 

@@ -235,8 +235,7 @@ struct ResultsView: View {
             NativeEditorView(
                 project: project,
                 libraryJobID: libraryJobID,
-                onProjects: { showsEditor = false },
-                onChat: { showsEditor = false }
+                onBack: { showsEditor = false }
             )
                 .environmentObject(model)
         }

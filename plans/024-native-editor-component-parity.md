@@ -1,6 +1,6 @@
 # Plan 024 — Native editor component parity
 
-Status: IN PROGRESS
+Status: COMPLETE
 Planned at: `7c444a47e`
 Date: 2026-09-08
 Source audit: `.audit/mobile-editor-parity/report.md` in the `codex/kria-ios-native` worktree
@@ -122,6 +122,15 @@ Expand the native request/response DTOs to mirror the existing API contract:
 - success clears only sections acknowledged in the response;
 - `ok == false` means the edit persisted but render enqueue failed;
 - 409 retains local edits, history, and selection and presents reload/rebase choices. It never silently retries stale content.
+
+### 6. Final timeline contract
+
+1. **Duration source:** `NativeEditorSession.timelineProjection`, built once by `NativeEditorInteraction.timelineProjection`, owns ordered clips, transition overlaps, Carousel insertion, and `outputDuration`. Timeline bars, preview visibility, transport, playhead, ruler geometry, and music extent consume that projection.
+2. **Ripple policy:** Text, captions, SFX, media overlays, visual blocks, motion scenes, and camera effects remain stored in stable base time and project through Carousel insertion. Points at the insertion boundary are right-biased; crossing intervals keep their start and extend their end. The continuous music bed is explicitly excluded and spans `0...outputDuration`.
+3. **Scrub bounds:** `timelineProjection.outputDuration` clamps pointer scrubbing, playback, keyboard/transport seeking, ruler ticks, playhead geometry, and `baseTime(forOutputTime:)`. No view recomputes a second duration.
+4. **Resize behavior:** Clip edges trim source windows against source bounds and the minimum clip duration; timed-lane edges preserve the opposite edge and use their schema limits. SFX edges edit source trim without moving placement. Motion timing rounds to 30 fps and caps at 8 seconds; camera timing clamps to 0.4–2 seconds. Transition overlap is rounded to 0.1 seconds and capped against both adjacent clips after duration changes.
+5. **Undo behavior:** Every pointer gesture opens one immutable document baseline with `beginDirectManipulation`/`beginTimed*`/`beginTrim` and commits at gesture end. Pointer updates preview from that baseline without adding snapshots; returning to the baseline adds no history entry.
+6. **Preview/render parity:** Native `allLanes`, `boundary`, and `stress-71` fixtures pair with web `editor-timeline`/`mobile-video-editor` fixtures and backend Carousel choreography/projection tests. They pin positional insertion, overlap rounding, right-biased boundaries, projected lane order, continuous-music exclusion, inverse scrubbing, exact motion frames, removal semantics, and legacy identity behavior.
 
 ## Delivery phases
 
@@ -313,11 +322,11 @@ No failure may be silent, destructive, or erase an untouched lane.
   - Surfaced by: Product parity — P1 objects lack complete property editing and durable recovery.
   - Files: `NativeEditorView.swift`, `NativeEditorComponents.swift`, inspector views, services/session/UI tests.
   - Verify: edit/undo/redo/save/reload/conflict flows for every P1 object.
-- [ ] **T6 (P2, human: ~4 days / CC: ~3 h)** — Visual and sound lanes — Add SFX, overlays, and visual blocks with timing, preview, inspectors, capability-aware creation/removal, and all-lanes preservation.
+- [x] **T6 (P2, human: ~4 days / CC: ~3 h)** — Visual and sound lanes — Add SFX, overlays, and visual blocks with timing, preview, inspectors, capability-aware creation/removal, and all-lanes preservation.
   - Surfaced by: Audit — native declares Visuals/Overlays unavailable and has no SFX item model.
   - Files: native document, timeline, preview, inspector, and integration tests.
   - Verify: modify/remove each P2 object and reload unchanged neighboring lanes.
-- [ ] **T7 (P2, human: ~3 days / CC: ~2 h)** — Advanced lanes — Add motion, camera, carousel, layer ordering, and honest simplified preview/read-only fallback.
+- [x] **T7 (P2, human: ~3 days / CC: ~2 h)** — Advanced lanes — Add motion, camera, carousel, layer ordering, and honest simplified preview/read-only fallback.
   - Surfaced by: Audit — advanced temporal objects are silently absent today.
   - Files: native document, timeline, preview, inspectors, and tests.
   - Verify: every server-supported object is selectable and editable or explicitly read-only.
@@ -325,10 +334,20 @@ No failure may be silent, destructive, or erase an untouched lane.
   - Surfaced by: Audit screenshot — ruler reaches 0:59 while rendered transport reports 0:30.
   - Files: web virtual timeline/player/timeline components and Jest tests.
   - Verify: targeted Jest plus `npx tsc --noEmit`.
-- [ ] **T9 (P1, human: ~2 days / CC: ~2 h)** — Release gate — Run full iOS/package/web suites, simulator stress/accessibility metrics, and one signed-device pass; fix all regressions.
+- [x] **T9 (P1, human: ~2 days / CC: ~2 h)** — Release gate — Run full iOS/package/web suites, simulator stress/accessibility metrics, and one signed-device pass; fix all regressions.
   - Surfaced by: Test/performance review — screenshots alone cannot verify VoiceOver, Dynamic Type, Reduce Motion, thermal, memory, or gesture latency.
   - Files: tests and any defect fixes only.
   - Verify: `make ios-verify`, `swift test`, targeted XCUITests, web Jest/tsc, device checklist.
+  - 2026-09-08 result: simulator/package/web/API gates pass. The final commit also built, signed, installed, and launched on the connected iPhone 13 Pro (`iOS 26.6.1`) using the signed-in Personal Team `AM9524S6CE` and its existing `com.kria.app.dev` profile. The certificate label `WBNABT8XC9` had initially been mistaken for the team identifier; no project signing setting was changed.
+
+## Verification result — 2026-09-08
+
+- `make ios-verify`: generic Simulator build passed; 97 unit tests passed with one expected unsigned-Keychain skip; 11 UI tests passed.
+- `swift test` in `KriaMediaEngine`: 13 passed.
+- `make verify-editor-timeline`: 204 Jest, 12 desktop Playwright, 42 mobile Playwright, and 499 API tests passed.
+- Earlier full web gate on this branch: 302 suites / 3,668 tests passed; `npx tsc --noEmit` passed.
+- API editor-commit characterization: 258 passed before the expanded 499-test timeline gate.
+- Signed-device gate: the final commit built and signed successfully, then installed and launched as `com.kria.app.dev` on the connected iPhone 13 Pro.
 
 ## NOT in scope
 

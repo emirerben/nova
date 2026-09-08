@@ -85,13 +85,70 @@ enum NativeEditorUITestFixtures {
                         "music_track_id": .string(id(350).uuidString),
                         "music_window": .object(["start_s": .number(0), "end_s": .number(6)]),
                         "audio_mix": .object(["music_level": .number(0.72), "original_level": .number(1)]),
-                        "sound_effects": .array([.object(["id": .string("sfx-1"), "start_s": .number(0.5), "end_s": .number(0.8), "volume": .number(0.8)])]),
-                        "media_overlays": .array([.object(["id": .string("overlay-1"), "start_s": .number(1), "end_s": .number(2), "z": .number(4), "src_gcs_path": .string("fixture/overlay.png")])]),
-                        "visual_blocks": .array([.object(["id": .string("visual-1"), "start_s": .number(2), "end_s": .number(3), "preset": .string("cards")])]),
-                        "motion_scenes": .array([.object(["id": .string("motion-1"), "start_s": .number(3), "end_s": .number(4), "preset": .string("zoom")])]),
-                        "camera_effects": .array([.object(["id": .string("camera-1"), "start_s": .number(4), "end_s": .number(5), "kind": .string("push_in")])]),
-                        "carousel_moment": .object(["id": .string("carousel-1"), "start_s": .number(1), "end_s": .number(3)]),
+                        "background_music": .object(["track_id": .string("fixture-background"), "enabled": .bool(true), "start_s": .number(0), "end_s": .number(6), "gain_db": .number(-6), "muted": .bool(false)]),
+                        "title": .string("All lanes fixture"),
+                        "orientation": .string("9:16"),
+                        "lyrics": .object(["enabled": .bool(true), "text": .string("Fixture lyrics")]),
+                        "sound_effects": .array([.object(["id": .string("sfx-1"), "src_gcs_path": .string("sound-effects/fixture.wav"), "at_s": .number(0.5), "trim_start_s": .number(0), "trim_end_s": .number(0.3), "duration_s": .number(1), "gain": .number(0.8), "label": .string("Whoosh")])]),
+                        "media_overlays": .array([.object(["id": .string("overlay-1"), "kind": .string("image"), "start_s": .number(1), "end_s": .number(2), "z": .number(4), "src_gcs_path": .string("users/fixture/plan/fixture/overlays/overlay.png"), "display_mode": .string("pip"), "position": .string("custom"), "x_frac": .number(0.5), "y_frac": .number(0.5), "scale": .number(0.35)])]),
+                        "visual_blocks": .array([.object(["version": .number(1), "id": .string("visual-1"), "kind": .string("text_card"), "start_s": .number(2), "end_s": .number(3), "timing_mode": .string("manual"), "origin": .string("user"), "style_preset_id": .string("text-card-default"), "background": .object(["type": .string("solid"), "color": .string("#111111")])])]),
+                        "motion_scenes": .array([.object(["id": .string("motion-1"), "start_frame": .number(90), "end_frame_exclusive": .number(120), "preset_id": .string("route_trace"), "preset_version": .number(1), "palette": .object(["primary": .string("#FFFFFF"), "accent": .string("#84CC16")]), "intensity": .number(0.7)])]),
+                        "motion_runtime_hash": .string("fixture-required-hash"),
+                        "camera_effects": .array([.object(["id": .string("camera-1"), "token": .string("semantic_crop_pulse"), "start_s": .number(4), "end_s": .number(5), "intensity": .number(0.04), "easing": .string("sine_pulse"), "source": .string("user")])]),
+                        "carousel_moment": .object(["id": .string("carousel-1"), "position": .string("middle"), "mode": .string("rolling"), "effect": .string("cover_flow"), "duration_s": .number(2), "transition_in": .string("none"), "transition_out": .string("none"), "timing_model": .string("ripple_v1")]),
+                     ], rootExtras: [
+                        "editor_capabilities": .object([
+                            "sfx": .object(["editable": .bool(true)]),
+                            "overlays": .object(["editable": .bool(true)]),
+                            "visual_blocks": .object(["editable": .bool(true)]),
+                            "motion_scenes": .bool(false),
+                            "motion_scenes_reason": .string("motion_runtime_mismatch"),
+                            "motion_runtime_hash": .string("fixture-editor-hash"),
+                            "motion_required_runtime_hash": .string("fixture-required-hash"),
+                            "camera_effects": .object(["editable": .bool(true)]),
+                            "carousel": .object(["editable": .bool(true)]),
+                            "background_music": .object(["editable": .bool(true)]),
+                            "orientation": .object(["editable": .bool(false), "reason": .string("Orientation is fixed by the rendered variant.")]),
+                            "lyrics": .object(["editable": .bool(false), "reason": .string("Lyrics are supplied by the rendered variant.")]),
+                        ])
                      ])
+    }()
+
+    static let visualMedia: EditorDraft = {
+        let clips = [clip(700, start: 0, duration: 4)]
+        return draft(
+            clips: clips,
+            text: [],
+            captions: false,
+            music: false,
+            sections: [
+                "timeline_slots": slots(for: clips),
+                "visual_blocks": .array([.object([
+                    "version": .number(1),
+                    "id": .string("visual-media-1"),
+                    "kind": .string("media"),
+                    "start_s": .number(0.5),
+                    "end_s": .number(2.5),
+                    "timing_mode": .string("manual"),
+                    "origin": .string("user"),
+                    "asset_id": .string("fixture-asset"),
+                    "src_gcs_path": .string("users/fixture/visual.png"),
+                    "media_kind": .string("image"),
+                    "display_mode": .string("fullscreen"),
+                    "transform": .object([
+                        "fit_mode": .string("contain"),
+                        "focal_x": .number(0.5),
+                        "focal_y": .number(0.5),
+                        "zoom": .number(1),
+                    ]),
+                    "x_frac": .number(0.5),
+                    "y_frac": .number(0.5),
+                    "scale": .number(0.35),
+                    "z": .number(0),
+                ])]),
+            ],
+            rootExtras: ["editor_capabilities": .object(["visual_blocks": .bool(true)])]
+        )
     }()
 
     static let stress: EditorDraft = {

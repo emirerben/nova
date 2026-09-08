@@ -2090,6 +2090,7 @@ function Playline({
       : Math.min(durationS, Math.max(0, playbackTimeS));
   return (
     <div
+      data-testid="editor-timeline-playline"
       className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-[#0c0c0e]/80"
       style={{ left: secondsToPx(boundedPlaybackTimeS, pps) }}
       aria-hidden
@@ -2104,6 +2105,7 @@ function Playline({
 function EndOfVideoMarker({ left }: { left: number }) {
   return (
     <div
+      data-testid="editor-timeline-end-marker"
       className="pointer-events-none absolute bottom-0 top-0 z-10 w-px bg-zinc-400/40"
       style={{ left }}
       aria-hidden

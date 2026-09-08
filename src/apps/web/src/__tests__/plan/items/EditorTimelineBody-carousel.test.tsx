@@ -338,6 +338,7 @@ describe("EditorTimelineBody — rendered duration contract", () => {
           durationS: 59,
           renderedOutputDurationS: 30,
           clipPreviewMode: "rendered",
+          currentTimeS: 59,
           onScrub,
         })}
       />,
@@ -347,10 +348,33 @@ describe("EditorTimelineBody — rendered duration contract", () => {
     expect(screen.queryByText("0:59")).not.toBeInTheDocument();
 
     const ruler = screen.getByTestId("editor-timeline-ruler");
+    expect(ruler).toHaveStyle({ width: "236px" });
+    expect(screen.getByTestId("editor-timeline-end-marker")).toHaveStyle({ left: "120px" });
+    for (const playline of screen.getAllByTestId("editor-timeline-playline")) {
+      expect(playline).toHaveStyle({ left: "120px" });
+    }
     const pointerDown = new Event("pointerdown", { bubbles: true, cancelable: true });
     Object.defineProperty(pointerDown, "clientX", { value: 1000 });
     Object.defineProperty(pointerDown, "pointerId", { value: 1 });
     fireEvent(ruler, pointerDown);
     expect(onScrub).toHaveBeenCalledWith(30);
   });
+
+  it.each([
+    ["virtual", Number.NaN, 30, 12, 12],
+    ["rendered", Number.POSITIVE_INFINITY, -1, 12, 12],
+    ["rendered", 0, Number.NaN, -1, 0],
+  ] as const)(
+    "falls back safely for invalid %s timeline durations",
+    (mode, projectedDurationS, renderedOutputDurationS, fallbackDurationS, expected) => {
+      expect(
+        resolveEditorTimelineDuration({
+          mode,
+          projectedDurationS,
+          renderedOutputDurationS,
+          fallbackDurationS,
+        }),
+      ).toBe(expected);
+    },
+  );
 });

@@ -3,17 +3,87 @@ import AVKit
 import KriaMediaEngine
 import SwiftUI
 
+private func nativeEffectName(_ raw: [String: JSONValue], fallback: String) -> String {
+    raw["kind"]?.stringValue
+        ?? raw["effect"]?.stringValue
+        ?? raw["preset_id"]?.stringValue
+        ?? raw["preset"]?.stringValue
+        ?? raw["name"]?.stringValue
+        ?? fallback
+}
+
+private func nativeTextPosition(_ layer: EditorTextElement) -> CGPoint {
+    CGPoint(
+        x: min(max(layer.raw["x_frac"]?.numberValue ?? 0.5, 0), 1),
+        y: min(max(layer.raw["y_frac"]?.numberValue ?? 0.5, 0), 1)
+    )
+}
+
+private func nativeRawNumber(_ raw: [String: JSONValue], _ key: String) -> Double? {
+    raw[key]?.numberValue ?? nativeRawTransformValue(raw, key)?.numberValue
+}
+
+private func nativeRawString(_ raw: [String: JSONValue], _ key: String) -> String? {
+    raw[key]?.stringValue ?? nativeRawTransformValue(raw, key)?.stringValue
+}
+
+private func nativeBool(_ value: JSONValue?) -> Bool? {
+    guard case let .bool(result)? = value else { return nil }
+    return result
+}
+
+private func nativeRawTransformValue(_ raw: [String: JSONValue], _ key: String) -> JSONValue? {
+    guard case let .object(transform)? = raw["transform"] else { return nil }
+    return transform[key]
+}
+
+private func nativeVisualPosition(_ raw: [String: JSONValue], fallback: CGPoint) -> CGPoint {
+    CGPoint(
+        x: min(max(nativeRawNumber(raw, "x_frac") ?? fallback.x, 0), 1),
+        y: min(max(nativeRawNumber(raw, "y_frac") ?? fallback.y, 0), 1)
+    )
+}
+
+private func nativeVisualScale(_ raw: [String: JSONValue], fallback: CGFloat = 0.35) -> CGFloat {
+    CGFloat(min(max(nativeRawNumber(raw, "scale") ?? Double(fallback), 0.05), 1.5))
+}
+
+private func nativeIsFullscreen(_ raw: [String: JSONValue]) -> Bool {
+    [raw["display_mode"]?.stringValue, raw["mode"]?.stringValue, nativeRawString(raw, "display_mode")]
+        .compactMap { $0 }
+        .contains { $0 == "fullscreen" || $0 == "full" }
+}
+
+@MainActor
+func nativePersistedTimelineItems(for session: NativeEditorSession) -> [NativeEditorTimelineItem] {
+    session.timelineItems.sorted {
+        if $0.start != $1.start { return $0.start < $1.start }
+        if $0.end != $1.end { return $0.end < $1.end }
+        if $0.zIndex != $1.zIndex { return $0.zIndex < $1.zIndex }
+        if $0.sourceIndex != $1.sourceIndex { return $0.sourceIndex < $1.sourceIndex }
+        if $0.kind != $1.kind { return $0.kind.rawValue < $1.kind.rawValue }
+        return $0.id < $1.id
+    }
+}
+
 /// The video surface for the native editor. The player is intentionally owned
 /// by NativeEditorSession: this view is only a playback surface and never
 /// invents a local preview when the session has no playable item.
 struct NativeVideoPreview: View {
     @ObservedObject var session: NativeEditorSession
+    @ObservedObject private var clock: NativeEditorPlaybackClock
     @State private var cachedObjects: [NativeEditorPreviewObject] = []
+    @State private var didCacheObjects = false
     @State private var lastTapIDs: [EditorSelection] = []
     @State private var lastTapPoint: CGPoint?
+    @State private var directMoveObjectID: String?
+    @State private var directMoveBaseline: CGPoint?
+    @State private var directResizeObjectID: String?
+    @State private var directResizeBaseline: CGFloat?
 
     init(session: NativeEditorSession) {
         self.session = session
+        _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
     private var previewKind: String {
@@ -25,32 +95,80 @@ struct NativeVideoPreview: View {
     }
 
     private var objects: [NativeEditorPreviewObject] {
-        cachedObjects.isEmpty ? makeObjects() : cachedObjects
+        didCacheObjects ? cachedObjects : makeObjects()
     }
 
     private func makeObjects() -> [NativeEditorPreviewObject] {
         let document = session.document
-        let textByID = Dictionary(uniqueKeysWithValues: session.draft.text.map { ($0.id.uuidString, $0) })
-        return session.timelineItems.compactMap { item in
+        let captionsEnabled = nativeBool(document.captionMeta["enabled"]) ?? !document.captionCues.isEmpty
+        return nativePersistedTimelineItems(for: session).compactMap { item -> NativeEditorPreviewObject? in
             switch item.kind {
             case .text:
-                let layer = textByID[item.id]
+                let layer = document.textElements.first { $0.id == item.id }
                 return NativeEditorPreviewObject(
                     item: item,
-                    text: layer?.content ?? document.textElements.first(where: { $0.id == item.id })?.text,
-                    position: layer?.position ?? CGPoint(x: 0.5, y: 0.5),
-                    style: layer?.style,
-                    title: "Text"
+                    text: layer?.text,
+                    position: layer.map(nativeTextPosition) ?? CGPoint(x: 0.5, y: 0.5),
+                    style: layer?.raw["font_family"]?.stringValue,
+                    title: "Text",
+                    render: .text,
+                    detail: nil,
+                    scale: CGFloat(min(max(layer.flatMap { nativeRawNumber($0.raw, "max_width_frac") } ?? 0.84, 0.2), 1))
                 )
             case .captionCue:
-                guard session.draft.captions.enabled else { return nil }
+                guard captionsEnabled else { return nil }
                 return NativeEditorPreviewObject(
                     item: item,
                     text: document.captionCues.first(where: { $0.id == item.id })?.text,
                     position: nil,
                     style: nil,
-                    title: "Caption"
+                    title: "Caption",
+                    render: .caption,
+                    detail: nil
                 )
+            case .soundEffect:
+                let effect = document.soundEffects.first { $0.id == item.id }
+                return NativeEditorPreviewObject(
+                    item: item,
+                    text: nil,
+                    position: CGPoint(x: 0.5, y: 0.18),
+                    style: nil,
+                    title: "Sound effect (audio)",
+                    render: .runtimeOnly,
+                    detail: effect.map { nativeEffectName($0.raw, fallback: $0.kind ?? "Sound effect") }
+                )
+            case .mediaOverlay:
+                let overlay = document.mediaOverlays.first { $0.id == item.id }
+                return NativeEditorPreviewObject(
+                    item: item, text: nil,
+                    position: overlay.map { nativeVisualPosition($0.raw, fallback: CGPoint(x: 0.78, y: 0.25)) },
+                    style: nil,
+                    title: "Media overlay",
+                    render: .mediaOverlay,
+                    detail: overlay.map { nativeEffectName($0.raw, fallback: $0.kind ?? "Overlay") },
+                    scale: overlay.map { nativeVisualScale($0.raw) } ?? 0.35,
+                    fullscreen: overlay.map { nativeIsFullscreen($0.raw) } ?? false
+                )
+            case .visualBlock:
+                let block = document.visualBlocks.first { $0.id == item.id }
+                return NativeEditorPreviewObject(
+                    item: item, text: nil,
+                    position: block.map { nativeVisualPosition($0.raw, fallback: CGPoint(x: 0.5, y: 0.25)) },
+                    style: nil,
+                    title: "Visual block",
+                    render: .visualBlock,
+                    detail: block?.kind,
+                    scale: block.map { nativeVisualScale($0.raw) } ?? 0.35,
+                    fullscreen: block.map { nativeIsFullscreen($0.raw) } ?? false
+                )
+            case .carousel:
+                return NativeEditorPreviewObject(item: item, text: nil, position: CGPoint(x: 0.5, y: 0.78), style: nil, title: "Carousel moment", render: .carousel, detail: nil)
+            case .motionScene:
+                let scene = document.motionScenes.first { $0.id == item.id }
+                return NativeEditorPreviewObject(item: item, text: nil, position: CGPoint(x: 0.5, y: 0.18), style: nil, title: "Motion (final render)", render: .runtimeOnly, detail: scene?.preset)
+            case .cameraEffect:
+                let effect = document.cameraEffects.first { $0.id == item.id }
+                return NativeEditorPreviewObject(item: item, text: nil, position: CGPoint(x: 0.5, y: 0.18), style: nil, title: "Camera effect (final render)", render: .runtimeOnly, detail: effect?.effect)
             default:
                 return nil
             }
@@ -59,12 +177,16 @@ struct NativeVideoPreview: View {
 
     private func refreshObjects() {
         cachedObjects = makeObjects()
+        didCacheObjects = true
     }
 
     private func frame(for object: NativeEditorPreviewObject, in size: CGSize) -> CGRect {
+        if object.fullscreen {
+            return CGRect(origin: .zero, size: size).insetBy(dx: 6, dy: 6)
+        }
         if let position = object.position {
-            let width = min(size.width * 0.84, max(44, size.width - 24))
-            let height: CGFloat = 54
+            let width = min(size.width * object.scale, max(44, size.width - 24))
+            let height = max(44, 54 * object.scale)
             let center = CGPoint(
                 x: min(max(width / 2, position.x * size.width), size.width - width / 2),
                 y: min(max(height / 2, position.y * size.height), size.height - height / 2)
@@ -76,7 +198,7 @@ struct NativeVideoPreview: View {
 
     private func selectPreviewObject(at point: CGPoint, in size: CGSize) {
         let candidates = NativeEditorInteraction.previewOrder(
-            NativeEditorInteraction.visible(objects.map(\.item), at: session.currentTime)
+            NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
         ).reversed().filter { item in
             guard let object = objects.first(where: { $0.item.selection == item.selection }) else { return false }
             return NativeEditorInteraction.hitRect(frame(for: object, in: size)).contains(point)
@@ -96,7 +218,119 @@ struct NativeVideoPreview: View {
         }
         lastTapIDs = ordered
         lastTapPoint = point
-        session.select(next)
+        session.select(next, seekToStart: false)
+    }
+
+    private func directMoveCandidate(at point: CGPoint, in size: CGSize) -> NativeEditorPreviewObject? {
+        NativeEditorInteraction.previewOrder(
+            NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
+        )
+        .reversed()
+        .compactMap { item in objects.first(where: { $0.item.selection == item.selection }) }
+        .first { object in
+            canDirectlyPosition(object)
+                && NativeEditorInteraction.hitRect(frame(for: object, in: size)).contains(point)
+        }
+    }
+
+    private func directMoveGesture(in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .local)
+            .onChanged { value in
+                if directMoveObjectID == nil {
+                    guard let object = directMoveCandidate(at: value.startLocation, in: size),
+                          let position = object.position else { return }
+                    directMoveObjectID = object.id
+                    directMoveBaseline = position
+                    session.beginDirectManipulation()
+                    session.select(object.item, seekToStart: false)
+                }
+                guard let objectID = directMoveObjectID,
+                      let baseline = directMoveBaseline,
+                      let object = objects.first(where: { $0.id == objectID }),
+                      let onMove = positionHandler(for: object),
+                      size.width > 0, size.height > 0 else { return }
+                onMove(
+                    CGPoint(
+                        x: min(max(0, baseline.x + value.translation.width / size.width), 1),
+                        y: min(max(0, baseline.y + value.translation.height / size.height), 1)
+                    )
+                )
+            }
+            .onEnded { _ in
+                guard directMoveObjectID != nil else { return }
+                directMoveObjectID = nil
+                directMoveBaseline = nil
+                if directResizeObjectID == nil { session.endDirectManipulation() }
+            }
+    }
+
+    private func directResizeGesture() -> some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                if directResizeObjectID == nil {
+                    guard let selection = session.selection,
+                          let object = objects.first(where: { $0.item.selection == selection }),
+                          scaleHandler(for: object) != nil else { return }
+                    directResizeObjectID = object.id
+                    directResizeBaseline = object.scale
+                    session.beginDirectManipulation()
+                }
+                guard let objectID = directResizeObjectID,
+                      let baseline = directResizeBaseline,
+                      let object = objects.first(where: { $0.id == objectID }),
+                      let onResize = scaleHandler(for: object) else { return }
+                onResize(baseline * value)
+            }
+            .onEnded { _ in
+                guard directResizeObjectID != nil else { return }
+                directResizeObjectID = nil
+                directResizeBaseline = nil
+                if directMoveObjectID == nil { session.endDirectManipulation() }
+            }
+    }
+
+    private func canDirectlyPosition(_ object: NativeEditorPreviewObject) -> Bool {
+        switch object.item.kind {
+        case .text:
+            return session.canEdit(.text)
+        case .mediaOverlay:
+            return !object.fullscreen && session.canEdit(.mediaOverlays)
+        case .visualBlock:
+            guard !object.fullscreen,
+                  session.canEdit(.visualBlocks),
+                  let block = session.document.visualBlocks.first(where: { $0.id == object.item.id }) else { return false }
+            return block.kind == "media" && block.raw["display_mode"]?.stringValue == "overlay"
+        default:
+            return false
+        }
+    }
+
+    private func positionHandler(for object: NativeEditorPreviewObject) -> ((CGPoint) -> Void)? {
+        guard canDirectlyPosition(object) else { return nil }
+        switch object.item.kind {
+        case .text:
+            return { point in session.setTextPosition(id: object.item.id, x: point.x, y: point.y) }
+        case .mediaOverlay:
+            return { point in session.setMediaOverlayPosition(id: object.item.id, x: point.x, y: point.y) }
+        case .visualBlock:
+            return { point in session.setVisualBlockOverlayLayout(id: object.item.id, x: point.x, y: point.y) }
+        default:
+            return nil
+        }
+    }
+
+    private func scaleHandler(for object: NativeEditorPreviewObject) -> ((CGFloat) -> Void)? {
+        guard canDirectlyPosition(object) else { return nil }
+        switch object.item.kind {
+        case .text:
+            return { scale in session.setTextWidth(id: object.item.id, width: scale) }
+        case .mediaOverlay:
+            return { scale in session.setMediaOverlayScale(id: object.item.id, scale: scale) }
+        case .visualBlock:
+            return { scale in session.setVisualBlockOverlayLayout(id: object.item.id, scale: scale) }
+        default:
+            return nil
+        }
     }
 
     var body: some View {
@@ -132,18 +366,28 @@ struct NativeVideoPreview: View {
 
             GeometryReader { proxy in
                 let visible = NativeEditorInteraction.previewOrder(
-                    NativeEditorInteraction.visible(objects.map(\.item), at: session.currentTime)
+                    NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
                 )
-                ForEach(visible.compactMap { item in objects.first(where: { $0.item == item }) }) { object in
-                    NativePreviewObjectView(
-                        object: object,
-                        frame: frame(for: object, in: proxy.size),
-                        isSelected: session.selection == object.item.selection,
-                        onSelect: { session.select(object.item) }
-                    )
+                ZStack(alignment: .topLeading) {
+                    ForEach(visible.compactMap { item in objects.first(where: { $0.item == item }) }) { object in
+                        NativePreviewObjectView(
+                            object: object,
+                            frame: frame(for: object, in: proxy.size),
+                            isSelected: session.selection == object.item.selection,
+                            onSelect: { session.select(object.item, seekToStart: false) },
+                            onMove: positionHandler(for: object),
+                            onResize: scaleHandler(for: object)
+                        )
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Route manipulation from the canvas itself so the visible
+                // object geometry and gesture coordinate space stay aligned
+                // when the editor shell changes height.
                 .contentShape(Rectangle())
-                .gesture(
+                .highPriorityGesture(directMoveGesture(in: proxy.size))
+                .simultaneousGesture(directResizeGesture())
+                .simultaneousGesture(
                     SpatialTapGesture().onEnded { value in
                         selectPreviewObject(at: value.location, in: proxy.size)
                     }
@@ -151,29 +395,30 @@ struct NativeVideoPreview: View {
             }
             .accessibilityElement(children: .contain)
 
-            Text(previewKind)
-                .font(KriaFont.body(11).weight(.semibold))
-                .foregroundStyle(previewKind == "Preview unavailable" ? .white : KriaColor.ink)
-                .padding(.horizontal, 10)
-                .frame(minHeight: 30)
-                .background(
-                    previewKind == "Preview unavailable"
-                        ? KriaColor.ink.opacity(0.82)
-                        : KriaColor.lime,
-                    in: Capsule()
-                )
-                .padding(12)
-                .accessibilityLabel(previewKind)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(previewKind == "Preview unavailable" ? Color.orange : KriaColor.lime)
+                    .frame(width: 6, height: 6)
+                Text(previewKind)
+                    .font(KriaFont.body(10).weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 9)
+            .frame(minHeight: 26)
+            .background(KriaColor.ink.opacity(0.82), in: Capsule())
+            .padding(10)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(previewKind)
 
-            if !session.draft.text.isEmpty || session.draft.captions.enabled {
+            if !session.document.textElements.isEmpty || nativeBool(session.document.captionMeta["enabled"]) == true {
                 VStack {
                     Spacer()
                     HStack {
-                        Text("Draft layout • final render may differ")
-                            .font(KriaFont.body(10).weight(.semibold))
+                        Label("Layout preview", systemImage: "info.circle")
+                            .font(KriaFont.body(9).weight(.semibold))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 9)
-                            .frame(minHeight: 26)
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 24)
                             .background(.black.opacity(0.72), in: Capsule())
                         Spacer()
                     }
@@ -191,7 +436,7 @@ struct NativeVideoPreview: View {
         }
         .background(Color.black, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .onAppear(perform: refreshObjects)
-        .onChange(of: session.draft) { _, _ in refreshObjects() }
+        .onChange(of: session.document) { _, _ in refreshObjects() }
     }
 }
 
@@ -201,8 +446,40 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
     let position: CGPoint?
     let style: String?
     let title: String
+    let render: NativePreviewRender
+    let detail: String?
+    /// For media blocks this is the canvas width fraction; other cards retain
+    /// the 84% legacy preview width.
+    let scale: CGFloat
+    let fullscreen: Bool
+
+    init(
+        item: NativeEditorTimelineItem,
+        text: String?,
+        position: CGPoint?,
+        style: String?,
+        title: String,
+        render: NativePreviewRender,
+        detail: String? = nil,
+        scale: CGFloat = 0.84,
+        fullscreen: Bool = false
+    ) {
+        self.item = item
+        self.text = text
+        self.position = position
+        self.style = style
+        self.title = title
+        self.render = render
+        self.detail = detail
+        self.scale = scale
+        self.fullscreen = fullscreen
+    }
 
     var id: String { "\(item.kind.rawValue)-\(item.id)" }
+}
+
+private enum NativePreviewRender: Equatable {
+    case text, caption, mediaOverlay, visualBlock, carousel, runtimeOnly
 }
 
 private struct NativePreviewObjectView: View {
@@ -210,17 +487,38 @@ private struct NativePreviewObjectView: View {
     let frame: CGRect
     let isSelected: Bool
     let onSelect: () -> Void
+    let onMove: ((CGPoint) -> Void)?
+    let onResize: ((CGFloat) -> Void)?
+
+    private var accessibilityValue: String {
+        var parts = ["\(nativeTimecode(object.item.start)) to \(nativeTimecode(object.item.end))"]
+        if let position = object.position, onMove != nil {
+            parts.append("position \(Int((position.x * 100).rounded()))%, \(Int((position.y * 100).rounded()))%")
+        }
+        if onResize != nil { parts.append("size \(Int((object.scale * 100).rounded()))%") }
+        if isSelected { parts.append("selected") }
+        return parts.joined(separator: ", ")
+    }
 
     var body: some View {
-        Group {
-            if object.item.kind == .captionCue {
+        ZStack {
+            // `Group` does not create a concrete hit-test surface. Keep a real,
+            // canvas-sized shape behind every preview object so direct
+            // manipulation works across transparent text/media padding and so
+            // XCUITest addresses the same geometry that the user sees.
+            Rectangle()
+                .fill(Color.black.opacity(0.001))
+                .contentShape(Rectangle())
+
+            Group {
+            if object.render == .caption {
                 Text(object.text ?? "Caption")
                     .font(KriaFont.body(15).weight(.semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            } else {
+            } else if object.render == .text {
                 Text(object.text ?? object.title)
                     .font(object.style == "Fraunces" ? KriaFont.display(24) : KriaFont.body(22).weight(.bold))
                     .foregroundStyle(.white)
@@ -228,27 +526,85 @@ private struct NativePreviewObjectView: View {
                     .lineLimit(3)
                     .shadow(color: .black.opacity(0.75), radius: 3, y: 1)
                     .frame(maxWidth: .infinity, minHeight: 44)
+            } else if object.render == .mediaOverlay {
+                Label(object.detail ?? object.title, systemImage: "photo.on.rectangle")
+                    .font(KriaFont.body(13).weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else if object.render == .visualBlock {
+                Label(object.detail ?? object.title, systemImage: "square.grid.2x2")
+                    .font(KriaFont.body(13).weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background(KriaColor.ink.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else if object.render == .carousel {
+                HStack(spacing: 4) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(KriaColor.lime.opacity(0.75))
+                            .frame(width: 28, height: 38)
+                    }
+                    Text("Carousel")
+                        .font(KriaFont.body(12).weight(.semibold))
+                        .foregroundStyle(.white)
+                }
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .padding(.horizontal, 8)
+                .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                Label(object.detail.map { "\($0) • preview in final render" } ?? "Preview in final render", systemImage: "sparkles.tv")
+                    .font(KriaFont.body(12).weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
             }
         }
         .frame(width: frame.width, height: frame.height)
-        .position(x: frame.midX, y: frame.midY)
-        .zIndex(Double(object.item.zIndex))
+        .contentShape(Rectangle())
         .overlay {
             if isSelected {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(KriaColor.lime, lineWidth: 2)
-                    .frame(width: frame.width, height: frame.height)
-                    .position(x: frame.midX, y: frame.midY)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(KriaColor.lime, lineWidth: 2)
+                    if onResize != nil {
+                        VStack {
+                            HStack {
+                                resizeHandle
+                                Spacer()
+                                resizeHandle
+                            }
+                            Spacer()
+                            HStack {
+                                resizeHandle
+                                Spacer()
+                                resizeHandle
+                            }
+                        }
+                        .padding(-5)
+                    }
+                }
+                .allowsHitTesting(false)
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(object.title): \(object.text ?? "")")
-        .accessibilityValue("\(nativeTimecode(object.item.start)) to \(nativeTimecode(object.item.end))\(isSelected ? ", selected" : "")")
+        .accessibilityLabel("\(object.title): \(object.text ?? object.detail ?? "")")
+        .accessibilityValue(accessibilityValue)
         .accessibilityIdentifier("native-editor-preview-\(object.item.kind.rawValue)-\(object.item.id)")
         .accessibilityAddTraits(isSelected ? AccessibilityTraits.isSelected : [])
         .accessibilityAction(named: "Select \(object.title.lowercased())") {
             onSelect()
         }
+        .position(x: frame.midX, y: frame.midY)
+        .zIndex(Double(object.item.zIndex))
+    }
+
+    private var resizeHandle: some View {
+        Circle()
+            .fill(KriaColor.lime)
+            .overlay { Circle().stroke(.white, lineWidth: 1) }
+            .frame(width: 12, height: 12)
     }
 }
 
@@ -257,34 +613,53 @@ private struct NativePreviewObjectView: View {
 /// scrubbed. This means a horizontal finger movement always maps 1:1 to time.
 struct NativeMiniStrip: View {
     @ObservedObject var session: NativeEditorSession
+    @ObservedObject private var clock: NativeEditorPlaybackClock
     @State private var zoom: CGFloat = 1
     @State private var pinchAnchor: CGFloat = 1
     @State private var viewportWidth: CGFloat = 0
     @State private var scrubStartTime: TimeInterval?
     @State private var cachedItems: [NativeEditorTimelineItem] = []
+    @State private var cachedClips: [EditorClip] = []
+    @State private var didCacheItems = false
 
     private let minimumZoom: CGFloat = 0.5
     private let maximumZoom: CGFloat = 3
     private let basePixelsPerSecond: CGFloat = 72
-    private let filmstripHeight: CGFloat = 80
-    private let secondaryLaneHeight: CGFloat = 48
-    private let rowGap: CGFloat = 4
+    private let filmstripHeight: CGFloat = 68
+    private let secondaryLaneHeight: CGFloat = 44
+    private let rowGap: CGFloat = 3
 
     init(session: NativeEditorSession) {
         self.session = session
+        _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
-    private var clips: [EditorClip] { session.draft.clips }
-    private var timelineItems: [NativeEditorTimelineItem] { cachedItems.isEmpty ? makeItems() : cachedItems }
+    private var clips: [EditorClip] { didCacheItems ? cachedClips : [] }
+    private var timelineItems: [NativeEditorTimelineItem] { didCacheItems ? cachedItems : makeItems() }
     private var textItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .text } }
     private var captionItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .captionCue } }
+    private var soundEffectItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .soundEffect } }
+    private var mediaOverlayItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .mediaOverlay } }
+    private var visualBlockItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .visualBlock } }
+    private var motionSceneItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .motionScene } }
+    private var cameraEffectItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .cameraEffect } }
+    private var carouselItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .carousel } }
     private var musicItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .music } }
     private var hasText: Bool { !textItems.isEmpty }
-    private var hasCaptions: Bool { session.draft.captions.enabled || !captionItems.isEmpty }
-    private var hasMusic: Bool { !musicItems.isEmpty || session.draft.music != nil }
+    private var hasCaptions: Bool { documentCaptionsEnabled || !captionItems.isEmpty }
+    private var hasSoundEffects: Bool { !soundEffectItems.isEmpty }
+    private var hasMediaOverlays: Bool { !mediaOverlayItems.isEmpty }
+    private var hasVisualBlocks: Bool { !visualBlockItems.isEmpty }
+    private var hasMotionScenes: Bool { !motionSceneItems.isEmpty }
+    private var hasCameraEffects: Bool { !cameraEffectItems.isEmpty }
+    private var hasCarousel: Bool { !carouselItems.isEmpty }
+    private var hasMusic: Bool { !musicItems.isEmpty || session.document.music != nil }
     private var captionsExpanded: Bool { session.selection?.kind == .captionCue }
     private var laneCount: Int {
         1 + (hasText ? 1 : 0) + (hasCaptions ? 1 : 0) + (hasMusic ? 1 : 0)
+            + (hasSoundEffects ? 1 : 0) + (hasMediaOverlays ? 1 : 0)
+            + (hasVisualBlocks ? 1 : 0) + (hasMotionScenes ? 1 : 0)
+            + (hasCameraEffects ? 1 : 0) + (hasCarousel ? 1 : 0)
     }
     private var timelineHeight: CGFloat {
         filmstripHeight + CGFloat(laneCount - 1) * secondaryLaneHeight + CGFloat(max(0, laneCount - 1)) * rowGap
@@ -293,21 +668,33 @@ struct NativeMiniStrip: View {
     /// view unframed is preferred so optional lanes stay visible.
     var preferredHeight: CGFloat { timelineHeight + 88 }
     private var timelineDuration: TimeInterval {
-        let clipEnd = clips.map(\.end).max() ?? 0
-        return max(0.1, session.duration, clipEnd)
+        // The rendered asset (or the server's expected_duration_s) owns the
+        // transport boundary. Stale lane ends must not make the clock promise
+        // seconds that the player cannot show.
+        max(0.1, session.duration)
+    }
+    private var documentCaptionsEnabled: Bool {
+        nativeBool(session.document.captionMeta["enabled"]) ?? !session.document.captionCues.isEmpty
     }
     private var pixelsPerSecond: CGFloat { basePixelsPerSecond * zoom }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             controls
-            HStack(alignment: .top, spacing: 8) {
-                laneLabels
-                    .frame(width: 52)
-                timeline
+            GeometryReader { _ in
+                ScrollView(.vertical, showsIndicators: laneCount > 4) {
+                    HStack(alignment: .top, spacing: 6) {
+                        laneLabels
+                            .frame(width: 46)
+                        timeline
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .accessibilityIdentifier("native-editor-lane-scroll")
             }
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
     }
 
@@ -323,7 +710,7 @@ struct NativeMiniStrip: View {
             .accessibilityLabel(session.isPlaying ? "Pause preview" : "Play preview")
             .accessibilityIdentifier("native-editor-play-pause")
 
-            Text(timecode(session.currentTime))
+            Text(timecode(clock.currentTime))
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .foregroundStyle(KriaColor.ink)
                 .monospacedDigit()
@@ -331,7 +718,7 @@ struct NativeMiniStrip: View {
                 .minimumScaleFactor(0.8)
                 .frame(width: 56, alignment: .leading)
                 .accessibilityLabel("Current time")
-                .accessibilityValue(timecode(session.currentTime))
+                .accessibilityValue(timecode(clock.currentTime))
                 .accessibilityIdentifier("native-editor-current-time")
             Text("/")
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
@@ -343,6 +730,9 @@ struct NativeMiniStrip: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(width: 56, alignment: .leading)
+                .accessibilityLabel("Duration")
+                .accessibilityValue(timecode(timelineDuration))
+                .accessibilityIdentifier("native-editor-duration")
 
             Spacer(minLength: 8)
             zoomButton("minus", label: "Zoom out") { setZoom(zoom - 0.25) }
@@ -389,6 +779,12 @@ struct NativeMiniStrip: View {
                 .frame(height: filmstripHeight)
             if hasText { laneLabel("TEXT") }
             if hasCaptions { laneLabel("CAPS") }
+            if hasSoundEffects { laneLabel("SFX") }
+            if hasMediaOverlays { laneLabel("MEDIA") }
+            if hasVisualBlocks { laneLabel("VISUAL") }
+            if hasMotionScenes { laneLabel("MOTION") }
+            if hasCameraEffects { laneLabel("CAMERA") }
+            if hasCarousel { laneLabel("CAROUSEL") }
             if hasMusic { laneLabel("MUSIC") }
         }
         .font(.system(size: 9, weight: .bold, design: .rounded))
@@ -427,6 +823,24 @@ struct NativeMiniStrip: View {
                             captionDensityLane(width: width, playheadX: playheadX)
                         }
                     }
+                    if hasSoundEffects {
+                        timedLane(title: "Sound effects", items: soundEffectItems, color: KriaColor.mutedInk, playheadX: playheadX)
+                    }
+                    if hasMediaOverlays {
+                        timedLane(title: "Media overlays", items: mediaOverlayItems, color: KriaColor.lime, playheadX: playheadX)
+                    }
+                    if hasVisualBlocks {
+                        timedLane(title: "Visual blocks", items: visualBlockItems, color: KriaColor.ink, playheadX: playheadX)
+                    }
+                    if hasMotionScenes {
+                        timedLane(title: "Motion scenes", items: motionSceneItems, color: KriaColor.zinc, playheadX: playheadX)
+                    }
+                    if hasCameraEffects {
+                        timedLane(title: "Camera effects", items: cameraEffectItems, color: KriaColor.mutedInk, playheadX: playheadX)
+                    }
+                    if hasCarousel {
+                        timedLane(title: "Carousel", items: carouselItems, color: KriaColor.lime, playheadX: playheadX)
+                    }
                     if hasMusic {
                         timedLane(title: "Music", items: musicItems, color: KriaColor.mutedInk, playheadX: playheadX)
                     }
@@ -446,15 +860,15 @@ struct NativeMiniStrip: View {
             .onChange(of: width) { _, newWidth in viewportWidth = newWidth }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Timeline")
-            .accessibilityValue("\(timecode(session.currentTime)) of \(timecode(timelineDuration))")
+            .accessibilityValue("\(timecode(clock.currentTime)) of \(timecode(timelineDuration))")
             .accessibilityAdjustableAction { direction in
                 let delta: TimeInterval = direction == .increment ? 1 : -1
-                seek(to: session.currentTime + delta)
+                seek(to: clock.currentTime + delta)
             }
         }
         .frame(height: timelineHeight)
         .onAppear { refreshItems() }
-        .onChange(of: session.draft) { _, _ in refreshItems() }
+        .onChange(of: session.document) { _, _ in refreshItems() }
     }
 
     private func playheadX(for width: CGFloat) -> CGFloat {
@@ -488,7 +902,7 @@ struct NativeMiniStrip: View {
             .frame(height: filmstripHeight)
             .allowsHitTesting(false)
 
-            ForEach(Array(clips.enumerated()), id: \.element.id) { index, clip in
+            ForEach(visibleClips(playheadX: playheadX), id: \.element.id) { index, clip in
                 NativeClipSurface(
                     clip: clip,
                     index: index,
@@ -517,27 +931,13 @@ struct NativeMiniStrip: View {
     }
 
     private func refreshItems() {
+        cachedClips = session.timelineClips
         cachedItems = makeItems()
+        didCacheItems = true
     }
 
     private func makeItems() -> [NativeEditorTimelineItem] {
-        var items = session.timelineItems
-        if musicItems(in: items).isEmpty, let music = session.draft.music {
-            items.append(
-                NativeEditorTimelineItem(
-                    selection: EditorSelection(kind: .music, id: music.trackID.uuidString),
-                    start: music.start,
-                    end: max(session.duration, music.start + max(0.1, session.duration)),
-                    zIndex: 50,
-                    sourceIndex: 0
-                )
-            )
-        }
-        return items
-    }
-
-    private func musicItems(in items: [NativeEditorTimelineItem]) -> [NativeEditorTimelineItem] {
-        items.filter { $0.kind == .music }
+        nativePersistedTimelineItems(for: session)
     }
 
     private func select(_ item: NativeEditorTimelineItem) {
@@ -548,17 +948,80 @@ struct NativeMiniStrip: View {
     private func itemName(_ item: NativeEditorTimelineItem, laneTitle: String) -> String {
         switch item.kind {
         case .text:
-            let content = session.draft.text.first { $0.id.uuidString == item.id }?.content
+            let content = session.document.textElements.first { $0.id == item.id }?.text
             return content.map { "Text: \($0)" } ?? laneTitle
         case .captionCue:
             let document = session.document
             let content = document.captionCues.first { $0.id == item.id }?.text
             return content.map { "Caption: \($0)" } ?? laneTitle
         case .music:
-            if let title = session.draft.music?.title { return "Music: \(title)" }
+            if let title = session.document.music?.raw["title"]?.stringValue { return "Music: \(title)" }
+            if let trackID = session.document.music?.trackID { return "Music: \(trackID)" }
             return laneTitle
+        case .soundEffect:
+            let effect = session.document.soundEffects.first { $0.id == item.id }
+            return effect.map { "SFX: \(nativeEffectName($0.raw, fallback: $0.kind ?? "Sound effect"))" } ?? laneTitle
+        case .mediaOverlay:
+            let overlay = session.document.mediaOverlays.first { $0.id == item.id }
+            return overlay.map { "Media: \(nativeEffectName($0.raw, fallback: $0.kind ?? "Overlay"))" } ?? laneTitle
+        case .visualBlock:
+            let block = session.document.visualBlocks.first { $0.id == item.id }
+            return block.map { "Visual: \($0.kind)" } ?? laneTitle
+        case .motionScene:
+            let scene = session.document.motionScenes.first { $0.id == item.id }
+            return scene.map { "Motion: \($0.preset ?? "Scene")" } ?? laneTitle
+        case .cameraEffect:
+            let effect = session.document.cameraEffects.first { $0.id == item.id }
+            return effect.map { "Camera: \($0.effect ?? "Effect")" } ?? laneTitle
+        case .carousel:
+            return "Carousel: \(item.id)"
         default:
             return laneTitle
+        }
+    }
+
+    private func timedOperationKeys(for kind: EditorSelectionKind, operation: String) -> [String]? {
+        switch kind {
+        case .soundEffect:
+            return operation == "trim"
+                ? ["sound_effects.trim", "sound_effects", "lanes.sfx.trim", "sfx.trim", "lanes.sfx"]
+                : ["sound_effects.timing", "sound_effects", "lanes.sfx.timing", "sfx.timing", "lanes.sfx"]
+        case .mediaOverlay:
+            return operation == "trim"
+                ? ["media_overlays.trim", "media_overlays", "lanes.overlays.trim", "overlays.trim", "lanes.overlays"]
+                : ["media_overlays.timing", "media_overlays", "lanes.overlays.timing", "overlays.timing", "lanes.overlays"]
+        case .visualBlock:
+            return operation == "trim"
+                ? ["visual_blocks.trim", "visual_blocks", "lanes.visual_blocks.trim", "lanes.visual_blocks"]
+                : ["visual_blocks.timing", "visual_blocks", "lanes.visual_blocks.timing", "lanes.visual_blocks"]
+        case .motionScene:
+            return operation == "trim"
+                ? ["motion_scenes.trim", "motion_scenes", "lanes.motion_scenes.trim", "lanes.motion_scenes"]
+                : ["motion_scenes.timing", "motion_scenes", "lanes.motion_scenes.timing", "lanes.motion_scenes"]
+        case .cameraEffect:
+            return operation == "trim"
+                ? ["camera_effects.trim", "camera_effects", "lanes.camera_effects.trim", "lanes.camera_effects"]
+                : ["camera_effects.timing", "camera_effects", "lanes.camera_effects.timing", "lanes.camera_effects"]
+        default:
+            return nil
+        }
+    }
+
+    private func canEditTimedOperation(_ item: NativeEditorTimelineItem, operation: String) -> Bool {
+        guard let keys = timedOperationKeys(for: item.kind, operation: operation) else { return false }
+        if item.kind == .motionScene, session.isMotionSceneReadOnly(id: item.id) { return false }
+        if item.kind == .visualBlock,
+           session.document.visualBlocks.first(where: { $0.id == item.id })?.kind == "montage" {
+            return false
+        }
+        if let capability = keys.compactMap({ session.operationCapability($0) }).first { return capability.editable }
+        switch item.kind {
+        case .soundEffect: return session.canEdit(.soundEffects)
+        case .mediaOverlay: return session.canEdit(.mediaOverlays)
+        case .visualBlock: return session.canEdit(.visualBlocks)
+        case .motionScene: return session.canEdit(.motionScenes)
+        case .cameraEffect: return session.canEdit(.cameraEffects)
+        default: return false
         }
     }
 
@@ -567,7 +1030,7 @@ struct NativeMiniStrip: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(KriaColor.softZinc)
                 .allowsHitTesting(false)
-            ForEach(items, id: \.selection) { item in
+            ForEach(visibleItems(items, playheadX: playheadX), id: \.selection) { item in
                 let itemFrame = itemFrame(item, playheadX: playheadX)
                 NativeTimelineBar(
                     item: item,
@@ -575,7 +1038,19 @@ struct NativeMiniStrip: View {
                     name: itemName(item, laneTitle: title),
                     color: color,
                     isSelected: session.selection == item.selection,
-                    onSelect: { select(item) }
+                    canMove: canEditTimedOperation(item, operation: "timing"),
+                    canTrim: canEditTimedOperation(item, operation: "trim"),
+                    pixelsPerSecond: pixelsPerSecond,
+                    onSelect: { select(item) },
+                    onMoveStart: {
+                        session.select(item, seekToStart: false)
+                        session.beginTimedBodyMove(kind: item.kind, id: item.id)
+                    },
+                    onMoveChange: { session.updateTimedBodyMove(by: $0) },
+                    onMoveEnd: { session.endTimedBodyMove() },
+                    onTrimStart: { session.beginTimedEdgeTrim(kind: item.kind, id: item.id, edge: $0) },
+                    onTrimChange: { session.updateTimedEdgeTrim(by: $0) },
+                    onTrimEnd: { session.endTimedEdgeTrim() }
                 )
             }
         }
@@ -617,9 +1092,29 @@ struct NativeMiniStrip: View {
     }
 
     private func itemFrame(_ item: NativeEditorTimelineItem, playheadX: CGFloat) -> CGRect {
-        let start = playheadX + CGFloat(item.start - session.currentTime) * pixelsPerSecond
+        let start = playheadX + CGFloat(item.start - clock.currentTime) * pixelsPerSecond
         let width = max(1, CGFloat(max(0.05, item.end - item.start)) * pixelsPerSecond)
         return CGRect(x: start, y: 0, width: width, height: secondaryLaneHeight)
+    }
+
+    private func visibleItems(
+        _ items: [NativeEditorTimelineItem],
+        playheadX: CGFloat
+    ) -> [NativeEditorTimelineItem] {
+        guard viewportWidth > 0 else { return items }
+        return items.filter { item in
+            let frame = itemFrame(item, playheadX: playheadX)
+            return frame.maxX >= 0 && frame.minX <= viewportWidth || item.selection == session.selection
+        }
+    }
+
+    private func visibleClips(playheadX: CGFloat) -> [(offset: Int, element: EditorClip)] {
+        let indexed = Array(clips.enumerated())
+        guard viewportWidth > 0 else { return indexed }
+        return indexed.filter { _, clip in
+            let frame = clipFrame(clip, playheadX: playheadX)
+            return frame.maxX >= 0 && frame.minX <= viewportWidth || session.selectedClipID == clip.id
+        }
     }
 
     private func clipDuration(_ clip: EditorClip) -> TimeInterval {
@@ -630,7 +1125,7 @@ struct NativeMiniStrip: View {
     }
 
     private func clipFrame(_ clip: EditorClip, playheadX: CGFloat) -> CGRect {
-        let start = playheadX + CGFloat(clip.start - session.currentTime) * pixelsPerSecond
+        let start = playheadX + CGFloat(clip.start - clock.currentTime) * pixelsPerSecond
         let width = CGFloat(clipDuration(clip)) * pixelsPerSecond
         return CGRect(x: start, y: 0, width: max(1, width), height: filmstripHeight)
     }
@@ -638,7 +1133,7 @@ struct NativeMiniStrip: View {
     private func scrubGesture(playheadX: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                let startTime = scrubStartTime ?? session.currentTime
+                let startTime = scrubStartTime ?? clock.currentTime
                 scrubStartTime = startTime
                 let delta = TimeInterval(value.translation.width) / TimeInterval(pixelsPerSecond)
                 seek(to: startTime - delta)
@@ -682,7 +1177,17 @@ private struct NativeTimelineBar: View {
     let name: String
     let color: Color
     let isSelected: Bool
+    let canMove: Bool
+    let canTrim: Bool
+    let pixelsPerSecond: CGFloat
     let onSelect: () -> Void
+    let onMoveStart: () -> Void
+    let onMoveChange: (TimeInterval) -> Void
+    let onMoveEnd: () -> Void
+    let onTrimStart: (NativeTrimEdge) -> Void
+    let onTrimChange: (TimeInterval) -> Void
+    let onTrimEnd: () -> Void
+    @State private var isMoving = false
 
     private var timing: String {
         "\(nativeTimecode(item.start)) to \(nativeTimecode(item.end))"
@@ -715,14 +1220,63 @@ private struct NativeTimelineBar: View {
             }
             .buttonStyle(.plain)
             .frame(width: hitWidth, height: 44)
+            .accessibilityLabel(name)
+            .accessibilityValue("\(timing)\(isSelected ? ", selected" : "")")
+            .accessibilityIdentifier("native-editor-timeline-\(item.kind.rawValue)-\(item.id)")
+            .accessibilityAddTraits(isSelected ? AccessibilityTraits.isSelected : [])
+            .accessibilityAction(named: "Select \(name.lowercased())") { onSelect() }
+            .accessibilityAction(named: "Move \(name.lowercased()) earlier") {
+                guard canMove else { return }
+                onMoveStart(); onMoveChange(-1); onMoveEnd()
+            }
+            .accessibilityAction(named: "Move \(name.lowercased()) later") {
+                guard canMove else { return }
+                onMoveStart(); onMoveChange(1); onMoveEnd()
+            }
+            .gesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { value in
+                        guard canMove else { return }
+                        if !isMoving {
+                            isMoving = true
+                            onMoveStart()
+                        }
+                        onMoveChange(TimeInterval(value.translation.width / max(1, pixelsPerSecond)))
+                    }
+                    .onEnded { value in
+                        guard canMove else { return }
+                        if !isMoving { onMoveStart() }
+                        onMoveChange(TimeInterval(value.translation.width / max(1, pixelsPerSecond)))
+                        onMoveEnd()
+                        isMoving = false
+                    }
+            )
+
+            if canTrim && isSelected {
+                NativeTrimHandle(
+                    edge: .leading,
+                    height: frame.height,
+                    pixelsPerSecond: pixelsPerSecond,
+                    visualOffset: -22,
+                    onTrimStart: onTrimStart,
+                    onTrimChange: { _, seconds in onTrimChange(seconds) },
+                    onTrimEnd: onTrimEnd
+                )
+                NativeTrimHandle(
+                    edge: .trailing,
+                    height: frame.height,
+                    pixelsPerSecond: pixelsPerSecond,
+                    visualOffset: 22,
+                    onTrimStart: onTrimStart,
+                    onTrimChange: { _, seconds in onTrimChange(seconds) },
+                    onTrimEnd: onTrimEnd
+                )
+                .offset(x: max(0, frame.width - 44))
+            }
         }
         .frame(width: hitWidth, height: 44)
         .position(x: frame.midX, y: frame.midY)
-        .accessibilityLabel(name)
-        .accessibilityValue("\(timing)\(isSelected ? ", selected" : "")")
-        .accessibilityIdentifier("native-editor-timeline-\(item.kind.rawValue)-\(item.id)")
-        .accessibilityAddTraits(isSelected ? AccessibilityTraits.isSelected : [])
-        .accessibilityAction(named: "Select \(name.lowercased())") { onSelect() }
+        .zIndex(isSelected ? 1 : 0)
     }
 }
 
