@@ -3632,7 +3632,8 @@ def _tag_guided_text_overlays(
             )
             overlay["element_id"] = by_timing.get(key)
             element = by_id.get(overlay.get("element_id"))
-        if element is not None and (element.source_params or {}).get("source") == CAPTION_CUE_SOURCE:
+        source_params = element.source_params if element is not None else None
+        if (source_params or {}).get("source") == CAPTION_CUE_SOURCE:
             overlay["role"] = "generative_narration_caption"
     return compiled
 

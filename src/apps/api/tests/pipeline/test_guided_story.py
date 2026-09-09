@@ -268,6 +268,48 @@ def test_voiceover_compiler_uses_narration_duration_and_caption_words() -> None:
     ] == ["one", "two"]
 
 
+def test_narration_caption_elements_carry_the_shared_caption_cue_marker() -> None:
+    """Producer-side contract pin (KRI-18): every narration caption TextElement's
+    source_params.source must equal CAPTION_CUE_SOURCE, imported from the
+    named constant — not a hand-typed literal. This is the ONLY thing the
+    editor's `isNarrationCaptionBar`/`isCaptionUnitBar` predicates
+    (editor-bars.ts) key on to classify a guided-story caption as a caption
+    rather than generic text; a producer drifting off this marker silently
+    breaks caption classification with no type error on either side."""
+    from app.agents._schemas.text_element import CAPTION_CUE_SOURCE
+
+    raw = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    narration = NarrationTrack(
+        gcs_path="voiceover/a.m4a",
+        generation="99",
+        duration_s=4.7,
+        words=[
+            {"text": "one", "start_s": 0.2, "end_s": 0.6},
+            {"text": "two", "start_s": 1.1, "end_s": 1.5},
+        ],
+    )
+    snapshot = EditProposalSnapshot.model_validate(
+        {
+            **snapshot.model_dump(mode="json"),
+            "duration_s": 5,
+            "narration": narration.model_dump(mode="json"),
+        }
+    )
+    raw = {
+        **raw,
+        "media_digest": canonical_media_digest(snapshot.media, snapshot.narration),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+    }
+
+    plan = compile_execution_plan(raw, track=None)
+    captions = [row for row in plan["text_elements"] if row["id"].startswith("narration-caption-")]
+    assert len(captions) == 2
+    for caption in captions:
+        assert caption["source_params"]["source"] == CAPTION_CUE_SOURCE
+        assert caption["role"] == "generative_sequence"
+
+
 def test_narration_label_lane_survives_plan_validation() -> None:
     raw = _guided_snapshot()
     plan = compile_execution_plan(raw, track=None)

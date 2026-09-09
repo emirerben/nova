@@ -208,4 +208,16 @@ describe("EditorShell — guided-story narration captions (KRI-18)", () => {
       }),
     ).toHaveLength(2);
   });
+
+  it("blocks splitting a narration caption (its timed-word identity is pinned server-side)", async () => {
+    await renderShell();
+
+    const captionsLane = screen.getByTestId("editor-captions-lane");
+    fireEvent.click(within(captionsLane).getByRole("button", { name: /Caption at.*Caption number 0/ }));
+    await screen.findByRole("heading", { name: /Captions/ });
+
+    const splitButton = screen.getByRole("button", { name: "Split at playhead" });
+    expect(splitButton).toBeDisabled();
+    expect(splitButton).toHaveAttribute("title", "Caption timing follows your narration.");
+  });
 });
