@@ -65,12 +65,25 @@ sum to roughly 316, 287, 270 and 260 seconds before setup overhead.
 All five groups passed on macOS: 303 suites and 3734 tests, matching the baseline.
 Interaction groups selected 2/3/4/4 suites (100/103/68/27 tests); the remaining
 job selected 290 suites (3436 tests). These local runtimes are not used as hosted
-performance evidence. Five runner guard tests cover exact partition membership,
+performance evidence. Six runner guard tests cover exact partition membership,
 new/colocated test inclusion, missing/duplicate discovery, and actual CLI exit
-codes for successful, failed, cancelled and skipped dependencies. Workflow YAML
+codes for successful, failed, cancelled and skipped dependencies. A subprocess regression guard also requires pnpm-based discovery. Workflow YAML
 parsing and the repository pre-PR checks also passed.
 
 ## Hosted validation
+
+The first three hosted attempts ([34359477982](https://github.com/emirerben/nova/actions/runs/34359477982),
+[34359592194](https://github.com/emirerben/nova/actions/runs/34359592194),
+[34359671694](https://github.com/emirerben/nova/actions/runs/34359671694)) exposed
+an invocation regression: launching Jest's JS entrypoint directly bypassed
+pnpm's executable wrapper and its NODE_PATH, so styled-jsx imports failed.
+Their remaining groups failed, and the aggregate check correctly failed rather
+than accepting partial coverage. These attempts are excluded from successful
+performance samples. The runner now uses `pnpm exec jest`, preserving pnpm's
+module resolution without changing dependencies, mocks or assertions. With an
+isolated pnpm 9 installation, the direct invocation reproduced the failure and
+the wrapper passed; the corrected remaining suite passed all 3436 tests locally.
+
 
 Target: median web feedback below eight minutes across at least three successful
 hosted runs. This is a target, not a measured result. Results will be recorded
