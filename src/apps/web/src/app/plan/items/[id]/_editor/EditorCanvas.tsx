@@ -1413,7 +1413,13 @@ export default function EditorCanvas({
       role="region"
       aria-label={`Video canvas, ${outputFormatLabel}`}
       data-look-preview={lookPreset}
-      className={`relative h-full w-full min-h-0 min-w-0 overflow-auto bg-[#ffffff] ${
+      // isolate (KRI-8): EDITOR_STAGE_Z (editor-media-overlays.ts) is a
+      // canvas-local z-scale that runs 0-90. Without a stacking context here,
+      // those values compete directly with EditorShell's chrome z-indexes
+      // (drawer, floating "Add text" CTA, etc.) in the shell's own stacking
+      // context, so preview text can paint — and hit-test — above editor
+      // controls instead of only ever inside this clipped canvas.
+      className={`relative isolate h-full w-full min-h-0 min-w-0 overflow-auto bg-[#ffffff] ${
         tool === "pan" && zoom > 1 ? "cursor-grab active:cursor-grabbing" : ""
       }`}
       onPointerDown={onViewportPointerDown}

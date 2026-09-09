@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.6.0] — 2026-09-09
+
+### Fixed
+- **Preview text no longer covers the editor's own controls.** Text added to a video preview could paint over the Text panel and its "Add text" button, including making the button unclickable while a layer was selected. The preview now stays behind editor chrome in every layout.
+
 ## [0.73.5.0] — 2026-09-09
 
 ### Changed
