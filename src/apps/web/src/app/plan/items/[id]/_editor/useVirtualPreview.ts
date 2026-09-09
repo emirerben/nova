@@ -53,9 +53,13 @@ export interface UseVirtualPreviewOptions {
   musicStartS?: number;
   soundMuted?: boolean;
   /**
-   * A music track is selected for this cut, whether or not its preview URL is
-   * available. The final render drops footage audio entirely when a track is
-   * mixed in, so the decks must stay silent even if the music itself fails.
+   * A standalone audio authority is selected for this cut, whether or not its
+   * preview URL is currently available. Music, narration, and prepared source
+   * beds all replace the raw deck audio, so decks must stay silent even if the
+   * external element is waiting on a refreshed signed URL.
+   *
+   * The legacy option name is retained because this hook is used broadly; its
+   * meaning at the boundary is now "external audio active".
    */
   musicTrackActive?: boolean;
   /** Enables decoded-frame output-timeline sampling. Flag-off preserves the
