@@ -20,6 +20,60 @@ reviews are cached for `EDIT_DIRECTOR_CACHE_TTL_DAYS` (90 by default), and each
 creator can start at most `EDIT_DIRECTOR_DAILY_PAID_LIMIT` (three by default)
 uncached paid reviews per UTC day.
 
+## Complete text appearance edits (KRI-13)
+
+With `TEXT_APPEARANCE_ENABLED=true` (default false), the API advertises
+`text_appearance_version: 1` with the matching parser,
+caption persistence, and Creator Block runtime. Negotiated clients send the
+complete `text_appearance.targets` inventory, built by
+`src/lib/edit-copilot/text-appearance.ts`. Each target carries its stable ID,
+category, supported fields, effective values, and an opaque draft fingerprint.
+Inventory coverage must fit the negotiated snapshot budget; never truncate it
+at the ordinary text-row or operation limit.
+
+`patch_text_appearance` accepts `stroke_width` (integer 0–12) and
+`shadow_enabled` (boolean). Its selector has `scope: editable_text`,
+`quantifier: all`, and either an optional `category` (`text`, `caption`, `motion`)
+or explicit `target_ids`. Resolve semantic subsets from supplied component
+metadata; selection is only a disambiguator. Missing support is an actual
+limitation, not a reason to ask users to select a caption. Read-only targets
+remain in the inventory; an unsupported field is harmless only when its
+effective value already matches the request.
+
+The backend binds the operation to every selected target. The browser rebuilds
+the inventory and checks membership and fingerprints before staging the entire
+bundle. Added, removed, or edited targets reject the request atomically.
+Already-compliant targets count as covered. Global caption changes update
+metadata and preview bars through the same mapper used by manual controls;
+explicit cue subsets persist `stroke_width`/`shadow_enabled` on the cue without
+changing defaults. Word-pop highlights restore these overrides after ASS style
+resets. Creator Block overrides affect glyph strokes and offset text depth,
+while retaining shapes and choreography. Runtime v6 accepts saved v2–v5 hashes;
+route-trace v1 retains its legacy path.
+
+The existing editor transaction and receipt lifecycle distinguish proposals,
+staged changes, Save outcomes, no-ops, and rejection. A request records one
+history entry across text, caption metadata, and motion scenes. Existing traces
+record the complete resolved target IDs and attached identities; investigate
+unsupported/stale/failed results alongside the staged receipt and Save outcome.
+Never treat an AI reply as proof that a render completed.
+
+Rollout: deploy API **and workers/runtime first** with
+`TEXT_APPEARANCE_ENABLED=false`, then deploy the web client. After all machines
+run the compatible build, enable `TEXT_APPEARANCE_ENABLED=true` on Fly and
+verify capability advertisement. Disable the flag to stop new bulk proposals. Old clients keep ordinary operations;
+new clients cannot emit the bulk operation against an older API. On rollback,
+retain the compatible runtime while any saved appearance overrides exist.
+
+Regression gates: `tests/test_edit_copilot.py`,
+`tests/pipeline/test_caption_appearance_scope.py`, the `edit-copilot` Jest suites,
+`EditorShell-text-appearance.test.tsx`, and `motion-runtime.test.ts`. Add newly
+reported scope failures to the Copilot golden corpus. KRI-13's production URL
+had no retrievable Copilot trace; its English/Turkish fixtures are explicitly
+synthetic, not a captured production snapshot. The mounted editor regression
+covers cross-lane Undo/Redo and the Save payload; deterministic production-image
+renders cover actual caption and Creator Block output.
+
 ## Suggestion lifecycle
 
 `POST /plan-items/{item_id}/variants/{variant_id}/director/suggestions` accepts
