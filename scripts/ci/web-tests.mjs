@@ -38,9 +38,10 @@ function main() {
   }
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
   const cwd = resolve(root, 'src/apps/web');
-  const jest = resolve(cwd, 'node_modules/jest/bin/jest.js');
-  const discovery = spawnSync(process.execPath, [jest, '--listTests', '--json', '--runInBand'], { cwd, encoding: 'utf8' });
-  if (discovery.status !== 0) throw new Error(discovery.stderr || 'Jest discovery failed');
+  // pnpm's executable wrapper supplies NODE_PATH for transitive Next.js modules.
+  // Invoking jest/bin/jest.js directly breaks styled-jsx resolution on pnpm CI.
+  const discovery = spawnSync('pnpm', ['exec', 'jest', '--listTests', '--json', '--runInBand'], { cwd, encoding: 'utf8' });
+  if (discovery.status !== 0) throw new Error(discovery.error?.message || discovery.stderr || discovery.stdout || 'Jest discovery failed');
   const discovered = JSON.parse(discovery.stdout).map(path => relative(cwd, path).replaceAll('\\', '/'));
   const partitions = partition(discovered);
   console.log(JSON.stringify(Object.fromEntries(Object.entries(partitions).map(([key, paths]) => [key, paths.length]))));
@@ -60,7 +61,8 @@ function main() {
     const args = ['--ci', '--json', `--outputFile=${output}`, '--runTestsByPath', ...paths];
     if (command !== 'remaining') args.push('--runInBand', '--testTimeout=300000');
     const batchStarted = Date.now();
-    const child = spawnSync(process.execPath, [jest, ...args], { cwd, stdio: 'inherit' });
+    const child = spawnSync('pnpm', ['exec', 'jest', ...args], { cwd, stdio: 'inherit' });
+    if (child.error) console.error(child.error);
     let report;
     try { report = JSON.parse(readFileSync(output, 'utf8')); } catch { /* Preserve process failure below. */ }
     const ok = child.status === 0 && report?.success === true;
