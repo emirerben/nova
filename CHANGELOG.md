@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Kria can remove outlines and shadows from all editable text in one request.** Titles, captions, editable lyrics, and Creator Blocks share complete scope checks, including drafts with more than twelve targets. Explicit subsets stay scoped, stale or unsupported targets reject the whole request, and one Undo restores every affected lane. Caption preview, Save, and rendered output preserve zero outlines and disabled shadows.
 
+### Internal
+- Browser Creator Block performance checks now use the same machine-relative calibration as the renderer test, with a doubled-workload control that confirms slowdown detection.
+
 ## [0.73.6.0] — 2026-09-09
 
 ### Fixed

@@ -13,6 +13,15 @@ import {
 } from "@nova/motion-runtime";
 
 const LONG_TASK_MS = 50;
+// Match motion-preview-performance.test.ts: fixed raw CanvasKit work normalizes
+// runner speed without normalizing away a regression in drawMotionFrame.
+// Minimize each side independently; taking the smallest ratio would favor
+// a preempted calibration sample and could conceal a real slowdown.
+const CALIBRATION_ITERATIONS = 80;
+const SAMPLE_COUNT = 24;
+const MEASUREMENT_BLOCKS = 3;
+const TRIM = 2;
+const MAX_DRAW_COST_RATIO = 0.8;
 
 function maximumPreviewScenes(): MotionPresetInstance[] {
   return Array.from({ length: 2 }, (_, index) => {
@@ -48,18 +57,59 @@ function maximumPreviewScenes(): MotionPresetInstance[] {
 
 interface BenchmarkResult {
   status: "running" | "ready" | "failed" | "unsupported";
-  measuredLongTasks: number;
-  observedLongTasks: number;
+  longTasksDuringBenchmark: number;
   maxDrawMs: number;
+  drawCostMs: number;
+  calibrationMs: number;
+  drawCostRatio: number;
+  drawCostCeiling: number;
+  drawMultiplier: number;
+}
+
+function drawCalibrationWorkload(CanvasKit: any, canvas: any, font: any): void {
+  const paint = new CanvasKit.Paint();
+  paint.setAntiAlias(true);
+  try {
+    for (let index = 0; index < CALIBRATION_ITERATIONS; index += 1) {
+      paint.setStyle(CanvasKit.PaintStyle.Fill);
+      paint.setColor(CanvasKit.parseColorString("#3344ff"));
+      canvas.drawRect(CanvasKit.XYWHRect(index % 300, index % 500, 40, 40), paint);
+      canvas.drawCircle(index % 320, index % 600, 12, paint);
+      const path = new CanvasKit.Path();
+      path.moveTo(0, 0);
+      path.cubicTo(20, 30, 60, 10, 90, 70);
+      path.close();
+      canvas.drawPath(path, paint);
+      path.delete();
+      canvas.drawText("CALIBRATION", index % 200, index % 600, paint, font);
+    }
+  } finally {
+    paint.delete();
+  }
+}
+
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function trimmedMean(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const kept = sorted.slice(TRIM, sorted.length - TRIM);
+  return kept.reduce((total, value) => total + value, 0) / kept.length;
 }
 
 export default function MotionPreviewPerformanceFixture() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [result, setResult] = useState<BenchmarkResult>({
     status: "running",
-    measuredLongTasks: 0,
-    observedLongTasks: 0,
+    longTasksDuringBenchmark: 0,
     maxDrawMs: 0,
+    drawCostMs: 0,
+    calibrationMs: 0,
+    drawCostRatio: 0,
+    drawCostCeiling: MAX_DRAW_COST_RATIO,
+    drawMultiplier: 1,
   });
 
   useEffect(() => {
@@ -67,6 +117,9 @@ export default function MotionPreviewPerformanceFixture() {
     let surface: Surface | null = null;
     let resources: MotionResources | null = null;
     let observer: PerformanceObserver | null = null;
+    let calibrationTypeface: any = null;
+    let calibrationFont: any = null;
+    const drawMultiplier = new URLSearchParams(window.location.search).get("benchmark") === "2x" ? 2 : 1;
     void (async () => {
       try {
         if (!PerformanceObserver.supportedEntryTypes.includes("longtask")) {
@@ -91,8 +144,16 @@ export default function MotionPreviewPerformanceFixture() {
         surface = CanvasKit.MakeSWCanvasSurface(canvasRef.current);
         if (!surface) throw new Error("Benchmark CanvasKit surface failed");
         resources = createMotionResources(CanvasKit, { font });
+        const canvas = surface.getCanvas();
+        const calibrationCanvasKit = CanvasKit as any;
+        calibrationTypeface = calibrationCanvasKit.Typeface.MakeFreeTypeFaceFromData(font.buffer);
+        calibrationFont = new calibrationCanvasKit.Font(calibrationTypeface, 24);
         for (const frame of [0, 30, 60]) {
-          drawMotionFrame(CanvasKit, surface.getCanvas(), scenes, frame, 360, 640, resources);
+          drawMotionFrame(CanvasKit, canvas, scenes, frame, 360, 640, resources);
+          surface.flush();
+        }
+        for (let index = 0; index < 5; index += 1) {
+          drawCalibrationWorkload(CanvasKit, canvas, calibrationFont);
           surface.flush();
         }
 
@@ -102,32 +163,50 @@ export default function MotionPreviewPerformanceFixture() {
         });
         observer.observe({ type: "longtask", buffered: false });
         const drawDurations: number[] = [];
-        for (let index = 0; index < 24; index += 1) {
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-          if (cancelled) return;
-          const started = performance.now();
-          drawMotionFrame(
-            CanvasKit,
-            surface.getCanvas(),
-            scenes,
-            (index * 5) % 120,
-            360,
-            640,
-            resources,
-          );
-          surface.flush();
-          drawDurations.push(performance.now() - started);
+        const blocks = [] as Array<{ calibrationCost: number; drawCost: number }>;
+        for (let block = 0; block < MEASUREMENT_BLOCKS; block += 1) {
+          const calibrationDurations: number[] = [];
+          for (let index = 0; index < SAMPLE_COUNT; index += 1) {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+            if (cancelled) return;
+            const started = performance.now();
+            drawCalibrationWorkload(CanvasKit, canvas, calibrationFont);
+            surface.flush();
+            calibrationDurations.push(performance.now() - started);
+          }
+          drawDurations.length = 0;
+          for (let index = 0; index < SAMPLE_COUNT; index += 1) {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+            if (cancelled) return;
+            const started = performance.now();
+            for (let repeat = 0; repeat < drawMultiplier; repeat += 1) {
+              drawMotionFrame(CanvasKit, canvas, scenes, (index * 5) % 360, 360, 640, resources);
+            }
+            surface.flush();
+            drawDurations.push(performance.now() - started);
+          }
+          blocks.push({ calibrationCost: median(calibrationDurations), drawCost: trimmedMean(drawDurations) });
         }
         await new Promise((resolve) => setTimeout(resolve, 0));
         if (cancelled) return;
+        const drawCostMs = Math.min(...blocks.map((block) => block.drawCost));
+        const calibrationMs = Math.min(...blocks.map((block) => block.calibrationCost));
+        const drawCostRatio = drawCostMs / calibrationMs;
         setResult({
           status: "ready",
-          measuredLongTasks: drawDurations.filter((duration) => duration > LONG_TASK_MS).length,
-          observedLongTasks: observedDurations.filter((duration) => duration > LONG_TASK_MS).length,
+          longTasksDuringBenchmark: observedDurations.filter((duration) => duration > LONG_TASK_MS).length,
           maxDrawMs: Math.max(...drawDurations),
+          drawCostMs,
+          calibrationMs,
+          drawCostRatio,
+          drawCostCeiling: MAX_DRAW_COST_RATIO,
+          drawMultiplier,
         });
       } catch {
         if (!cancelled) setResult((current) => ({ ...current, status: "failed" }));
+      } finally {
+        calibrationFont?.delete();
+        calibrationTypeface?.delete();
       }
     })();
     return () => {
@@ -144,9 +223,13 @@ export default function MotionPreviewPerformanceFixture() {
       <div
         id="qa-state"
         data-status={result.status}
-        data-measured-long-tasks={result.measuredLongTasks}
-        data-observed-long-tasks={result.observedLongTasks}
+        data-long-tasks-during-benchmark={result.longTasksDuringBenchmark}
         data-max-draw-ms={result.maxDrawMs.toFixed(3)}
+        data-draw-cost-ms={result.drawCostMs.toFixed(3)}
+        data-calibration-ms={result.calibrationMs.toFixed(3)}
+        data-draw-cost-ratio={result.drawCostRatio.toFixed(3)}
+        data-draw-cost-ceiling={result.drawCostCeiling.toFixed(3)}
+        data-draw-multiplier={result.drawMultiplier}
         aria-hidden="true"
       />
     </main>
