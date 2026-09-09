@@ -10,18 +10,40 @@ Handles all Gemini File API interactions:
   _get_client             → module-level singleton (lazy init)
 """
 
+from __future__ import annotations
+
 import json
 import mimetypes
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
 
+from app.agents._runtime import RunContext
 from app.config import settings
 
 log = structlog.get_logger()
+
+
+def _cost_context(job_id: str | None) -> RunContext:
+    """Build an attributable context for Job and system analysis calls.
+
+    Real Job UUIDs resolve to their creator in the reservation ledger. Template,
+    track, and back-compat calls have no customer Job row, so they are explicitly
+    optional background work and stop at the 80% circuit breaker.
+    """
+
+    try:
+        parsed_job_id = uuid.UUID(job_id) if job_id else None
+    except (TypeError, ValueError, AttributeError):
+        parsed_job_id = None
+    if parsed_job_id is None:
+        return RunContext(job_id=job_id, usage_purpose="optional_background")
+    return RunContext(job_id=job_id)
+
 
 # ── Custom Exceptions ─────────────────────────────────────────────────────────
 
@@ -392,6 +414,7 @@ def analyze_clip(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    run_context: RunContext | None = None,
 ) -> ClipMeta:
     """Analyze a video clip / time range — returns ClipMeta.
 
@@ -406,7 +429,7 @@ def analyze_clip(
     omitted calls still work but won't cluster.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
     from app.agents.clip_metadata import (  # noqa: PLC0415
         ClipMetadataAgent,
         ClipMetadataInput,
@@ -426,7 +449,7 @@ def analyze_clip(
     )
     agent = ClipMetadataAgent(default_client())
     try:
-        out = agent.run(inp, ctx=RunContext(job_id=job_id))
+        out = agent.run(inp, ctx=run_context or _cost_context(job_id))
     except TerminalError as exc:
         # Translate runtime taxonomy back to legacy exception classes.
         from app.agents._runtime import RefusalError, SchemaError  # noqa: PLC0415
@@ -611,7 +634,6 @@ def analyze_template(
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import (  # noqa: PLC0415
         RefusalError,
-        RunContext,
         SchemaError,
         TerminalError,
     )
@@ -662,7 +684,7 @@ def analyze_template(
 
     agent = TemplateRecipeAgent(default_client())
     try:
-        out = agent.run(inp, ctx=RunContext(job_id=job_id))
+        out = agent.run(inp, ctx=_cost_context(job_id))
     except TerminalError as exc:
         cause = exc.__cause__
         msg = str(exc)
@@ -750,7 +772,7 @@ def _extract_creative_direction(
     clustering with the parent template-analysis run.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
     from app.agents.creative_direction import (  # noqa: PLC0415
         CreativeDirectionAgent,
         CreativeDirectionInput,
@@ -763,7 +785,7 @@ def _extract_creative_direction(
     try:
         out = CreativeDirectionAgent(default_client()).run(
             inp,
-            ctx=RunContext(job_id=job_id),
+            ctx=_cost_context(job_id),
         )
     except TerminalError as exc:
         log.warning("template_creative_direction_failed", error=str(exc))
@@ -916,7 +938,7 @@ def _validate_interstitials(raw: list, shot_count: int) -> list[dict]:
 # ── Transcription ─────────────────────────────────────────────────────────────
 
 
-def transcribe(file_ref: Any, *, job_id: str | None = None) -> "Transcript":  # noqa: F821
+def transcribe(file_ref: Any, *, job_id: str | None = None) -> Transcript:  # noqa: F821
     """Transcribe audio from a Gemini file reference — returns Transcript.
 
     SHIM (v0.2): delegates to `app.agents.transcript.TranscriptAgent` for the
@@ -929,7 +951,7 @@ def transcribe(file_ref: Any, *, job_id: str | None = None) -> "Transcript":  # 
     clustering. Defaults to None for back-compat.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
     from app.agents.transcript import TranscriptAgent, TranscriptInput  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
 
@@ -938,7 +960,7 @@ def transcribe(file_ref: Any, *, job_id: str | None = None) -> "Transcript":  # 
         file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
     )
     try:
-        out = TranscriptAgent(default_client()).run(inp, ctx=RunContext(job_id=job_id))
+        out = TranscriptAgent(default_client()).run(inp, ctx=_cost_context(job_id))
         return Transcript(
             words=[
                 Word(text=w.text, start_s=w.start_s, end_s=w.end_s, confidence=w.confidence)
@@ -985,7 +1007,6 @@ def analyze_audio_template(
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import (  # noqa: PLC0415
         RefusalError,
-        RunContext,
         SchemaError,
         TerminalError,
     )
@@ -1007,7 +1028,7 @@ def analyze_audio_template(
     )
 
     try:
-        out = AudioTemplateAgent(default_client()).run(inp, ctx=RunContext(job_id=job_id))
+        out = AudioTemplateAgent(default_client()).run(inp, ctx=_cost_context(job_id))
     except TerminalError as exc:
         cause = exc.__cause__
         msg = str(exc)

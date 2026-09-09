@@ -594,7 +594,7 @@ async def test_conversation_same_direction_replans_explicit_timing_change(
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     monkeypatch.setattr(
         "app.agents.edit_guide.EditGuideAgent.run",
-        lambda _self, _input: EditGuideOutput(
+        lambda _self, _input, **_kwargs: EditGuideOutput(
             reply="I updated the timing.",
             suggestions=[],
             brief=ProposalBrief(direction="guided_story", pace="balanced", duration_s=24),
@@ -1025,7 +1025,7 @@ async def test_conversation_turn_persists_brief_before_analysis(monkeypatch) -> 
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     monkeypatch.setattr(
         "app.agents.edit_guide.EditGuideAgent.run",
-        lambda _self, _input: EditGuideOutput(
+        lambda _self, _input, **_kwargs: EditGuideOutput(
             reply="I’ll make a quick, music-led trip highlight.",
             suggestions=["Focus on food", "Keep all topics"],
             brief=ProposalBrief(
@@ -1110,7 +1110,7 @@ async def test_conversation_revision_preserves_media_and_creator_thought(monkeyp
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     monkeypatch.setattr(
         "app.agents.edit_guide.EditGuideAgent.run",
-        lambda _self, _input: EditGuideOutput(
+        lambda _self, _input, **_kwargs: EditGuideOutput(
             reply="I slowed the story and made the coast chapter more reflective.",
             suggestions=[],
             brief=ProposalBrief(
@@ -1192,7 +1192,7 @@ async def test_conversation_direction_change_preserves_mixed_media_timing(monkey
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     monkeypatch.setattr(
         "app.agents.edit_guide.EditGuideAgent.run",
-        lambda _self, _input: EditGuideOutput(
+        lambda _self, _input, **_kwargs: EditGuideOutput(
             reply="I changed the structure but kept your photo and video rhythm.",
             suggestions=[],
             brief=ProposalBrief(direction="fast_montage", pace="fast", duration_s=24),
@@ -1265,7 +1265,7 @@ async def test_revision_validation_failure_releases_conversation_attempt(monkeyp
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     monkeypatch.setattr(
         "app.agents.edit_guide.EditGuideAgent.run",
-        lambda _self, _input: EditGuideOutput(
+        lambda _self, _input, **_kwargs: EditGuideOutput(
             reply="I moved the coast first.",
             suggestions=[],
             brief=ProposalBrief(goal="Share what stood out"),
@@ -1333,7 +1333,7 @@ async def test_review_mixed_media_capacity_failure_is_actionable(monkeypatch) ->
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     monkeypatch.setattr(
         "app.agents.edit_guide.EditGuideAgent.run",
-        lambda _self, _input: EditGuideOutput(
+        lambda _self, _input, **_kwargs: EditGuideOutput(
             reply="I changed this to a fast montage.",
             suggestions=[],
             brief=ProposalBrief(direction="fast_montage", pace="fast", duration_s=24),
@@ -1408,7 +1408,7 @@ async def test_review_clarification_preserves_current_brief(monkeypatch) -> None
     seen_beats = []
     seen_media_refs = []
 
-    def run(_self, agent_input):  # noqa: ANN001, ANN202
+    def run(_self, agent_input, **_kwargs):  # noqa: ANN001, ANN202
         seen_briefs.append(agent_input.brief)
         seen_beats.extend(agent_input.beats)
         seen_media_refs.extend(row.media_ref for row in agent_input.media)
@@ -1492,7 +1492,7 @@ async def test_conversation_rejects_version_change_after_agent_returns(monkeypat
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     monkeypatch.setattr(
         "app.agents.edit_guide.EditGuideAgent.run",
-        lambda _self, _input: EditGuideOutput(
+        lambda _self, _input, **_kwargs: EditGuideOutput(
             reply="I’ll make it faster.",
             suggestions=[],
             brief=ProposalBrief(pace="fast"),
@@ -1533,7 +1533,7 @@ async def test_conversation_agent_failure_is_retryable_without_mutation(monkeypa
     monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
 
-    def fail(_self, _input):  # noqa: ANN001, ANN202
+    def fail(_self, _input, **_kwargs):  # noqa: ANN001, ANN202
         raise RuntimeError("model unavailable")
 
     monkeypatch.setattr("app.agents.edit_guide.EditGuideAgent.run", fail)
@@ -1574,7 +1574,7 @@ async def test_conversation_with_full_history_sends_bounded_window(monkeypatch) 
     ]
     seen_turns = []
 
-    def run(_self, agent_input):  # noqa: ANN001, ANN202
+    def run(_self, agent_input, **_kwargs):  # noqa: ANN001, ANN202
         seen_turns.extend(agent_input.turns)
         return EditGuideOutput(
             reply="I’ll keep the coast as the ending.",

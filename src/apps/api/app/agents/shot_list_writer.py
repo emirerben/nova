@@ -166,7 +166,11 @@ class ShotListWriterAgent(Agent[ShotListWriterInput, ShotListWriterOutput]):
 
 
 def run_shot_list_writer(
-    inp: ShotListWriterInput, *, client: object | None = None
+    inp: ShotListWriterInput,
+    *,
+    client: object | None = None,
+    creator_id: str | None = None,
+    request_id: str | None = None,
 ) -> ShotListWriterOutput:
     """Generate a filming guide for a single plan item.
 
@@ -175,4 +179,7 @@ def run_shot_list_writer(
     from app.agents._model_client import default_client  # noqa: PLC0415
 
     agent = ShotListWriterAgent(client or default_client())
-    return agent.run(inp, ctx=RunContext(job_id=None))
+    return agent.run(
+        inp,
+        ctx=RunContext(creator_id=creator_id, request_id=request_id),
+    )

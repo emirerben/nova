@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import PersonaEditor from "@/app/plan/_components/PersonaEditor";
 import type { PersonaContent } from "@/lib/plan-api";
 
@@ -132,5 +132,86 @@ describe("PersonaEditor — posts-per-week field after the declutter refactor", 
     expect(screen.getByLabelText("Posts per week")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "About Posts per week" }));
     expect(screen.getByText(/infers it from your cadence/)).toBeInTheDocument();
+  });
+});
+
+describe("PersonaEditor — explicit TikTok visual-style consent", () => {
+  const tiktokProfile = { handle: "kria_creator", video_count: 12 };
+
+  it("explains the bounded review before starting it", async () => {
+    const onAnalyzeTikTokStyle = jest.fn().mockResolvedValue(undefined);
+    render(
+      <PersonaEditor
+        {...baseProps}
+        tiktokProfile={tiktokProfile}
+        tiktokStyleAnalysisAvailable
+        onAnalyzeTikTokStyle={onAnalyzeTikTokStyle}
+      />,
+    );
+
+    expect(screen.getByText(/up to eight representative public TikTok videos/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review my TikTok visual style" }));
+
+    await waitFor(() => expect(onAnalyzeTikTokStyle).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the consent action retryable when dispatch fails", async () => {
+    const onAnalyzeTikTokStyle = jest.fn().mockRejectedValue(new Error("offline"));
+    render(
+      <PersonaEditor
+        {...baseProps}
+        tiktokProfile={tiktokProfile}
+        tiktokStyleAnalysisAvailable
+        onAnalyzeTikTokStyle={onAnalyzeTikTokStyle}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review my TikTok visual style" }));
+
+    expect(await screen.findByText(/couldn’t start the TikTok visual-style review/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review my TikTok visual style" })).toBeEnabled();
+  });
+
+  it("shows the 90-day reuse state without another paid action", () => {
+    render(
+      <PersonaEditor
+        {...baseProps}
+        tiktokProfile={tiktokProfile}
+        tiktokStyleAnalysisAvailable
+        onAnalyzeTikTokStyle={jest.fn()}
+        tiktokStyleAnalysisStatus="ready"
+      />,
+    );
+
+    expect(screen.getByText(/reuse this analysis for 90 days/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review my TikTok visual style" })).not.toBeInTheDocument();
+  });
+
+  it("hides the paid action when the server capability is off", () => {
+    render(
+      <PersonaEditor
+        {...baseProps}
+        tiktokProfile={tiktokProfile}
+        onAnalyzeTikTokStyle={jest.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/up to eight representative public TikTok videos/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review my TikTok visual style" })).not.toBeInTheDocument();
+  });
+
+  it("shows a deliberate retry after a terminal analysis failure", () => {
+    render(
+      <PersonaEditor
+        {...baseProps}
+        tiktokProfile={tiktokProfile}
+        tiktokStyleAnalysisAvailable
+        tiktokStyleAnalysisStatus="failed"
+        onAnalyzeTikTokStyle={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/could not finish/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry TikTok visual-style review" })).toBeEnabled();
   });
 });

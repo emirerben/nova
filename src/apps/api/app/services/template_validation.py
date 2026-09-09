@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import VideoTemplate
 from app.pipeline.probe import probe_video
-from app.storage import signed_get_url
+from app.storage import signed_get_url, signed_get_url_for_generation
 
 log = structlog.get_logger()
 
@@ -146,7 +146,11 @@ def validate_clip_count(template: VideoTemplate, n_clips: int) -> None:
         )
 
 
-async def validate_clips_processable(clip_gcs_paths: list[str]) -> None:
+async def validate_clips_processable(
+    clip_gcs_paths: list[str],
+    *,
+    clip_generations: dict[str, str] | None = None,
+) -> None:
     """Reject uploads whose clips exceed the pipeline's empirical cost budget.
 
     The deployed orientation pipeline (`app/pipeline/orientation.py:normalize_orientation`)
@@ -193,7 +197,16 @@ async def validate_clips_processable(clip_gcs_paths: list[str]) -> None:
         """Returns (idx, path, duration_s, pix_fmt) or None on probe failure."""
         idx, path = idx_path
         try:
-            url = signed_get_url(path, expiration_minutes=5)
+            generation = (clip_generations or {}).get(path)
+            url = (
+                signed_get_url_for_generation(
+                    path,
+                    generation=generation,
+                    expiration_minutes=5,
+                )
+                if generation is not None
+                else signed_get_url(path, expiration_minutes=5)
+            )
         except Exception as exc:  # GCS auth / network
             log.warning(
                 "preflight_signed_url_failed",

@@ -159,3 +159,31 @@ async def test_resolver_projects_persona_style_below_active_memory():
     assert snapshot.compatibility_items[0]["structured_value"] == {"font_family": "Inter"}
     assert "Existing style preference: font_family=Inter" not in snapshot.prompt_block
     assert "Always use Playfair Display" in snapshot.prompt_block
+
+
+def test_compatibility_items_exclude_expired_derived_style() -> None:
+    persona = SimpleNamespace(
+        style={
+            "status": "ready",
+            "knobs": {"font_family": "Inter"},
+            "derived_from": {"observed_style_at": "2000-01-01T00:00:00+00:00"},
+        },
+        tiktok_profile=None,
+    )
+
+    assert CreatorDirectionResolver._compatibility_items(persona) == ()
+
+
+def test_compatibility_items_preserve_user_edited_style() -> None:
+    persona = SimpleNamespace(
+        style={
+            "status": "edited",
+            "knobs": {"font_family": "Inter"},
+            "derived_from": {"observed_style_at": "2000-01-01T00:00:00+00:00"},
+        },
+        tiktok_profile=None,
+    )
+
+    items = CreatorDirectionResolver._compatibility_items(persona)
+
+    assert items[0]["structured_value"] == {"font_family": "Inter"}

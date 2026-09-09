@@ -37,6 +37,7 @@ from app.services.feedback_summary import MAX_NOTES_IN_SUMMARY, build_preference
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.media_filenames import safe_media_basename
 from app.services.plan_clips import ClipAssignment, ClipAssignmentError, set_item_clips
+from app.services.tiktok_style_observations import effective_persona_style
 from app.tasks.creator_workspace import detect_plan_relevance
 
 router = APIRouter()
@@ -867,7 +868,14 @@ async def _workspace_response(
         status=receipt_status,
         deliverables=output,
         preference_summary=plan.preference_summary,
-        style=dict(persona.style) if persona and persona.style else None,
+        style=(
+            effective_persona_style(
+                persona.style,
+                profile=getattr(persona, "tiktok_profile", None),
+            )
+            if persona
+            else None
+        ),
     )
 
 
@@ -1182,7 +1190,14 @@ async def record_workspace_preference_signal(
             ownership_epoch=int(existing.ownership_epoch),
             source="creator_explicit",
             note=existing.note,
-            style=dict(persona.style) if persona and persona.style else None,
+            style=(
+                effective_persona_style(
+                    persona.style,
+                    profile=getattr(persona, "tiktok_profile", None),
+                )
+                if persona
+                else None
+            ),
             preference_summary=plan.preference_summary,
         )
 
@@ -1217,7 +1232,13 @@ async def record_workspace_preference_signal(
         ).scalar_one_or_none()
         if persona is None:
             raise HTTPException(status_code=404, detail="Persona not found")
-        raw = dict(persona.style or {})
+        raw = (
+            effective_persona_style(
+                persona.style,
+                profile=getattr(persona, "tiktok_profile", None),
+            )
+            or {}
+        )
         edit = body.style_edit.model_dump(mode="json", exclude_none=True)
         for key, value in edit.items():
             if key == "knobs":

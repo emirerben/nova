@@ -15,10 +15,12 @@ pytest tests/evals/ -v
 # 2) Structural + Claude-Sonnet judge, still replay mode. Needs ANTHROPIC_API_KEY.
 ANTHROPIC_API_KEY=… pytest tests/evals/ -v --with-judge
 
-# 3) Live mode — actually call Gemini for each fixture. Slow and costs money.
-#    The harness pre-flights estimated cost; pass --allow-cost after reviewing.
-NOVA_EVAL_MODE=live GEMINI_API_KEY=… ANTHROPIC_API_KEY=… \
-  pytest tests/evals/ -v --eval-mode=live --with-judge --allow-cost
+# 3) Live mode — only after a prompt/model/provider/schema change.
+NOVA_EVAL_MODE=live GEMINI_API_KEY=… \
+  AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+  pytest tests/evals/test_clip_metadata_evals.py -v --eval-mode=live \
+  --usage-purpose=live_eval --test-run-id=clip-metadata-<date> \
+  --max-cost-usd=2 --approve-reservation
 
 # 4) Single agent
 pytest tests/evals/test_clip_metadata_evals.py -v --with-judge
@@ -81,7 +83,7 @@ per fixture:
    Produce by running `nova.audio.transcript` on the template and serialising
    `output.words`.
 
-Live mode (`--eval-mode=live --allow-cost`) downloads the source video from GCS,
+Live mode (`--eval-mode=live` plus the mandatory attribution flags) downloads the source video from GCS,
 invokes the full pipeline, and scores the result. Estimated cost: **~$0.03/template**
 (Cloud Vision OCR @ 2 fps). Requires `STORAGE_BUCKET`, GCS credentials, and
 `GEMINI_API_KEY`.
@@ -140,7 +142,9 @@ pytest tests/evals/test_clip_metadata_evals.py -v --with-judge | tee /tmp/old.lo
 git stash pop
 # 4) Test the candidate against live Gemini:
 NOVA_EVAL_MODE=live pytest tests/evals/test_clip_metadata_evals.py \
-  -v --with-judge --eval-mode=live --allow-cost | tee /tmp/new.log
+  -v --eval-mode=live --usage-purpose=live_eval \
+  --test-run-id=clip-metadata-<date> --max-cost-usd=2 \
+  --approve-reservation | tee /tmp/new.log
 # 5) Compare avg scores per fixture. Ship only if no fixture regressed.
 ```
 
@@ -155,15 +159,19 @@ cp prompts/analyze_clip.txt prompts.candidate/analyze_clip.txt
 $EDITOR prompts.candidate/analyze_clip.txt
 
 # 2) Run the eval suite with shadow:
-NOVA_EVAL_MODE=live GEMINI_API_KEY=… ANTHROPIC_API_KEY=… \
-  pytest tests/evals/test_clip_metadata_evals.py -v --eval-mode=live --with-judge \
-  --shadow-prompts-dir=prompts.candidate --allow-cost
+NOVA_EVAL_MODE=live GEMINI_API_KEY=… \
+  pytest tests/evals/test_clip_metadata_evals.py -v --eval-mode=live \
+  --shadow-prompts-dir=prompts.candidate --usage-purpose=live_eval \
+  --test-run-id=clip-shadow-<date> --max-cost-usd=2 --approve-reservation
 ```
 
 How it works:
 - For each fixture, the harness runs the agent twice in live mode: once with prod prompts/, once with prompts.candidate/<prompt_id>.txt overlaid on prod prompts/ (any prompt file not in the candidate dir falls through to prod).
-- Both runs are judged. Per-fixture summary prints `primary_avg=… shadow_avg=… Δ=…`.
-- Shadow result is **informational only** — the test still gates on the primary (prod) run. Shadow failures (raise, structural-fail, judge-fail) are reported but never break the test.
+- Both runs receive structural checks. Paid judging must be run separately in
+  replay mode; combining an unmetered judge with a live run would invalidate the
+  run's maximum-cost approval.
+- Shadow result is **informational only** — the test still gates on the primary
+  run. Shadow failures are reported but never break the test.
 
 Constraints:
 - Live-mode only. Replay's `raw_text` was recorded under the prod prompt; comparing it against a candidate prompt is meaningless. The harness errors clearly if `--shadow-prompts-dir` is set without `--eval-mode=live`.
@@ -171,14 +179,15 @@ Constraints:
 
 ## Live-mode cost cap
 
-Live runs hit the Gemini API. To prevent an accidental 100-fixture run from quietly burning real $, the harness pre-flights estimated cost at pytest collection time and refuses to run if the total exceeds **$20**.
+Live runs hit the Gemini API. The harness requires explicit purpose, run ID,
+approved maximum, and reservation acknowledgement. The hard ceiling is **$2**
+for full evals and **$0.20** for the weekly provider smoke; there is no bypass.
 
 ```bash
-# Default — refuses if estimate > $20:
-NOVA_EVAL_MODE=live pytest tests/evals/ --eval-mode=live
-
-# Bypass after reviewing the estimate:
-NOVA_EVAL_MODE=live pytest tests/evals/ --eval-mode=live --allow-cost
+NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+pytest tests/evals/test_clip_metadata_evals.py --eval-mode=live \
+  --usage-purpose=live_eval --test-run-id=clip-<date> \
+  --max-cost-usd=2 --approve-reservation
 ```
 
 The estimate is intentionally pessimistic: input tokens ≈ chars/3 of (input payload + 4KB prompt overhead), output tokens fixed at 1500 per call. Replay mode skips the check entirely.
@@ -186,7 +195,11 @@ The estimate is intentionally pessimistic: input tokens ≈ chars/3 of (input pa
 ## CI
 
 - **Default CI:** runs structural-only on every PR (~30s, no secrets).
-- **Manual:** `.github/workflows/agent-evals.yml` is `workflow_dispatch` only. Triggers full live + judge run with `--allow-cost`.
+- **Paid:** `.github/workflows/agent-evals.yml` permits manual runs only for
+  prompt/model/provider/structured-output changes and runs one fixture weekly
+  as a provider smoke. The workflow uses the development key and reservation ledger.
+- Successful paid responses are uploaded as replay-capture artifacts; review and
+  copy the capture into the matching fixture directory before subsequent prompt work.
 
 ## Related
 

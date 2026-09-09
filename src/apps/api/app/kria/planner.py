@@ -259,7 +259,10 @@ async def plan_live_turn(
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
         return MainCreatorAgent(default_client()).run(
             agent_input,
-            ctx=RunContext(request_id=str(thread_id)),
+            ctx=RunContext(
+                request_id=str(thread_id),
+                creator_id=str(creator_id),
+            ),
         )
 
     try:

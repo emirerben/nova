@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -76,6 +77,12 @@ def _rows(rows: list) -> MagicMock:
     """A result whose `.all()` yields tuple rows (the batched feedback lookup)."""
     r = MagicMock()
     r.all = MagicMock(return_value=rows)
+    return r
+
+
+def _one(row: object) -> MagicMock:
+    r = MagicMock()
+    r.one = MagicMock(return_value=row)
     return r
 
 
@@ -181,6 +188,54 @@ def test_list_generating_job_has_no_preview_url() -> None:
     assert j["status"] == "generating"
     assert j["poster_status"] == "repairing"
     assert j["output_url"] is None
+
+
+def test_list_surfaces_day_83_retention_warning_without_object_paths(monkeypatch) -> None:
+    user = _user()
+    job_id = uuid.uuid4()
+    delete_at = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.routes.me.settings.storage_retention_enabled", True)
+    db = _db(
+        [
+            _scalars([]),
+            _one(
+                SimpleNamespace(
+                    affected_video_count=1,
+                    source_count=3,
+                    earliest_delete_at=delete_at,
+                )
+            ),
+            _rows(
+                [
+                    SimpleNamespace(
+                        job_id=job_id,
+                        delete_at=delete_at,
+                        source_count=3,
+                    )
+                ]
+            ),
+        ]
+    )
+    _override(user, db)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    assert response.json()["retention_warnings"] == [
+        {
+            "job_id": str(job_id),
+            "delete_at": "2026-09-15T12:00:00Z",
+            "source_count": 3,
+            "final_retention_days": 365,
+        }
+    ]
+    assert response.json()["retention_summary"] == {
+        "affected_video_count": 1,
+        "source_count": 3,
+        "earliest_delete_at": "2026-09-15T12:00:00Z",
+        "final_retention_days": 365,
+    }
+    assert "object_path" not in response.text
 
 
 def test_list_never_signs_control_owned_media_when_contract_is_missing(monkeypatch) -> None:

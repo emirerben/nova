@@ -6,10 +6,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from app.database import sync_session
 from app.models import TemporaryMediaUpload
+from app.services.job_storage_paths import project_media_reference_lock_key
 from app.storage import delete_object_best_effort
 from app.worker import celery_app
 
@@ -37,30 +38,54 @@ def cleanup_expired_temporary_uploads(
     if bounded == 0:
         return 0
 
+    eligible = or_(
+        and_(
+            TemporaryMediaUpload.status == "reserved",
+            TemporaryMediaUpload.retention_expires_at <= current,
+        ),
+        and_(
+            TemporaryMediaUpload.status == "cleanup_pending",
+            TemporaryMediaUpload.retention_expires_at <= current,
+            or_(
+                TemporaryMediaUpload.cleanup_claimed_at.is_(None),
+                TemporaryMediaUpload.cleanup_claimed_at <= stale_claim,
+            ),
+        ),
+    )
     claimed: list[tuple[uuid.UUID, str]] = []
     with sync_session() as db:
+        # Discover without row locks, then acquire owner locks in deterministic
+        # order before locking and rechecking receipts. Job attachment uses the
+        # same owner lock, avoiding both delete-after-attach and lock inversion.
+        candidates = db.execute(
+            select(TemporaryMediaUpload.id, TemporaryMediaUpload.user_id)
+            .where(TemporaryMediaUpload.deleted_at.is_(None), eligible)
+            .order_by(
+                TemporaryMediaUpload.retention_expires_at,
+                TemporaryMediaUpload.user_id,
+                TemporaryMediaUpload.id,
+            )
+            .limit(bounded)
+        ).all()
+        candidate_ids = [row.id for row in candidates]
+        for owner_id in sorted({row.user_id for row in candidates}, key=str):
+            db.execute(
+                select(func.pg_advisory_xact_lock(project_media_reference_lock_key(owner_id)))
+            )
         rows = (
             db.execute(
                 select(TemporaryMediaUpload)
                 .where(
+                    TemporaryMediaUpload.id.in_(candidate_ids),
                     TemporaryMediaUpload.deleted_at.is_(None),
-                    or_(
-                        and_(
-                            TemporaryMediaUpload.status == "reserved",
-                            TemporaryMediaUpload.retention_expires_at <= current,
-                        ),
-                        and_(
-                            TemporaryMediaUpload.status == "cleanup_pending",
-                            or_(
-                                TemporaryMediaUpload.cleanup_claimed_at.is_(None),
-                                TemporaryMediaUpload.cleanup_claimed_at <= stale_claim,
-                            ),
-                        ),
-                    ),
+                    eligible,
                 )
-                .order_by(TemporaryMediaUpload.retention_expires_at)
+                .order_by(
+                    TemporaryMediaUpload.retention_expires_at,
+                    TemporaryMediaUpload.user_id,
+                    TemporaryMediaUpload.id,
+                )
                 .with_for_update(skip_locked=True)
-                .limit(bounded)
             )
             .scalars()
             .all()

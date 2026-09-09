@@ -44,6 +44,7 @@ export interface TemplateJobCreateResponse {
 }
 
 export type TemplateJobStatus =
+  | "importing"
   | "queued"
   | "processing"
   | "template_ready"

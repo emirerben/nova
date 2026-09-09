@@ -8,6 +8,8 @@ The cache must:
   - Round-trip a real ClipMeta through serialize/deserialize.
 """
 
+import dataclasses
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,11 +17,15 @@ import pytest
 from app.pipeline import clip_cache
 from app.pipeline.agents.gemini_analyzer import ClipMeta
 
+_CREATOR_ID = "00000000-0000-0000-0000-000000000123"
+
 
 @pytest.fixture(autouse=True)
-def _reset_redis_singleton():
+def _reset_cache_backends(monkeypatch):
     """Each test starts with no cached client; tests inject their own."""
     clip_cache._redis_client = None
+    monkeypatch.setattr(clip_cache, "_get_persistent_payload", lambda *_args: None)
+    monkeypatch.setattr(clip_cache, "_set_persistent_payload", lambda *_args: None)
     yield
     clip_cache._redis_client = None
 
@@ -156,40 +162,40 @@ def test_filter_hint_key_empty_returns_sentinel():
 
 
 def test_round_trip_get_after_set(fake_redis):
-    clip_cache.set_cached_meta("hash1", "ball", _meta())
-    got = clip_cache.get_cached_meta("hash1", "ball")
+    clip_cache.set_cached_meta("hash1", "ball", _meta(), creator_id=_CREATOR_ID)
+    got = clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID)
     assert got is not None
     assert got.clip_id == "files/abc"
     assert got.hook_score == 8.5
 
 
 def test_get_returns_none_on_miss(fake_redis):
-    assert clip_cache.get_cached_meta("never-set", "ball") is None
+    assert clip_cache.get_cached_meta("never-set", "ball", creator_id=_CREATOR_ID) is None
 
 
 def test_filter_hint_scoping_is_enforced_at_lookup(fake_redis):
-    clip_cache.set_cached_meta("hash1", "ball", _meta())
-    assert clip_cache.get_cached_meta("hash1", "different") is None
+    clip_cache.set_cached_meta("hash1", "ball", _meta(), creator_id=_CREATOR_ID)
+    assert clip_cache.get_cached_meta("hash1", "different", creator_id=_CREATOR_ID) is None
 
 
 def test_set_skips_degraded_metas(fake_redis):
     deg = _meta(analysis_degraded=True)
-    clip_cache.set_cached_meta("hash1", "ball", deg)
-    assert clip_cache.get_cached_meta("hash1", "ball") is None
+    clip_cache.set_cached_meta("hash1", "ball", deg, creator_id=_CREATOR_ID)
+    assert clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID) is None
 
 
 def test_set_skips_failed_metas(fake_redis):
     failed = _meta(failed=True)
-    clip_cache.set_cached_meta("hash1", "ball", failed)
-    assert clip_cache.get_cached_meta("hash1", "ball") is None
+    clip_cache.set_cached_meta("hash1", "ball", failed, creator_id=_CREATOR_ID)
+    assert clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID) is None
 
 
 def test_set_skips_synthetic_moments_metas(fake_redis):
     """Backfilled moments are job-specific heuristics — a later run should
     retry the real Gemini path rather than inherit them from cache."""
     synth = _meta(moments_synthetic=True)
-    clip_cache.set_cached_meta("hash1", "ball", synth)
-    assert clip_cache.get_cached_meta("hash1", "ball") is None
+    clip_cache.set_cached_meta("hash1", "ball", synth, creator_id=_CREATOR_ID)
+    assert clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID) is None
 
 
 def test_clip_path_never_serialized(fake_redis):
@@ -197,11 +203,84 @@ def test_clip_path_never_serialized(fake_redis):
     it must not survive into the cache."""
     meta = _meta()
     meta.clip_path = "/tmp/run-specific/clip.mp4"
-    clip_cache.set_cached_meta("hash1", "ball", meta)
-    got = clip_cache.get_cached_meta("hash1", "ball")
+    clip_cache.set_cached_meta("hash1", "ball", meta, creator_id=_CREATOR_ID)
+    got = clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID)
     assert got is not None
     # The reconstructed meta has the dataclass default ("")
     assert got.clip_path == ""
+
+
+def test_postgres_tier_hit_warms_redis(monkeypatch, fake_redis):
+    payload = MagicMock(
+        return_value=json.dumps(
+            {key: value for key, value in dataclasses.asdict(_meta()).items() if key != "clip_path"}
+        )
+    )
+    monkeypatch.setattr(clip_cache, "_get_persistent_payload", payload)
+
+    got = clip_cache.get_cached_meta("shared-hash", "ball", creator_id=_CREATOR_ID)
+
+    assert got is not None
+    assert got.hook_text == "Hook!"
+    payload.assert_called_once_with("shared-hash", "ball", _CREATOR_ID)
+    assert clip_cache._cache_key("shared-hash", "ball", _CREATOR_ID) in fake_redis.store
+
+
+def test_redis_hot_tier_stays_capped_at_24_hours(monkeypatch, fake_redis):
+    monkeypatch.setattr(clip_cache.settings, "media_analysis_cache_ttl_days", 90)
+
+    clip_cache.set_cached_meta("shared-hash", "ball", _meta(), creator_id=_CREATOR_ID)
+
+    key = clip_cache._cache_key("shared-hash", "ball", _CREATOR_ID)
+    assert fake_redis.ttls[key] == 24 * 60 * 60
+
+
+def test_persistent_tier_honors_90_day_reuse_window(monkeypatch):
+    monkeypatch.setattr(clip_cache.settings, "media_analysis_cache_ttl_days", 90)
+
+    assert clip_cache._persistent_cache_ttl_days() == 90
+
+
+def test_set_writes_postgres_tier_when_redis_is_unavailable(monkeypatch):
+    persist = MagicMock()
+    monkeypatch.setattr(clip_cache, "_get_redis", lambda: None)
+    monkeypatch.setattr(clip_cache, "_set_persistent_payload", persist)
+
+    clip_cache.set_cached_meta("shared-hash", "ball", _meta(), creator_id=_CREATOR_ID)
+
+    persist.assert_called_once()
+    assert persist.call_args.args[:2] == ("shared-hash", "ball")
+    assert persist.call_args.args[3] == _CREATOR_ID
+
+
+def test_cache_keys_are_creator_scoped(fake_redis):
+    clip_cache.set_cached_meta("shared-hash", "ball", _meta(), creator_id="creator-a")
+
+    assert clip_cache.get_cached_meta("shared-hash", "ball", creator_id="creator-a") is not None
+    assert clip_cache.get_cached_meta("shared-hash", "ball", creator_id="creator-b") is None
+
+
+def test_cache_refuses_unattributed_reads_and_writes(fake_redis):
+    clip_cache.set_cached_meta("shared-hash", "ball", _meta())
+
+    assert clip_cache.get_cached_meta("shared-hash", "ball") is None
+    assert fake_redis.store == {}
+
+
+def test_cache_refuses_shared_synthetic_user_reads_and_writes(fake_redis, monkeypatch):
+    """Anonymous jobs share one synthetic owner, so caching could cross users."""
+
+    from app.auth import SYNTHETIC_USER_ID
+
+    persist = MagicMock()
+    monkeypatch.setattr(clip_cache, "_set_persistent_payload", persist)
+    creator_id = str(SYNTHETIC_USER_ID)
+
+    clip_cache.set_cached_meta("shared-hash", "ball", _meta(), creator_id=creator_id)
+
+    assert clip_cache.get_cached_meta("shared-hash", "ball", creator_id=creator_id) is None
+    assert fake_redis.store == {}
+    persist.assert_not_called()
 
 
 # ── fail-open behavior ───────────────────────────────────────────────────────
@@ -209,28 +288,28 @@ def test_clip_path_never_serialized(fake_redis):
 
 def test_get_falls_open_when_redis_unavailable(monkeypatch):
     monkeypatch.setattr(clip_cache, "_get_redis", lambda: None)
-    assert clip_cache.get_cached_meta("hash1", "ball") is None
+    assert clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID) is None
 
 
 def test_set_falls_open_when_redis_unavailable(monkeypatch):
     monkeypatch.setattr(clip_cache, "_get_redis", lambda: None)
     # Must not raise
-    clip_cache.set_cached_meta("hash1", "ball", _meta())
+    clip_cache.set_cached_meta("hash1", "ball", _meta(), creator_id=_CREATOR_ID)
 
 
 def test_get_falls_open_on_redis_get_error(monkeypatch):
     fake = _FakeRedis()
     fake.get = MagicMock(side_effect=RuntimeError("network blip"))
     monkeypatch.setattr(clip_cache, "_get_redis", lambda: fake)
-    assert clip_cache.get_cached_meta("hash1", "ball") is None
+    assert clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID) is None
 
 
 def test_get_falls_open_on_corrupt_cache_value(monkeypatch):
     """A garbage value in Redis must not crash the orchestrator."""
     fake = _FakeRedis()
-    fake.store[clip_cache._cache_key("hash1", "ball")] = b"not-json-at-all"
+    fake.store[clip_cache._cache_key("hash1", "ball", _CREATOR_ID)] = b"not-json-at-all"
     monkeypatch.setattr(clip_cache, "_get_redis", lambda: fake)
-    assert clip_cache.get_cached_meta("hash1", "ball") is None
+    assert clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID) is None
 
 
 def test_set_falls_open_on_redis_setex_error(monkeypatch):
@@ -238,7 +317,7 @@ def test_set_falls_open_on_redis_setex_error(monkeypatch):
     fake.setex = MagicMock(side_effect=RuntimeError("network blip"))
     monkeypatch.setattr(clip_cache, "_get_redis", lambda: fake)
     # Must not raise
-    clip_cache.set_cached_meta("hash1", "ball", _meta())
+    clip_cache.set_cached_meta("hash1", "ball", _meta(), creator_id=_CREATOR_ID)
 
 
 # ── connection-pooling guarantee ─────────────────────────────────────────────

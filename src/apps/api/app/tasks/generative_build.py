@@ -98,6 +98,7 @@ from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_out
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.speech_cleanup_terminal import REQUIRED_SPEECH_CLAIM_TTL_S
 from app.services.template_poster import generate_and_upload_from_gcs
+from app.services.tiktok_style_observations import effective_persona_style
 from app.services.video_poster_cleanup import (
     VIDEO_POSTER_BACKFILL_CLEANUP_FIELD,
     append_retired_variant_poster_receipts,
@@ -105,6 +106,12 @@ from app.services.video_poster_cleanup import (
     reconcile_video_poster_cleanup_receipts,
 )
 from app.worker import celery_app
+
+
+def _effective_render_user_style(all_candidates: dict) -> dict:
+    """Expire TikTok-derived style even when a queued Job is re-rendered later."""
+
+    return effective_persona_style(all_candidates.get("user_style")) or {}
 
 
 def _rendered_duration_s(path: str) -> float | None:
@@ -2262,7 +2269,7 @@ def _run_generative_job_impl(
         creator_request = str(raw_creator_request or "")[:1000]
         # Per-user style (Creator Agent M1). Absent on legacy/public jobs →
         # all render branches fall through to today's byte-identical behavior.
-        user_style: dict = all_candidates.get("user_style") or {}
+        user_style = _effective_render_user_style(all_candidates)
         # Smart Captions creator preset is resolved from the server-owned
         # assignment at dispatch time and pinned into this job. Re-check the
         # master/base-renderer gates here so a mid-rollout kill switch wins.
@@ -4392,6 +4399,7 @@ def _ingest_clips(
     min_success_fraction: float = 0.5,
     skip_analysis: bool = False,
     exact_source_generations: Mapping[int, tuple[str, str]] | None = None,
+    creator_id: str | None = None,
 ) -> dict[str, Any]:
     """Download → probe → Gemini upload → clip_metadata. Reuses the proven helpers.
 
@@ -4629,7 +4637,11 @@ def _ingest_clips(
     analysis_t0 = time.monotonic()
     file_refs = _upload_clips_parallel(local_clip_paths)
     indexed_metas, failed_slots = _analyze_clips_parallel_indexed(
-        file_refs, local_clip_paths, probe_map, job_id=job_id
+        file_refs,
+        local_clip_paths,
+        probe_map,
+        job_id=job_id,
+        creator_id=creator_id,
     )
     clip_metas = [meta for _source_slot, meta in indexed_metas]
     failed_count = len(failed_slots)
@@ -10942,7 +10954,11 @@ def _run_regenerate_variant(
             log.info("generative_regenerate_cancelled_job_skipped", job_id=job_id)
             return
         all_candidates = job.all_candidates or {}
-        pinned_direction = (job.assembly_plan or {}).get("_creator_direction_snapshot_v1") or {}
+        from app.services.creator_direction_snapshot import snapshot_from_container  # noqa: PLC0415
+
+        pinned_direction = snapshot_from_container(job.assembly_plan) or (
+            (job.assembly_plan or {}).get("_creator_direction_snapshot_v1") or {}
+        )
         creator_direction_prompt = str(pinned_direction.get("prompt_block") or "")
         creator_strategy = _creator_strategy_from_candidates(all_candidates)
         creator_opening_title = (

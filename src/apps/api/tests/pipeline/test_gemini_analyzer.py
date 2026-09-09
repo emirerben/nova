@@ -1072,11 +1072,11 @@ class TestAnalyzeAudioTemplate:
                 )
 
     def test_rate_limit_retries(self):
-        """analyze_audio_template retries on ResourceExhausted."""
+        """analyze_audio_template retries on the current SDK's explicit 429."""
         file_ref = _make_audio_file_ref()
         data = _valid_audio_recipe()
 
-        from google.api_core import exceptions as gapi_exc
+        from google.genai import errors as genai_errors
 
         with (
             patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc,
@@ -1085,7 +1085,7 @@ class TestAnalyzeAudioTemplate:
             mock_client = MagicMock()
             mock_gc.return_value = mock_client
             mock_client.models.generate_content.side_effect = [
-                gapi_exc.ResourceExhausted("quota"),
+                genai_errors.ClientError(429, {"message": "quota"}),
                 _make_gemini_response(data),
             ]
 

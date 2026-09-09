@@ -18,6 +18,7 @@ Skia-free (no libEGL import path touched) — safe for CI evals job.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -308,6 +309,7 @@ class TestStyleDerivationParseBadInput:
 class TestStyleDerivationRenderObservedBlock:
     def _render(self, observed_style=None) -> str:
         from unittest.mock import MagicMock
+
         agent = StyleDerivationAgent(model_client=MagicMock())
         inp = StyleDerivationInput(
             persona_summary="test creator",
@@ -323,6 +325,7 @@ class TestStyleDerivationRenderObservedBlock:
 
     def test_observed_style_with_data_shows_block(self):
         from app.agents.style_derivation import ObservedStyleSummary
+
         obs = ObservedStyleSummary(
             videos_seen=22,
             has_on_screen_text=True,
@@ -343,12 +346,14 @@ class TestStyleDerivationRenderObservedBlock:
 
     def test_observed_style_zero_videos_shows_fallback(self):
         from app.agents.style_derivation import ObservedStyleSummary
+
         obs = ObservedStyleSummary(videos_seen=0)
         prompt = self._render(observed_style=obs)
         assert "No vision analysis yet" in prompt
 
     def test_observed_no_text_shows_no_font_feel(self):
         from app.agents.style_derivation import ObservedStyleSummary
+
         obs = ObservedStyleSummary(videos_seen=5, has_on_screen_text=False)
         prompt = self._render(observed_style=obs)
         # No consistent style detected since has_text=False means no font_feel
@@ -364,21 +369,26 @@ class TestStyleDerivationRenderObservedBlock:
 class TestObservedStyleInput:
     def test_none_tiktok_profile_returns_none(self):
         from app.tasks.style_build import _observed_style_input
+
         assert _observed_style_input(None) is None
 
     def test_missing_style_observations_returns_none(self):
         from app.tasks.style_build import _observed_style_input
+
         assert _observed_style_input({"analysis": {}}) is None
 
     def test_empty_aggregate_returns_none(self):
         from app.tasks.style_build import _observed_style_input
+
         profile = {"style_observations": {"videos_seen": 0, "aggregate": {}}}
         assert _observed_style_input(profile) is None
 
     def test_valid_aggregate_returns_summary(self):
         from app.tasks.style_build import _observed_style_input
+
         profile = {
             "style_observations": {
+                "observed_at": datetime.now(UTC).isoformat(),
                 "videos_seen": 22,
                 "aggregate": {
                     "has_on_screen_text": True,
@@ -398,3 +408,16 @@ class TestObservedStyleInput:
         assert obs.text_color_hex == "#ffffff"
         assert obs.highlight_color_hex == "#f6d895"
         assert obs.mean_confidence == 0.9
+
+    def test_expired_aggregate_is_not_reused(self):
+        from app.tasks.style_build import _observed_style_input
+
+        profile = {
+            "style_observations": {
+                "observed_at": (datetime.now(UTC) - timedelta(days=91)).isoformat(),
+                "videos_seen": 8,
+                "aggregate": {"has_on_screen_text": True, "font_feel": "bold_display"},
+            }
+        }
+
+        assert _observed_style_input(profile) is None

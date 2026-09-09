@@ -1557,7 +1557,9 @@ def test_fast_cut_program_persists_with_legacy_compatibility_beats(monkeypatch) 
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
     monkeypatch.setattr(
         "app.agents.edit_proposal.EditProposalAgent.run",
-        lambda self, input: _FakeFastAgentOutput(_PROD_CLIP_ASSIGNMENT["media_id"]),  # noqa: ARG005
+        lambda self, input, **_kw: _FakeFastAgentOutput(  # noqa: ARG005
+            _PROD_CLIP_ASSIGNMENT["media_id"]
+        ),
     )
 
     proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
@@ -1614,7 +1616,7 @@ def test_agent_output_longer_than_feasible_footage_is_rejected(monkeypatch) -> N
     # (within its own +/-5s tolerance of the 10s target it was given).
     monkeypatch.setattr(
         "app.agents.edit_proposal.EditProposalAgent.run",
-        lambda self, input: _FakeAgentOutput(  # noqa: A002
+        lambda self, input, **_kw: _FakeAgentOutput(  # noqa: A002
             [_PROD_CLIP_ASSIGNMENT["media_id"]], duration_s=15
         ),
     )
@@ -1665,7 +1667,7 @@ def test_auto_finalize_success_approves_auto_and_dispatches_after_commit(monkeyp
     _auto_finalize_common_mocks(monkeypatch, item, owner_id)
     monkeypatch.setattr(
         "app.agents.edit_proposal.EditProposalAgent.run",
-        lambda self, input: _FakeAgentOutput(  # noqa: A002
+        lambda self, input, **_kw: _FakeAgentOutput(  # noqa: A002
             [_PROD_CLIP_ASSIGNMENT["media_id"]]
         ),
     )
@@ -1725,7 +1727,7 @@ def test_auto_finalize_dispatch_failure_leaves_approved_no_wedge(monkeypatch) ->
     _auto_finalize_common_mocks(monkeypatch, item, owner_id)
     monkeypatch.setattr(
         "app.agents.edit_proposal.EditProposalAgent.run",
-        lambda self, input: _FakeAgentOutput(  # noqa: A002
+        lambda self, input, **_kw: _FakeAgentOutput(  # noqa: A002
             [_PROD_CLIP_ASSIGNMENT["media_id"]]
         ),
     )

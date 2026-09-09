@@ -44,7 +44,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.config import settings
 from app.database import sync_session as _sync_session
-from app.models import MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.models import Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
 from app.pipeline.agentic_matcher import agentic_match_or_fallback as _agentic_match_or_fallback
 from app.pipeline.agents.gemini_analyzer import (
     AssemblyPlan,
@@ -803,14 +803,27 @@ def orchestrate_template_job(
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     with renderer_policy_scope(), pipeline_trace_for(job_id):
-        _orchestrate_template_job_inner(job_id, job_uuid, force_single_pass)
+        _orchestrate_template_job_inner(
+            job_id,
+            job_uuid,
+            force_single_pass,
+            allow_processing_retry=_request_allows_processing_retry(self.request),
+        )
 
 
 def _orchestrate_template_job_inner(
-    job_id: str, job_uuid: uuid.UUID, force_single_pass: bool
+    job_id: str,
+    job_uuid: uuid.UUID,
+    force_single_pass: bool,
+    *,
+    allow_processing_retry: bool = False,
 ) -> None:
     try:
-        _run_template_job(job_id, force_single_pass=force_single_pass)
+        _run_template_job(
+            job_id,
+            force_single_pass=force_single_pass,
+            allow_processing_retry=allow_processing_retry,
+        )
     except _StageError as stage_err:
         log.error(
             "template_job_classified_failure",
@@ -928,10 +941,63 @@ def _orchestrate_template_job_inner(
         _mark_failed(job_uuid, FAILURE_REASON_UNKNOWN, str(exc))
 
 
-def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
+def _request_allows_processing_retry(request: Any) -> bool:
+    """Differentiate Celery retry/redelivery from a duplicate publication."""
+
+    raw_retries = getattr(request, "retries", 0)
+    retries = raw_retries if isinstance(raw_retries, int) else 0
+    delivery_info = getattr(request, "delivery_info", None)
+    redelivered = isinstance(delivery_info, dict) and delivery_info.get("redelivered") is True
+    return retries > 0 or redelivered
+
+
+def _claim_template_job_start(
+    db: Any,
+    job_id: str,
+    *,
+    operation: str,
+    allow_processing_retry: bool,
+) -> Job | None:
+    """Claim a fresh delivery, while allowing explicit retries to resume.
+
+    Celery does not deduplicate two messages with the same task id.  Requiring
+    ``queued`` for a first delivery makes the Job row the idempotency fence:
+    one worker changes it to ``processing`` and every concurrently published
+    first delivery then exits.  Celery retries and broker redeliveries may
+    re-enter an interrupted ``processing`` job, preserving transient-failure
+    recovery.
+    """
+
+    job = active_job_for_update(db, job_id, operation=operation)
+    if job is None:
+        return None
+    current_status = str(getattr(job, "status", ""))
+    if current_status == "queued" or (allow_processing_retry and current_status == "processing"):
+        return job
+    log.info(
+        "template_job_duplicate_delivery_skipped",
+        job_id=job_id,
+        operation=operation,
+        status=current_status,
+        retry_or_redelivery=allow_processing_retry,
+    )
+    return None
+
+
+def _run_template_job(
+    job_id: str,
+    force_single_pass: bool = False,
+    *,
+    allow_processing_retry: bool = False,
+) -> None:
     """Core template job logic. May raise — caller wraps in try/except."""
     with _sync_session() as db:
-        job = active_job_for_update(db, job_id, operation="template_job_start")
+        job = _claim_template_job_start(
+            db,
+            job_id,
+            operation="template_job_start",
+            allow_processing_retry=allow_processing_retry,
+        )
         if job is None:
             log.info("template_job_start_skipped", job_id=job_id)
             return
@@ -958,6 +1024,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
 
         # Snapshot fields before session closes
         template_id = job.template_id
+        creator_id = str(job.user_id)
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
         user_subject = ((all_candidates.get("inputs") or {}).get("location") or "").strip()
@@ -1165,6 +1232,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
                 local_clip_paths,
                 filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
                 job_id=job_id,
+                creator_id=creator_id,
                 record_sub_phases=preview_mode,
             )
 
@@ -2384,6 +2452,7 @@ def _analyze_clips_with_cache(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    creator_id: str | None = None,
     record_sub_phases: bool = False,
 ) -> tuple[list[ClipMeta], list[ClipMeta | None], list, dict, int]:
     """Hash → cache lookup → concurrent (probe + upload misses) → analyze.
@@ -2429,7 +2498,7 @@ def _analyze_clips_with_cache(
     miss_indices: list[int] = []
     cache_hits = 0
     for i, h in enumerate(hashes):
-        cached = get_cached_meta(h, filter_hint) if h else None
+        cached = get_cached_meta(h, filter_hint, creator_id=creator_id) if h else None
         if cached is not None:
             cached.clip_path = local_paths[i]
             clip_metas_ordered[i] = cached
@@ -2475,6 +2544,7 @@ def _analyze_clips_with_cache(
         probe_map,
         filter_hint,
         job_id=job_id,
+        creator_id=creator_id,
         record_sub_phases=record_sub_phases,
     )
 
@@ -2493,7 +2563,7 @@ def _analyze_clips_with_cache(
         # content hash. Degraded entries are filtered inside set_cached_meta.
         h = path_to_hash.get(meta.clip_path)
         if h:
-            set_cached_meta(h, filter_hint, meta)
+            set_cached_meta(h, filter_hint, meta, creator_id=creator_id)
 
     # Cache-hit entries never passed through _analyze_one, so give any
     # empty-moments hits the same synthetic-moments backfill (idempotent for
@@ -2510,6 +2580,7 @@ def _analyze_clips_parallel_indexed(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    creator_id: str | None = None,
     record_sub_phases: bool = False,
 ) -> tuple[list[tuple[int, ClipMeta]], list[int]]:
     """Analyze clips in parallel while retaining their authoritative input slots.
@@ -2568,7 +2639,21 @@ def _analyze_clips_parallel_indexed(
                 # Whisper-fallback path in the except branch so the clip
                 # still produces a usable ClipMeta with default best_moments.
                 raise GeminiAnalysisError("gemini upload failed; skipping analysis")
-            meta = analyze_clip(ref, filter_hint=filter_hint, job_id=job_id)
+            run_context = None
+            if creator_id is not None:
+                from app.agents._runtime import RunContext  # noqa: PLC0415
+
+                run_context = RunContext(
+                    job_id=job_id,
+                    creator_id=creator_id,
+                    segment_idx=idx,
+                )
+            meta = analyze_clip(
+                ref,
+                filter_hint=filter_hint,
+                job_id=job_id,
+                run_context=run_context,
+            )
             if record_sub_phases and job_id is not None:
                 record_sub_phase(
                     job_id,
@@ -2694,6 +2779,7 @@ def _analyze_clips_parallel(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    creator_id: str | None = None,
     record_sub_phases: bool = False,
 ) -> tuple[list[ClipMeta], int]:
     """Compatibility wrapper returning completion-ordered metadata + count."""
@@ -2704,6 +2790,7 @@ def _analyze_clips_parallel(
         probe_map,
         filter_hint,
         job_id=job_id,
+        creator_id=creator_id,
         record_sub_phases=record_sub_phases,
     )
     return [meta for _source_slot, meta in indexed], len(failed_slots)
@@ -7786,7 +7873,10 @@ def orchestrate_single_video_job(self, job_id: str) -> None:
         return
 
     try:
-        _run_single_video_job_entry(job_id)
+        _run_single_video_job_entry(
+            job_id,
+            allow_processing_retry=_request_allows_processing_retry(self.request),
+        )
     except _StageError as stage_err:
         log.error(
             "single_video_job_classified_failure",
@@ -7836,17 +7926,33 @@ def orchestrate_single_video_job(self, job_id: str) -> None:
         _mark_failed(job_uuid, FAILURE_REASON_UNKNOWN, str(exc))
 
 
-def _run_single_video_job_entry(job_id: str) -> None:
+def _run_single_video_job_entry(
+    job_id: str,
+    *,
+    allow_processing_retry: bool = False,
+) -> None:
     from app.services.creator_direction_snapshot import renderer_policy_scope  # noqa: PLC0415
 
     with renderer_policy_scope():
-        _run_single_video_job_entry_impl(job_id)
+        _run_single_video_job_entry_impl(
+            job_id,
+            allow_processing_retry=allow_processing_retry,
+        )
 
 
-def _run_single_video_job_entry_impl(job_id: str) -> None:
+def _run_single_video_job_entry_impl(
+    job_id: str,
+    *,
+    allow_processing_retry: bool = False,
+) -> None:
     """Hydrate job state, set processing, then call _run_single_video_job."""
     with _sync_session() as db:
-        job = active_job_for_update(db, job_id, operation="single_video_job_start")
+        job = _claim_template_job_start(
+            db,
+            job_id,
+            operation="single_video_job_start",
+            allow_processing_retry=allow_processing_retry,
+        )
         if job is None:
             log.info("single_video_job_start_skipped", job_id=job_id)
             return

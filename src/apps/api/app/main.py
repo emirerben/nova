@@ -10,6 +10,12 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.exc import DBAPIError
 
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    AiCostControlPolicyError,
+    CostControlUnavailableError,
+    ProviderOutcomeUnknownError,
+)
 from app.config import settings
 from app.limiter import limiter
 from app.routes import (
@@ -153,6 +159,130 @@ def _transient_sqlstate(exc: BaseException) -> str | None:
         return None
     sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
     return sqlstate if sqlstate in _RETRYABLE_SQLSTATES else None
+
+
+@app.exception_handler(AiBudgetExceededError)
+async def ai_budget_exhausted_handler(request: Request, exc: AiBudgetExceededError) -> JSONResponse:
+    """Return one stable, cache-aware contract for every paid-call breaker."""
+
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or _safe_trace_id(request.headers.get("x-request-id"))
+        or uuid.uuid4().hex
+    )
+    correlation_id = (
+        getattr(request.state, "correlation_id", None)
+        or _safe_trace_id(request.headers.get("x-correlation-id"))
+        or request_id
+    )
+    log.warning(
+        "ai_budget_exhausted",
+        path=request.url.path,
+        scope=exc.scope,
+        reason=exc.reason,
+        reset_at=exc.reset_at,
+        request_id=request_id,
+    )
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "AI budget exhausted for this scope.",
+            "code": "ai_budget_exhausted",
+            "scope": exc.scope,
+            "reset_at": exc.reset_at,
+            "cached_behavior_available": exc.cached_behavior_available,
+            "reason": exc.reason,
+            "retryable": False,
+            "request_id": request_id,
+            "correlation_id": correlation_id,
+        },
+        headers={
+            **_cors_headers_for(request),
+            "X-Request-Id": request_id,
+            "X-Correlation-Id": correlation_id,
+        },
+    )
+
+
+@app.exception_handler(AiCostControlPolicyError)
+async def ai_cost_policy_handler(request: Request, exc: AiCostControlPolicyError) -> JSONResponse:
+    """Return a correction-required contract, never a fake budget reset."""
+
+    request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex
+    correlation_id = getattr(request.state, "correlation_id", None) or request_id
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": "Paid AI attribution or approval is invalid.",
+            "code": "ai_cost_control_policy_rejected",
+            "scope": exc.scope,
+            "reason": exc.reason,
+            "retryable": False,
+            "request_id": request_id,
+            "correlation_id": correlation_id,
+        },
+        headers={
+            **_cors_headers_for(request),
+            "X-Request-Id": request_id,
+            "X-Correlation-Id": correlation_id,
+        },
+    )
+
+
+@app.exception_handler(CostControlUnavailableError)
+async def ai_cost_control_unavailable_handler(
+    request: Request, exc: CostControlUnavailableError
+) -> JSONResponse:
+    """Fail closed with an explicit control-plane outage contract."""
+
+    request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex
+    correlation_id = getattr(request.state, "correlation_id", None) or request_id
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "AI cost controls are unavailable; no provider call was made.",
+            "code": "ai_cost_control_unavailable",
+            "retryable": True,
+            "request_id": request_id,
+            "correlation_id": correlation_id,
+        },
+        headers={
+            **_cors_headers_for(request),
+            "X-Request-Id": request_id,
+            "X-Correlation-Id": correlation_id,
+        },
+    )
+
+
+@app.exception_handler(ProviderOutcomeUnknownError)
+async def ai_provider_outcome_unknown_handler(
+    request: Request, exc: ProviderOutcomeUnknownError
+) -> JSONResponse:
+    """Do not invite a second paid request while the first outcome is unknown."""
+
+    request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex
+    correlation_id = getattr(request.state, "correlation_id", None) or request_id
+    log.warning(
+        "ai_provider_outcome_unknown",
+        path=request.url.path,
+        request_id=request_id,
+        error=str(exc)[:300],
+    )
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "The AI request may still be processing. Do not retry this operation.",
+            "code": "ai_provider_outcome_unknown",
+            "retryable": False,
+            "request_id": request_id,
+            "correlation_id": correlation_id,
+        },
+        headers={
+            **_cors_headers_for(request),
+            "X-Request-Id": request_id,
+            "X-Correlation-Id": correlation_id,
+        },
+    )
 
 
 @app.exception_handler(DBAPIError)

@@ -562,7 +562,7 @@ def test_generate_guide_happy_path(client: TestClient) -> None:
     mock_result = MagicMock()
     mock_result.shots = [mock_shot]
 
-    with patch("app.agents.shot_list_writer.run_shot_list_writer", return_value=mock_result):
+    with patch("app.agents.shot_list_writer.run_shot_list_writer", return_value=mock_result) as run:
         resp = client.post(f"/plan-items/{item.id}/generate-guide")
 
     assert resp.status_code == 200
@@ -571,6 +571,8 @@ def test_generate_guide_happy_path(client: TestClient) -> None:
     assert "shot_id" in item.filming_guide[0]
     assert item.filming_guide[0]["what"] == "lace up shoes"
     assert item.user_edited is True
+    assert run.call_args.kwargs["creator_id"] == str(user.id)
+    assert run.call_args.kwargs["request_id"].startswith(f"shot-list:{item.id}:")
     db.commit.assert_awaited()
 
 
@@ -595,7 +597,7 @@ def test_generate_guide_discards_result_after_ownership_epoch_change(
     }
     mock_result = MagicMock(shots=[mock_shot])
 
-    def _run(_input):  # noqa: ANN001
+    def _run(_input, *, creator_id, request_id):  # noqa: ANN001, ARG001
         plan.ownership_epoch += 1
         return mock_result
 

@@ -7,6 +7,7 @@ module after it supplies its own ownership/variant guard.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import uuid
@@ -16,7 +17,12 @@ from fastapi import HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 
 from app.agents._model_client import default_client
-from app.agents._runtime import RunContext, TerminalError
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    ProviderOutcomeUnknownError,
+    RunContext,
+    TerminalError,
+)
 from app.agents.edit_copilot import (
     CopilotOutcome,
     EditCopilotAgent,
@@ -31,6 +37,9 @@ _MAX_SNAPSHOT_BYTES = COPILOT_SNAPSHOT_MAX_BYTES
 
 
 class CopilotTurnBody(BaseModel):
+    # Minted once per user intent and retained for transport retries. Optional
+    # only for split-deploy compatibility with already-open browser bundles.
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
     message: str = Field(default="", max_length=2000)
     turns: list[dict] = Field(default_factory=list, max_length=12)
     snapshot: dict = Field(default_factory=dict)
@@ -143,6 +152,19 @@ def _snapshot_size_bytes(snapshot: dict) -> int:
         ) from exc
 
 
+def _paid_request_id(body: CopilotTurnBody, *, job_id: uuid.UUID) -> str:
+    if body.client_request_id:
+        client_digest = hashlib.sha256(body.client_request_id.encode("utf-8")).hexdigest()
+        return f"edit-copilot:{job_id}:client:{client_digest}"
+    payload = json.dumps(
+        {"job_id": str(job_id), "body": body.model_dump(mode="json")},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return f"edit-copilot:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
+
+
 async def run_copilot_turn(
     body: CopilotTurnBody,
     *,
@@ -171,8 +193,16 @@ async def run_copilot_turn(
         output: EditCopilotOutput = await asyncio.to_thread(
             EditCopilotAgent(default_client()).run,
             agent_input,
-            ctx=RunContext(job_id=str(job_id)),
+            ctx=RunContext(
+                job_id=str(job_id),
+                request_id=_paid_request_id(body, job_id=job_id),
+                request_id_authoritative=bool(body.client_request_id),
+            ),
         )
+    except AiBudgetExceededError:
+        raise
+    except ProviderOutcomeUnknownError:
+        raise
     except TerminalError as exc:
         log.warning("edit_copilot.agent_failed", job_id=str(job_id), error=str(exc)[:300])
         raise HTTPException(

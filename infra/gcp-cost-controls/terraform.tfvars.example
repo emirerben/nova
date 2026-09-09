@@ -1,0 +1,55 @@
+monitoring_project_id = "nova-finops-a"
+alert_email           = "cloud-costs@example.com"
+
+# Replace IDs and choose the real project split. Each account budget is derived
+# from the projects assigned to it, so the two alert layers cannot drift.
+billing_accounts = {
+  "000000-000000-000000" = {
+    display_name = "Nova AI"
+  }
+  "111111-111111-111111" = {
+    display_name = "Nova storage"
+  }
+}
+
+project_budgets = {
+  production = {
+    display_name       = "Gemini production (canaries included)"
+    billing_account_id = "000000-000000-000000"
+    project_number     = "100000000001"
+    monthly_budget_gbp = 22
+  }
+  development = {
+    display_name       = "Gemini development and live evals"
+    billing_account_id = "000000-000000-000000"
+    project_number     = "100000000002"
+    monthly_budget_gbp = 2
+  }
+  omni = {
+    display_name       = "Omni lab"
+    billing_account_id = "000000-000000-000000"
+    project_number     = "100000000003"
+    monthly_budget_gbp = 2
+  }
+  storage = {
+    display_name       = "Cloud Storage"
+    billing_account_id = "111111-111111-111111"
+    project_number     = "100000000004"
+    monthly_budget_gbp = 4
+  }
+}
+
+export_datasets = {
+  account_a = {
+    billing_account_id = "000000-000000-000000"
+    project_id         = "nova-finops-a"
+    dataset_id         = "all_billing_data"
+    location           = "EU"
+  }
+  account_b = {
+    billing_account_id = "111111-111111-111111"
+    project_id         = "nova-finops-b"
+    dataset_id         = "all_billing_data"
+    location           = "EU"
+  }
+}

@@ -22,6 +22,7 @@ import pytest
 
 from app.services.job_dispatch import (
     ORCHESTRATOR_TASK_NAMES,
+    claim_and_enqueue_orchestrator_sync,
     enqueue_orchestrator,
     enqueue_orchestrator_sync,
 )
@@ -189,8 +190,8 @@ def test_enqueue_orchestrator_sync_publish_failure_recovers_after_broker_io() ->
     recovery_result = MagicMock()
     recovery_result.rowcount = 1
     recovery_session = MagicMock()
-    recovery_session.execute.side_effect = (
-        lambda _stmt: events.append("recovery_update") or recovery_result
+    recovery_session.execute.side_effect = lambda _stmt: (
+        events.append("recovery_update") or recovery_result
     )
     recovery_context = MagicMock()
     recovery_context.__enter__.return_value = recovery_session
@@ -212,6 +213,101 @@ def test_enqueue_orchestrator_sync_publish_failure_recovers_after_broker_io() ->
 
     assert events == ["status_read", "broker_publish", "recovery_update"]
     recovery_session.commit.assert_called_once()
+
+
+def test_claim_and_enqueue_sync_persists_claim_before_next_sweep() -> None:
+    """A queued broker message is not republished by the next recovery tick."""
+
+    job_id = uuid.uuid4()
+    task = MagicMock()
+    task.name = "orchestrate_template_job"
+
+    first_result = MagicMock()
+    first_result.scalar_one_or_none.return_value = job_id
+    first_session = MagicMock()
+    first_session.execute.return_value = first_result
+    first_context = MagicMock()
+    first_context.__enter__.return_value = first_session
+    first_context.__exit__.return_value = False
+
+    second_result = MagicMock()
+    second_result.scalar_one_or_none.return_value = None
+    second_session = MagicMock()
+    second_session.execute.return_value = second_result
+    second_context = MagicMock()
+    second_context.__enter__.return_value = second_session
+    second_context.__exit__.return_value = False
+
+    with patch(
+        "app.database.sync_session",
+        side_effect=[first_context, second_context],
+    ):
+        assert claim_and_enqueue_orchestrator_sync(task, job_id) is True
+        assert claim_and_enqueue_orchestrator_sync(task, job_id) is False
+
+    task.apply_async.assert_called_once_with(
+        args=[str(job_id)],
+        kwargs={},
+        task_id=str(job_id),
+    )
+    claim_stmt = first_session.execute.call_args.args[0]
+    claim_sql = str(claim_stmt)
+    assert "jobs.status =" in claim_sql
+    assert "jobs.celery_task_id IS NULL" in claim_sql
+    assert "RETURNING jobs.id" in claim_sql
+    first_session.commit.assert_called_once()
+    second_session.rollback.assert_called_once()
+
+
+def test_claim_and_enqueue_sync_rolls_back_claim_before_failure_recovery() -> None:
+    job_id = uuid.uuid4()
+    task = MagicMock()
+    task.name = "orchestrate_template_job"
+    task.apply_async.side_effect = RuntimeError("broker unavailable")
+
+    claim_result = MagicMock()
+    claim_result.scalar_one_or_none.return_value = job_id
+    claim_session = MagicMock()
+    claim_session.execute.return_value = claim_result
+    claim_context = MagicMock()
+    claim_context.__enter__.return_value = claim_session
+    claim_context.__exit__.return_value = False
+
+    with (
+        patch("app.database.sync_session", return_value=claim_context),
+        patch("app.services.job_dispatch._recover_sync_publish_failure") as recover,
+        pytest.raises(RuntimeError, match="broker unavailable"),
+    ):
+        claim_and_enqueue_orchestrator_sync(task, job_id)
+
+    claim_session.rollback.assert_called_once()
+    claim_session.commit.assert_not_called()
+    recover.assert_called_once()
+
+
+def test_claim_and_enqueue_sync_preserves_published_task_when_commit_fails() -> None:
+    job_id = uuid.uuid4()
+    task = MagicMock()
+    task.name = "orchestrate_template_job"
+
+    claim_result = MagicMock()
+    claim_result.scalar_one_or_none.return_value = job_id
+    claim_session = MagicMock()
+    claim_session.execute.return_value = claim_result
+    claim_session.commit.side_effect = RuntimeError("commit outcome unknown")
+    claim_context = MagicMock()
+    claim_context.__enter__.return_value = claim_session
+    claim_context.__exit__.return_value = False
+
+    with (
+        patch("app.database.sync_session", return_value=claim_context),
+        patch("app.services.job_dispatch._recover_sync_publish_failure") as recover,
+    ):
+        assert claim_and_enqueue_orchestrator_sync(task, job_id) is True
+
+    task.apply_async.assert_called_once()
+    claim_session.rollback.assert_called_once()
+    recover.assert_not_called()
 
 
 @pytest.mark.asyncio

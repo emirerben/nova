@@ -89,8 +89,8 @@ from app.services.content_plan_persona import (
 from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS
 from app.services.generative_upload_paths import (
-    DIRECT_CLIP_PREFIX,
     DIRECT_VOICEOVER_PREFIX,
+    LEGACY_DIRECT_CLIP_PREFIX,
     PURPOSE_PREFIXES,
     direct_clip_owner,
     direct_clip_path,
@@ -109,6 +109,7 @@ from app.services.public_assembly_plan import (
     project_public_assembly_plan_with_metadata,
 )
 from app.services.speech_cleanup_terminal import classify_route_speech_cut_rollback
+from app.services.tiktok_style_observations import effective_persona_style
 from app.services.variant_generation_guard import (
     VariantInitialRenderInProgress,
     assert_required_speech_dispatch_quiescent,
@@ -244,19 +245,19 @@ class CreateGenerativeJobRequest(BaseModel):
             raise ValueError("At least 1 clip is required")
         if len(v) > _MAX_CLIPS:
             raise ValueError(f"Maximum {_MAX_CLIPS} clips allowed")
-        # The current direct-upload path is lifecycle-managed under dev-user/.
+        # Direct project uploads live under the durable users/ namespace.
         # Older clients still produce music-uploads/ and slot-uploads/ paths, so
         # keep those through the shared validator during the rollout window.
         purpose_paths = tuple(PURPOSE_PREFIXES.values())
         legacy_paths = [
             path
             for path in v
-            if not path.startswith(DIRECT_CLIP_PREFIX) and not path.startswith(purpose_paths)
+            if direct_clip_owner(path) is None and not path.startswith(purpose_paths)
         ]
         if legacy_paths:
             _validate_clip_path_prefixes(legacy_paths)
         for path in v:
-            if path.startswith(DIRECT_CLIP_PREFIX) and direct_clip_owner(path) is None:
+            if path.startswith(LEGACY_DIRECT_CLIP_PREFIX) and direct_clip_owner(path) is None:
                 raise ValueError("Invalid direct-upload clip path")
             if path.startswith(purpose_paths) and direct_clip_owner(path) is None:
                 raise ValueError("Invalid purpose upload path")
@@ -277,8 +278,8 @@ class GenerativeUploadUrlRequest(BaseModel):
     filename: str
     content_type: str = "application/octet-stream"
     file_size_bytes: int = Field(gt=0, le=_DIRECT_UPLOAD_MAX_BYTES)
-    # Optional native-client purpose. Omitted retains the historical path and
-    # response exactly; purpose paths use dedicated 24-hour lifecycle prefixes.
+    # Optional native-client purpose. Omitted creates a durable project input;
+    # purpose paths use dedicated 24-hour lifecycle prefixes.
     purpose: Literal["analysis_proxy", "cloud_render_source"] | None = None
 
 
@@ -314,12 +315,11 @@ async def validate_direct_uploads(
 
     user_id = str(current_user.id)
     direct: list[tuple[str, Literal["clip", "voiceover"]]] = []
-    expected_clip_prefix = f"{DIRECT_CLIP_PREFIX}{user_id}/generative/"
     expected_persistent_prefix = f"users/{user_id}/"
     is_synthetic = current_user.id == SYNTHETIC_USER_ID
     for path in req.clip_gcs_paths:
-        if path.startswith(DIRECT_CLIP_PREFIX):
-            if not path.startswith(expected_clip_prefix):
+        if direct_clip_owner(path) is not None:
+            if direct_clip_owner(path) != user_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
                 )
@@ -403,6 +403,53 @@ async def validate_direct_uploads(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Uploads are too large together. Maximum 1 GB combined per project.",
         )
+
+
+async def _consume_project_upload_reservations(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    object_paths: list[str],
+) -> None:
+    """Move pending uploads into the Job transaction's retention domain.
+
+    The caller already holds ``project_media_reference_lock_key(user_id)``.
+    Cleanup takes the same lock before claiming a receipt, so exactly one side
+    wins: this transaction removes the receipt and commits a Job reference, or
+    cleanup claims it and this request fails closed. If later work fails, the
+    surrounding transaction rolls back and restores the pending receipt.
+    """
+
+    paths = sorted({path for path in object_paths if path})
+    if not paths:
+        return
+    rows = (
+        (
+            await db.execute(
+                select(TemporaryMediaUpload)
+                .where(
+                    TemporaryMediaUpload.user_id == user_id,
+                    TemporaryMediaUpload.object_path.in_(paths),
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    now = datetime.now(UTC)
+    for row in rows:
+        if (
+            row.status != "reserved"
+            or row.deleted_at is not None
+            or row.retention_expires_at <= now
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload is no longer available — upload it again",
+            )
+    for row in rows:
+        await db.delete(row)
 
 
 class UnplacedShot(BaseModel):
@@ -9477,7 +9524,13 @@ async def create_generative_upload_url(
         object_path = direct_voiceover_path(user_id, upload_id, ext or ".webm")
     else:
         default_ext = ".mp4" if kind == "video" else ".jpg"
-        object_path = direct_clip_path(user_id, upload_id, ext or default_ext, req.purpose)
+        object_path = direct_clip_path(
+            user_id,
+            upload_id,
+            ext or default_ext,
+            req.purpose,
+            durable=current_user.id != SYNTHETIC_USER_ID,
+        )
     try:
         upload_url = storage.signed_put_url(
             object_path,
@@ -9490,17 +9543,22 @@ async def create_generative_upload_url(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Upload service unavailable — try again",
         ) from exc
+    # Purpose uploads already live in lifecycle-limited prefixes. Authenticated
+    # project clips now live under durable ``users/`` storage, so they need a
+    # receipt until a Job transaction attaches them. Otherwise closing the tab
+    # between PUT and POST would leave personal media without any cleanup owner.
+    needs_reservation = bool(req.purpose) or object_path.startswith(f"users/{user_id}/")
     retention_expires_at = (
         datetime.now(UTC) + timedelta(hours=settings.mobile_upload_retention_hours)
-        if req.purpose
+        if needs_reservation
         else None
     )
     reservation: TemporaryMediaUpload | None = None
-    if req.purpose and retention_expires_at is not None:
+    if needs_reservation and retention_expires_at is not None:
         reservation = TemporaryMediaUpload(
             user_id=current_user.id,
             object_path=object_path,
-            purpose=req.purpose,
+            purpose=req.purpose or "generative_project_input",
             retention_expires_at=retention_expires_at,
         )
         db.add(reservation)
@@ -9527,11 +9585,14 @@ async def cancel_temporary_upload(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> TemporaryUploadCancellationResponse:
-    """Cancel one owned native upload and durably request object cleanup."""
+    """Cancel one owned native upload and durably request post-URL cleanup."""
     try:
         identifier = uuid.UUID(reservation_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="bad id") from exc
+    await db.execute(
+        select(func.pg_advisory_xact_lock(project_media_reference_lock_key(current_user.id)))
+    )
     row = (
         await db.execute(
             select(TemporaryMediaUpload)
@@ -9549,22 +9610,17 @@ async def cancel_temporary_upload(
             reservation_id=reservation_id,
             status="deleted",
         )
+    # A delete while the signed PUT is still live is not terminal: NotFound can
+    # simply mean the browser has not finished its upload yet. Keep the receipt
+    # nonterminal and let the durable sweeper delete at the original retention
+    # deadline, well after both URL expiry and any slow in-flight PUT.
     row.status = "cleanup_pending"
-    row.cleanup_claimed_at = datetime.now(UTC)
-    await db.commit()
-
-    deleted = await asyncio.to_thread(storage.delete_object_best_effort, row.object_path)
-    if deleted:
-        row.status = "deleted"
-        row.deleted_at = datetime.now(UTC)
-        row.last_error = None
-    else:
-        row.delete_attempts = int(row.delete_attempts or 0) + 1
-        row.last_error = "storage_unavailable"
+    row.cleanup_claimed_at = None
+    row.last_error = None
     await db.commit()
     return TemporaryUploadCancellationResponse(
         reservation_id=reservation_id,
-        status="deleted" if deleted else "cleanup_pending",
+        status="cleanup_pending",
     )
 
 
@@ -9580,6 +9636,14 @@ async def create_generative_job(
     # preserves it, or cleanup deletes first and metadata validation fails.
     await db.execute(
         select(func.pg_advisory_xact_lock(project_media_reference_lock_key(current_user.id)))
+    )
+    await _consume_project_upload_reservations(
+        db,
+        user_id=current_user.id,
+        object_paths=[
+            *req.clip_gcs_paths,
+            *([req.voiceover_gcs_path] if req.voiceover_gcs_path else []),
+        ],
     )
     await validate_direct_uploads(req, current_user)
     first_image_path = next(
@@ -9617,8 +9681,11 @@ async def create_generative_job(
                 select(PersonaRow).where(PersonaRow.user_id == current_user.id)
             )
             persona_row = result_p.scalar_one_or_none()
-            if persona_row is not None and persona_row.style:
-                user_style_raw = dict(persona_row.style)
+            if persona_row is not None:
+                user_style_raw = effective_persona_style(
+                    persona_row.style,
+                    profile=getattr(persona_row, "tiktok_profile", None),
+                )
         except Exception:  # noqa: BLE001
             pass  # non-fatal — proceed without style
 

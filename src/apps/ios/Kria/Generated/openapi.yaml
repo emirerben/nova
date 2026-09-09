@@ -1021,6 +1021,18 @@
             "nullable": true,
             "title": "Next Cursor",
             "type": "string"
+          },
+          "retention_summary": {
+            "$ref": "#/components/schemas/LibraryRetentionSummary",
+            "default": null,
+            "nullable": true
+          },
+          "retention_warnings": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryRetentionWarning"
+            },
+            "title": "Retention Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -1028,6 +1040,64 @@
           "next_cursor"
         ],
         "title": "LibraryResponse",
+        "type": "object"
+      },
+      "LibraryRetentionSummary": {
+        "properties": {
+          "affected_video_count": {
+            "title": "Affected Video Count",
+            "type": "integer"
+          },
+          "earliest_delete_at": {
+            "format": "date-time",
+            "title": "Earliest Delete At",
+            "type": "string"
+          },
+          "final_retention_days": {
+            "title": "Final Retention Days",
+            "type": "integer"
+          },
+          "source_count": {
+            "title": "Source Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "affected_video_count",
+          "source_count",
+          "earliest_delete_at",
+          "final_retention_days"
+        ],
+        "title": "LibraryRetentionSummary",
+        "type": "object"
+      },
+      "LibraryRetentionWarning": {
+        "properties": {
+          "delete_at": {
+            "format": "date-time",
+            "title": "Delete At",
+            "type": "string"
+          },
+          "final_retention_days": {
+            "title": "Final Retention Days",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "source_count": {
+            "title": "Source Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "delete_at",
+          "source_count",
+          "final_retention_days"
+        ],
+        "title": "LibraryRetentionWarning",
         "type": "object"
       },
       "LibraryTikTokPublication": {
@@ -1486,6 +1556,42 @@
             "nullable": true,
             "title": "Tiktok Profile",
             "type": "object"
+          },
+          "tiktok_style_analysis_available": {
+            "default": false,
+            "title": "Tiktok Style Analysis Available",
+            "type": "boolean"
+          },
+          "tiktok_style_analysis_failed_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Tiktok Style Analysis Failed At",
+            "type": "string"
+          },
+          "tiktok_style_analysis_failure_reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Tiktok Style Analysis Failure Reason",
+            "type": "string"
+          },
+          "tiktok_style_analysis_status": {
+            "default": "idle",
+            "enum": [
+              "idle",
+              "running",
+              "ready",
+              "failed"
+            ],
+            "title": "Tiktok Style Analysis Status",
+            "type": "string"
+          },
+          "tiktok_style_analyzed_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Tiktok Style Analyzed At",
+            "type": "string"
           }
         },
         "required": [

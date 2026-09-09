@@ -4,25 +4,35 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import uuid
 from collections import OrderedDict
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import structlog
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents._model_client import default_client
-from app.agents._runtime import RunContext, TerminalError
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    ProviderOutcomeUnknownError,
+    RunContext,
+    TerminalError,
+)
 from app.agents.edit_director import (
     EDIT_DIRECTOR_PROMPT_VERSION,
     EditDirectorAgent,
-    EditDirectorFallbackAgent,
     EditDirectorInput,
     EditorSuggestion,
 )
 from app.config import settings
+from app.models import DirectorReviewCache
 from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 
 log = structlog.get_logger()
@@ -50,7 +60,10 @@ class DirectorSuggestionsResponse(BaseModel):
     snapshot_revision: str
     requested_model: str
     model_used: str
+    # Compatibility for clients/cache rows written before the one-paid-call
+    # policy. Runtime Director reviews never populate a fallback reason.
     fallback_reason: str | None = None
+    omni_max_cost_per_second_usd: float | None = None
 
 
 class DirectorFeedbackBody(BaseModel):
@@ -90,6 +103,13 @@ async def run_director(
     body: DirectorSuggestionsBody,
     *,
     job_id: uuid.UUID,
+    creator_id: uuid.UUID | None = None,
+    db: AsyncSession | None = None,
+    usage_purpose: str | None = None,
+    test_run_id: str | None = None,
+    estimated_max_cost_usd: float | None = None,
+    reservation_approved: bool = False,
+    release_canary_id: str | None = None,
     authoritative_speech_cut: dict | None = None,
 ) -> DirectorSuggestionsResponse:
     job_key = str(job_id)
@@ -101,7 +121,16 @@ async def run_director(
                 detail="edit_director_request_superseded",
             )
         return await _run_director_once(
-            body, job_id=job_id, authoritative_speech_cut=authoritative_speech_cut
+            body,
+            job_id=job_id,
+            creator_id=creator_id,
+            db=db,
+            usage_purpose=usage_purpose,
+            test_run_id=test_run_id,
+            estimated_max_cost_usd=estimated_max_cost_usd,
+            reservation_approved=reservation_approved,
+            release_canary_id=release_canary_id,
+            authoritative_speech_cut=authoritative_speech_cut,
         )
 
 
@@ -109,6 +138,13 @@ async def _run_director_once(
     body: DirectorSuggestionsBody,
     *,
     job_id: uuid.UUID,
+    creator_id: uuid.UUID | None = None,
+    db: AsyncSession | None = None,
+    usage_purpose: str | None = None,
+    test_run_id: str | None = None,
+    estimated_max_cost_usd: float | None = None,
+    reservation_approved: bool = False,
+    release_canary_id: str | None = None,
     authoritative_speech_cut: dict | None = None,
 ) -> DirectorSuggestionsResponse:
     if _snapshot_size(body.snapshot) > COPILOT_SNAPSHOT_MAX_BYTES:
@@ -140,10 +176,54 @@ async def _run_director_once(
     agent_input = EditDirectorInput(
         variant_snapshot=director_snapshot,
         dismissed_suggestion_ids=body.dismissed_suggestion_ids,
-        omni_enabled=settings.omni_generated_video_enabled and body.omni_enabled,
+        omni_enabled=(
+            settings.omni_generated_video_enabled
+            and settings.ai_usage_environment == "lab"
+            and body.omni_enabled
+        ),
     )
-    ctx = RunContext(job_id=str(job_id), request_id=body.snapshot_revision)
-    fallback_reason: str | None = None
+    snapshot_digest = hashlib.sha256(
+        json.dumps(
+            agent_input.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    if db is not None and creator_id is not None:
+        cached = (
+            await db.execute(
+                select(DirectorReviewCache).where(
+                    DirectorReviewCache.creator_id == creator_id,
+                    DirectorReviewCache.snapshot_digest == snapshot_digest,
+                    DirectorReviewCache.prompt_version == EDIT_DIRECTOR_PROMPT_VERSION,
+                    DirectorReviewCache.model == settings.edit_director_model,
+                    DirectorReviewCache.expires_at > datetime.now(UTC),
+                )
+            )
+        ).scalar_one_or_none()
+        if cached is not None:
+            response = DirectorSuggestionsResponse.model_validate(cached.response_json)
+            return response.model_copy(
+                update={
+                    "snapshot_revision": body.snapshot_revision,
+                    "omni_max_cost_per_second_usd": (
+                        settings.ai_omni_cost_per_second_usd if agent_input.omni_enabled else None
+                    ),
+                }
+            )
+
+    ctx = RunContext(
+        job_id=str(job_id),
+        creator_id=str(creator_id) if creator_id else None,
+        request_id=body.snapshot_revision,
+        usage_purpose=usage_purpose,
+        test_run_id=test_run_id,
+        estimated_max_cost_usd=estimated_max_cost_usd,
+        reservation_approved=reservation_approved,
+        release_canary_id=release_canary_id,
+        extra={"cached_behavior_available": False},
+    )
     try:
         output = await asyncio.to_thread(
             EditDirectorAgent(default_client()).run,
@@ -151,54 +231,56 @@ async def _run_director_once(
             ctx=ctx,
         )
         model_used = settings.edit_director_model
+    except (AiBudgetExceededError, ProviderOutcomeUnknownError):
+        # Budget rejection and unknown provider outcomes are never candidates
+        # for a fallback: either would turn one explicit review into a second
+        # paid request.
+        raise
     except TerminalError as exc:
-        fallback_reason = type(exc.__cause__ or exc).__name__
         log.warning(
             "edit_director.primary_failed",
             job_id=str(job_id),
             requested_model=settings.edit_director_model,
-            fallback_model=settings.edit_director_fallback_model,
-            fallback_reason=fallback_reason,
             error=str(exc)[:300],
         )
-        # A newer hydrated snapshot may have arrived while the primary model
-        # was running. Do not spend the fallback budget on a response the
-        # client has already superseded; release the per-job lock so the fresh
-        # review can start immediately.
         if _latest_revision_by_job.get(str(job_id)) != body.snapshot_revision:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="edit_director_request_superseded",
             ) from exc
-        try:
-            output = await asyncio.to_thread(
-                EditDirectorFallbackAgent(default_client()).run,
-                agent_input,
-                ctx=RunContext(
-                    job_id=str(job_id),
-                    request_id=body.snapshot_revision,
-                    extra={"fallback_reason": fallback_reason},
-                ),
-            )
-            model_used = settings.edit_director_fallback_model
-        except TerminalError as fallback_exc:
-            log.warning(
-                "edit_director.fallback_failed",
-                job_id=str(job_id),
-                error=str(fallback_exc)[:300],
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="edit_director_failed",
-            ) from fallback_exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="edit_director_failed",
+        ) from exc
 
-    return DirectorSuggestionsResponse(
+    response = DirectorSuggestionsResponse(
         suggestions=output.suggestions,
         snapshot_revision=body.snapshot_revision,
         requested_model=settings.edit_director_model,
         model_used=model_used,
-        fallback_reason=fallback_reason,
+        fallback_reason=None,
+        omni_max_cost_per_second_usd=(
+            settings.ai_omni_cost_per_second_usd if agent_input.omni_enabled else None
+        ),
     )
+    if db is not None and creator_id is not None:
+        await db.execute(
+            insert(DirectorReviewCache)
+            .values(
+                creator_id=creator_id,
+                job_id=job_id,
+                snapshot_revision=body.snapshot_revision,
+                snapshot_digest=snapshot_digest,
+                prompt_version=EDIT_DIRECTOR_PROMPT_VERSION,
+                model=model_used,
+                response_json=response.model_dump(mode="json"),
+                expires_at=datetime.now(UTC)
+                + timedelta(days=settings.edit_director_cache_ttl_days),
+            )
+            .on_conflict_do_nothing(constraint="uq_director_review_cache_identity")
+        )
+        await db.commit()
+    return response
 
 
 def record_director_feedback(

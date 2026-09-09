@@ -33,10 +33,17 @@ JOB_OUTPUT_PREFIXES = (
 
 
 def project_media_reference_lock_key(user_id: uuid.UUID) -> int:
-    """Stable positive BIGINT key for owner-scoped PostgreSQL advisory locks."""
+    """Stable positive BIGINT shared with the database reference-write trigger.
 
-    digest = hashlib.sha256(f"project-media:{user_id}".encode()).digest()
-    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+    PostgreSQL exposes MD5 without an extension, so migration 0103 can derive
+    the same 60-bit key for legacy and ORM writers that do not call this helper.
+    This is a coordination hash, not a security primitive.
+    """
+
+    digest = hashlib.md5(  # noqa: S324 - non-cryptographic advisory-lock key
+        f"project-media:{user_id}".encode(), usedforsecurity=False
+    ).hexdigest()
+    return int(digest[:15], 16)
 
 
 def job_input_path_matches_owner(path: object, user_id: uuid.UUID) -> bool:
@@ -53,6 +60,8 @@ def job_input_path_matches_owner(path: object, user_id: uuid.UUID) -> bool:
     expected = str(user_id)
     parts = candidate.split("/")
     if parts[0] == "users" and len(parts) >= 2:
+        return parts[1] == expected
+    if parts[0] == "staging" and len(parts) >= 2:
         return parts[1] == expected
     if parts[:2] == ["voiceover-uploads", "direct"] and len(parts) >= 3:
         return parts[2] == expected

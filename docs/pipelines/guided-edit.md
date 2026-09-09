@@ -544,9 +544,18 @@ cd src/apps/api
 pytest tests/evals/test_edit_proposal_evals.py tests/evals/test_edit_guide_evals.py -v
 ```
 
-Run it against Gemini and the judge before changing the prompt:
+Run the paid provider pass before changing the prompt:
 
 ```bash
-NOVA_EVAL_MODE=live pytest tests/evals/test_edit_proposal_evals.py \
-  tests/evals/test_edit_guide_evals.py -v --with-judge --allow-cost
+NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+pytest tests/evals/test_edit_proposal_evals.py \
+  tests/evals/test_edit_guide_evals.py -v --eval-mode=live \
+  --with-judge \
+  --usage-purpose=live_eval --test-run-id=guided-edit-YYYYMMDD \
+  --max-cost-usd=2 --approve-reservation
 ```
+
+These guided tests require semantic judging in live mode, so this command also
+needs `ANTHROPIC_API_KEY`; the Anthropic charge is outside the Google $2
+reservation ledger. The standard protected workflow intentionally has no
+guided selector until it can account for that second provider.

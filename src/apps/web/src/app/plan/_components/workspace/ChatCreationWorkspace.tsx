@@ -57,7 +57,7 @@ import {
 } from "@/lib/creation-thread-api";
 import { cn } from "@/lib/cn";
 import CreatorDirectionReceipt from "@/app/plan/_components/CreatorDirectionReceipt";
-import { listMyJobs, type LibraryJob } from "@/lib/me-api";
+import { listMyJobs, type LibraryJob, type LibraryRetentionSummary, type LibraryRetentionWarning } from "@/lib/me-api";
 import { getPlanItemFresh, type PlanItem } from "@/lib/plan-api";
 import LibraryTile from "@/components/library/LibraryTile";
 import AssetPool from "@/app/plan/_components/AssetPool";
@@ -486,6 +486,8 @@ export default function ChatCreationWorkspace({
   const [undoneMemoryOperations, setUndoneMemoryOperations] = useState<Record<string, boolean>>({});
   const [memoryUndoErrors, setMemoryUndoErrors] = useState<Record<string, string>>({});
   const [galleryJobs, setGalleryJobs] = useState<LibraryJob[]>([]);
+  const [galleryRetentionWarnings, setGalleryRetentionWarnings] = useState<LibraryRetentionWarning[]>([]);
+  const [galleryRetentionSummary, setGalleryRetentionSummary] = useState<LibraryRetentionSummary | null>(null);
   const [galleryCursor, setGalleryCursor] = useState<string | null>(null);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [galleryLoadError, setGalleryLoadError] = useState<string | null>(null);
@@ -706,6 +708,8 @@ export default function ChatCreationWorkspace({
           if (!isCurrentLoad()) return;
           productionGalleryLoadedRef.current = true;
           setGalleryJobs(library.jobs);
+          setGalleryRetentionWarnings(library.retention_warnings ?? []);
+          setGalleryRetentionSummary(library.retention_summary ?? null);
           setAvailableFormats(capabilitiesResult.formats.map((item) => item.edit_format));
           setCapabilities(capabilitiesResult);
           setProjects(listed);
@@ -882,6 +886,8 @@ export default function ChatCreationWorkspace({
         if (cancelled) return;
         if (productionPreview) productionGalleryLoadedRef.current = true;
         setGalleryJobs(page.jobs);
+        setGalleryRetentionWarnings(page.retention_warnings ?? []);
+        setGalleryRetentionSummary(page.retention_summary ?? null);
         setGalleryCursor(productionPreview ? null : page.next_cursor);
         setGalleryRetryCursor(null);
       })
@@ -909,6 +915,14 @@ export default function ChatCreationWorkspace({
         return [...jobsById.values()];
       });
       setGalleryCursor(page.next_cursor);
+      setGalleryRetentionWarnings((current) => {
+        const byJob = new Map(current.map((warning) => [warning.job_id, warning]));
+        (page.retention_warnings ?? []).forEach((warning) => byJob.set(warning.job_id, warning));
+        return [...byJob.values()].sort((left, right) => Date.parse(left.delete_at) - Date.parse(right.delete_at));
+      });
+      if (page.retention_summary !== undefined) {
+        setGalleryRetentionSummary(page.retention_summary ?? null);
+      }
       setGalleryRetryCursor(null);
     } catch {
       setGalleryRetryCursor(cursor);
@@ -936,6 +950,18 @@ export default function ChatCreationWorkspace({
       } else {
         setGalleryJobs(page.jobs);
       }
+      if (cursor) {
+        setGalleryRetentionWarnings((current) => {
+          const byJob = new Map(current.map((warning) => [warning.job_id, warning]));
+          (page.retention_warnings ?? []).forEach((warning) => byJob.set(warning.job_id, warning));
+          return [...byJob.values()].sort((left, right) => Date.parse(left.delete_at) - Date.parse(right.delete_at));
+        });
+      } else {
+        setGalleryRetentionWarnings(page.retention_warnings ?? []);
+      }
+      if (page.retention_summary !== undefined) {
+        setGalleryRetentionSummary(page.retention_summary ?? null);
+      }
       setGalleryCursor(productionPreview ? null : page.next_cursor);
       setGalleryRetryCursor(null);
       if (productionPreview) productionGalleryLoadedRef.current = true;
@@ -945,6 +971,20 @@ export default function ChatCreationWorkspace({
         : "I couldn’t load your Gallery. Your saved videos are still safe.");
     } finally {
       setGalleryLoading(false);
+    }
+  }
+
+  async function handleGalleryJobDeleted(jobId: string) {
+    setGalleryJobs((current) => current.filter((item) => item.id !== jobId));
+    setGalleryRetentionWarnings((current) => current.filter((item) => item.job_id !== jobId));
+    try {
+      const page = await listMyJobs();
+      setGalleryRetentionWarnings(page.retention_warnings ?? []);
+      setGalleryRetentionSummary(page.retention_summary ?? null);
+    } catch {
+      // The deleted tile remains gone. Clear the aggregate rather than showing
+      // a known-stale warning; reopening Gallery retries the authoritative read.
+      setGalleryRetentionSummary(null);
     }
   }
 
@@ -1887,8 +1927,15 @@ export default function ChatCreationWorkspace({
 
   const editor = <section className="flex min-w-0 flex-1 flex-col overflow-hidden border-l bg-muted/10" aria-label={productionPreview ? "Production video preview" : "Video editor"}><header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4"><div><p className="text-sm font-medium">{productionPreview ? "Production video" : "Editor"}</p><p className="text-xs text-muted-foreground">{productionPreview ? "Real output · read-only playback" : "Feature-complete overlay editor"}</p></div><Badge variant="secondary"><Check /> Ready</Badge></header>{productionPreview && selectedReadyVariant?.output_url ? <div className="flex min-h-0 flex-1 items-center justify-center bg-zinc-950 p-4"><video key={selectedReadyVariant.output_url} controls playsInline preload="metadata" poster={selectedReadyVariant.poster_url ?? undefined} src={selectedReadyVariant.output_url} className="max-h-full max-w-full rounded-lg shadow-2xl" data-testid="production-video-player">Your browser cannot play this video.</video></div> : editorUrl ? <iframe ref={editorFrameRef} src={editorUrl} title="Full video editor" className="min-h-0 flex-1 border-0 bg-background" /> : <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">The editor will appear when your first cut is ready.</div>}</section>;
 
-  if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background">{productionPreview ? <div className="border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong> · Read-only playback</div> : null}<header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><div><h1 className="text-lg font-semibold">Gallery</h1>{productionPreview ? <p className="text-xs text-muted-foreground">{accountName} · {galleryJobs.length} recent videos</p> : null}</div><Button type="button" className="min-h-11" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6">{galleryLoading && galleryJobs.length === 0 ? <div className="py-16 text-center text-sm text-muted-foreground" role="status">Loading your videos…</div> : null}{galleryLoadError ? <div className="mx-auto mb-4 flex max-w-md items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm" role="alert"><span>{galleryLoadError}</span><Button type="button" variant="outline" className="min-h-11 shrink-0" onClick={() => void retryGalleryLoad()}>Retry</Button></div> : null}<ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => {
-    if (!productionPreview) return <li key={job.id}><LibraryTile job={job} onDeleted={(jobId) => setGalleryJobs((current) => current.filter((item) => item.id !== jobId))} onPosterLoadError={posterRecovery.onPosterLoadError} onPosterLoadSuccess={posterRecovery.onPosterLoadSuccess} posterRecoveryExhausted={posterRecovery.exhaustedJobIds.has(job.id)} posterRefreshUnavailable={posterRecovery.refreshUnavailableJobIds.has(job.id)} /></li>;
+  const retentionNotice = galleryRetentionSummary ?? (galleryRetentionWarnings.length > 0 ? {
+    affected_video_count: galleryRetentionWarnings.length,
+    source_count: galleryRetentionWarnings.reduce((total, warning) => total + warning.source_count, 0),
+    earliest_delete_at: galleryRetentionWarnings[0].delete_at,
+    final_retention_days: galleryRetentionWarnings[0].final_retention_days,
+  } : null);
+
+  if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background">{productionPreview ? <div className="border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong> · Read-only playback</div> : null}<header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><div><h1 className="text-lg font-semibold">Gallery</h1>{productionPreview ? <p className="text-xs text-muted-foreground">{accountName} · {galleryJobs.length} recent videos</p> : null}</div><Button type="button" className="min-h-11" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6">{retentionNotice ? <div className="mx-auto mb-4 max-w-5xl rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-800" role="status"><strong>Source-file retention notice.</strong> Editable source files for {retentionNotice.affected_video_count} inactive {retentionNotice.affected_video_count === 1 ? "video" : "videos"} are scheduled for removal as early as {new Date(retentionNotice.earliest_delete_at).toLocaleDateString()}. Your latest final video and poster remain under the {retentionNotice.final_retention_days}-day retention policy.</div> : null}{galleryLoading && galleryJobs.length === 0 ? <div className="py-16 text-center text-sm text-muted-foreground" role="status">Loading your videos…</div> : null}{galleryLoadError ? <div className="mx-auto mb-4 flex max-w-md items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm" role="alert"><span>{galleryLoadError}</span><Button type="button" variant="outline" className="min-h-11 shrink-0" onClick={() => void retryGalleryLoad()}>Retry</Button></div> : null}<ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => {
+    if (!productionPreview) return <li key={job.id}><LibraryTile job={job} onDeleted={(jobId) => void handleGalleryJobDeleted(jobId)} onPosterLoadError={posterRecovery.onPosterLoadError} onPosterLoadSuccess={posterRecovery.onPosterLoadSuccess} posterRecoveryExhausted={posterRecovery.exhaustedJobIds.has(job.id)} posterRefreshUnavailable={posterRecovery.refreshUnavailableJobIds.has(job.id)} /></li>;
     const matchingProject = projects.find((project) => project.active_job_id === job.id || project.id === `${PRODUCTION_LIBRARY_THREAD_PREFIX}${job.id}`);
     return <li key={job.id}><ProductionPreviewVideoCard job={job} title={matchingProject ? projectTitle(matchingProject) : productionLibraryTitle(job)} /></li>;
   })}</ul>{galleryJobs.length === 0 && !galleryLoading && !galleryLoadError ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}{galleryCursor && !galleryLoadError ? <div className="flex justify-center py-8"><Button type="button" variant="outline" className="min-h-11" disabled={galleryLoading} onClick={() => void loadMoreGallery()}>{galleryLoading ? "Loading more videos…" : "Load more videos"}</Button></div> : null}</main></div>;

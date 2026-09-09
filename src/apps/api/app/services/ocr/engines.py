@@ -21,6 +21,7 @@ introspect the protocol.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -142,7 +143,7 @@ class CloudVisionEngine:
     name = "cloud_vision"
     _VISION_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 
-    def __init__(self) -> None:
+    def __init__(self, *, run_context=None) -> None:
         if not (
             os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
             or os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -171,6 +172,7 @@ class CloudVisionEngine:
         self._client = vision.ImageAnnotatorClient(credentials=creds)
         self._vision = vision
         self._Image = Image
+        self._run_context = run_context
 
     def recognize(self, image_path: str) -> list[OCRWord]:
         with open(image_path, "rb") as f:
@@ -180,9 +182,40 @@ class CloudVisionEngine:
         if width <= 0 or height <= 0:
             return []
         image = self._vision.Image(content=content)
-        response = self._client.document_text_detection(image=image)
-        if response.error.message:
-            raise RuntimeError(f"cloud_vision_error: {response.error.message}")
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.services.ai_cost_control import (  # noqa: PLC0415
+            PaidCallRequest,
+            execute_metered_fixed_cost_google_call,
+            logical_call_id,
+        )
+
+        ctx = self._run_context or RunContext(usage_purpose="optional_background")
+        model = "cloud-vision-document-text-detection"
+        cost_usd = 0.0015
+        response = execute_metered_fixed_cost_google_call(
+            request=PaidCallRequest(
+                idempotency_key=logical_call_id(
+                    feature="ocr_ground_truth",
+                    model=model,
+                    prompt="document_text_detection",
+                    ctx=ctx,
+                    attempt=1,
+                    media_identity=hashlib.sha256(content).hexdigest(),
+                ),
+                feature="ocr_ground_truth",
+                model=model,
+                estimated_cost_usd=cost_usd,
+                ctx=ctx,
+                provider="google-cloud-vision",
+            ),
+            operation=lambda: self._client.document_text_detection(image=image),
+            resolved_model=model,
+            actual_cost_usd=cost_usd,
+            provider_error=lambda result: (
+                f"cloud_vision_error: {result.error.message}" if result.error.message else None
+            ),
+            usage_json={"images": 1, "feature": "DOCUMENT_TEXT_DETECTION"},
+        )
 
         words: list[OCRWord] = []
         for page in response.full_text_annotation.pages or []:

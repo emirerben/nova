@@ -562,18 +562,38 @@ async def create_publication(
     # lock; this second fence prevents a concurrent rerender/cancellation from
     # slipping between the initial validation and the publication commit.
     job = await _owned_job(db, user.id, body.job_id, for_update=True)
+    try:
+        locked_output = await run_in_threadpool(resolve_publishable_output, job, body.variant_id)
+        locked_meta = await run_in_threadpool(storage.object_metadata, locked_output.object_path)
+    except (PublishableOutputError, FileNotFoundError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="The approved render is no longer available",
+        ) from exc
+    if (
+        locked_output.source_revision != output.source_revision
+        or locked_output.object_path != output.object_path
+        or locked_output.generation != output.generation
+        or locked_output.etag != output.etag
+        or locked_meta.generation != output.generation
+        or locked_meta.etag != output.etag
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="The video changed; review the latest render before publishing",
+        )
 
     row = TikTokPublication(
         user_id=user.id,
         job_id=job.id,
-        variant_id=output.variant_id,
+        variant_id=locked_output.variant_id,
         idempotency_key=body.idempotency_key,
         request_hash=request_hash,
         delivery_mode=body.delivery_mode,
-        source_object_path=output.object_path,
-        source_generation=output.generation,
-        source_etag=output.etag,
-        edit_signature=output.edit_signature,
+        source_object_path=locked_output.object_path,
+        source_generation=locked_output.generation,
+        source_etag=locked_output.etag,
+        edit_signature=locked_output.edit_signature,
         title=("" if body.delivery_mode == "draft_upload" else body.title.strip()),
         privacy_level=(
             "TIKTOK_DRAFT" if body.delivery_mode == "draft_upload" else body.privacy_level

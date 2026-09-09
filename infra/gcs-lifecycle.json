@@ -5,14 +5,15 @@
         "action": { "type": "Delete" },
         "condition": {
           "age": 1,
-          "matchesPrefix": ["dev-user/"]
-        }
-      },
-      {
-        "action": { "type": "Delete" },
-        "condition": {
-          "age": 1,
-          "matchesPrefix": ["music-jobs/"]
+          "matchesPrefix": [
+            "dev-user/",
+            "staging/",
+            "music-uploads/",
+            "slot-uploads/",
+            "direction-audio/",
+            "raw-uploads/",
+            "uploads/"
+          ]
         }
       },
       {
@@ -68,7 +69,7 @@
         "action": { "type": "Delete" },
         "condition": {
           "age": 30,
-          "matchesPrefix": ["jobs/"]
+          "matchesPrefix": ["tiktok-publish/"]
         }
       }
     ]

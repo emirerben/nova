@@ -10,6 +10,18 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
+_PAID_KEY_PLACEHOLDERS = {"", "ci-noop", "test", "test-key", "dummy"}
+if (
+    os.environ.get("CI")
+    and os.environ.get("GEMINI_API_KEY", "").strip() not in _PAID_KEY_PLACEHOLDERS
+    and os.environ.get("NOVA_PAID_AI_WORKFLOW") != "1"
+):
+    pytest.exit(
+        "Paid Gemini credentials are forbidden in routine CI. "
+        "Use the named agent-evals live workflow.",
+        returncode=2,
+    )
+
 os.environ.setdefault("STORAGE_BUCKET", "nova-test")
 os.environ.setdefault("STORAGE_PROVIDER", "gcs")
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/nova_test")

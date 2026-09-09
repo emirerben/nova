@@ -20,6 +20,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+from enum import Enum
 from threading import BoundedSemaphore
 from typing import Any
 
@@ -28,6 +29,7 @@ import structlog
 from app.agents._runtime import (
     ModelClient,
     ModelInvocation,
+    ProviderOutcomeUnknownError,
     TerminalError,
     TransientError,
 )
@@ -217,8 +219,16 @@ class GeminiClient(ModelClient):
             future.add_done_callback(lambda _: _GEMINI_INVOKE_SLOTS.release())
             response = future.result(timeout=max(0.1, timeout_s))
         except FutureTimeoutError as exc:
-            future.cancel()
-            raise TransientError(f"gemini request timed out after {timeout_s:.1f}s") from exc
+            # Cancellation only proves no provider contact when the queued
+            # future has not started. A running SDK thread may still complete
+            # and bill after our local deadline, so retrying it is unsafe.
+            if future.cancel():
+                raise TransientError(
+                    f"gemini request cancelled before start after {timeout_s:.1f}s"
+                ) from exc
+            raise ProviderOutcomeUnknownError(
+                f"gemini provider outcome unknown after {timeout_s:.1f}s"
+            ) from exc
         except genai_errors.APIError as exc:
             if _is_genai_transient(exc):
                 raise TransientError(f"gemini transient: {exc}") from exc
@@ -228,21 +238,85 @@ class GeminiClient(ModelClient):
                 _GEMINI_INVOKE_SLOTS.release()
             if isinstance(exc, (TransientError, TerminalError)):
                 raise
-            # Network / parse / timeout errors at the SDK boundary count as transient.
-            raise TransientError(f"gemini sdk error: {exc}") from exc
+            # Submission already happened. Without a concrete provider
+            # rejection, transport/SDK/decoding failure may still represent
+            # accepted and billable work, so retrying would risk a second call.
+            raise ProviderOutcomeUnknownError(f"gemini sdk outcome unknown: {exc}") from exc
 
         raw_text = getattr(response, "text", "") or ""
         usage = getattr(response, "usage_metadata", None)
         tokens_in = int(getattr(usage, "prompt_token_count", 0) or 0) if usage else 0
         tokens_out = int(getattr(usage, "candidates_token_count", 0) or 0) if usage else 0
+        tokens_thoughts = int(getattr(usage, "thoughts_token_count", 0) or 0) if usage else 0
+        tokens_cached = int(getattr(usage, "cached_content_token_count", 0) or 0) if usage else 0
+        tokens_tool = int(getattr(usage, "tool_use_prompt_token_count", 0) or 0) if usage else 0
 
         return ModelInvocation(
             raw_text=raw_text,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             raw_response=response,
-            model_used=model,
+            model_used=str(getattr(response, "model_version", None) or model),
+            provider_request_id=_provider_request_id(response),
+            tokens_thoughts=tokens_thoughts,
+            tokens_cached=tokens_cached,
+            tokens_tool=tokens_tool,
+            token_details=_usage_details(usage),
         )
+
+
+def _jsonable(value: Any) -> Any:
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, Enum):
+        return value.name
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    try:
+        return dict(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _usage_details(usage: Any) -> dict[str, Any]:
+    if usage is None:
+        return {}
+    names = (
+        "prompt_tokens_details",
+        "candidates_tokens_details",
+        "cache_tokens_details",
+        "tool_use_prompt_tokens_details",
+        "traffic_type",
+        "total_token_count",
+    )
+    return {
+        name: _jsonable(value)
+        for name in names
+        if (value := getattr(usage, name, None)) is not None
+    }
+
+
+def _provider_request_id(response: Any) -> str | None:
+    direct = getattr(response, "response_id", None) or getattr(response, "request_id", None)
+    if direct:
+        return str(direct)[:200]
+    http_response = getattr(response, "sdk_http_response", None)
+    headers = getattr(http_response, "headers", None)
+    if headers:
+        for name in ("x-request-id", "x-goog-request-id", "x-cloud-trace-context"):
+            try:
+                value = headers.get(name)
+            except AttributeError:
+                value = None
+            if value:
+                return str(value)[:200]
+    return None
 
 
 def _is_genai_transient(exc: Exception) -> bool:

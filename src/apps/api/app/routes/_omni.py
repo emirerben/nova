@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -42,6 +44,17 @@ OmniStatus = Literal[
 ]
 
 
+def _request_signature(body: OmniAssetStartBody) -> str:
+    """Identity for every field that can change generated media."""
+
+    payload = body.model_dump(
+        mode="json",
+        exclude={"estimated_max_cost_usd", "cost_confirmed"},
+    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class OmniAssetStartBody(BaseModel):
     suggestion_id: str = Field(min_length=1, max_length=100)
     draft_revision: str = Field(min_length=1, max_length=100)
@@ -54,6 +67,12 @@ class OmniAssetStartBody(BaseModel):
     source_end_s: float | None = Field(default=None, ge=0.0)
     reference_clip_index: int | None = Field(default=None, ge=0)
     reference_frame_s: float | None = Field(default=None, ge=0.0)
+    # Kept optional at the schema boundary so a disabled/production route can
+    # remain indistinguishable (404) and existing action validation still
+    # reports the useful source-contract error.  start_omni_asset fails closed
+    # before enqueueing whenever the lab confirmation fields are absent.
+    estimated_max_cost_usd: float | None = Field(default=None, gt=0.0, le=10.0)
+    cost_confirmed: bool = False
 
     @model_validator(mode="after")
     def validate_source_contract(self) -> OmniAssetStartBody:
@@ -216,6 +235,34 @@ async def start_omni_asset(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="omni_generated_video_not_enabled",
         )
+    if settings.ai_usage_environment != "lab":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="omni_generated_video_available_only_in_lab",
+        )
+    server_estimate = round(
+        body.duration_s * settings.ai_omni_cost_per_second_usd,
+        4,
+    )
+    if (
+        not body.cost_confirmed
+        or body.estimated_max_cost_usd is None
+        or body.estimated_max_cost_usd < server_estimate
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "omni_cost_confirmation_required",
+                "estimated_max_cost_usd": server_estimate,
+            },
+        )
+    lab_run_id = settings.ai_omni_lab_test_run_id.strip()
+    lab_run_max = settings.ai_omni_lab_run_max_cost_usd
+    if not lab_run_id or lab_run_max is None or not settings.ai_omni_lab_reservation_approved:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="omni_lab_budget_authority_not_configured",
+        )
     job = await _lock_job(db, job.id)
     variant = next(
         (
@@ -260,13 +307,31 @@ async def start_omni_asset(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="omni_insert_time_out_of_bounds",
         )
-    asset_id = str(uuid.uuid4())
     assembly, records = _records(job)
+    request_signature = _request_signature(body)
+    # A retried confirmation (or a double POST before the browser receives the
+    # first response) must resolve to the same paid attempt. The job row lock
+    # makes this signature check and insert atomic. Terminal attempts are
+    # deliberately excluded so an explicit later retry can create new work.
+    for existing in records.values():
+        if not isinstance(existing, dict):
+            continue
+        if existing.get("request_signature") == request_signature and existing.get("status") in {
+            "queued",
+            "generating",
+            "normalizing",
+            "ready",
+            "cancellation_requested",
+        }:
+            return omni_response(existing)
+
+    asset_id = str(uuid.uuid4())
     record = {
         "asset_id": asset_id,
         "created_at": datetime.now(UTC).isoformat(),
         "suggestion_id": body.suggestion_id,
         "draft_revision": body.draft_revision,
+        "request_signature": request_signature,
         "status": "queued",
         "progress": 0.02,
         "model": settings.edit_omni_model,
@@ -297,6 +362,11 @@ async def start_omni_asset(
         "storage_path": None,
         "operation": None,
         "error": None,
+        "usage_purpose": "omni_lab",
+        "test_run_id": lab_run_id,
+        "approved_run_max_cost_usd": lab_run_max,
+        "estimated_max_cost_usd": server_estimate,
+        "cost_confirmed": True,
     }
     records[asset_id] = record
     job.assembly_plan = assembly

@@ -76,7 +76,7 @@ async def create_batch_presigned(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"File {i}: unsupported content type '{f.content_type}'. "
-                       f"Allowed: {', '.join(sorted(ALLOWED_CONTENT_TYPES))}",
+                f"Allowed: {', '.join(sorted(ALLOWED_CONTENT_TYPES))}",
             )
         if f.file_size_bytes > MAX_BYTES_PER_FILE:
             raise HTTPException(
@@ -96,14 +96,16 @@ async def create_batch_presigned(
     try:
         urls: list[PresignedUrlItem] = []
         for i, f in enumerate(body.files):
-            # Path: {user_id}/batch-{batch_id}/clip_{i}.ext
+            # Unattached uploads live only in the 24-hour lifecycle namespace.
+            # POST /template-jobs promotes the exact generation after an owned
+            # Job row exists.
             ext = f.filename.rsplit(".", 1)[-1] if "." in f.filename else "mp4"
-            safe_name = f"clip_{i:03d}.{ext}"
-            upload_url, gcs_path = storage.presigned_put_url(
-                user_id=user_id,
-                job_id=f"batch-{batch_id}",
-                filename=safe_name,
-                content_type=f.content_type,
+            safe_ext = "mov" if ext.lower() == "mov" else "mp4"
+            gcs_path = f"staging/{user_id}/batch-{batch_id}/clip_{i:03d}.{safe_ext}"
+            upload_url = storage.signed_put_url_legacy(
+                gcs_path,
+                f.content_type,
+                f.file_size_bytes,
             )
             urls.append(PresignedUrlItem(upload_url=upload_url, gcs_path=gcs_path))
     except Exception as exc:

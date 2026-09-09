@@ -114,10 +114,12 @@ The Privacy Policy (§8) states specific retention windows. As of this PR:
 
 | Category | Policy says | Enforced by |
 |---|---|---|
-| Anonymous/session uploads | 24h | `infra/gcs-lifecycle.json` — already live |
-| Voiceover recordings, music renders | 24h | `infra/gcs-lifecycle.json` — already live |
-| Speech transcripts (`transcript-cache/`) | 24h | **This PR** — added to `infra/gcs-lifecycle.json` (was previously unbounded; the cache is content-hash-keyed with no link back to a user, so account deletion can't find and purge it — see below) |
-| Uploaded footage / rendered output (`users/…`, `generative-jobs/…`) | kept until you delete | Correct as-is — never auto-swept; `DELETE /me/account` (this PR) is now the removal path |
+| Anonymous uploads | 30d | Anonymous-user prefix in `infra/gcs-lifecycle.json` |
+| Other unattached session uploads | 24h | Purpose-specific prefixes/receipts plus `infra/gcs-lifecycle.json` |
+| Voiceover recordings, temporary music/lyric previews | 24h | `infra/gcs-lifecycle.json` |
+| GCS Whisper transcripts (`transcript-cache/`) | 24h | **This PR** — added to `infra/gcs-lifecycle.json` (was previously unbounded; the cache is content-hash-keyed with no link back to a user, so account deletion can't find and purge it — see below) |
+| Authenticated account-scoped media analysis (may include transcript text + visual descriptions) | 90d | PostgreSQL `media_analysis_cache.expires_at`; rows are creator-scoped and cascade on account deletion. Redis is only a 24h owner-scoped hot copy. Anonymous/synthetic jobs bypass both cache tiers. |
+| Attached footage / rendered output (`users/…`, `generative-jobs/…`) | policy windows, then deletion or latest-final preservation | Generation-pinned retention manifests; newly signed `users/…/generative/…` footage remains a 24h temporary-upload receipt until a Job transaction attaches it |
 | Internal AI processing logs tied to a job | 30 days | Already enforced (`agent_run_retention_days`) |
 
 **Corrected from an earlier draft of this document:** initial research flagged
@@ -151,7 +153,10 @@ This PR adds:
   `users.id` at the DB level — see the docstring on
   `confirm_account_deletion` for the exact sequence and why), then GCS
   objects under `users/{user_id}/` and `generative-jobs/{job_id}/` are swept
-  asynchronously (`tasks.purge_user_storage`). Two-step confirm — a Fernet
+  asynchronously (`tasks.purge_user_storage`). A durable second verified
+  `users/{user_id}/` sweep runs after the full upload-retention window, when
+  signed-upload capabilities and slow in-flight PUTs have quiesced, preventing
+  late media from surviving the immediate purge. Two-step confirm — a Fernet
   token of the caller's own id, emailed as a code, verified + TTL-checked on
   confirm — so a stray call can't delete an account outright. (`AgentRun`
   rows tied to a job cascade-delete automatically via `ondelete=CASCADE`
@@ -226,7 +231,7 @@ discards them with no error at queue time — this is a known repo trap
 - No cookie-consent banner — not required today (strictly-necessary cookies
   only), but must be revisited the moment any analytics or marketing
   cookie is added.
-- `user_id → content_hash` index for transcript-cache is not built; instead
+- `user_id → content_hash` index for the GCS Whisper transcript cache is not built; instead
   we shortened the cache TTL to 24h so orphaned entries age out on their
   own. Revisit if a longer transcript cache TTL becomes worth the
   engineering to do it properly.

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AgentApprovalCard } from "@/components/chat/AgentApprovalCard";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import type { EditorSuggestion, SuggestionCategory } from "@/lib/plan-api";
 import type {
   DirectorAppliedReceipt,
@@ -110,11 +111,14 @@ export default function DirectorSuggestions({
   suggestions,
   appliedReceipts,
   historyVersion,
+  reviewed,
   loading,
+  reviewBlocked = false,
   error,
   modelUsed,
-  fallbackReason,
+  omniMaxCostPerSecondUsd = null,
   generation,
+  omniDispatchPending = false,
   serverRendering = false,
   onAccept,
   onDismiss,
@@ -127,13 +131,19 @@ export default function DirectorSuggestions({
   suggestions: EditorSuggestion[];
   appliedReceipts: DirectorAppliedReceipt[];
   historyVersion: number;
+  reviewed: boolean;
   loading: boolean;
+  reviewBlocked?: boolean;
   error: string | null;
   modelUsed: string;
-  fallbackReason: string | null;
+  omniMaxCostPerSecondUsd?: number | null;
   generation: DirectorGenerationState | null;
+  omniDispatchPending?: boolean;
   serverRendering?: boolean;
-  onAccept: (suggestion: EditorSuggestion) => void;
+  onAccept: (
+    suggestion: EditorSuggestion,
+    options?: { omniCostConfirmed?: boolean },
+  ) => void;
   onDismiss: (suggestion: EditorSuggestion) => void;
   onRevealApplied: (receipt: DirectorAppliedReceipt) => void;
   onRefresh: () => void;
@@ -143,6 +153,7 @@ export default function DirectorSuggestions({
 }) {
   const firstSuggestionRef = useRef<HTMLDivElement>(null);
   const firstSuggestionId = suggestions[0]?.id ?? null;
+  const [pendingOmni, setPendingOmni] = useState<EditorSuggestion | null>(null);
 
   useEffect(() => {
     if (!firstSuggestionId) return;
@@ -158,7 +169,7 @@ export default function DirectorSuggestions({
           </h3>
           {modelUsed && (
             <p className="mt-0.5 text-[11px] text-[#71717a]">
-              {fallbackReason ? "Fast fallback review" : "Deep creative review"}
+              Deep creative review
             </p>
           )}
         </div>
@@ -166,10 +177,16 @@ export default function DirectorSuggestions({
           type="button"
           variant="ghost"
           onClick={onRefresh}
-          disabled={loading}
+          disabled={loading || reviewBlocked}
           className="h-auto min-h-11 rounded-full px-3 text-[11px] font-medium text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
         >
-          {loading ? "Reviewing…" : "Refresh"}
+          {loading
+            ? "Reviewing…"
+            : reviewBlocked
+              ? "Review limit reached"
+              : reviewed
+                ? "Review again"
+                : "Review my edit"}
         </Button>
       </div>
 
@@ -197,13 +214,19 @@ export default function DirectorSuggestions({
         </div>
       )}
 
-      {!loading && !error && suggestions.length === 0 && (
+      {!loading && !error && reviewed && suggestions.length === 0 && (
         <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3">
           <p className="text-[12px] font-semibold text-[#27272a]">No changes recommended</p>
           <p className="mt-0.5 text-[11px] leading-4 text-[#71717a]">
-            Kria did not find a clear improvement for this draft. Refresh after your next edit.
+            Kria did not find a clear improvement for this draft. Review again after your next edit.
           </p>
         </div>
+      )}
+
+      {!loading && !error && !reviewed && suggestions.length === 0 && (
+        <p className="text-[11px] leading-4 text-[#71717a]">
+          Run a deep creative review when you want a second opinion.
+        </p>
       )}
 
       {serverRendering && (
@@ -248,6 +271,12 @@ export default function DirectorSuggestions({
         </div>
       )}
 
+      {omniDispatchPending && !generation && (
+        <div role="status" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-[12px] text-[#3f3f46]">
+          Starting the generated clip… Your current draft stays unchanged.
+        </div>
+      )}
+
       {suggestions.map((suggestion, index) => (
         <AgentApprovalCard
           key={suggestion.id}
@@ -270,12 +299,25 @@ export default function DirectorSuggestions({
               <Button
                 type="button"
                 variant="default"
-                onClick={() => onAccept(suggestion)}
-                disabled={generation !== null || serverRendering}
+                onClick={() => {
+                  if (suggestion.apply_mode === "omni_async") {
+                    setPendingOmni(suggestion);
+                  } else {
+                    onAccept(suggestion);
+                  }
+                }}
+                disabled={
+                  generation !== null ||
+                  omniDispatchPending ||
+                  serverRendering ||
+                  (suggestion.apply_mode === "omni_async" && omniMaxCostPerSecondUsd === null)
+                }
                 className="h-auto min-h-11 flex-1 rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-[#0c0c0e] hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 {suggestion.apply_mode === "omni_async"
-                  ? "Generate & add"
+                  ? omniMaxCostPerSecondUsd === null
+                    ? "Cost unavailable"
+                    : "Generate & add"
                   : suggestion.apply_mode === "server_async"
                     ? "Apply & rebuild"
                     : "Accept"}
@@ -318,6 +360,30 @@ export default function DirectorSuggestions({
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingOmni !== null}
+        question="Generate this experimental clip?"
+        detail={
+          pendingOmni?.omni && omniMaxCostPerSecondUsd !== null
+            ? `Estimated maximum provider cost: $${(
+                Math.ceil(
+                  pendingOmni.omni.duration_s * omniMaxCostPerSecondUsd * 100,
+                ) / 100
+              ).toFixed(2)}. Your current draft stays unchanged until generation finishes.`
+            : undefined
+        }
+        confirmLabel="Generate & add"
+        cancelLabel="Keep current draft"
+        confirmDisabled={omniDispatchPending || omniMaxCostPerSecondUsd === null}
+        onConfirm={() => {
+          if (pendingOmni && omniMaxCostPerSecondUsd !== null) {
+            onAccept(pendingOmni, { omniCostConfirmed: true });
+          }
+          setPendingOmni(null);
+        }}
+        onCancel={() => setPendingOmni(null)}
+      />
     </section>
   );
 }

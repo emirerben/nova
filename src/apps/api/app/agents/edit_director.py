@@ -372,17 +372,3 @@ class EditDirectorAgent(Agent[EditDirectorInput, EditDirectorOutput]):
             'The discriminator is "op", never "name" or "action"; use the exact '
             "index and timing field names shown in those examples."
         )
-
-
-class EditDirectorFallbackAgent(EditDirectorAgent):
-    spec: ClassVar[AgentSpec] = AgentSpec(
-        name="nova.edit.director.fallback",
-        prompt_id="edit_director",
-        prompt_version=EDIT_DIRECTOR_PROMPT_VERSION,
-        model=settings.edit_director_fallback_model,
-        max_attempts=1,
-        backoff_s=(),
-        timeout_s=20.0,
-        thinking_level="medium",
-        enable_json_repair=True,
-    )

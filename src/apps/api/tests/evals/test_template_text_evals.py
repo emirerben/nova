@@ -20,11 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from app.agents._runtime import RunContext
-
 from .runners.eval_runner import (
     CassetteModelClient,
     EvalResult,
+    build_eval_run_context,
     discover_fixtures,
     load_fixture,
 )
@@ -139,8 +138,10 @@ def test_template_text_eval(
 
     client = live_model_client if eval_mode == "live" else CassetteModelClient(fixture.raw_text)
     agent = TemplateTextAgent(client)
-    eval_ctx = RunContext(
-        extra={"skip_langfuse_trace": True, "skip_agent_run_persist": True}
+    eval_ctx = build_eval_run_context(
+        fixture.fixture_id,
+        is_live=eval_mode == "live",
+        invocation="template-text",
     )
 
     effective_input = fixture.input
@@ -175,8 +176,7 @@ def test_template_text_eval(
         }
         if scoring.completeness < floors["completeness"]:
             floor_failures.append(
-                f"completeness {scoring.completeness:.2f} < hard floor "
-                f"{floors['completeness']}"
+                f"completeness {scoring.completeness:.2f} < hard floor {floors['completeness']}"
             )
         # Temporal/spatial IoU floors only fire when we actually matched at
         # least one pair — otherwise the mean is zero by convention and the

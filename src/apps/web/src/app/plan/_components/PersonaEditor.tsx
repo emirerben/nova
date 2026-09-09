@@ -50,6 +50,9 @@ export default function PersonaEditor({
   onRetuneFromFeedback,
   tiktokProfile,
   onUpdateAnswers,
+  onAnalyzeTikTokStyle,
+  tiktokStyleAnalysisAvailable = false,
+  tiktokStyleAnalysisStatus = "idle",
   variant = "manage",
 }: {
   persona: PersonaContent;
@@ -67,6 +70,9 @@ export default function PersonaEditor({
   tiktokProfile?: TikTokProfile | null;
   // Navigates back to the TikTok pre-screen so returning users can restart the chat.
   onUpdateAnswers?: () => void;
+  onAnalyzeTikTokStyle?: () => Promise<void>;
+  tiktokStyleAnalysisAvailable?: boolean;
+  tiktokStyleAnalysisStatus?: "idle" | "running" | "ready" | "failed";
   variant?: "reveal" | "manage";
 }) {
   const [draft, setDraft] = useState<PersonaContent>(persona);
@@ -75,6 +81,7 @@ export default function PersonaEditor({
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(startInEdit);
   const [retuning, setRetuning] = useState(false);
+  const [styleAnalysisStarting, setStyleAnalysisStarting] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<HTMLDivElement>(null);
   const actionRowRef = useRef<HTMLDivElement>(null);
@@ -136,6 +143,19 @@ export default function PersonaEditor({
     }
   }
 
+  async function handleTikTokStyleAnalysis() {
+    if (!onAnalyzeTikTokStyle) return;
+    setStyleAnalysisStarting(true);
+    setError(null);
+    try {
+      await onAnalyzeTikTokStyle();
+    } catch {
+      setError("Kria couldn’t start the TikTok visual-style review. Try again.");
+    } finally {
+      setStyleAnalysisStarting(false);
+    }
+  }
+
   const dirty = JSON.stringify(draft) !== JSON.stringify(lastSaved);
 
   // Trim + drop blank entries from the list fields. Done ONLY at save time, never
@@ -192,6 +212,13 @@ export default function PersonaEditor({
       <div ref={rootRef} className="animate-fade-up py-2">
         {/* Aha-moment reveal — TikTok stat line */}
         <AhaMoment tiktokProfile={tiktokProfile} />
+        <TikTokStyleAnalysisAction
+          available={Boolean(
+            tiktokStyleAnalysisAvailable && tiktokProfile && onAnalyzeTikTokStyle
+          )}
+          status={styleAnalysisStarting ? "running" : tiktokStyleAnalysisStatus}
+          onStart={handleTikTokStyleAnalysis}
+        />
 
         <div className="mb-8 flex items-start justify-between gap-4">
           <div>
@@ -305,6 +332,11 @@ export default function PersonaEditor({
     <div ref={rootRef} className="animate-fade-up py-2">
       {/* Aha-moment reveal — TikTok stat line */}
       <AhaMoment tiktokProfile={tiktokProfile} />
+      <TikTokStyleAnalysisAction
+        available={Boolean(tiktokStyleAnalysisAvailable && tiktokProfile && onAnalyzeTikTokStyle)}
+        status={styleAnalysisStarting ? "running" : tiktokStyleAnalysisStatus}
+        onStart={handleTikTokStyleAnalysis}
+      />
 
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
@@ -392,6 +424,48 @@ export default function PersonaEditor({
           );
         })()}
       </div>
+    </div>
+  );
+}
+
+function TikTokStyleAnalysisAction({
+  available,
+  status,
+  onStart,
+}: {
+  available: boolean;
+  status: "idle" | "running" | "ready" | "failed";
+  onStart: () => void;
+}) {
+  if (!available) return null;
+  if (status === "ready") {
+    return (
+      <p className="mb-6 text-sm text-[#52525b]" role="status">
+        TikTok visual style reviewed. Kria will reuse this analysis for 90 days.
+      </p>
+    );
+  }
+  const failed = status === "failed";
+  return (
+    <div className="mb-6 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+      <p className="text-sm text-[#3f3f46]">
+        {failed
+          ? "The TikTok visual-style review could not finish. No profile changes were made."
+          : "Optional: let Kria temporarily download and visually review up to eight representative public TikTok videos. The result is reused for 90 days."}
+      </p>
+      <Button
+        type="button"
+        variant="outline"
+        className="mt-3 min-h-11"
+        disabled={status === "running"}
+        onClick={onStart}
+      >
+        {status === "running"
+          ? "Reviewing TikTok style…"
+          : failed
+            ? "Retry TikTok visual-style review"
+            : "Review my TikTok visual style"}
+      </Button>
     </div>
   );
 }

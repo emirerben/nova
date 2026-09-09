@@ -25,6 +25,7 @@ interface ConfirmDialogProps {
   detail?: string;
   confirmLabel: string;
   cancelLabel?: string;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -35,6 +36,7 @@ export function ConfirmDialog({
   detail,
   confirmLabel,
   cancelLabel = "Cancel",
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -67,9 +69,11 @@ export function ConfirmDialog({
         <AlertDialogTitle>{question}</AlertDialogTitle>
         {detail ? <AlertDialogDescription>{detail}</AlertDialogDescription> : null}
         <AlertDialogFooter>
-          <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogCancel className="min-h-11">{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction
             ref={confirmRef}
+            className="min-h-11"
+            disabled={confirmDisabled}
             onClick={() => {
               confirmedRef.current = true;
               onConfirm();

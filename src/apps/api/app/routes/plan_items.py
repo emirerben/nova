@@ -12,6 +12,7 @@ leave an item stuck "generating" forever.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import tempfile
@@ -30,6 +31,13 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
 from app import storage
+from app.agents._runtime import (
+    AiBudgetExceededError,
+    AiCostControlPolicyError,
+    CostControlUnavailableError,
+    ProviderOutcomeUnknownError,
+    RunContext,
+)
 from app.agents._schemas.edit_format import coerce_edit_format, guided_edit_applicable
 from app.agents.music_matcher import _sanitize_text
 from app.auth import SYNTHETIC_USER_ID, CurrentUser
@@ -148,6 +156,7 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
     is_collage_montage_preset,
 )
+from app.services.ai_usage_headers import paid_call_headers
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
     PlanPersonaOwnershipError,
@@ -179,6 +188,7 @@ from app.services.speech_cleanup import (
     reconcile_item_policy_change,
     renderer_enabled_for_item,
 )
+from app.services.tiktok_style_observations import effective_persona_style
 from app.services.variant_generation_guard import (
     VariantInitialRenderInProgress,
     assert_variant_generation_editable,
@@ -256,6 +266,49 @@ async def _load_item_plan_persona(
 
 
 log = structlog.get_logger()
+
+_COST_CONTROL_ERRORS = (
+    AiBudgetExceededError,
+    AiCostControlPolicyError,
+    CostControlUnavailableError,
+    ProviderOutcomeUnknownError,
+)
+
+
+def _creator_run_context(
+    request: Request,
+    *,
+    creator_id: uuid.UUID,
+    request_id: str | None = None,
+) -> RunContext:
+    return RunContext(
+        creator_id=str(creator_id),
+        request_id=request_id,
+        **paid_call_headers(request).as_kwargs(),
+    )
+
+
+def _paid_agent_request_id(
+    feature: str,
+    scope: str,
+    input_model: BaseModel,
+    *,
+    client_request_id: str | None = None,
+) -> str:
+    """Stable identity for a synchronous paid mutation attempt.
+
+    A client-minted intent ID is authoritative even if a buggy retry changes
+    the payload. Legacy callers and one-shot server mutations retain a stable
+    semantic fallback derived from their input.
+    """
+
+    if client_request_id:
+        client_digest = hashlib.sha256(client_request_id.encode("utf-8")).hexdigest()
+        return f"{feature}:{scope}:client:{client_digest}"
+    payload_digest = hashlib.sha256(input_model.model_dump_json().encode("utf-8")).hexdigest()
+    return f"{feature}:{scope}:{payload_digest}"
+
+
 router = APIRouter()
 
 # Themed plan uploads land under the persistent `users/` prefix (NOT swept by the
@@ -739,7 +792,13 @@ async def _get_instruction_level(item: PlanItem, db: AsyncSession) -> str:
     cross-tenant persona link is an ownership conflict and never defaults.
     """
     _, persona = await _load_item_plan_persona(item, db)
-    style = persona.style or {}
+    style = (
+        effective_persona_style(
+            persona.style,
+            profile=getattr(persona, "tiktok_profile", None),
+        )
+        or {}
+    )
     level = str(style.get("instruction_level", "full") or "full")
     return level if level in ("full", "light", "none") else "full"
 
@@ -1639,6 +1698,10 @@ async def generate_guide(
     """
     import uuid as _uuid  # noqa: PLC0415
 
+    from app.agents._runtime import (  # noqa: PLC0415
+        AiBudgetExceededError,
+        ProviderOutcomeUnknownError,
+    )
     from app.agents.shot_list_writer import (  # noqa: PLC0415
         ShotListWriterInput,
         run_shot_list_writer,
@@ -1663,7 +1726,20 @@ async def generate_guide(
     # still current when we reacquire Plan -> Persona -> PlanItem below.
     await db.rollback()
     try:
-        result = await asyncio.to_thread(run_shot_list_writer, inp)
+        result = await asyncio.to_thread(
+            run_shot_list_writer,
+            inp,
+            creator_id=str(user.id),
+            request_id=_paid_agent_request_id(
+                "shot-list",
+                f"{item.id}:{ownership_epoch}",
+                inp,
+            ),
+        )
+    except AiBudgetExceededError:
+        raise
+    except ProviderOutcomeUnknownError:
+        raise
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -2244,6 +2320,7 @@ class AdvisorTurnResponse(BaseModel):
 
 @router.post("/{item_id}/agent/turn", response_model=AdvisorTurnResponse)
 async def plan_item_advisor_turn(
+    request: Request,
     item_id: str,
     body: AdvisorTurnBody,
     user: CurrentUser,
@@ -2315,7 +2392,21 @@ async def plan_item_advisor_turn(
     )
 
     try:
-        result = await asyncio.to_thread(PlanItemAdvisorAgent(default_client()).run, agent_input)
+        result = await asyncio.to_thread(
+            PlanItemAdvisorAgent(default_client()).run,
+            agent_input,
+            ctx=_creator_run_context(
+                request,
+                creator_id=user.id,
+                request_id=_paid_agent_request_id(
+                    "plan-item-advisor",
+                    str(item.id),
+                    agent_input,
+                ),
+            ),
+        )
+    except _COST_CONTROL_ERRORS:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.warning("plan_item_advisor.failed", item_id=item_id, error=str(exc)[:300])
         return AdvisorTurnResponse(
@@ -3340,40 +3431,53 @@ async def edit_proposal_conversation_turn(
     # starting the prompt with an orphaned assistant reply at the window edge.
     turns = conversation[-(EDIT_CONVERSATION_MAX_TURNS - 2) :]
     turns.append({"role": "user", "phase": phase, "content": body.message.strip()})
+    agent_input = EditGuideInput(
+        phase=phase,
+        idea=idea,
+        theme=theme,
+        turns=turns,
+        brief=brief,
+        media=[EditGuideMediaSummary.model_validate(row) for row in media_summary],
+        title=review_snapshot.title if review_snapshot else "",
+        beats=(
+            [
+                EditGuideBeatInput(
+                    beat_id=beat.beat_id,
+                    topic=beat.topic,
+                    thought=beat.thought,
+                    thought_source=beat.thought_source,
+                    layout=beat.layout,
+                    duration_s=beat.duration_s,
+                    media_count=len(beat.media_ids),
+                    media_refs=[
+                        f"media_{index}"
+                        for index, ref in enumerate(review_snapshot.media, start=1)
+                        if ref.media_id in beat.media_ids
+                    ],
+                )
+                for beat in review_snapshot.story_beats
+            ]
+            if review_snapshot
+            else []
+        ),
+    )
     try:
         result = await asyncio.to_thread(
             EditGuideAgent(default_client()).run,
-            EditGuideInput(
-                phase=phase,
-                idea=idea,
-                theme=theme,
-                turns=turns,
-                brief=brief,
-                media=[EditGuideMediaSummary.model_validate(row) for row in media_summary],
-                title=review_snapshot.title if review_snapshot else "",
-                beats=(
-                    [
-                        EditGuideBeatInput(
-                            beat_id=beat.beat_id,
-                            topic=beat.topic,
-                            thought=beat.thought,
-                            thought_source=beat.thought_source,
-                            layout=beat.layout,
-                            duration_s=beat.duration_s,
-                            media_count=len(beat.media_ids),
-                            media_refs=[
-                                f"media_{index}"
-                                for index, ref in enumerate(review_snapshot.media, start=1)
-                                if ref.media_id in beat.media_ids
-                            ],
-                        )
-                        for beat in review_snapshot.story_beats
-                    ]
-                    if review_snapshot
-                    else []
+            agent_input,
+            ctx=_creator_run_context(
+                request,
+                creator_id=owner_id,
+                request_id=_paid_agent_request_id(
+                    "edit-guide",
+                    str(item.id),
+                    agent_input,
                 ),
             ),
         )
+    except _COST_CONTROL_ERRORS:
+        await release_reservation()
+        raise
     except Exception as exc:  # noqa: BLE001 - conversational failure is retryable
         log.warning("edit_guide.failed", item_id=item_id, error=str(exc)[:300])
         await release_reservation()
@@ -4749,9 +4853,15 @@ async def plan_item_director_suggestions(
         )
     job = await _owned_item_render_job(item_id, user.id, db)
     variant = require_editable_variant(job, variant_id, allow_guided_text=True)
+    from app.services.ai_usage_headers import paid_call_headers  # noqa: PLC0415
+
+    cost_headers = paid_call_headers(request)
     return await run_director(
         body,
         job_id=job.id,
+        creator_id=user.id,
+        db=db,
+        **cost_headers.as_kwargs(),
         authoritative_speech_cut=speech_cut_director_context(job, variant),
     )
 
@@ -5136,6 +5246,9 @@ class IdeaExpandResponse(BaseModel):
 class IdeaExpandRequest(BaseModel):
     """Optional creator context for a stronger propose-only expansion."""
 
+    # Mint once for an explicit expansion intent and retain across transport
+    # retries. Optional during split deploys for older browser bundles.
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
     creator_context: str | None = Field(default=None, max_length=800)
 
     @field_validator("creator_context", mode="before")
@@ -5175,7 +5288,12 @@ async def expand_idea(
     the proposal in a card and calls PATCH /{item_id} if the user accepts.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
+    from app.agents._runtime import (  # noqa: PLC0415
+        AiBudgetExceededError,
+        ProviderOutcomeUnknownError,
+        RunContext,
+        TerminalError,
+    )
     from app.agents.idea_expander import IdeaExpanderAgent, IdeaExpanderInput  # noqa: PLC0415
 
     item = await _load_owned_item(item_id, user.id, db)
@@ -5191,19 +5309,33 @@ async def expand_idea(
         if getattr(item, "content_mode", None) is None:
             content_mode = _normalize_content_mode(persona.persona.get("content_mode"))
 
+    agent_input = IdeaExpanderInput(
+        idea=item.idea or "",
+        persona_summary=persona_summary,
+        content_pillars=content_pillars,
+        creator_context=body.creator_context if body and body.creator_context else "",
+        video_type=_expand_video_type(getattr(item, "edit_format", None)),
+        content_mode=content_mode,
+    )
     agent = IdeaExpanderAgent(default_client())
     try:
         output = agent.run(
-            IdeaExpanderInput(
-                idea=item.idea or "",
-                persona_summary=persona_summary,
-                content_pillars=content_pillars,
-                creator_context=body.creator_context if body and body.creator_context else "",
-                video_type=_expand_video_type(getattr(item, "edit_format", None)),
-                content_mode=content_mode,
+            agent_input,
+            ctx=RunContext(
+                creator_id=str(user.id),
+                request_id=_paid_agent_request_id(
+                    "idea-expand",
+                    str(item.id),
+                    agent_input,
+                    client_request_id=(body.client_request_id if body else None),
+                ),
+                request_id_authoritative=bool(body and body.client_request_id),
             ),
-            ctx=RunContext(job_id=None),
         )
+    except AiBudgetExceededError:
+        raise
+    except ProviderOutcomeUnknownError:
+        raise
     except TerminalError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -6607,6 +6739,7 @@ async def transcript_analyze_status(
 
 @router.post("/{item_id}/transcript/interview", response_model=TranscriptInterviewResponse)
 async def transcript_interview(
+    request: Request,
     item_id: str,
     body: TranscriptInterviewBody,
     user: CurrentUser,
@@ -6639,8 +6772,22 @@ async def transcript_interview(
                 turns=[VoiceoverTurn(role=t.role, content=t.content) for t in body.turns],
                 turn_count=asked + 1,
             )
-            out = await asyncio.to_thread(agent.run, inp)
+            out = await asyncio.to_thread(
+                agent.run,
+                inp,
+                ctx=_creator_run_context(
+                    request,
+                    creator_id=user.id,
+                    request_id=_paid_agent_request_id(
+                        "voiceover-interview",
+                        str(item_id),
+                        inp,
+                    ),
+                ),
+            )
             question, suggestions, is_final = out.question, out.suggestions, out.is_final
+        except _COST_CONTROL_ERRORS:
+            raise
         except Exception as exc:  # noqa: BLE001
             log.warning("transcript_interview.agent_failed", error=str(exc)[:200])
             question = None
@@ -6657,6 +6804,7 @@ async def transcript_interview(
 
 @router.post("/{item_id}/transcript/script", response_model=TranscriptScriptResponse)
 async def transcript_script(
+    request: Request,
     item_id: str,
     body: TranscriptScriptBody,
     user: CurrentUser,
@@ -6690,8 +6838,22 @@ async def transcript_script(
                 answers=body.answers,
                 target_duration_s=body.duration_s,
             )
-            out = await asyncio.to_thread(agent.run, inp)
+            out = await asyncio.to_thread(
+                agent.run,
+                inp,
+                ctx=_creator_run_context(
+                    request,
+                    creator_id=user.id,
+                    request_id=_paid_agent_request_id(
+                        "voiceover-script",
+                        f"{item_id}:{ownership_epoch}",
+                        inp,
+                    ),
+                ),
+            )
             text, lines = out.text, out.lines
+        except _COST_CONTROL_ERRORS:
+            raise
         except Exception as exc:  # noqa: BLE001
             log.warning("transcript_script.agent_failed", error=str(exc)[:200])
             text = None

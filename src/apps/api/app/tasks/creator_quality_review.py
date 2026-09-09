@@ -12,6 +12,7 @@ import tempfile
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -695,7 +696,11 @@ def run_quality_review(
     return True
 
 
-def review_with_video_quality_grader(video_gcs_path: str) -> Any:
+def review_with_video_quality_grader(
+    video_gcs_path: str,
+    *,
+    run_context: Any | None = None,
+) -> Any:
     """Download and grade the exact render claimed by the fenced worker.
 
     Reaching this adapter requires both Creator review flags plus the exact
@@ -714,6 +719,7 @@ def review_with_video_quality_grader(video_gcs_path: str) -> Any:
             RUBRIC_PATH,
             model=QUALITY_REVIEW_MODEL,
             require_evidence=True,
+            run_context=run_context,
         ).grade(local_path)
 
 
@@ -798,6 +804,7 @@ def quality_review_creator_session(
     """Offline-safe worker entry point; a reviewer adapter is rollout-owned."""
 
     from app.agents._persistence import persist_agent_run  # noqa: PLC0415
+    from app.agents._runtime import RunContext  # noqa: PLC0415
     from app.config import settings  # noqa: PLC0415
     from app.database import sync_session  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
@@ -835,7 +842,17 @@ def quality_review_creator_session(
             variant_id=variant_id,
             render_generation_id=render_generation_id,
             db_factory=sync_session,
-            reviewer=review_with_video_quality_grader,
+            reviewer=partial(
+                review_with_video_quality_grader,
+                run_context=RunContext(
+                    job_id=job_id,
+                    creator_agent_session_id=session_id,
+                    request_id=(
+                        f"creator-quality-review:{session_id}:{job_id}:"
+                        f"{variant_id}:{render_generation_id}"
+                    ),
+                ),
+            ),
             persist_run=persist_agent_run,
             reclaim_running=bool(self.request.delivery_info.get("redelivered")),
         )

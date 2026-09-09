@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { getPersona, updatePersona } from "@/lib/plan-api";
+import { analyzeTikTokStyle, getPersona, updatePersona } from "@/lib/plan-api";
 import type { PersonaContent, PersonaResponse } from "@/lib/plan-api";
 import PersonaEditor from "../_components/PersonaEditor";
 import { LightShell } from "../_components/ui/LightShell";
@@ -37,6 +37,24 @@ export default function PersonaPage() {
       .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, [status, router, loadAttempt]);
+
+  useEffect(() => {
+    if (persona?.tiktok_style_analysis_status !== "running") return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void getPersona()
+        .then((next) => {
+          if (!cancelled && next) setPersona(next);
+        })
+        .catch(() => {
+          // Keep the visible running state through transient polling failures.
+        });
+    }, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [persona?.tiktok_style_analysis_status]);
 
   if (loading) {
     return (
@@ -77,6 +95,12 @@ export default function PersonaPage() {
     setPersona(refreshed);
   }
 
+  async function handleAnalyzeTikTokStyle() {
+    if (!persona) return;
+    await analyzeTikTokStyle(persona.id);
+    setPersona({ ...persona, tiktok_style_analysis_status: "running" });
+  }
+
   return (
     <LightShell size="narrow">
       <PersonaEditor
@@ -86,6 +110,11 @@ export default function PersonaPage() {
         onContinue={() => router.push("/plan")}
         continueLabel="Back to content plan"
         tiktokProfile={persona.tiktok_profile}
+        tiktokStyleAnalysisAvailable={persona.tiktok_style_analysis_available}
+        tiktokStyleAnalysisStatus={persona.tiktok_style_analysis_status}
+        onAnalyzeTikTokStyle={
+          persona.tiktok_style_analysis_available ? handleAnalyzeTikTokStyle : undefined
+        }
       />
     </LightShell>
   );

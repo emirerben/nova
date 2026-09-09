@@ -582,6 +582,10 @@ def _run_official_analysis(
     mature_fingerprint_changed: bool,
 ) -> None:
     correlations = _edit_correlations(mature_publications)
+    with sync_session() as session:
+        persona_owner = session.scalar(select(Persona.user_id).where(Persona.id == persona_id))
+    if persona_owner is None:
+        return
     try:
         output = TikTokAnalyzerAgent(default_client()).run(
             TikTokAnalyzerInput(
@@ -593,7 +597,7 @@ def _run_official_analysis(
                 videos=videos,
                 edit_correlations=correlations,
             ),
-            ctx=RunContext(job_id=None),
+            ctx=RunContext(creator_id=str(persona_owner)),
         )
     except Exception as exc:  # noqa: BLE001
         log.warning(

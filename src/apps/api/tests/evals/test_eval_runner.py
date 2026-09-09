@@ -14,6 +14,7 @@ from .runners.eval_runner import (
     CassetteModelClient,
     EvalResult,
     Fixture,
+    build_eval_run_context,
     discover_fixtures,
     load_fixture,
     rubric_path_for,
@@ -75,6 +76,21 @@ def test_cassette_rejects_second_call():
     cas.invoke(model="gemini-2.5-flash", prompt="x")
     with pytest.raises(TerminalError, match="retried more than once"):
         cas.invoke(model="gemini-2.5-flash", prompt="x")
+
+
+def test_live_eval_context_carries_shared_paid_attribution(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("NOVA_EVAL_USAGE_PURPOSE", "live_eval")
+    monkeypatch.setenv("NOVA_EVAL_TEST_RUN_ID", "github-123-1")
+    monkeypatch.setenv("NOVA_EVAL_MAX_COST_USD", "2.00")
+    monkeypatch.setenv("NOVA_EVAL_RESERVATION_APPROVED", "true")
+
+    ctx = build_eval_run_context("golden/example", is_live=True, invocation="custom")
+
+    assert ctx.request_id == "eval:golden/example:custom"
+    assert ctx.usage_purpose == "live_eval"
+    assert ctx.test_run_id == "github-123-1"
+    assert ctx.estimated_max_cost_usd == 2.0
+    assert ctx.reservation_approved is True
 
 
 # ── run_eval ────────────────────────────────────────────────────────────────

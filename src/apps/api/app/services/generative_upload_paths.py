@@ -2,7 +2,11 @@
 
 import re
 
-DIRECT_CLIP_PREFIX = "dev-user/"
+# New authenticated uploads are durable project inputs. Keep the old prefix
+# readable because jobs and upload URLs minted before this rollout still name
+# it, but never mint fresh project footage under the 24-hour lifecycle tier.
+DIRECT_CLIP_PREFIX = "users/"
+LEGACY_DIRECT_CLIP_PREFIX = "dev-user/"
 DIRECT_VOICEOVER_PREFIX = "voiceover-uploads/direct/"
 PURPOSE_PREFIXES = {
     "analysis_proxy": "analysis-proxy/",
@@ -10,7 +14,8 @@ PURPOSE_PREFIXES = {
 }
 
 _DIRECT_CLIP_RE = re.compile(
-    r"^dev-user/([^/]+)/generative/[0-9a-f]{12}(?:[0-9a-f]{20})?(?:/(?:analysis_proxy|cloud_render_source))?/clip\.[a-z0-9]+$"
+    r"^(?:users|dev-user)/([^/]+)/generative/[0-9a-f]{12}(?:[0-9a-f]{20})?"
+    r"(?:/(?:analysis_proxy|cloud_render_source))?/clip\.[a-z0-9]+$"
 )
 _PURPOSE_CLIP_RE = re.compile(
     r"^(?:analysis-proxy|cloud-render-source)/([^/]+)/[0-9a-f]{12}(?:[0-9a-f]{20})?/clip\.[a-z0-9]+$"
@@ -26,11 +31,17 @@ def direct_clip_owner(path: str) -> str | None:
 
 
 def direct_clip_path(
-    user_id: str, upload_id: str, extension: str, purpose: str | None = None
+    user_id: str,
+    upload_id: str,
+    extension: str,
+    purpose: str | None = None,
+    *,
+    durable: bool = True,
 ) -> str:
     if purpose in PURPOSE_PREFIXES:
         return f"{PURPOSE_PREFIXES[purpose]}{user_id}/{upload_id}/clip{extension}"
-    return f"{DIRECT_CLIP_PREFIX}{user_id}/generative/{upload_id}/clip{extension}"
+    prefix = DIRECT_CLIP_PREFIX if durable else LEGACY_DIRECT_CLIP_PREFIX
+    return f"{prefix}{user_id}/generative/{upload_id}/clip{extension}"
 
 
 def direct_voiceover_path(user_id: str, upload_id: str, extension: str) -> str:

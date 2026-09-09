@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -512,7 +513,7 @@ def test_analyze_pool_asset_discards_late_output_after_attempt_changes(monkeypat
     _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
     monkeypatch.setattr("app.storage.download_to_file", lambda *_a, **_kw: None)
 
-    def _late_analysis(*_args):
+    def _late_analysis(*_args, **_kwargs):
         asset.analysis_attempt_token = "attempt-2"
         return ({"subject": "stale-result"}, 1.0, (100, 100), False)
 
@@ -603,13 +604,11 @@ def test_analyze_image_registers_heif_decoder_before_opening(monkeypatch, tmp_pa
     assert has_alpha is False
 
 
-def test_analyze_image_sends_heif_with_provider_mime(monkeypatch, tmp_path) -> None:
-    import pillow_heif
+def test_analyze_image_downscales_and_meters_submitted_jpeg(monkeypatch, tmp_path) -> None:
     from PIL import Image
 
-    pillow_heif.register_heif_opener()
-    source = tmp_path / "phone-photo.heif"
-    Image.new("RGB", (12, 8), "#336699").save(source, format="HEIF")
+    source = tmp_path / "large-photo.png"
+    Image.new("RGB", (3000, 1000), "#336699").save(source, format="PNG")
 
     from app.config import settings as _settings
 
@@ -636,11 +635,26 @@ def test_analyze_image_sends_heif_with_provider_mime(monkeypatch, tmp_path) -> N
         lambda: SimpleNamespace(models=_Models()),
     )
     monkeypatch.setattr("app.pipeline.prompt_loader.load_prompt", lambda _name: "prompt")
+    estimate_kwargs: dict = {}
 
-    analysis, _aspect, _dims, _has_alpha = ap._analyze_image(str(source), "test-scope")
+    def _estimate(**kwargs):  # noqa: ANN003, ANN202
+        estimate_kwargs.update(kwargs)
+        return 0.001
+
+    monkeypatch.setattr("app.services.ai_cost_control.estimate_call_cost_usd", _estimate)
+
+    analysis, aspect, dims, _has_alpha = ap._analyze_image(str(source), "test-scope")
 
     assert analysis is not None
-    assert captured["contents"][0].inline_data.mime_type == "image/heif"
+    assert aspect == 3.0
+    assert dims == (3000, 1000)
+    inline_data = captured["contents"][0].inline_data
+    assert inline_data.mime_type == "image/jpeg"
+    with Image.open(BytesIO(inline_data.data)) as submitted:
+        assert submitted.size == (1536, 512)
+    assert estimate_kwargs["media_mime"] == "image/jpeg"
+    assert estimate_kwargs["media_width_px"] == 1536
+    assert estimate_kwargs["media_height_px"] == 512
 
 
 def test_analyze_video_does_not_treat_plan_item_as_job_owner(monkeypatch) -> None:
@@ -670,7 +684,11 @@ def test_analyze_video_does_not_treat_plan_item_as_job_owner(monkeypatch) -> Non
 
     analysis, aspect, duration, dims = ap._analyze_video("/tmp/asset.mp4")
 
-    analyze.assert_called_once_with(file_ref)
+    analyze.assert_called_once()
+    assert analyze.call_args.args == (file_ref,)
+    run_context = analyze.call_args.kwargs["run_context"]
+    assert run_context.job_id is None
+    assert run_context.usage_purpose == "optional_background"
     assert analysis is not None
     assert aspect == 0.5625
     assert duration == 4.0
@@ -809,7 +827,7 @@ def test_analyze_pool_asset_persists_timeout_then_propagates(monkeypatch) -> Non
     monkeypatch.setattr(
         ap,
         "_analyze_image",
-        lambda *_a: (_ for _ in ()).throw(ap.SoftTimeLimitExceeded()),
+        lambda *_a, **_kw: (_ for _ in ()).throw(ap.SoftTimeLimitExceeded()),
     )
 
     with pytest.raises(ap.SoftTimeLimitExceeded):
@@ -829,7 +847,7 @@ def test_analyze_pool_asset_marks_unreadable_nonretryable(monkeypatch) -> None:
     monkeypatch.setattr(
         ap,
         "_analyze_image",
-        lambda *_a: (_ for _ in ()).throw(ap.AssetUnreadableError()),
+        lambda *_a, **_kw: (_ for _ in ()).throw(ap.AssetUnreadableError()),
     )
 
     ap.analyze_pool_asset.run(str(asset.id), False, "attempt-1")

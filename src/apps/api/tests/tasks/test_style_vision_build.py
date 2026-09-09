@@ -6,8 +6,15 @@ the local E2E playbook (TIKTOK_STYLE_VISION_ENABLED=true + worker + real handle)
 
 from __future__ import annotations
 
+import uuid
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 
+from app.tasks import style_vision_build
 from app.tasks.style_vision_build import _aggregate_observations, _mode_or_none
 
 # ── _mode_or_none ─────────────────────────────────────────────────────────────
@@ -196,16 +203,107 @@ class TestAggregateObservations:
 
     def test_qbuilder_profile(self):
         """Mirrors the @qbuilder live fixture: bold_display, #ffffff, #f6d895, center."""
-        obs = [_obs(
-            font_feel="bold_display",
-            text_color="#ffffff",
-            highlight="#f6d895",
-            position="center",
-            confidence=0.9,
-        )] * 22 + [_obs(has_text=False)] * 5
+        obs = [
+            _obs(
+                font_feel="bold_display",
+                text_color="#ffffff",
+                highlight="#f6d895",
+                position="center",
+                confidence=0.9,
+            )
+        ] * 22 + [_obs(has_text=False)] * 5
         agg = _aggregate_observations(obs)
         assert agg["font_feel"] == "bold_display"
         assert agg["text_color_hex"] == "#ffffff"
         assert agg["highlight_color_hex"] == "#f6d895"
         assert agg["position"] == "center"
         assert agg["has_on_screen_text"] is True
+
+
+def _task_sessions(row):
+    @contextmanager
+    def factory():
+        session = MagicMock()
+        session.scalar.return_value = row
+        session.get.return_value = row
+        yield session
+
+    return factory
+
+
+def test_claim_is_renewed_before_work_and_cleared_afterward(monkeypatch) -> None:
+    claim_id = uuid.uuid4()
+    original_expiry = datetime.now(UTC) + timedelta(seconds=30)
+    row = SimpleNamespace(
+        tiktok_style_analysis_claim_id=claim_id,
+        tiktok_style_analysis_claim_expires_at=original_expiry,
+    )
+
+    def assert_renewed(*_args, **_kwargs) -> None:
+        assert row.tiktok_style_analysis_claim_expires_at > original_expiry
+
+    runner = MagicMock(side_effect=assert_renewed)
+    monkeypatch.setattr(style_vision_build.settings, "tiktok_style_vision_enabled", True)
+    monkeypatch.setattr(style_vision_build, "sync_session", _task_sessions(row))
+    monkeypatch.setattr(style_vision_build, "_run_tiktok_style_analysis", runner)
+
+    style_vision_build.analyze_tiktok_style.run(
+        str(uuid.uuid4()),
+        "@creator",
+        claim_id=str(claim_id),
+        explicit=True,
+    )
+
+    runner.assert_called_once()
+    assert row.tiktok_style_analysis_claim_id is None
+    assert row.tiktok_style_analysis_claim_expires_at is None
+
+
+def test_expired_claim_never_starts_paid_work(monkeypatch) -> None:
+    claim_id = uuid.uuid4()
+    row = SimpleNamespace(
+        tiktok_style_analysis_claim_id=claim_id,
+        tiktok_style_analysis_claim_expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    runner = MagicMock()
+    monkeypatch.setattr(style_vision_build.settings, "tiktok_style_vision_enabled", True)
+    monkeypatch.setattr(style_vision_build, "sync_session", _task_sessions(row))
+    monkeypatch.setattr(style_vision_build, "_run_tiktok_style_analysis", runner)
+
+    style_vision_build.analyze_tiktok_style.run(
+        str(uuid.uuid4()),
+        "@creator",
+        claim_id=str(claim_id),
+        explicit=True,
+    )
+
+    runner.assert_not_called()
+
+
+def test_failed_analysis_persists_safe_retry_state_and_releases_claim(monkeypatch) -> None:
+    claim_id = uuid.uuid4()
+    row = SimpleNamespace(
+        tiktok_profile={"handle": "creator"},
+        tiktok_style_analysis_claim_id=claim_id,
+        tiktok_style_analysis_claim_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    monkeypatch.setattr(style_vision_build.settings, "tiktok_style_vision_enabled", True)
+    monkeypatch.setattr(style_vision_build, "sync_session", _task_sessions(row))
+    monkeypatch.setattr(
+        style_vision_build,
+        "_run_tiktok_style_analysis",
+        MagicMock(return_value="analysis_unavailable"),
+    )
+
+    style_vision_build.analyze_tiktok_style.run(
+        str(uuid.uuid4()),
+        "@creator",
+        claim_id=str(claim_id),
+        explicit=True,
+    )
+
+    failure = row.tiktok_profile["style_analysis_failure"]
+    assert failure["reason"] == "analysis_unavailable"
+    assert datetime.fromisoformat(failure["failed_at"])
+    assert row.tiktok_style_analysis_claim_id is None
+    assert row.tiktok_style_analysis_claim_expires_at is None

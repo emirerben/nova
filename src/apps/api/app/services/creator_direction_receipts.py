@@ -62,6 +62,10 @@ def stamp_private_receipt(
 def project_direction_receipt(private_snapshot: dict[str, Any]) -> dict[str, Any]:
     """Return the stable user receipt without consulting mutable ledger rows."""
 
+    from app.services.creator_direction_snapshot import private_snapshot_from  # noqa: PLC0415
+
+    private_snapshot = private_snapshot_from(private_snapshot) or private_snapshot
+
     raw_rules = private_snapshot.get("receipt_rules")
     rules = (
         [dict(row) for row in raw_rules if isinstance(row, dict)]

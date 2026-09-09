@@ -3,13 +3,14 @@
 #
 # Runs the full live + judge eval suite for the TemplateTextAgent:
 #   NOVA_EVAL_MODE=live pytest tests/evals/test_template_text_evals.py \
-#     -v --eval-mode=live --with-judge --allow-cost
+#     -v --eval-mode=live --with-judge --usage-purpose=live_eval \
+#     --test-run-id=<id> --max-cost-usd=2 --approve-reservation
 #
 # Captures output to .dev/eval-results/template_text-<timestamp>.log and
 # prints a one-line summary on exit. On failure, prints the last 20 lines
 # of the log so you don't have to open the file.
 #
-# Cost: ~$2-5 per run (Gemini calls for each fixture + Claude Sonnet judge).
+# Cost: hard-capped at $2 per explicitly attributed run.
 # When to run: after every bump of prompt_version in TemplateTextAgent's AgentSpec,
 # and to record a v0.4.26.0 baseline before editing any template_text prompt.
 #
@@ -40,16 +41,16 @@ USAGE
 WHAT IT DOES
   Runs the template_text eval suite in live mode with the LLM-as-judge:
     NOVA_EVAL_MODE=live pytest tests/evals/test_template_text_evals.py \
-      -v --eval-mode=live --with-judge --allow-cost
+      -v --eval-mode=live --with-judge --usage-purpose=live_eval \
+      --test-run-id=<id> --max-cost-usd=2 --approve-reservation
 
   Output is tee'd to .dev/eval-results/template_text-<YYYYMMDD-HHMMSS>.log.
   On success: prints a one-line summary.
   On failure: prints the summary + last 20 lines of the log.
 
 COST
-  ~$2-5 per run (Gemini API calls per fixture + Claude Sonnet judge).
-  The harness pre-flights an estimated cost at collection time and aborts
-  if it exceeds the $20 cap (--allow-cost is pre-set by this wrapper).
+  At most $2 per run. The harness pre-flights selected fixtures and aborts
+  if their conservative estimate exceeds the cap. There is no bypass.
 
 WHEN TO RUN
   1. To record the v0.4.26.0 baseline before touching any template_text prompt.
@@ -131,6 +132,7 @@ mkdir -p "$RESULTS_DIR"
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 LOG_FILE="$RESULTS_DIR/template_text-$TIMESTAMP.log"
+TEST_RUN_ID="template-text-$TIMESTAMP"
 
 echo "[run_template_text_eval] starting live eval — log: $LOG_FILE"
 
@@ -140,8 +142,14 @@ EXIT_CODE=0
 (
   cd "$API_DIR"
   NOVA_EVAL_MODE=live \
+  AI_COST_CONTROL_ENABLED=true \
+  AI_USAGE_ENVIRONMENT=development \
     .venv/bin/pytest tests/evals/test_template_text_evals.py \
-      -v --eval-mode=live --with-judge --allow-cost
+      -v --eval-mode=live --with-judge \
+      --usage-purpose=live_eval \
+      --test-run-id="$TEST_RUN_ID" \
+      --max-cost-usd=2 \
+      --approve-reservation
 ) 2>&1 | tee "$LOG_FILE" || EXIT_CODE=$?
 
 # ── One-line summary ──────────────────────────────────────────────────────────

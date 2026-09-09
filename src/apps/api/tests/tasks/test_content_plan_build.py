@@ -23,11 +23,40 @@ from app.tasks.content_plan_build import (
     _dispatch_item_render,
     _guided_render_queue,
     _item_direction_snapshot,
+    _persona_data,
     dispatch_item_render_for,
     generate_content_plan,
     generate_plan_item_videos,
     regenerate_content_plan,
 )
+
+
+def test_persona_render_snapshot_excludes_expired_derived_style() -> None:
+    persona = SimpleNamespace(
+        persona={"tone": "direct"},
+        tiktok_profile=None,
+        style={
+            "status": "ready",
+            "style_set_id": "editorial",
+            "derived_from": {"observed_style_at": "2000-01-01T00:00:00+00:00"},
+        },
+    )
+
+    assert _persona_data(persona)["_user_style"] is None
+
+
+def test_persona_render_snapshot_preserves_user_edited_style() -> None:
+    persona = SimpleNamespace(
+        persona={"tone": "direct"},
+        tiktok_profile=None,
+        style={
+            "status": "edited",
+            "style_set_id": "editorial",
+            "derived_from": {"observed_style_at": "2000-01-01T00:00:00+00:00"},
+        },
+    )
+
+    assert _persona_data(persona)["_user_style"]["style_set_id"] == "editorial"
 
 
 def test_chat_item_direction_snapshot_wins_over_account_plan_snapshot() -> None:
@@ -1376,7 +1405,7 @@ def test_dedup_skips_regen_when_no_duplicates() -> None:
         ]
     )
     agent = _FakeAgent(raises=True)  # would blow up if regen were attempted
-    result = _dedup_and_replace(agent, _plan_input(), output, "pid")
+    result = _dedup_and_replace(agent, _plan_input(), output, "pid", creator_id=str(uuid.uuid4()))
     assert agent.calls == 0  # no extra LLM call when the plan is already varied
     assert result is output
 
@@ -1401,7 +1430,7 @@ def test_dedup_replaces_duplicate_with_distinct_regen_idea() -> None:
         ]
     )
     agent = _FakeAgent(regen=regen)
-    result = _dedup_and_replace(agent, _plan_input(), output, "pid")
+    result = _dedup_and_replace(agent, _plan_input(), output, "pid", creator_id=str(uuid.uuid4()))
 
     assert agent.calls == 1
     assert [it.day_index for it in result.items] == [1, 2, 3]  # full length, day kept
@@ -1419,7 +1448,7 @@ def test_dedup_keeps_original_when_regen_fails() -> None:
         ]
     )
     agent = _FakeAgent(raises=True)
-    result = _dedup_and_replace(agent, _plan_input(), output, "pid")
+    result = _dedup_and_replace(agent, _plan_input(), output, "pid", creator_id=str(uuid.uuid4()))
     assert result is output  # best-effort: a failed regen never degrades the plan
 
 
@@ -1433,7 +1462,7 @@ def test_dedup_keeps_original_slot_when_regen_has_no_distinct_idea() -> None:
     # Regen only offers another near-dup → nothing distinct to swap in.
     regen = ContentPlanOutput(items=[_spec(9, "5am gym workout motivation session")])
     agent = _FakeAgent(regen=regen)
-    result = _dedup_and_replace(agent, _plan_input(), output, "pid")
+    result = _dedup_and_replace(agent, _plan_input(), output, "pid", creator_id=str(uuid.uuid4()))
     assert [it.idea for it in result.items] == [
         "5am gym workout motivation routine",
         "early morning gym workout motivation routine",

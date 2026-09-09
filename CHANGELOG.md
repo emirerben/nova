@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.3.0] — 2026-09-09
+
+### Added
+- **The Gallery can warn creators before inactive editing media expires.** The staged retention policy warns ahead of cleanup, preserves referenced work, and keeps the latest final video and poster for the configured long-term window.
+
+### Internal
+- Paid Google AI calls now pass through an atomic reservation ledger with creator/test/canary attribution, conservative model-aware pricing, unknown-outcome fencing, durable usage records, and shared budget breakers. Director reviews are explicit-only, cached for 90 days, and limited to three paid reviews per creator each day; experimental Omni generation remains lab-only and requires a visible cost confirmation.
+- Added split-account Cloud Billing budgets and Standard Usage reconciliation scaffolding, replay-only routine evals, a capped weekly provider smoke, generation-pinned upload promotion, lifecycle drift detection, and an approval-gated storage-retention manifest. Unattached authenticated generative uploads receive a 24-hour cleanup receipt until a job atomically attaches them. Template upload promotion is journaled before the first copy, POST retries reuse the recoverable job, and reconciliation claims each queued render once. Authenticated media analysis can be reused for 90 days; anonymous jobs bypass the owner cache, and the public retention disclosure covers transcript-bearing analysis. All cloud controls ship dark until the documented rollout steps are completed.
+
 ## [0.73.2.0] — 2026-09-08
 
 ### Fixed

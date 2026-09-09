@@ -9,7 +9,10 @@ Modes (selected via CLI flags + env):
                                        Live-only; replay's recorded raw_text was produced under
                                        the prod prompt, so comparing it against a candidate is
                                        meaningless.
-  --allow-cost                      — bypass the $20 live-mode cost cap.
+  --usage-purpose=live_eval         — mandatory attribution for paid runs.
+  --test-run-id=<id>                — mandatory stable run identifier.
+  --max-cost-usd=<amount>           — mandatory approved run cap (maximum $2).
+  --approve-reservation             — explicit acknowledgement of paid usage.
 
 Set NOVA_EVAL_MODE=live as an alternative to --eval-mode=live.
 """
@@ -23,14 +26,14 @@ import pytest
 
 from .runners.eval_runner import (
     RUBRIC_ROOT,
-    discover_fixtures,
     estimate_live_cost,
     load_fixture,
     rubric_path_for,
 )
 from .runners.llm_judge import LLMJudge
 
-LIVE_COST_CAP_USD = 20.0
+LIVE_COST_CAP_USD = 2.0
+WEEKLY_SMOKE_COST_CAP_USD = 0.20
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -56,10 +59,19 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         ),
     )
     parser.addoption(
-        "--allow-cost",
+        "--usage-purpose",
+        action="store",
+        default=None,
+        choices=["live_eval", "provider_smoke"],
+        help="Required attribution for a paid live run.",
+    )
+    parser.addoption("--test-run-id", action="store", default=None)
+    parser.addoption("--max-cost-usd", action="store", type=float, default=None)
+    parser.addoption(
+        "--approve-reservation",
         action="store_true",
         default=False,
-        help=f"Bypass the ${LIVE_COST_CAP_USD:.0f} live-mode cost cap.",
+        help="Confirm that the named run may reserve up to --max-cost-usd.",
     )
     parser.addoption(
         "--eval-mode",
@@ -73,9 +85,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 @pytest.fixture(scope="session")
 def eval_mode(request: pytest.FixtureRequest) -> str:
     cli_mode = request.config.getoption("--eval-mode")
-    if cli_mode:
-        return cli_mode
-    return os.environ.get("NOVA_EVAL_MODE", "replay")
+    mode = cli_mode or os.environ.get("NOVA_EVAL_MODE", "replay")
+    os.environ["NOVA_EVAL_MODE"] = mode
+    return mode
 
 
 @pytest.fixture(scope="session")
@@ -118,10 +130,10 @@ callers to remember `--timeout=600`."""
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Live-mode pre-flight: lift per-test timeout, then cost-cap check.
 
-    Walks each collected eval fixture, looks up its agent's `AgentSpec`
+    Walks each selected eval fixture, looks up its agent's `AgentSpec`
     cost-per-1k fields, applies a deliberately conservative token heuristic
     (chars/3 for input, fixed 1500 for output), and refuses to run if the sum
-    exceeds LIVE_COST_CAP_USD unless --allow-cost is passed.
+    exceeds the explicitly approved cap. There is no bypass.
 
     Replay mode is free AND fast, so both checks no-op there.
     """
@@ -137,30 +149,40 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         if not item.get_closest_marker("timeout"):
             item.add_marker(timeout_mark)
 
-    if config.getoption("--allow-cost"):
-        return
+    usage_purpose = config.getoption("--usage-purpose")
+    test_run_id = str(config.getoption("--test-run-id") or "").strip()
+    max_cost_usd = config.getoption("--max-cost-usd")
+    approved = bool(config.getoption("--approve-reservation"))
+    if not usage_purpose or not test_run_id or max_cost_usd is None or not approved:
+        pytest.exit(
+            "Refusing paid eval: --usage-purpose, --test-run-id, --max-cost-usd, "
+            "and --approve-reservation are all required.",
+            returncode=2,
+        )
+    purpose_cap = (
+        WEEKLY_SMOKE_COST_CAP_USD if usage_purpose == "provider_smoke" else LIVE_COST_CAP_USD
+    )
+    if max_cost_usd <= 0 or max_cost_usd > purpose_cap:
+        pytest.exit(
+            f"Refusing paid eval: --max-cost-usd must be within (0, ${purpose_cap:.2f}] "
+            f"for {usage_purpose}.",
+            returncode=2,
+        )
+    os.environ.update(
+        {
+            "NOVA_EVAL_USAGE_PURPOSE": usage_purpose,
+            "NOVA_EVAL_TEST_RUN_ID": test_run_id,
+            "NOVA_EVAL_MAX_COST_USD": str(max_cost_usd),
+            "NOVA_EVAL_RESERVATION_APPROVED": "true",
+        }
+    )
 
     fixture_paths: list[Path] = []
-    for agent_dir in (
-        "template_recipe",
-        "clip_metadata",
-        "creative_direction",
-        "transcript",
-        "platform_copy",
-        "audio_template",
-        "clip_router",
-        "shot_ranker",
-        "text_designer",
-        "transition_picker",
-        "edit_director",
-        "edit_proposal",
-        "edit_guide",
-        "main_creator",
-        "sfx_placement",
-        "narration_annotations",
-        "narration_focus",
-    ):
-        fixture_paths.extend(discover_fixtures(agent_dir))
+    for item in items:
+        callspec = getattr(item, "callspec", None)
+        candidate = callspec.params.get("fixture_path") if callspec is not None else None
+        if isinstance(candidate, Path):
+            fixture_paths.append(candidate)
 
     fixtures = []
     for p in fixture_paths:
@@ -173,15 +195,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             continue
 
     breakdown, total = estimate_live_cost(fixtures)
-    if total <= LIVE_COST_CAP_USD:
+    if total <= max_cost_usd:
         return
 
     parts = [f"  {name}: ${cost:.2f} ({n} fixtures)" for name, (cost, n) in breakdown.items()]
     pytest.exit(
         "Refusing to run live evals: estimated cost "
-        f"${total:.2f} > ${LIVE_COST_CAP_USD:.0f} cap.\n"
+        f"${total:.2f} > ${max_cost_usd:.2f} approved run cap.\n"
         + "\n".join(parts)
-        + "\n\nPass --allow-cost to override.",
+        + "\n\nSelect fewer fixtures or approve a separate run; "
+        "the $2 hard cap cannot be bypassed.",
         returncode=2,
     )
 

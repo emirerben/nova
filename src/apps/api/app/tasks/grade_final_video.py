@@ -171,7 +171,17 @@ def _run_grade(*, job_id: str) -> None:
     finally:
         session.close()
 
-    grader = VideoQualityGrader(RUBRIC_PATH, model=DEFAULT_VIDEO_MODEL)
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+
+    grader = VideoQualityGrader(
+        RUBRIC_PATH,
+        model=DEFAULT_VIDEO_MODEL,
+        run_context=RunContext(
+            job_id=job_id,
+            request_id=f"final-video-grade:{job_id}",
+            usage_purpose="optional_background",
+        ),
+    )
 
     with tempfile.TemporaryDirectory(prefix="grade-") as tmpdir:
         local_path = str(Path(tmpdir) / "final.mp4")

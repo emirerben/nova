@@ -66,8 +66,9 @@ make a backend route safe.
    (cd src/apps/api && alembic upgrade head)
    ```
 
-   The expected Creator Agent head is `0089`. Do not downgrade `0085` through
-   `0089` during a feature rollback; proposals, processing claims, receipts,
+   The Creator Agent chain must include `0089`; the repository's current global
+   head is later. Do not downgrade `0085` through `0089` during a feature rollback;
+   proposals, processing claims, receipts,
    opt-in state, rollback evidence, and the query/index contract must remain
    readable.
 
@@ -88,13 +89,19 @@ make a backend route safe.
      tests/services/test_creator_sessions.py
    ```
 
-   After replay passes, run the live main-creator eval only with the required
-   provider credentials and judge approval:
+   After replay passes, run the paid live main-creator provider eval only with
+   the required development-ledger attribution:
 
    ```bash
-   NOVA_EVAL_MODE=live pytest tests/evals/test_main_creator_evals.py \
-     --eval-mode=live --with-judge
+   NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+   pytest tests/evals/test_main_creator_evals.py --eval-mode=live \
+     --usage-purpose=live_eval --test-run-id=main-creator-YYYYMMDD \
+     --max-cost-usd=2 --approve-reservation
    ```
+
+   Select `main_creator` in the protected `Agent evals` workflow for the paid
+   provider pass. Run `pytest tests/evals/test_main_creator_evals.py --with-judge`
+   separately in replay mode; the protected workflow has no Anthropic key.
 
 4. **Conversation canary.** Set `MAIN_CREATOR_AGENT_ENABLED=true` and
    `MAIN_CREATOR_AGENT_ROLLOUT_PERCENT=1`, restart API, and verify one internal
@@ -223,9 +230,9 @@ paths for every row. A green unit suite is not a substitute for the human rows.
 
 | Check | Required evidence | Status / owner / timestamp |
 |---|---|---|
-| Migration | `alembic current` and `alembic heads` show `0089`; schema test sees 0085 proposal, 0086 receipt, 0087 opt-in/count state, 0088 processing claims, and 0089 bounded-query indexes | |
+| Migration | `alembic current` and `alembic heads` show the repository head; history/schema tests include 0085 proposal, 0086 receipt, 0087 opt-in/count state, 0088 processing claims, and 0089 bounded-query indexes | |
 | Replay evals | Focused Creator Agent/schema/capability/session/workspace tests pass | |
-| Live eval | `test_main_creator_evals.py --eval-mode=live --with-judge` passes with approved credentials | |
+| Live eval | attributed `test_main_creator_evals.py --eval-mode=live` passes under a ≤$2 approved run; replay judge passes separately | |
 | Stage 2 exact render | Ready Job/variant/generation receipt; review evidence and stale-target case | |
 | Stage 4 bounded auto-iteration | Explicit opt-in; threshold skips; one allowlisted command; exact pins; duplicate recovery; one-cycle cap; prior-generation rollback receipt; fail-open craft/render case | |
 | Stage 3 craft | Caption, transition, look, SFX, overlay, and speech-cut receipts; enqueue rollback case | |

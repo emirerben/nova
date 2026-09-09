@@ -25,7 +25,7 @@ import {
   type CreationSpeechCleanupProjection,
   type CreationThread,
 } from "@/lib/creation-thread-api";
-import { listMyJobs, refreshMyJobPosters, type LibraryJob } from "@/lib/me-api";
+import { deleteMyJob, listMyJobs, refreshMyJobPosters, type LibraryJob } from "@/lib/me-api";
 import { undoCreatorMemoryOperation } from "@/lib/memory-api";
 import { getPlanItemFresh } from "@/lib/plan-api";
 
@@ -46,7 +46,7 @@ jest.mock("@/lib/creation-thread-api", () => {
 });
 jest.mock("@/lib/me-api", () => {
   const actual = jest.requireActual("@/lib/me-api");
-  return { ...actual, listMyJobs: jest.fn(), refreshMyJobPosters: jest.fn() };
+  return { ...actual, deleteMyJob: jest.fn(), listMyJobs: jest.fn(), refreshMyJobPosters: jest.fn() };
 });
 jest.mock("@/lib/memory-api", () => {
   const actual = jest.requireActual("@/lib/memory-api");
@@ -143,6 +143,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(applyCreationAction).mockReset();
     jest.mocked(getCreationCapabilities).mockReset();
     jest.mocked(listMyJobs).mockReset();
+    jest.mocked(deleteMyJob).mockReset();
     jest.mocked(refreshMyJobPosters).mockReset();
     jest.mocked(getPlanItemFresh).mockReset();
     jest.mocked(undoCreatorMemoryOperation).mockReset();
@@ -178,6 +179,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(renameCreationThread).mockImplementation(async (thread, title) => ({ ...thread, title }));
     jest.mocked(uploadCreationMedia).mockResolvedValue(baseThread);
     jest.mocked(listMyJobs).mockResolvedValue({ jobs: [], next_cursor: null });
+    jest.mocked(deleteMyJob).mockResolvedValue();
     jest.mocked(refreshMyJobPosters).mockResolvedValue({ jobs: [] });
     jest.mocked(getPlanItemFresh).mockRejectedValue(new Error("No linked plan item"));
     jest.mocked(undoCreatorMemoryOperation).mockResolvedValue({ revision: 2 });
@@ -846,6 +848,72 @@ describe("ChatCreationWorkspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
     expect(await screen.findByRole("button", { name: "Play preview" })).toBeInTheDocument();
     expect(screen.getByText("Ready to post")).toBeInTheDocument();
+  });
+
+  it("shows the day-83 source retention notice in Gallery", async () => {
+    jest.mocked(listMyJobs).mockResolvedValueOnce({
+      jobs: [],
+      next_cursor: null,
+      retention_warnings: [],
+      retention_summary: {
+        affected_video_count: 7,
+        earliest_delete_at: "2026-09-15T12:00:00Z",
+        source_count: 21,
+        final_retention_days: 365,
+      },
+    });
+
+    render(<ChatCreationWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+
+    const notice = (await screen.findByText("Source-file retention notice.")).parentElement;
+    expect(notice).not.toBeNull();
+    expect(notice).toHaveTextContent("Source-file retention notice");
+    expect(notice).toHaveTextContent("7 inactive videos");
+    expect(notice).toHaveTextContent("365-day retention policy");
+  });
+
+  it("refreshes and clears the owner-wide retention notice after deleting its job", async () => {
+    const warnedJob: LibraryJob = {
+      id: "job-warned", mode: "generative", status: "ready", raw_status: "ready",
+      output_url: "/warned.mp4", poster_url: null, output_variant_id: "original_text",
+      tiktok_publishable: false, tiktok_publication: null, created_at: "2026-01-01T00:00:00Z",
+      content_plan_item_id: null, feedback_signal: null,
+    };
+    jest.mocked(listMyJobs)
+      .mockResolvedValueOnce({
+        jobs: [warnedJob],
+        next_cursor: null,
+        retention_warnings: [{
+          job_id: warnedJob.id,
+          delete_at: "2026-09-15T12:00:00Z",
+          source_count: 2,
+          final_retention_days: 365,
+        }],
+        retention_summary: {
+          affected_video_count: 1,
+          earliest_delete_at: "2026-09-15T12:00:00Z",
+          source_count: 2,
+          final_retention_days: 365,
+        },
+      })
+      .mockResolvedValueOnce({
+        jobs: [],
+        next_cursor: null,
+        retention_warnings: [],
+        retention_summary: null,
+      });
+
+    render(<ChatCreationWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+    await screen.findByText("Source-file retention notice.");
+    fireEvent.keyDown(screen.getByRole("button", { name: "More video actions" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete video" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete video" }));
+
+    await waitFor(() => expect(deleteMyJob).toHaveBeenCalledWith(warnedJob.id));
+    await waitFor(() => expect(listMyJobs).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Source-file retention notice.")).not.toBeInTheDocument();
   });
 
   it("loads older Gallery pages from next_cursor and deduplicates jobs", async () => {

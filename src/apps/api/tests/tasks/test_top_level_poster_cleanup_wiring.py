@@ -187,6 +187,7 @@ def test_template_job_finalizer_retargets_receipts_before_failed_cleanup(monkeyp
     old_plan, prior_paths = _previous_plan(job_id)
     job = SimpleNamespace(
         id=uuid.UUID(job_id),
+        user_id=uuid.uuid4(),
         status="queued",
         template_id="template-1",
         assembly_plan=copy.deepcopy(old_plan),
@@ -263,7 +264,7 @@ def test_template_job_finalizer_retargets_receipts_before_failed_cleanup(monkeyp
         }[remote],
     )
 
-    template_orchestrate._run_template_job(job_id)
+    template_orchestrate._run_template_job(job_id, allow_processing_retry=True)
 
     assert job.status == "template_ready"
     _assert_primary_chain(
@@ -296,6 +297,7 @@ def test_template_rerender_finalizer_retargets_receipts_before_failed_cleanup(
     )
     job = SimpleNamespace(
         id=uuid.UUID(job_id),
+        user_id=uuid.uuid4(),
         status="processing",
         assembly_plan=copy.deepcopy(old_plan),
     )
@@ -373,6 +375,7 @@ def test_single_video_finalizer_retargets_receipts_before_failed_cleanup(monkeyp
     old_plan, prior_paths = _previous_plan(job_id)
     job = SimpleNamespace(
         id=uuid.UUID(job_id),
+        user_id=uuid.uuid4(),
         status="processing",
         assembly_plan=copy.deepcopy(old_plan),
         error_detail=None,
@@ -508,6 +511,7 @@ def test_music_job_finalizer_retargets_receipts_before_failed_cleanup(monkeypatc
     old_plan, prior_paths = _previous_plan(job_id)
     job = SimpleNamespace(
         id=uuid.UUID(job_id),
+        user_id=uuid.uuid4(),
         status="queued",
         music_track_id="track-1",
         assembly_plan=copy.deepcopy(old_plan),
@@ -593,6 +597,7 @@ def test_templated_music_finalizer_retargets_receipts_before_failed_cleanup(
     old_plan, prior_paths = _previous_plan(job_id)
     job = SimpleNamespace(
         id=uuid.UUID(job_id),
+        user_id=uuid.uuid4(),
         status="queued",
         music_track_id="track-1",
         assembly_plan=copy.deepcopy(old_plan),

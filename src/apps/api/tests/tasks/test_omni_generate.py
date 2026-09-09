@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import base64
 import copy
+import sys
 import uuid
 from contextlib import contextmanager
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,6 +22,86 @@ from app.routes._omni import (
     start_omni_asset,
 )
 from app.tasks import omni_generate
+
+
+@pytest.fixture(autouse=True)
+def _configured_omni_lab_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_omni.settings, "ai_omni_lab_test_run_id", "omni-suite")
+    monkeypatch.setattr(_omni.settings, "ai_omni_lab_run_max_cost_usd", 2.5)
+    monkeypatch.setattr(_omni.settings, "ai_omni_lab_reservation_approved", True)
+
+
+def _install_omni_provider(monkeypatch, interaction) -> SimpleNamespace:
+    interactions = SimpleNamespace(
+        create=MagicMock(return_value=interaction),
+        get=MagicMock(return_value=interaction),
+        cancel=MagicMock(),
+    )
+    client = SimpleNamespace(
+        interactions=interactions,
+        files=SimpleNamespace(delete=MagicMock()),
+    )
+    google_module = ModuleType("google")
+    google_module.genai = SimpleNamespace(Client=MagicMock(return_value=client))
+    monkeypatch.setitem(sys.modules, "google", google_module)
+    return client
+
+
+def _run_omni_task(
+    monkeypatch,
+    interaction,
+    *,
+    poll_error: Exception | None = None,
+) -> tuple[SimpleNamespace, MagicMock, MagicMock, MagicMock]:
+    client = _install_omni_provider(monkeypatch, interaction)
+    if poll_error is not None:
+        client.interactions.get.side_effect = poll_error
+        monkeypatch.setattr(omni_generate.time, "sleep", lambda _seconds: None)
+    job = SimpleNamespace(
+        user_id=uuid.uuid4(),
+        all_candidates={"clip_paths": []},
+    )
+    record = {
+        "status": "queued",
+        "action": "generate_insert",
+        "reference_clip_index": None,
+        "duration_s": 4.0,
+        "estimated_max_cost_usd": 0.44,
+        "test_run_id": "omni-lifecycle-test",
+        "approved_run_max_cost_usd": 2.5,
+        "cost_confirmed": True,
+        "prompt": "Generate a bridge",
+    }
+    monkeypatch.setattr(omni_generate.settings, "omni_generated_video_enabled", True)
+    monkeypatch.setattr(omni_generate.settings, "ai_usage_environment", "lab")
+    monkeypatch.setattr(omni_generate.settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(omni_generate, "_read", lambda *_args: (job, record))
+    monkeypatch.setattr(omni_generate, "_cancelled", lambda *_args: False)
+    monkeypatch.setattr(omni_generate, "_update", MagicMock(return_value={}))
+    monkeypatch.setattr(
+        omni_generate,
+        "_input_parts",
+        lambda *_args: [{"type": "text", "text": "Generate a bridge"}],
+    )
+    monkeypatch.setattr(omni_generate, "_write_provider_video", MagicMock())
+    monkeypatch.setattr(omni_generate, "_normalize", MagicMock(return_value=3.25))
+    monkeypatch.setattr(omni_generate, "upload_public_read", MagicMock(return_value="url"))
+    monkeypatch.setattr(omni_generate, "_commit_ready", MagicMock(return_value=True))
+    monkeypatch.setattr(omni_generate.cleanup_unclaimed_omni_asset, "apply_async", MagicMock())
+
+    from app.services import ai_cost_control
+
+    reserve = MagicMock(return_value=SimpleNamespace(id="reservation"))
+    settle = MagicMock()
+    release = MagicMock()
+    unknown = MagicMock()
+    monkeypatch.setattr(ai_cost_control, "reserve_paid_call", reserve)
+    monkeypatch.setattr(ai_cost_control, "settle_paid_call_cost", settle)
+    monkeypatch.setattr(ai_cost_control, "release_paid_call", release)
+    monkeypatch.setattr(ai_cost_control, "mark_paid_call_unknown", unknown)
+    monkeypatch.setattr(ai_cost_control, "mark_paid_call_started", MagicMock())
+    omni_generate.generate_omni_asset.run(job_id=str(uuid.uuid4()), asset_id="asset-1")
+    return client, settle, release, unknown
 
 
 def _record(**overrides) -> dict:
@@ -174,6 +255,56 @@ def test_failed_interaction_input_upload_cleans_provider_file(tmp_path) -> None:
         )
 
     files.delete.assert_called_once_with(name="files/segment-1")
+
+
+def test_omni_cost_settles_only_after_completed_output_is_measured(monkeypatch) -> None:
+    interaction = SimpleNamespace(
+        id="interactions/completed-1",
+        status="completed",
+        output_video=SimpleNamespace(data="ignored", uri=None),
+    )
+
+    _client, settle, release, unknown = _run_omni_task(monkeypatch, interaction)
+
+    settle.assert_called_once()
+    assert settle.call_args.kwargs["cost_usd"] == pytest.approx(
+        3.25 * omni_generate.settings.ai_omni_cost_per_second_usd
+    )
+    assert settle.call_args.kwargs["provider_request_id"] == "interactions/completed-1"
+    assert settle.call_args.kwargs["usage_json"]["duration_s"] == 3.25
+    release.assert_not_called()
+    unknown.assert_not_called()
+
+
+def test_omni_provider_terminal_failure_releases_without_settlement(monkeypatch) -> None:
+    interaction = SimpleNamespace(
+        id="interactions/failed-1",
+        status="failed",
+        output_video=None,
+    )
+
+    _client, settle, release, unknown = _run_omni_task(monkeypatch, interaction)
+
+    settle.assert_not_called()
+    release.assert_called_once()
+    unknown.assert_not_called()
+
+
+def test_omni_poll_failure_marks_unknown_without_settlement(monkeypatch) -> None:
+    interaction = SimpleNamespace(
+        id="interactions/running-1",
+        status="running",
+        output_video=None,
+    )
+    _client, settle, release, unknown = _run_omni_task(
+        monkeypatch,
+        interaction,
+        poll_error=TimeoutError("poll timed out"),
+    )
+
+    settle.assert_not_called()
+    release.assert_not_called()
+    unknown.assert_called_once()
 
 
 def test_normalize_enforces_timeline_dimensions_codec_and_audio(monkeypatch, tmp_path) -> None:
@@ -441,6 +572,62 @@ async def test_claim_rejects_present_malformed_source_identity_without_mutation(
 
 
 @pytest.mark.asyncio
+async def test_start_requires_explicit_cost_confirmation_before_locking_job(
+    monkeypatch,
+) -> None:
+    job = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(_omni.settings, "omni_generated_video_enabled", True)
+    monkeypatch.setattr(_omni.settings, "ai_usage_environment", "lab")
+    lock = AsyncMock()
+    monkeypatch.setattr(_omni, "_lock_job", lock)
+    body = OmniAssetStartBody(
+        draft_revision="v1-test",
+        suggestion_id="suggestion-1",
+        action="generate_insert",
+        prompt="Generate a bridge",
+        insert_at_s=2,
+        duration_s=4,
+        estimated_max_cost_usd=0.44,
+        cost_confirmed=False,
+        test_run_id="omni-test-declined",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await start_omni_asset(job, "v1", body, SimpleNamespace())
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "omni_cost_confirmation_required"
+    lock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("environment", ["production", "development", "test"])
+async def test_start_is_hidden_outside_lab_even_with_confirmation(
+    monkeypatch, environment: str
+) -> None:
+    job = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(_omni.settings, "omni_generated_video_enabled", True)
+    monkeypatch.setattr(_omni.settings, "ai_usage_environment", environment)
+    body = OmniAssetStartBody(
+        draft_revision="v1-test",
+        suggestion_id="suggestion-1",
+        action="generate_insert",
+        prompt="Generate a bridge",
+        insert_at_s=2,
+        duration_s=4,
+        estimated_max_cost_usd=0.44,
+        cost_confirmed=True,
+        test_run_id="omni-test-production",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await start_omni_asset(job, "v1", body, SimpleNamespace())
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "omni_generated_video_available_only_in_lab"
+
+
+@pytest.mark.asyncio
 async def test_start_rejects_source_times_beyond_authoritative_duration(monkeypatch) -> None:
     variant = {
         "variant_id": "v1",
@@ -460,6 +647,7 @@ async def test_start_rejects_source_times_beyond_authoritative_duration(monkeypa
         all_candidates={"clip_paths": ["source-a.mp4"]},
     )
     monkeypatch.setattr(_omni.settings, "omni_generated_video_enabled", True)
+    monkeypatch.setattr(_omni.settings, "ai_usage_environment", "lab")
     monkeypatch.setattr(_omni, "_lock_job", AsyncMock(return_value=job))
     body = OmniAssetStartBody(
         draft_revision="v1-test",
@@ -471,6 +659,9 @@ async def test_start_rejects_source_times_beyond_authoritative_duration(monkeypa
         source_clip_index=0,
         source_start_s=4,
         source_end_s=6,
+        estimated_max_cost_usd=2.0,
+        cost_confirmed=True,
+        test_run_id="omni-test-out-of-bounds",
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -500,6 +691,7 @@ async def test_start_restyle_accepts_one_complete_unsaved_draft_slot(monkeypatch
         all_candidates={"clip_paths": ["source-a.mp4"]},
     )
     monkeypatch.setattr(_omni.settings, "omni_generated_video_enabled", True)
+    monkeypatch.setattr(_omni.settings, "ai_usage_environment", "lab")
     monkeypatch.setattr(_omni, "_lock_job", AsyncMock(return_value=job))
     enqueue = MagicMock()
     monkeypatch.setattr(omni_generate.generate_omni_asset, "apply_async", enqueue)
@@ -513,6 +705,9 @@ async def test_start_restyle_accepts_one_complete_unsaved_draft_slot(monkeypatch
         source_clip_index=0,
         source_start_s=2,
         source_end_s=4,
+        estimated_max_cost_usd=2.0,
+        cost_confirmed=True,
+        test_run_id="omni-test-unsaved-slot",
     )
 
     response = await start_omni_asset(
@@ -530,7 +725,91 @@ async def test_start_restyle_accepts_one_complete_unsaved_draft_slot(monkeypatch
         "start_s": 2.0,
         "end_s": 4.0,
     }
+    assert record["test_run_id"] == "omni-suite"
+    assert record["approved_run_max_cost_usd"] == 2.5
     enqueue.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_start_deduplicates_retried_confirmation_under_job_lock(monkeypatch) -> None:
+    variant = {
+        "variant_id": "v1",
+        "ai_timeline": {"slots": [{"clip_index": 0, "duration_s": 5.0}]},
+    }
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000001",
+        assembly_plan={"variants": [variant]},
+        all_candidates={"clip_paths": ["source-a.mp4"]},
+    )
+    monkeypatch.setattr(_omni.settings, "omni_generated_video_enabled", True)
+    monkeypatch.setattr(_omni.settings, "ai_usage_environment", "lab")
+    monkeypatch.setattr(_omni, "_lock_job", AsyncMock(return_value=job))
+    enqueue = MagicMock()
+    monkeypatch.setattr(omni_generate.generate_omni_asset, "apply_async", enqueue)
+    db = SimpleNamespace(commit=AsyncMock())
+    body = OmniAssetStartBody(
+        draft_revision="v1-test",
+        suggestion_id="suggestion-1",
+        action="generate_insert",
+        prompt="Generate a bridge",
+        insert_at_s=2,
+        duration_s=3.4,
+        estimated_max_cost_usd=0.38,
+        cost_confirmed=True,
+        test_run_id="omni-test-retry",
+    )
+
+    first = await start_omni_asset(job, "v1", body, db)
+    retried = await start_omni_asset(job, "v1", body, db)
+
+    assert retried.asset_id == first.asset_id
+    assert retried.status == "queued"
+    enqueue.assert_called_once()
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_does_not_deduplicate_a_changed_generation_request(monkeypatch) -> None:
+    variant = {
+        "variant_id": "v1",
+        "ai_timeline": {"slots": [{"clip_index": 0, "duration_s": 5.0}]},
+    }
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000001",
+        assembly_plan={"variants": [variant]},
+        all_candidates={"clip_paths": ["source-a.mp4"]},
+    )
+    monkeypatch.setattr(_omni.settings, "omni_generated_video_enabled", True)
+    monkeypatch.setattr(_omni.settings, "ai_usage_environment", "lab")
+    monkeypatch.setattr(_omni, "_lock_job", AsyncMock(return_value=job))
+    enqueue = MagicMock()
+    monkeypatch.setattr(omni_generate.generate_omni_asset, "apply_async", enqueue)
+    db = SimpleNamespace(commit=AsyncMock())
+    base = {
+        "draft_revision": "v1-test",
+        "suggestion_id": "suggestion-1",
+        "action": "generate_insert",
+        "insert_at_s": 2,
+        "duration_s": 3.4,
+        "estimated_max_cost_usd": 0.38,
+        "cost_confirmed": True,
+    }
+
+    first = await start_omni_asset(
+        job,
+        "v1",
+        OmniAssetStartBody(prompt="Generate a bridge", **base),
+        db,
+    )
+    changed = await start_omni_asset(
+        job,
+        "v1",
+        OmniAssetStartBody(prompt="Generate a paper bridge", **base),
+        db,
+    )
+
+    assert changed.asset_id != first.asset_id
+    assert enqueue.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -546,6 +825,7 @@ async def test_start_enqueue_failure_never_rewrites_cancelled_job(monkeypatch) -
         all_candidates={"clip_paths": ["source-a.mp4"]},
     )
     monkeypatch.setattr(_omni.settings, "omni_generated_video_enabled", True)
+    monkeypatch.setattr(_omni.settings, "ai_usage_environment", "lab")
     monkeypatch.setattr(_omni, "_lock_job", AsyncMock(return_value=job))
     monkeypatch.setattr(
         omni_generate.generate_omni_asset,
@@ -569,6 +849,9 @@ async def test_start_enqueue_failure_never_rewrites_cancelled_job(monkeypatch) -
         prompt="Generate a bridge",
         insert_at_s=2,
         duration_s=3,
+        estimated_max_cost_usd=2.0,
+        cost_confirmed=True,
+        test_run_id="omni-test-enqueue-failure",
     )
 
     with pytest.raises(HTTPException) as exc_info:

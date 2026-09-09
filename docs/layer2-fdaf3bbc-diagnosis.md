@@ -123,7 +123,10 @@ at `tests/fixtures/agent_evals/template_text/prod_snapshots/fdaf3bbc.json`:
 `raw_text` is unused in live mode but the schema requires it. Once dropped:
 
 ```bash
-pytest tests/evals/test_template_text_evals.py -v -k fdaf3bbc --eval-mode=live --with-judge
+NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+pytest tests/evals/test_template_text_evals.py -v -k fdaf3bbc --eval-mode=live \
+  --usage-purpose=live_eval --test-run-id=fdaf3bbc-YYYYMMDD \
+  --max-cost-usd=2 --approve-reservation
 ```
 
 Expected: **fails** initially (that's the point — the eval is the regression gate
@@ -153,8 +156,14 @@ pytest tests/evals/test_template_text_evals.py -v -k fdaf3bbc
 # Must NOT regress
 pytest tests/evals/test_template_text_evals.py -v -k "rich_in_life or not_just_luck"
 
-# Full live judge run on all 3 fixtures (~$2-5)
-NOVA_EVAL_MODE=live ./scripts/run_template_text_eval.sh --with-judge --eval-mode=live
+# Full paid live provider run on all 3 fixtures (hard $2 cap)
+NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+pytest tests/evals/test_template_text_evals.py -v --eval-mode=live \
+  --usage-purpose=live_eval --test-run-id=layer2-YYYYMMDD \
+  --max-cost-usd=2 --approve-reservation
+
+# Judge replay output separately; Anthropic spend is outside the Google ledger
+pytest tests/evals/test_template_text_evals.py -v --with-judge
 
 # Manual re-test against prod admin
 curl -X POST -H "Authorization: Bearer $NOVA_ADMIN_TOKEN" \

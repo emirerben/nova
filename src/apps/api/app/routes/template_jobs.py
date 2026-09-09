@@ -9,6 +9,7 @@ GET  /template-jobs/:id/debug    — admin debug endpoint
 """
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -23,6 +24,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import storage
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import AsyncSessionLocal, get_db
 from app.models import Job, VideoTemplate
@@ -31,6 +33,12 @@ from app.services.job_storage_paths import (
     project_media_reference_lock_key,
 )
 from app.services.public_assembly_plan import project_public_assembly_plan
+from app.services.template_upload_promotion import (
+    TEMPLATE_UPLOAD_PROMOTION_FIELD,
+    build_template_upload_promotion,
+    record_template_upload_promotion_failure,
+    resume_template_upload_promotion,
+)
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -40,6 +48,8 @@ from app.services.template_validation import (
 )
 
 log = structlog.get_logger()
+
+_TEMPLATE_SUBMISSION_KEY_FIELD = "_template_submission_key"
 
 # Control chars (C0 minus tab, C1, DEL) plus Unicode bidi-overrides and
 # line/paragraph separators. Stripping at the trust boundary keeps weird
@@ -62,6 +72,7 @@ def _scrub(value: str) -> str:
 
 
 router = APIRouter()
+
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -185,6 +196,25 @@ class TemplateJobListResponse(BaseModel):
     total: int
 
 
+def _template_submission_key(
+    req: CreateTemplateJobRequest,
+    *,
+    user_id: uuid.UUID,
+) -> str:
+    """Return a stable owner-bound key for one staged-upload submission."""
+
+    payload = {
+        "user_id": str(user_id),
+        "template_id": req.template_id,
+        "clip_gcs_paths": req.clip_gcs_paths,
+        "clip_durations": req.clip_durations,
+        "selected_platforms": req.selected_platforms,
+        "inputs": req.inputs,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
@@ -209,16 +239,84 @@ async def create_template_job(
     # HDR uploads longer than the pipeline's empirical 60s cost budget
     # BEFORE creating a job that would hang for 21 min on the worker before
     # failing. See `validate_clips_processable` for the empirical record.
-    await validate_clips_processable(req.clip_gcs_paths)
+    staged_paths = [path for path in req.clip_gcs_paths if path.startswith("staging/")]
+    submission_key = (
+        _template_submission_key(req, user_id=current_user.id) if staged_paths else None
+    )
+    if submission_key is not None:
+        existing = (
+            (
+                await db.execute(
+                    select(Job)
+                    .where(
+                        Job.user_id == current_user.id,
+                        Job.job_type == "template",
+                        Job.all_candidates[_TEMPLATE_SUBMISSION_KEY_FIELD].as_string()
+                        == submission_key,
+                    )
+                    .order_by(Job.created_at.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing is not None:
+            return TemplateJobResponse(
+                job_id=str(existing.id),
+                status=existing.status,
+                template_id=str(existing.template_id or req.template_id),
+            )
 
+    staged_metadata = await asyncio.gather(
+        *(asyncio.to_thread(storage.object_metadata, path) for path in staged_paths)
+    )
+    staged_generations = {
+        path: metadata.generation
+        for path, metadata in zip(staged_paths, staged_metadata, strict=True)
+    }
+    await validate_clips_processable(
+        req.clip_gcs_paths,
+        clip_generations=staged_generations,
+    )
+
+    job_id = uuid.uuid4()
+    promotion_journal = (
+        build_template_upload_promotion(
+            req.clip_gcs_paths,
+            user_id=current_user.id,
+            job_id=job_id,
+            source_generations=staged_generations,
+        )
+        if staged_paths
+        else None
+    )
     job = Job(
+        id=job_id,
         user_id=current_user.id,
         job_type="template",
         template_id=req.template_id,
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
-        all_candidates={"clip_paths": req.clip_gcs_paths, "inputs": req.inputs},
-        status="queued",
+        all_candidates={
+            "clip_paths": req.clip_gcs_paths,
+            "inputs": req.inputs,
+            **(
+                {_TEMPLATE_SUBMISSION_KEY_FIELD: submission_key}
+                if submission_key is not None
+                else {}
+            ),
+        },
+        assembly_plan=(
+            {TEMPLATE_UPLOAD_PROMOTION_FIELD: promotion_journal}
+            if promotion_journal is not None
+            else None
+        ),
+        status=(
+            "importing"
+            if any(path.startswith("staging/") for path in req.clip_gcs_paths)
+            else "queued"
+        ),
     )
     db.add(job)
     from app.services.creator_direction_snapshot import ensure_job_snapshot_async  # noqa: PLC0415
@@ -227,7 +325,38 @@ async def create_template_job(
     await db.commit()
     await db.refresh(job)
 
-    job_id = str(job.id)
+    if job.status == "importing":
+        try:
+            promotion = await asyncio.to_thread(
+                resume_template_upload_promotion,
+                job.id,
+            )
+        except Exception as exc:
+            await db.rollback()
+            await asyncio.to_thread(
+                record_template_upload_promotion_failure,
+                job_id,
+                error_type=type(exc).__name__,
+            )
+            log.warning(
+                "template_upload_promotion_deferred",
+                job_id=str(job_id),
+                error_type=type(exc).__name__,
+            )
+            return TemplateJobResponse(
+                job_id=str(job_id),
+                status="importing",
+                template_id=req.template_id,
+            )
+        if promotion.state not in {"promoted", "ready"}:
+            return TemplateJobResponse(
+                job_id=str(job_id),
+                status="importing",
+                template_id=req.template_id,
+            )
+        await db.refresh(job)
+
+    job_id_str = str(job.id)
 
     # Dispatch on template_kind: single_video templates use a tight-timeout
     # task (240s soft / 300s hard) so a hung run doesn't hold the worker
@@ -249,13 +378,13 @@ async def create_template_job(
 
     log.info(
         "template_job_created",
-        job_id=job_id,
+        job_id=job_id_str,
         template_id=req.template_id,
         template_kind=template_kind,
         clips=len(req.clip_gcs_paths),
         inputs=req.inputs,
     )
-    return TemplateJobResponse(job_id=job_id, status="queued", template_id=req.template_id)
+    return TemplateJobResponse(job_id=job_id_str, status="queued", template_id=req.template_id)
 
 
 @router.get("", response_model=TemplateJobListResponse)
@@ -341,9 +470,9 @@ async def reroll_template_job(
     # Create new job with same clips and template
     original_candidates = original.all_candidates or {}
     inherited_inputs = original_candidates.get("inputs") or {}
-    from app.services.creator_direction_snapshot import private_snapshot_from
+    from app.services.creator_direction_snapshot import snapshot_from_container
 
-    inherited_direction_snapshot = private_snapshot_from(original.assembly_plan)
+    inherited_direction_snapshot = snapshot_from_container(original.assembly_plan)
 
     new_job = Job(
         user_id=current_user.id,

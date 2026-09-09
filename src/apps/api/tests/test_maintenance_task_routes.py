@@ -31,6 +31,7 @@ API_ROOT = Path(__file__).resolve().parents[1] / "app"
 _MAINTENANCE_PYTHON_IDENTIFIERS: tuple[str, ...] = (
     "sweep_stale_jobs",
     "cleanup_agent_runs",
+    "purge_expired_ai_caches",
     "send_daily_digest",
     "cleanup_cancelled_job",
     "purge_job_storage",

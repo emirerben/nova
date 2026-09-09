@@ -183,6 +183,10 @@ jobs:
           python scripts/verify_content_plan_owner_constraint.py verify-installed
           python -m alembic downgrade -1
           python -m alembic upgrade head
+          python scripts/verify_0103_downgrade_state.py seed
+          python -m alembic downgrade -1
+          python scripts/verify_0103_downgrade_state.py verify
+          python -m alembic upgrade head
       - name: Run API tests
         working-directory: src/apps/api
         env:

@@ -195,13 +195,18 @@ pytest tests/evals/test_template_text_evals.py -v
 # With LLM judge (needs ANTHROPIC_API_KEY):
 pytest tests/evals/test_template_text_evals.py -v --with-judge
 
-# Live Gemini re-run + judge (needs both GEMINI_API_KEY + ANTHROPIC_API_KEY, ~$2-5):
-NOVA_EVAL_MODE=live pytest tests/evals/test_template_text_evals.py -v \
-  --eval-mode=live --with-judge
+# Live Gemini re-run (equivalent to selecting template_text in the protected
+# Agent evals workflow; this local command carries the attribution explicitly):
+NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+pytest tests/evals/test_template_text_evals.py -v --eval-mode=live \
+  --usage-purpose=live_eval --test-run-id=template-text-YYYYMMDD \
+  --max-cost-usd=2 --approve-reservation
 ```
 
-Pass threshold: avg judge score ≥ 3.5 across the 5 rubric dimensions
+Replay-judge pass threshold: avg judge score ≥ 3.5 across the 5 rubric dimensions
 (completeness, timing_accuracy, position_accuracy, font_color_accuracy, effect_label_accuracy).
+Do not add `--with-judge` to the paid live run: Anthropic spend is outside the
+Google reservation ledger. Judge the saved replay capture separately.
 
 ---
 

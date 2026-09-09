@@ -86,16 +86,24 @@ export interface DirectorAppliedReceipt {
 export interface UseEditDirectorResult {
   suggestions: EditorSuggestion[];
   appliedReceipts: DirectorAppliedReceipt[];
+  /** True after the user has explicitly requested and received a review. */
+  reviewed: boolean;
   loading: boolean;
   error: string | null;
   /** The API cannot serve director reviews at all; polling has been stopped. */
   unavailable: boolean;
+  /** A non-retryable budget breaker is active until its server-provided reset. */
+  reviewBlocked: boolean;
   modelUsed: string;
-  fallbackReason: string | null;
+  omniMaxCostPerSecondUsd: number | null;
   generation: DirectorGenerationState | null;
+  omniDispatchPending: boolean;
   serverRendering: boolean;
   refresh: () => void;
-  accept: (suggestion: EditorSuggestion) => void;
+  accept: (
+    suggestion: EditorSuggestion,
+    options?: { omniCostConfirmed?: boolean },
+  ) => void;
   dismiss: (suggestion: EditorSuggestion) => void;
   revealApplied: (receipt: DirectorAppliedReceipt) => void;
   cancelGeneration: () => void;
@@ -137,6 +145,8 @@ export const DIRECTOR_CAPABILITY_MISMATCH_MESSAGE =
   "Kria’s review is updating. Retry the review shortly.";
 export const DIRECTOR_SNAPSHOT_TOO_LARGE_MESSAGE =
   "The editor context is too large to review in one request. Your draft is unchanged.";
+export const DIRECTOR_DRAFT_CHANGED_MESSAGE =
+  "The draft changed while Kria was reviewing it. Review again when you’re ready.";
 const DIRECTOR_REVIEW_DEBOUNCE_MS = 1200;
 const MAX_APPLIED_RECEIPTS = 8;
 
@@ -182,6 +192,19 @@ function friendlyDirectorError(caught: unknown): string {
   const stage = caught && typeof caught === "object" && "stage" in caught
     ? String((caught as { stage?: unknown }).stage ?? "")
     : "";
+  const retryable = caught && typeof caught === "object" && "retryable" in caught
+    ? (caught as { retryable?: unknown }).retryable
+    : true;
+  const resetAt = directorBudgetResetAt(caught);
+  if (status === 429 && code === "ai_budget_exhausted" && retryable === false) {
+    const formatted = resetAt
+      ? new Intl.DateTimeFormat(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(new Date(resetAt))
+      : "the next budget window";
+    return `This draft’s review limit has been reached. Reviews become available again ${formatted}. Your draft is unchanged.`;
+  }
   if (status === null) {
     return "Kria couldn’t connect to the review service. Check your connection and retry the review. Your draft is unchanged.";
   }
@@ -197,6 +220,13 @@ function friendlyDirectorError(caught: unknown): string {
     return "Kria couldn’t complete this review because the service is unavailable. Retry shortly. Your draft is unchanged.";
   }
   return "Kria couldn’t review this draft. Retry the review. Your draft is unchanged.";
+}
+
+function directorBudgetResetAt(caught: unknown): string | null {
+  if (!caught || typeof caught !== "object") return null;
+  const value = "resetAt" in caught ? (caught as { resetAt?: unknown }).resetAt : null;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return null;
+  return value;
 }
 
 function directorErrorStatus(caught: unknown): number | null {
@@ -234,19 +264,26 @@ export function useEditDirector(
   const [appliedReceipts, setAppliedReceipts] = useState<DirectorAppliedReceipt[]>([]);
   const suggestionsRef = useRef<EditorSuggestion[]>([]);
   suggestionsRef.current = suggestions;
+  const [reviewed, setReviewed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [reviewQueued, setReviewQueued] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [reviewBlockedUntil, setReviewBlockedUntil] = useState<string | null>(null);
+  const [reviewBlockTimerTick, setReviewBlockTimerTick] = useState(0);
   const [modelUsed, setModelUsed] = useState("");
-  const [fallbackReason, setFallbackReason] = useState<string | null>(null);
+  const [omniMaxCostPerSecondUsd, setOmniMaxCostPerSecondUsd] = useState<number | null>(null);
   const [generation, setGeneration] = useState<DirectorGenerationState | null>(null);
+  const [omniDispatchPending, setOmniDispatchPending] = useState(false);
   const [serverDispatchPending, setServerDispatchPending] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [reviewRequestKey, setReviewRequestKey] = useState(0);
+  const settledReviewRequestKeyRef = useRef(0);
   const requestIdRef = useRef(0);
   const sourceSnapshotRef = useRef<CopilotSnapshot | null>(null);
   const sourceRevisionRef = useRef("");
   const optsRef = useRef(opts);
   const generationTokenRef = useRef(0);
+  const omniDispatchPendingRef = useRef(false);
   const receiptSequenceRef = useRef(0);
   const lastServerReceiptIdRef = useRef("");
   const lastServerFailureIdRef = useRef("");
@@ -258,8 +295,8 @@ export function useEditDirector(
   const snapshotBuildErrorRef = useRef<string | null>(null);
   optsRef.current = opts;
   // Unlike history.version, this includes async editor hydration (asset pool,
-  // captions, capabilities, overlays). A review started against a partial
-  // snapshot is cancelled and restarted once that real input settles.
+  // captions, capabilities, overlays). Hydration invalidates an in-flight paid
+  // review; the user explicitly starts the replacement once the draft settles.
   const directorEnabled = opts.enabled;
   const canRestoreOriginalTiming = opts.canRestoreOriginalTiming === true;
   const buildSnapshot = opts.buildSnapshot;
@@ -287,20 +324,47 @@ export function useEditDirector(
     suggestionsRef.current = [];
     setSuggestions([]);
     setAppliedReceipts([]);
+    setReviewed(false);
+    setReviewQueued(false);
     setError(snapshotBuildErrorRef.current);
     setUnavailable(false);
+    setReviewBlockedUntil(null);
     setModelUsed("");
-    setFallbackReason(null);
+    setOmniMaxCostPerSecondUsd(null);
     sourceRevisionRef.current = "";
+    settledReviewRequestKeyRef.current = 0;
+    setReviewRequestKey(0);
     forceRefreshRef.current = false;
     generationTokenRef.current += 1;
     setGeneration(null);
+    omniDispatchPendingRef.current = false;
+    setOmniDispatchPending(false);
     setServerDispatchPending(false);
     lastServerReceiptIdRef.current = "";
     lastServerFailureIdRef.current = "";
     pendingServerOperationIdRef.current = "";
     pendingServerSuggestionRef.current = null;
   }, [opts.itemId, opts.variantId]);
+
+  useEffect(() => {
+    if (!reviewBlockedUntil) return;
+    const remainingMs = Date.parse(reviewBlockedUntil) - Date.now();
+    if (remainingMs <= 0) {
+      setReviewBlockedUntil(null);
+      return;
+    }
+    const maxTimerMs = 2_147_000_000;
+    const timer = window.setTimeout(() => {
+      if (remainingMs > maxTimerMs) {
+        // Monthly resets can sit beyond the browser's maximum timer delay.
+        // Recalculate the remainder instead of enabling the paid action early.
+        setReviewBlockTimerTick((value) => value + 1);
+      } else {
+        setReviewBlockedUntil(null);
+      }
+    }, Math.min(remainingMs, maxTimerMs));
+    return () => window.clearTimeout(timer);
+  }, [reviewBlockedUntil, reviewBlockTimerTick]);
 
   useEffect(() => {
     if (opts.serverRenderPending) {
@@ -357,30 +421,37 @@ export function useEditDirector(
 
   useEffect(() => {
     if (!opts.enabled || !opts.itemId || !opts.variantId) return;
-    // This effect re-runs on every complete snapshot revision. Without this guard a
-    // flag-off API re-fires a doomed request after each keystroke-sized edit
-    // and repaints the failure, which is what put an error in the drawer
-    // before the user had typed anything.
+    // Paid reviews are explicit. One button press owns one provider attempt;
+    // later snapshot changes may invalidate its result but never auto-start a
+    // replacement paid review.
+    if (reviewRequestKey === 0) return;
+    if (settledReviewRequestKeyRef.current === reviewRequestKey) return;
     if (unavailable) return;
     const forceRefresh = forceRefreshRef.current;
     // Keep a returned review stable while the user works through it. Director
     // suggestions are server-validated into sequentially compatible edit
     // domains, and applyOpsAtomic rejects a card if its own target changed.
-    if (snapshotBuildErrorRef.current) return;
+    if (snapshotBuildErrorRef.current) {
+      setReviewQueued(false);
+      return;
+    }
     if (suggestionsRef.current.length > 0 && !forceRefresh) return;
-    if (sourceRevisionRef.current === currentSnapshotRevision && !forceRefresh) return;
     const controller = new AbortController();
     let activeRequestId = 0;
     const timer = window.setTimeout(() => {
       const built = tryBuildDirectorSnapshot(optsRef.current.buildSnapshot);
       if (!built.snapshot) {
         forceRefreshRef.current = false;
+        setReviewQueued(false);
         setError(built.error);
         return;
       }
       const snapshot = built.snapshot;
       if (snapshot.allowed_op_families.length === 0) {
+        settledReviewRequestKeyRef.current = reviewRequestKey;
+        setReviewed(true);
         forceRefreshRef.current = false;
+        setReviewQueued(false);
         suggestionsRef.current = [];
         setSuggestions([]);
         return;
@@ -389,6 +460,7 @@ export function useEditDirector(
       requestIdRef.current += 1;
       const requestId = requestIdRef.current;
       activeRequestId = requestId;
+      setReviewQueued(false);
       setLoading(true);
       setError(null);
       void editDirectorSuggestions(optsRef.current.itemId, optsRef.current.variantId, {
@@ -412,6 +484,12 @@ export function useEditDirector(
             response.snapshot_revision !== revision ||
             currentRevision !== revision
           ) {
+            settledReviewRequestKeyRef.current = reviewRequestKey;
+            forceRefreshRef.current = false;
+            suggestionsRef.current = [];
+            setSuggestions([]);
+            setReviewed(true);
+            setError(DIRECTOR_DRAFT_CHANGED_MESSAGE);
             return;
           }
           sourceSnapshotRef.current = snapshot;
@@ -421,9 +499,12 @@ export function useEditDirector(
             : response.suggestions.filter((item) => item.apply_mode !== "omni_async");
           suggestionsRef.current = nextSuggestions;
           setSuggestions(nextSuggestions);
+          settledReviewRequestKeyRef.current = reviewRequestKey;
+          setReviewed(true);
           forceRefreshRef.current = false;
           setModelUsed(response.model_used);
-          setFallbackReason(response.fallback_reason ?? null);
+          setOmniMaxCostPerSecondUsd(response.omni_max_cost_per_second_usd ?? null);
+          setReviewBlockedUntil(null);
           if (nextSuggestions.length === 0 && response.suggestions.length > 0) {
             setError(DIRECTOR_CAPABILITY_MISMATCH_MESSAGE);
           }
@@ -431,16 +512,24 @@ export function useEditDirector(
         .catch((caught) => {
           if (requestId !== requestIdRef.current || controller.signal.aborted) return;
           if (directorErrorStatus(caught) === 409) {
-            // The server evaluated a newer editor revision. Rebuild the
-            // snapshot and retry without painting a failure over the draft.
-            forceRefreshRef.current = true;
-            sourceRevisionRef.current = "";
-            setError(null);
-            setRefreshKey((value) => value + 1);
+            // The server rejected a stale revision before provider contact.
+            // Keep the one-click/one-request invariant: the user can choose
+            // Review again once the draft has settled.
+            forceRefreshRef.current = false;
+            settledReviewRequestKeyRef.current = reviewRequestKey;
+            suggestionsRef.current = [];
+            setSuggestions([]);
+            setReviewed(true);
+            setError(DIRECTOR_DRAFT_CHANGED_MESSAGE);
             return;
           }
           forceRefreshRef.current = false;
+          settledReviewRequestKeyRef.current = reviewRequestKey;
           if (isFeatureUnavailable(caught)) setUnavailable(true);
+          const budgetResetAt = directorBudgetResetAt(caught);
+          if (directorErrorStatus(caught) === 429 && budgetResetAt) {
+            setReviewBlockedUntil(budgetResetAt);
+          }
           const requestRef = caught && typeof caught === "object" && "requestId" in caught
             ? String((caught as { requestId?: unknown }).requestId ?? "")
             : "";
@@ -465,8 +554,7 @@ export function useEditDirector(
     opts.enabled,
     opts.itemId,
     opts.variantId,
-    currentSnapshotRevision,
-    refreshKey,
+    reviewRequestKey,
     unavailable,
   ]);
 
@@ -497,10 +585,12 @@ export function useEditDirector(
   }, []);
 
   const refreshReview = useCallback(() => {
+    if (reviewBlockedUntil && Date.parse(reviewBlockedUntil) > Date.now()) return;
     forceRefreshRef.current = true;
     setUnavailable(false);
-    setRefreshKey((value) => value + 1);
-  }, []);
+    setReviewQueued(true);
+    setReviewRequestKey((value) => value + 1);
+  }, [reviewBlockedUntil]);
 
   useEffect(() => {
     const failure = opts.speechCutLastError;
@@ -571,7 +661,10 @@ export function useEditDirector(
   );
 
   const accept = useCallback(
-    (suggestion: EditorSuggestion) => {
+    (
+      suggestion: EditorSuggestion,
+      options?: { omniCostConfirmed?: boolean },
+    ) => {
       if (suggestion.apply_mode === "server_async") {
         const op = suggestion.ops.find(
           (candidate) => candidate.op === "apply_speech_cut_candidate",
@@ -613,7 +706,11 @@ export function useEditDirector(
         return;
       }
       if (suggestion.apply_mode === "omni_async") {
-        if (!suggestion.omni || generation) return;
+        if (!suggestion.omni || generation || omniDispatchPendingRef.current) return;
+        // The visible AlertDialog owns the explicit cost confirmation. Keep a
+        // second guard here so a future caller cannot start an Omni request by
+        // invoking the hook directly without that confirmation.
+        if (options?.omniCostConfirmed !== true) return;
         const source = sourceSnapshotRef.current;
         const sourceRevision = sourceRevisionRef.current;
         const current = tryBuildDirectorSnapshot(optsRef.current.buildSnapshot);
@@ -660,6 +757,18 @@ export function useEditDirector(
           }
         };
         setError(null);
+        if (omniMaxCostPerSecondUsd === null) {
+          setError("Kria couldn’t confirm the provider cost. Review the draft again before generating.");
+          return;
+        }
+        // Consent must never understate the server's four-decimal estimate.
+        // Ceiling to a cent so fractional durations cannot be rejected after
+        // the creator confirms the displayed maximum.
+        const estimatedMaxCostUsd = Math.ceil(
+          suggestion.omni.duration_s * omniMaxCostPerSecondUsd * 100,
+        ) / 100;
+        omniDispatchPendingRef.current = true;
+        setOmniDispatchPending(true);
         void startOmniAsset(
           itemId,
           variantId,
@@ -667,11 +776,15 @@ export function useEditDirector(
             suggestion_id: suggestion.id,
             draft_revision: sourceRevision,
             ...suggestion.omni,
+            estimated_max_cost_usd: estimatedMaxCostUsd,
+            cost_confirmed: true,
           },
         )
           .then(async (started) => {
             startedAssetId = started.asset_id;
             if (!contextIsCurrent()) {
+              omniDispatchPendingRef.current = false;
+              setOmniDispatchPending(false);
               abandonAsset(started.asset_id);
               return;
             }
@@ -681,6 +794,8 @@ export function useEditDirector(
               status: started.status,
               progress: started.progress,
             });
+            omniDispatchPendingRef.current = false;
+            setOmniDispatchPending(false);
             let current = started;
             while (
               contextIsCurrent() &&
@@ -762,6 +877,8 @@ export function useEditDirector(
           })
           .catch(() => {
             if (token !== generationTokenRef.current) return;
+            omniDispatchPendingRef.current = false;
+            setOmniDispatchPending(false);
             setGeneration(null);
             setError("Kria couldn’t start generating that video. Retry the request. Your draft is unchanged.");
           });
@@ -787,7 +904,14 @@ export function useEditDirector(
       }
       completeAcceptance(suggestion, result);
     },
-    [completeAcceptance, generation, refreshReview, removeSuggestion, serverRendering],
+    [
+      completeAcceptance,
+      generation,
+      omniMaxCostPerSecondUsd,
+      refreshReview,
+      removeSuggestion,
+      serverRendering,
+    ],
   );
 
   const revealApplied = useCallback((receipt: DirectorAppliedReceipt) => {
@@ -814,8 +938,38 @@ export function useEditDirector(
         }
       })
       .catch(() => {
-        setGeneration(null);
+        // Keep the provider attempt addressable so Cancel remains retryable.
+        // The original generation poll was fenced above; start a replacement
+        // observer until a second cancel click supersedes this token.
+        const observerToken = generationTokenRef.current;
+        setGeneration(active);
         setError("Kria couldn’t confirm the cancellation. Retry the cancellation. Your draft is unchanged.");
+        void (async () => {
+          while (generationTokenRef.current === observerToken) {
+            await new Promise((resolve) => window.setTimeout(resolve, 2000));
+            if (generationTokenRef.current !== observerToken) return;
+            try {
+              const current = await getOmniAsset(
+                optsRef.current.itemId,
+                optsRef.current.variantId,
+                active.assetId,
+              );
+              if (generationTokenRef.current !== observerToken) return;
+              if (["failed", "cancelled", "ready"].includes(current.status)) {
+                setGeneration(null);
+                return;
+              }
+              setGeneration({
+                suggestionId: active.suggestionId,
+                assetId: active.assetId,
+                status: current.status,
+                progress: current.progress,
+              });
+            } catch {
+              // Keep the retry control visible; the next poll may recover.
+            }
+          }
+        })();
       });
   }, [generation]);
 
@@ -852,11 +1006,16 @@ export function useEditDirector(
     () => ({
       suggestions,
       appliedReceipts,
-      loading,
+      reviewed,
+      loading: loading || reviewQueued,
       error,
       unavailable,
+      reviewBlocked: Boolean(
+        reviewBlockedUntil && Date.parse(reviewBlockedUntil) > Date.now()
+      ),
       modelUsed,
-      fallbackReason,
+      omniMaxCostPerSecondUsd,
+      omniDispatchPending,
       generation,
       serverRendering,
       // Explicit refresh stays armed through snapshot-hydration aborts, so the
@@ -872,11 +1031,15 @@ export function useEditDirector(
     [
       suggestions,
       appliedReceipts,
+      reviewed,
       loading,
+      reviewQueued,
       error,
       unavailable,
+      reviewBlockedUntil,
       modelUsed,
-      fallbackReason,
+      omniMaxCostPerSecondUsd,
+      omniDispatchPending,
       generation,
       serverRendering,
       refreshReview,

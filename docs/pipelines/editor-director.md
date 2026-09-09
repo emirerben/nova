@@ -5,16 +5,20 @@ Nova's editor has two distinct AI paths:
 - `nova.edit.copilot` uses `EDIT_COPILOT_MODEL` with low thinking and a 20-second
   request timeout for responsive chat-to-operation conversion.
 - `nova.edit.director` uses `EDIT_DIRECTOR_MODEL` with high thinking and a
-  single 30-second attempt for proactive editorial review. The suggestion
-  endpoint falls back to one 20-second `EDIT_DIRECTOR_FALLBACK_MODEL` attempt
-  after a timeout, rate limit, unavailable-model error, refusal, or schema
-  failure. If a newer snapshot supersedes the primary request, the API returns
-  a conflict immediately instead of spending the fallback budget on stale work.
+  single 30-second attempt for proactive editorial review. A timeout, rate
+  limit, refusal, unavailable model, or schema failure ends that explicit
+  review; the endpoint never turns one user action into a second paid request.
+  If a newer snapshot supersedes the request, the API returns a conflict
+  immediately instead of spending on stale work. `EDIT_DIRECTOR_EVAL_COMPARISON_MODEL`
+  is used only by the opt-in live quality comparison and is never a runtime fallback.
 
 The fleet-wide `GEMINI_MODEL` no longer rewrites an agent's declared model.
-Agent-run telemetry records requested/effective model, fallback reason, latency,
+Agent-run telemetry records requested/effective model, latency,
 token usage, prompt version, and outcome. Director feedback separately records
-accepted and dismissed suggestion IDs.
+accepted and dismissed suggestion IDs. Identical creator/snapshot/model/prompt
+reviews are cached for `EDIT_DIRECTOR_CACHE_TTL_DAYS` (90 by default), and each
+creator can start at most `EDIT_DIRECTOR_DAILY_PAID_LIMIT` (three by default)
+uncached paid reviews per UTC day.
 
 ## Suggestion lifecycle
 
@@ -52,14 +56,15 @@ split, and transition edits can stale one another's slot windows. Omni reviews
 are homogeneous and contain exactly one asynchronous card; they are never mixed
 with instant cards tied to the same source revision.
 
-The editor requests its initial review after the complete editor snapshot has
-settled, then tracks the full snapshot hash rather than only the undo-history
-revision. This includes asynchronously hydrated captions, capabilities, assets,
-overlays, and effects. Responses are ignored when either the request ID or the
-snapshot hash is stale. The browser aborts and restarts superseded HTTP requests,
-and the API serializes Director runs per job so a newer revision does not fan out
-concurrent Pro calls behind an older request. An explicit Refresh stays armed
-through hydration-driven aborts until a replacement review lands or fails.
+The editor makes no Director request merely because the editor opened or its
+snapshot changed. The creator explicitly selects **Review my edit**. Once that
+action starts, the browser tracks the full snapshot hash rather than only the
+undo-history revision, including asynchronously hydrated captions, capabilities,
+assets, overlays, and effects. Responses are ignored when either the request ID
+or snapshot hash is stale. The browser aborts and restarts only that already
+requested review against the latest hydrated state, and the API serializes runs
+per job so a newer revision does not fan out concurrent Pro calls behind an older
+request. **Review again** deliberately starts a new review.
 
 Instant suggestions contain one or more operations from the normal copilot
 contract. Acceptance validates and stages the complete bundle in memory first.
@@ -156,14 +161,20 @@ deleted when it is still safe to remove from the candidate pool. Unclaimed
 output expires after 24 hours and its storage object is deleted; accepted
 provenance remains on the job for debugging.
 
+Omni is also restricted to `AI_USAGE_ENVIRONMENT=lab`. Starting an asset requires
+the browser to confirm a server-verifiable cost estimate and requires the
+operator-owned `AI_OMNI_LAB_TEST_RUN_ID`, `AI_OMNI_LAB_RUN_MAX_COST_USD`, and
+`AI_OMNI_LAB_RESERVATION_APPROVED` envelope. A repeated in-flight confirmation
+reuses the same request signature instead of starting a second paid generation.
+
 ## Rollout
 
-1. Keep all three flags off and run the English/Turkish Director live eval with
-   an independent judge. Pro must average at least 4/5 and beat the Flash
-   comparison; Flash must stay structurally valid.
+1. Keep all three flags off and run the English/Turkish Director replay judge,
+   then the attributed live provider eval. The protected live workflow does not
+   run the Anthropic judge because that spend is outside the Google ledger.
 2. Enable `EDIT_DIRECTOR_ENABLED` and `NEXT_PUBLIC_EDIT_DIRECTOR_ENABLED` for
-   internal/admin traffic. Monitor latency, fallback rate, schema failures,
-   acceptance, and dismissal.
+   internal/admin traffic. Monitor latency, cache hits, budget refusals, schema
+   failures, acceptance, and dismissal.
 3. Enable `EDIT_TRANSITIONS_ENABLED` and
    `NEXT_PUBLIC_EDIT_TRANSITIONS_ENABLED` after mixed-source render QA.
 4. Expand Director suggestions to users after quality and latency gates pass.
@@ -180,14 +191,21 @@ cd src/apps/api
 pytest tests/evals/test_edit_director_evals.py -v
 ```
 
-Live launch gate (sends the fixtures and prompts to Gemini and the independent
-judge):
+Paid live provider gate. Select `edit_director` in the protected `Agent evals`
+workflow, or use the equivalent attributed local command:
 
 ```bash
 cd src/apps/api
-NOVA_EVAL_MODE=live pytest tests/evals/test_edit_director_evals.py \
-  -v --eval-mode=live --with-judge
+NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+pytest tests/evals/test_edit_director_evals.py -v --eval-mode=live \
+  --usage-purpose=live_eval --test-run-id=director-YYYYMMDD \
+  --max-cost-usd=2 --approve-reservation
 ```
+
+Run `pytest tests/evals/test_edit_director_evals.py -v --with-judge` separately
+in replay mode for the rubric score. The Pro-vs-Flash live comparison test also
+requires `--with-judge`; it is not part of the standard protected workflow and
+must not be treated as covered by the Google-only $2 cap.
 
 Changes that touch the shared template orchestration or final transition render
 path also require a real-video `make local-render` pass. Record its run ID in the

@@ -15,12 +15,20 @@ from app.services.video_poster_cleanup import VideoPosterCleanupResult
 from app.storage import PrefixDeletionResult
 from app.tasks.account_lifecycle import (
     _guard_project_storage_targets,
+    _project_manifest_owner,
     cleanup_job_storage_paths,
     cleanup_job_storage_prefixes,
     purge_job_storage,
     purge_user_storage,
     sweep_job_storage_deletions,
 )
+
+
+def test_account_root_prefix_uses_the_owner_reference_lock() -> None:
+    owner_id = uuid.uuid4()
+
+    assert _project_manifest_owner([f"users/{owner_id}/"]) == owner_id
+    assert _project_manifest_owner(["users/not-a-uuid/"]) is None
 
 
 def test_cleanup_job_storage_paths_is_idempotent_and_returns_only_failures() -> None:
@@ -147,14 +155,14 @@ def test_purge_job_storage_persists_only_failed_objects_for_durable_retry() -> N
 def test_cleanup_job_storage_prefixes_deduplicates_and_preserves_failures() -> None:
     calls: list[str] = []
 
-    def delete(prefix: str, *, timeout_s: float) -> int:
+    def delete(prefix: str, *, timeout_s: float) -> PrefixDeletionResult:
         calls.append(prefix)
         assert timeout_s == 5.0
         if prefix.endswith("failed/"):
             raise RuntimeError("bucket unavailable")
-        return 2
+        return PrefixDeletionResult(status="verified_empty", deleted=2, remaining=0)
 
-    with patch("app.storage.delete_prefix_once", side_effect=delete):
+    with patch("app.storage.delete_prefix_verified", side_effect=delete):
         deleted, failed = cleanup_job_storage_prefixes(
             ["users/user/project/", "users/user/project/", "users/user/failed/"]
         )
@@ -162,6 +170,17 @@ def test_cleanup_job_storage_prefixes_deduplicates_and_preserves_failures() -> N
     assert deleted == 2
     assert failed == ["users/user/failed/"]
     assert calls == ["users/user/project/", "users/user/failed/"]
+
+
+def test_cleanup_job_storage_prefixes_retries_a_partial_verified_delete() -> None:
+    with patch(
+        "app.storage.delete_prefix_verified",
+        return_value=PrefixDeletionResult(status="partial", deleted=2, remaining=1),
+    ):
+        deleted, failed = cleanup_job_storage_prefixes(["users/user/project/"])
+
+    assert deleted == 2
+    assert failed == ["users/user/project/"]
 
 
 def test_project_storage_revalidation_preserves_new_job_and_plan_references() -> None:

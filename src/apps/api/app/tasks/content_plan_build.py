@@ -41,6 +41,7 @@ from app.services.creator_sessions import ACTIVE_CREATOR_PHASES
 from app.services.edit_proposal_limits import queue_for_guided_contract
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.seed_provenance import match_specs_to_seeds
+from app.services.tiktok_style_observations import effective_persona_style
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -52,8 +53,13 @@ def _plan_epoch(plan: ContentPlan) -> int:
 
 
 def _plan_direction_prompt(plan: ContentPlan) -> str:
+    from app.services.creator_direction_snapshot import private_snapshot_from  # noqa: PLC0415
+
     snapshot = getattr(plan, "creator_direction_snapshot", None)
-    return str(snapshot.get("prompt_block") or "") if isinstance(snapshot, dict) else ""
+    effective = private_snapshot_from(snapshot) or (
+        snapshot if isinstance(snapshot, dict) else None
+    )
+    return str(effective.get("prompt_block") or "") if effective is not None else ""
 
 
 def _item_direction_snapshot(session, item: PlanItem, plan: ContentPlan) -> dict | None:  # noqa: ANN001
@@ -168,6 +174,7 @@ def generate_content_plan(
             return
         plan, persona_row = owned
         ownership_epoch = _plan_epoch(plan)
+        creator_id = str(plan.user_id)
         creator_direction_prompt = _plan_direction_prompt(plan)
         if not persona_row.persona:
             _fail(session, plan, "persona is not ready")
@@ -175,7 +182,10 @@ def generate_content_plan(
         tiktok_summary = _analysis_summary(persona_row.tiktok_profile)
         from app.config import settings as _settings  # noqa: PLC0415
 
-        user_style = dict(persona_row.style) if persona_row.style else None
+        user_style = effective_persona_style(
+            persona_row.style,
+            profile=persona_row.tiktok_profile,
+        )
         instruction_level = "full"
         preferred_edit_format_mix: dict[str, float] = {}
         if _settings.user_style_enabled and user_style:
@@ -213,8 +223,14 @@ def generate_content_plan(
 
     try:
         agent = ContentPlanGeneratorAgent(default_client())
-        output = agent.run(agent_input, ctx=RunContext(job_id=None))
-        output = _dedup_and_replace(agent, agent_input, output, plan_id)
+        output = agent.run(agent_input, ctx=RunContext(creator_id=creator_id))
+        output = _dedup_and_replace(
+            agent,
+            agent_input,
+            output,
+            plan_id,
+            creator_id=creator_id,
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("content_plan_build.failed", plan_id=plan_id, error=str(exc))
         with sync_session() as session:
@@ -308,6 +324,8 @@ def _dedup_and_replace(
     agent_input: ContentPlanInput,
     output: ContentPlanOutput,
     plan_id: str,
+    *,
+    creator_id: str,
 ) -> ContentPlanOutput:
     """Replace near-duplicate ideas via one constrained regeneration call.
 
@@ -330,7 +348,7 @@ def _dedup_and_replace(
     try:
         regen = agent.run(
             agent_input.model_copy(update={"exclude_ideas": kept_ideas}),
-            ctx=RunContext(job_id=None),
+            ctx=RunContext(creator_id=creator_id),
         )
     except Exception as exc:  # noqa: BLE001 — dedup is best-effort, never fail the plan
         log.warning(
@@ -395,6 +413,7 @@ def regenerate_content_plan(
             return
         plan, persona_row = owned
         ownership_epoch = _plan_epoch(plan)
+        creator_id = str(plan.user_id)
         creator_direction_prompt = _plan_direction_prompt(plan)
         if not persona_row.persona:
             _fail(session, plan, "persona is not ready")
@@ -405,7 +424,10 @@ def regenerate_content_plan(
         tiktok_summary = _analysis_summary(persona_row.tiktok_profile)
         from app.config import settings as _settings  # noqa: PLC0415
 
-        user_style = dict(persona_row.style) if persona_row.style else None
+        user_style = effective_persona_style(
+            persona_row.style,
+            profile=persona_row.tiktok_profile,
+        )
         instruction_level = "full"
         preferred_edit_format_mix: dict[str, float] = {}
         if _settings.user_style_enabled and user_style:
@@ -444,8 +466,14 @@ def regenerate_content_plan(
 
     try:
         agent = ContentPlanGeneratorAgent(default_client())
-        output = agent.run(agent_input, ctx=RunContext(job_id=None))
-        output = _dedup_and_replace(agent, agent_input, output, plan_id)
+        output = agent.run(agent_input, ctx=RunContext(creator_id=creator_id))
+        output = _dedup_and_replace(
+            agent,
+            agent_input,
+            output,
+            plan_id,
+            creator_id=creator_id,
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("content_plan_regen.failed", plan_id=plan_id, error=str(exc))
         with sync_session() as session:
@@ -1652,7 +1680,10 @@ def _persona_data(persona_row: PersonaRow) -> dict:
     # Thread the per-user style (Creator Agent M1) under a private key so
     # _dispatch_item_render can pass it to build_generative_job without
     # polluting the public persona schema fields.
-    data["_user_style"] = dict(persona_row.style) if persona_row.style else None
+    data["_user_style"] = effective_persona_style(
+        persona_row.style,
+        profile=persona_row.tiktok_profile,
+    )
     return data
 
 
@@ -2078,6 +2109,7 @@ def activate_content_plan(
             return
         plan, persona_row = owned
         ownership_epoch = _plan_epoch(plan)
+        creator_id = str(plan.user_id)
         if not persona_row.persona:
             _set_activation(session, plan, "failed")
             log.warning("activate_plan.persona_not_ready", plan_id=plan_id)
@@ -2122,7 +2154,12 @@ def activate_content_plan(
     trace_scope = f"activation-{plan_id}"
     try:
         with pipeline_trace_for(trace_scope), tempfile.TemporaryDirectory() as tmpdir:
-            ingest = _ingest_clips(seed_paths, tmpdir, job_id=trace_scope)
+            ingest = _ingest_clips(
+                seed_paths,
+                tmpdir,
+                job_id=trace_scope,
+                creator_id=creator_id,
+            )
             clip_id_to_gcs: dict[str, str] = ingest["clip_id_to_gcs"]
             clips: list[ClipSummary] = []
             for meta in ingest["clip_metas"]:
@@ -2145,7 +2182,7 @@ def activate_content_plan(
                 ClipPlanMatcherInput(
                     clips=clips, items=items, max_assignments=_AUTO_GENERATE_LIMIT
                 ),
-                ctx=RunContext(job_id=None),
+                ctx=RunContext(creator_id=creator_id),
             )
     except Exception as exc:  # noqa: BLE001 — best-effort; never hard-fail the plan
         log.warning("activate_plan.match_failed", plan_id=plan_id, error=str(exc))
@@ -2426,6 +2463,7 @@ def _run_pool_match(plan_id: str, *, ownership_epoch: int | None = None) -> None
             log.warning("pool_match.missing_row", plan_id=plan_id)
             return
         plan, _persona_row = owned
+        creator_id = str(plan.user_id)
         if ownership_epoch is None:
             ownership_epoch = _plan_epoch(plan)
         pool = dict(plan.pool or {})
@@ -2469,7 +2507,13 @@ def _run_pool_match(plan_id: str, *, ownership_epoch: int | None = None) -> None
             # min_success_fraction=0.0: matching WHATEVER analyzed beats matching
             # nothing — a Gemini 503 spike on half the batch must not abort the
             # pool (unmatched clips stay listed with "Match again").
-            ingest = _ingest_clips(unmatched, tmpdir, job_id=trace_scope, min_success_fraction=0.0)
+            ingest = _ingest_clips(
+                unmatched,
+                tmpdir,
+                job_id=trace_scope,
+                min_success_fraction=0.0,
+                creator_id=creator_id,
+            )
             clip_id_to_gcs: dict[str, str] = ingest["clip_id_to_gcs"]
             clips: list[ClipSummary] = []
             for meta in ingest["clip_metas"]:
@@ -2489,7 +2533,7 @@ def _run_pool_match(plan_id: str, *, ownership_epoch: int | None = None) -> None
                 raise ValueError("no pool clip produced a usable metadata summary")
             matched = ClipPlanMatcherAgent(default_client()).run(
                 ClipPlanMatcherInput(clips=clips, items=items, max_assignments=_POOL_MATCH_LIMIT),
-                ctx=RunContext(job_id=None),
+                ctx=RunContext(creator_id=creator_id),
             )
     except Exception as exc:  # noqa: BLE001 — best-effort; items stay untouched
         log.warning("pool_match.failed", plan_id=plan_id, error=str(exc))
@@ -2623,6 +2667,7 @@ def reroll_plan_item(
             return
         plan, persona_row = owned
         content_plan_id = plan.id
+        creator_id = str(plan.user_id)
         ownership_epoch = _plan_epoch(plan)
         locked_items = _lock_plan_items(session, list(plan.items))
         item = next((row for row in locked_items if row.id == iid), None)
@@ -2665,7 +2710,7 @@ def reroll_plan_item(
 
     try:
         agent = ContentPlanGeneratorAgent(default_client())
-        output = agent.run(agent_input, ctx=RunContext(job_id=None))
+        output = agent.run(agent_input, ctx=RunContext(creator_id=creator_id))
         replacements = choose_replacements(1, list(output.items), all_ideas)
     except Exception as exc:  # noqa: BLE001
         log.warning("reroll_plan_item.failed", item_id=item_id, error=str(exc))
@@ -2862,6 +2907,7 @@ def generate_ideas_into_plan(
             if owned is None:
                 return
             plan, persona_row = owned
+            creator_id = str(plan.user_id)
             if not _is_current_attempt(plan):
                 log.info(
                     "generate_ideas_into_plan.stale_delivery",
@@ -2903,7 +2949,7 @@ def generate_ideas_into_plan(
         )
         with pipeline_trace_for(pid):
             agent = ContentPlanGeneratorAgent(default_client())
-            output = agent.run(agent_input, ctx=RunContext(job_id=None))
+            output = agent.run(agent_input, ctx=RunContext(creator_id=creator_id))
             new_specs = list(output.items)[:1]
         if not new_specs:
             log.warning("generate_ideas_into_plan.fresh_empty", plan_id=plan_id)

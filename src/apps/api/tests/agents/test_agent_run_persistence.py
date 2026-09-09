@@ -329,6 +329,137 @@ def test_persist_handles_unserializable_input():
 # ── End-to-end: Agent.run() through _log_outcome ─────────────────────────────
 
 
+def test_paid_agent_run_reserves_starts_settles_and_persists_metering(
+    sample_agent: SampleAgent,
+    mock_client: MockModelClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The ordinary token-metered Agent path keeps one auditable receipt.
+
+    This intentionally crosses the runtime/cost-control/persistence seams: a
+    reservation must exist before provider contact, settlement must use the
+    provider's detailed usage, and the resulting AgentRun row must retain the
+    same reservation and metering fields.
+    """
+    from app.agents import _persistence
+    from app.agents._runtime import ModelInvocation
+    from app.services import ai_cost_control
+    from app.services.ai_cost_control import ReservationReceipt
+
+    reservation_id = uuid.uuid4()
+    receipt = ReservationReceipt(
+        id=reservation_id,
+        environment="development",
+        usage_purpose="manual_qa",
+        feature="test.sample",
+        requested_model="gemini-2.5-flash",
+        estimated_cost_usd=0.25,
+    )
+    events: list[str] = []
+    settlement_usage: list[object] = []
+
+    def reserve(request):
+        events.append("reserve")
+        assert request.feature == "test.sample"
+        assert request.ctx.test_run_id == "qa-run-42"
+        assert request.estimated_cost_usd > 0
+        return receipt
+
+    def mark_started(reservation):
+        events.append("start")
+        assert reservation is receipt
+
+    def settle(reservation, usage):
+        events.append("settle")
+        assert reservation is receipt
+        settlement_usage.append(usage)
+        return 0.001234
+
+    monkeypatch.setattr(ai_cost_control, "reserve_paid_call", reserve)
+    monkeypatch.setattr(ai_cost_control, "mark_paid_call_started", mark_started)
+    monkeypatch.setattr(ai_cost_control, "settle_paid_call", settle)
+
+    original_invoke = mock_client.invoke
+
+    def invoke(**kwargs):
+        events.append("invoke")
+        return original_invoke(**kwargs)
+
+    monkeypatch.setattr(mock_client, "invoke", invoke)
+
+    engine, captured = _fake_engine_capturing()
+    original_persist = _persistence.persist_agent_run
+
+    def persist(**kwargs):
+        events.append("persist")
+        return original_persist(**kwargs)
+
+    monkeypatch.setattr(_persistence, "persist_agent_run", persist)
+
+    details = {
+        "prompt_tokens_details": [{"modality": "TEXT", "token_count": 120}],
+        "cache_tokens_details": [{"modality": "TEXT", "token_count": 30}],
+    }
+    mock_client.queue(
+        "gemini-2.5-flash",
+        ModelInvocation(
+            raw_text='{"answer":"ok","score":50}',
+            tokens_in=120,
+            tokens_out=40,
+            tokens_thoughts=7,
+            tokens_cached=30,
+            tokens_tool=3,
+            token_details=details,
+            provider_request_id="gemini-request-123",
+            model_used="gemini-2.5-flash-001",
+        ),
+    )
+
+    with patch("app.database.sync_engine", engine):
+        out = sample_agent.run(
+            SampleInput(topic="meter me"),
+            ctx=RunContext(
+                job_id=str(uuid.uuid4()),
+                creator_id=str(uuid.uuid4()),
+                usage_purpose="manual_qa",
+                test_run_id="qa-run-42",
+                estimated_max_cost_usd=0.50,
+                reservation_approved=True,
+            ),
+        )
+
+    assert out.answer == "ok"
+    assert events == ["reserve", "start", "invoke", "settle", "persist"]
+    assert len(settlement_usage) == 1
+    usage = settlement_usage[0]
+    assert usage.tokens_in == 120
+    assert usage.tokens_out == 40
+    assert usage.tokens_thoughts == 7
+    assert usage.tokens_cached == 30
+    assert usage.tokens_tool == 3
+    assert usage.token_details == details
+    assert usage.provider_request_id == "gemini-request-123"
+    assert usage.resolved_model == "gemini-2.5-flash-001"
+
+    assert len(captured) == 1
+    row = captured[0]
+    assert row["environment"] == "development"
+    assert row["usage_purpose"] == "manual_qa"
+    assert row["test_run_id"] == "qa-run-42"
+    assert row["provider_request_id"] == "gemini-request-123"
+    assert row["price_version"] == receipt.price_version
+    assert row["reserved_cost_usd"] == 0.25
+    assert row["settled_cost_usd"] == 0.001234
+    assert row["cost_reservation_id"] == str(reservation_id)
+    assert row["tokens_in"] == 120
+    assert row["tokens_out"] == 40
+    assert row["tokens_thoughts"] == 7
+    assert row["tokens_cached"] == 30
+    assert row["tokens_tool"] == 3
+    assert details["prompt_tokens_details"][0]["token_count"] == 120
+    assert '"invocations"' in row["token_details"]
+
+
 def test_agent_run_triggers_persist_for_uuid_job(
     sample_agent: SampleAgent, mock_client: MockModelClient
 ):

@@ -31,6 +31,7 @@ import tempfile
 import time
 import uuid
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 
 import structlog
@@ -779,6 +780,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
 # read as 1920x1080 (landscape).
 ANALYSIS_VERSION = 6
 _MAX_POOL_IMAGE_PIXELS = 50_000_000
+_AI_ANALYSIS_IMAGE_MAX_DIM = 1_536
 
 
 class AssetUnreadableError(RuntimeError):
@@ -898,7 +900,7 @@ def _persist_pool_media_readiness(
 
 
 def _analyze_image(
-    local_path: str, job_scope: str
+    local_path: str, job_scope: str, *, creator_id: str | None = None
 ) -> tuple[dict | None, float | None, tuple[int, int] | None, bool]:
     """(analysis, aspect, (width, height), has_alpha) for a still image."""
     aspect: float | None = None
@@ -944,29 +946,75 @@ def _analyze_image(
 
         from google.genai import types as genai_types  # noqa: PLC0415
 
+        # Analyze a bounded raster rather than forwarding an arbitrarily large
+        # original. Gemini bills image input by resolution tiles; constraining
+        # both axes makes the reservation below a real upper bound while leaving
+        # the original bytes/dimensions untouched for rendering.
+        from PIL import ImageOps  # noqa: PLC0415
+
         from app.agents.image_metadata import ImageMetadataOutput  # noqa: PLC0415
         from app.pipeline.agents.gemini_analyzer import _get_client  # noqa: PLC0415
         from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
 
-        mime = "image/png"
-        lower = local_path.lower()
-        if lower.endswith((".jpg", ".jpeg")):
-            mime = "image/jpeg"
-        elif lower.endswith(".webp"):
-            mime = "image/webp"
-        elif lower.endswith(".heic"):
-            mime = "image/heic"
-        elif lower.endswith(".heif"):
-            mime = "image/heif"
-        with open(local_path, "rb") as fh:
-            data = fh.read()
-        resp = _get_client().models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                genai_types.Part.from_bytes(data=data, mime_type=mime),
-                load_prompt("image_metadata"),
-            ],
-            config=genai_types.GenerateContentConfig(response_mime_type="application/json"),
+        with Image.open(local_path) as provider_image:
+            provider_image = ImageOps.exif_transpose(provider_image)
+            provider_image.thumbnail(
+                (_AI_ANALYSIS_IMAGE_MAX_DIM, _AI_ANALYSIS_IMAGE_MAX_DIM),
+                Image.Resampling.LANCZOS,
+            )
+            analysis_width, analysis_height = provider_image.size
+            buffer = BytesIO()
+            provider_image.convert("RGB").save(buffer, format="JPEG", quality=88, optimize=True)
+            data = buffer.getvalue()
+        mime = "image/jpeg"
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.services.ai_cost_control import (  # noqa: PLC0415
+            PaidCallRequest,
+            effective_max_output_tokens,
+            estimate_call_cost_usd,
+            execute_metered_google_call,
+            logical_call_id,
+        )
+
+        prompt = load_prompt("image_metadata")
+        provider_max_output_tokens = effective_max_output_tokens(None)
+        ctx = RunContext(
+            creator_id=creator_id,
+            request_id=f"pool-image:{job_scope}:{hashlib.sha256(data).hexdigest()}",
+            usage_purpose="optional_background",
+        )
+        resp = execute_metered_google_call(
+            request=PaidCallRequest(
+                idempotency_key=logical_call_id(
+                    feature="nova.video.image_metadata",
+                    model="gemini-2.5-flash",
+                    prompt=prompt,
+                    ctx=ctx,
+                    attempt=1,
+                ),
+                feature="nova.video.image_metadata",
+                model="gemini-2.5-flash",
+                estimated_cost_usd=estimate_call_cost_usd(
+                    model="gemini-2.5-flash",
+                    prompt=prompt,
+                    max_output_tokens=provider_max_output_tokens,
+                    media_mime=mime,
+                    media_width_px=analysis_width,
+                    media_height_px=analysis_height,
+                ),
+                ctx=ctx,
+            ),
+            operation=lambda: _get_client().models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    genai_types.Part.from_bytes(data=data, mime_type=mime),
+                    prompt,
+                ],
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    max_output_tokens=provider_max_output_tokens,
+                ),
+            ),
         )
         parsed = _json.loads(resp.text or "{}")
         out = ImageMetadataOutput.model_validate(parsed)
@@ -991,6 +1039,9 @@ def _analyze_image(
 
 def _analyze_video(
     local_path: str,
+    *,
+    job_scope: str = "",
+    creator_id: str | None = None,
 ) -> tuple[dict | None, float | None, float | None, tuple[int, int] | None]:
     """(analysis, aspect, duration_s, (width, height)) for a video asset."""
     aspect: float | None = None
@@ -1040,7 +1091,16 @@ def _analyze_video(
         # FK and can dump SQL parameters (including provider payloads) into the
         # fallback warning.  The outer pipeline trace and asset correlation ID
         # remain the authoritative context for this task.
-        meta = analyze_clip(file_ref)
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+
+        meta = analyze_clip(
+            file_ref,
+            run_context=RunContext(
+                creator_id=creator_id,
+                request_id=f"pool-video:{job_scope}:{getattr(file_ref, 'name', '')}",
+                usage_purpose="optional_background",
+            ),
+        )
         if getattr(meta, "failed", False):
             raise AnalysisTemporarilyUnavailableError("video analysis provider failed")
         # Persist the content map the trim rule needs (plan 006 §1): every
@@ -1312,9 +1372,13 @@ def analyze_pool_asset(
                         ),
                     )
                 if kind == "video":
-                    analysis, aspect, duration, dims = _analyze_video(local)
+                    analysis, aspect, duration, dims = _analyze_video(
+                        local, job_scope=scope, creator_id=str(plan.user_id)
+                    )
                 else:
-                    analysis, aspect, dims, has_alpha = _analyze_image(local, scope)
+                    analysis, aspect, dims, has_alpha = _analyze_image(
+                        local, scope, creator_id=str(plan.user_id)
+                    )
                 if media_probe_failed:
                     # The successful authoritative analysis is itself proof
                     # that the bytes are readable. Publish readiness now (the

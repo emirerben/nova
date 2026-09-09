@@ -1121,7 +1121,10 @@ def _run_lyrics_extraction(
                 duration_s=float(duration_s or 0.0),
                 forced_lrclib_id=forced_lrclib_id,
             ),
-            ctx=RunContext(job_id=f"track:{track_id}"),
+            ctx=RunContext(
+                job_id=f"track:{track_id}",
+                usage_purpose="optional_background",
+            ),
         )
     except TerminalError as exc:
         msg = str(exc)
@@ -1374,7 +1377,11 @@ def _run_song_sections(
             audio_template_output=audio_template_output or {},
         )
         out = SongSectionsAgent(default_client()).run(
-            inp, ctx=RunContext(job_id=f"track:{track_id}")
+            inp,
+            ctx=RunContext(
+                job_id=f"track:{track_id}",
+                usage_purpose="optional_background",
+            ),
         )
         log.info(
             "song_sections_done",
@@ -1424,7 +1431,11 @@ def _run_song_classifier(
             audio_template_output=audio_template_output or {},
         )
         out = SongClassifierAgent(default_client()).run(
-            inp, ctx=RunContext(job_id=f"track:{track_id}")
+            inp,
+            ctx=RunContext(
+                job_id=f"track:{track_id}",
+                usage_purpose="optional_background",
+            ),
         )
         log.info(
             "song_classifier_done",
@@ -1472,7 +1483,7 @@ def _maybe_select_lyric_style_set(
 
         out = LyricStyleSelectorAgent(default_client()).run(
             LyricStyleSelectorInput(labels=MusicLabels(**labels_dict), title=title or ""),
-            ctx=RunContext(job_id=None),
+            ctx=RunContext(usage_purpose="optional_background"),
         )
         cfg = dict(lyrics_config)
         cfg["style_set_id"] = out.style_set_id

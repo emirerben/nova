@@ -7,6 +7,7 @@ create→enqueue flow, GET-when-absent, and PATCH ownership isolation.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +17,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem
+from app.routes.personas import PersonaResponse
 
 
 def _fake_user(uid: uuid.UUID | None = None) -> MagicMock:
@@ -74,6 +76,54 @@ def test_get_persona_404_when_absent(client: TestClient) -> None:
 
     resp = client.get("/personas")
     assert resp.status_code == 404
+
+
+def test_persona_response_exposes_server_tiktok_analysis_capability() -> None:
+    row = _persona_row(uuid.uuid4(), status="ready")
+    row.tiktok_profile = {"handle": "creator"}
+
+    with patch("app.routes.personas.settings.tiktok_style_vision_enabled", False):
+        disabled = PersonaResponse.of(row)
+    with patch("app.routes.personas.settings.tiktok_style_vision_enabled", True):
+        enabled = PersonaResponse.of(row)
+
+    assert disabled.tiktok_style_analysis_available is False
+    assert enabled.tiktok_style_analysis_available is True
+
+
+def test_persona_response_exposes_terminal_tiktok_analysis_failure() -> None:
+    row = _persona_row(uuid.uuid4(), status="ready")
+    row.tiktok_profile = {
+        "handle": "creator",
+        "style_analysis_failure": {
+            "reason": "analysis_unavailable",
+            "failed_at": "2026-09-08T12:00:00+00:00",
+        },
+    }
+
+    response = PersonaResponse.of(row)
+
+    assert response.tiktok_style_analysis_status == "failed"
+    assert response.tiktok_style_analysis_failure_reason == "analysis_unavailable"
+    assert response.tiktok_style_analysis_failed_at == datetime(2026, 9, 8, 12, tzinfo=UTC)
+
+
+def test_persona_response_does_not_expose_expired_style_observations() -> None:
+    row = _persona_row(uuid.uuid4(), status="ready")
+    row.tiktok_profile = {
+        "handle": "creator",
+        "style_observations": {
+            "observed_at": (datetime.now(UTC) - timedelta(days=91)).isoformat(),
+            "videos_seen": 8,
+            "aggregate": {"font_feel": "bold_display"},
+        },
+    }
+
+    response = PersonaResponse.of(row)
+
+    assert response.tiktok_style_analysis_status == "idle"
+    assert response.tiktok_style_analyzed_at is None
+    assert response.tiktok_profile == {"handle": "creator"}
 
 
 def test_patch_persona_404_for_other_users_persona(client: TestClient) -> None:
@@ -180,8 +230,7 @@ def test_patch_persona_accepts_posts_per_week(client: TestClient) -> None:
     """PATCH {posts_per_week: 4} must store the integer, not a stringified '4'."""
     user = _fake_user()
     row = _editable_row(user.id)
-    db = _async_db()
-    db.get = AsyncMock(return_value=row)
+    db = _async_db(scalar_result=row)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
 
@@ -391,8 +440,7 @@ def test_patch_persona_does_not_flip_status_when_chat_pending(client: TestClient
     row.error_detail = None
     row.tiktok_profile = None
     row.idea_seeds = []
-    db = _async_db()
-    db.get = AsyncMock(return_value=row)
+    db = _async_db(scalar_result=row)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
 
@@ -751,3 +799,50 @@ def test_onboarding_fork_second_call_merges_not_clobbers(client: TestClient) -> 
     # Fields from the second call must be added.
     assert row.questionnaire["onboarding_clip_paths"] == ["generative-jobs/abc/sources/clip.mp4"]
     assert row.questionnaire["onboarding_edit_job_id"] == "job-123"
+
+
+def test_explicit_tiktok_style_analysis_claims_under_row_lock(client: TestClient) -> None:
+    user = _fake_user()
+    row = _persona_row(user.id, status="ready")
+    row.questionnaire = {"tiktok_handle": "@creator"}
+    row.tiktok_style_analysis_claim_id = None
+    row.tiktok_style_analysis_claim_expires_at = None
+    db = _async_db(scalar_result=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with (
+        patch("app.routes.personas.settings.tiktok_style_vision_enabled", True),
+        patch("app.tasks.style_vision_build.analyze_tiktok_style") as task,
+    ):
+        response = client.post(f"/personas/{row.id}/analyze-tiktok-style")
+
+    assert response.status_code == 202
+    assert row.tiktok_style_analysis_claim_id is not None
+    statement = db.execute.await_args_list[0].args[0]
+    assert "FOR UPDATE" in str(statement)
+    task.apply_async.assert_called_once()
+    assert task.apply_async.call_args.kwargs["kwargs"]["claim_id"] == str(
+        row.tiktok_style_analysis_claim_id
+    )
+
+
+def test_explicit_tiktok_style_analysis_rejects_active_claim(client: TestClient) -> None:
+    user = _fake_user()
+    row = _persona_row(user.id, status="ready")
+    row.questionnaire = {"tiktok_handle": "@creator"}
+    row.tiktok_style_analysis_claim_id = uuid.uuid4()
+    row.tiktok_style_analysis_claim_expires_at = datetime.now(UTC) + timedelta(minutes=5)
+    db = _async_db(scalar_result=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with (
+        patch("app.routes.personas.settings.tiktok_style_vision_enabled", True),
+        patch("app.tasks.style_vision_build.analyze_tiktok_style") as task,
+    ):
+        response = client.post(f"/personas/{row.id}/analyze-tiktok-style")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "TikTok style analysis is already running"
+    task.apply_async.assert_not_called()

@@ -28,6 +28,13 @@ from typing import Any
 
 import structlog
 
+from app.agents._runtime import (
+    ProviderOutcomeUnknownError,
+    RunContext,
+    TerminalError,
+    TransientError,
+)
+
 log = structlog.get_logger()
 
 # Gemini 2.5 Flash is the house video-understanding model. The dispatcher
@@ -69,6 +76,17 @@ class VideoGraderError(Exception):
     persists a `failed` AgentRun rather than a verdict — a broken judge must
     not masquerade as an auto_reject.
     """
+
+
+def _video_duration_bound(video_path: str) -> float | None:
+    """Read the local duration used for the pre-provider cost reservation."""
+
+    try:
+        from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+        return float(probe_video(video_path).duration_s)
+    except Exception:  # noqa: BLE001 - estimator falls back to the hard product maximum
+        return None
 
 
 @dataclass
@@ -254,6 +272,7 @@ class VideoQualityGrader:
         t_reject: float = T_REJECT,
         t_floor: float = T_FLOOR,
         require_evidence: bool = False,
+        run_context: RunContext | None = None,
     ) -> None:
         self.rubric_path = Path(rubric_path)
         self.model = model
@@ -263,6 +282,7 @@ class VideoQualityGrader:
         self.t_reject = t_reject
         self.t_floor = t_floor
         self.require_evidence = require_evidence
+        self.run_context = run_context or RunContext(usage_purpose="optional_background")
         self._client = client
         self._rubric_cache: tuple[str, float] | None = None
 
@@ -295,17 +315,56 @@ class VideoQualityGrader:
 
         rubric, threshold = self._rubric()
 
+        # Reserve before either the File API upload or generation request.
+        prompt = self._build_prompt(rubric)
+        from app.services.ai_cost_control import (  # noqa: PLC0415
+            PaidCallRequest,
+            UsageMeter,
+            estimate_call_cost_usd,
+            logical_call_id,
+            mark_paid_call_started,
+            mark_paid_call_unknown,
+            release_paid_call,
+            reserve_paid_call,
+            settle_paid_call,
+        )
+
+        estimate = estimate_call_cost_usd(
+            model=self.model,
+            prompt=prompt,
+            max_output_tokens=self.max_tokens,
+            media_mime="video/mp4",
+            media_duration_s=_video_duration_bound(video_path),
+        )
+        receipt = reserve_paid_call(
+            PaidCallRequest(
+                idempotency_key=logical_call_id(
+                    feature="final_video_grader",
+                    model=self.model,
+                    prompt=prompt,
+                    ctx=self.run_context,
+                    attempt=1,
+                ),
+                feature="final_video_grader",
+                model=self.model,
+                estimated_cost_usd=estimate,
+                ctx=self.run_context,
+            )
+        )
+        mark_paid_call_started(receipt)
+
         # 1. Upload via the Gemini File API (poll-until-ACTIVE inside).
         try:
             media = self.client.upload_media(video_path, timeout=self.upload_timeout_s)
-        except Exception as exc:  # noqa: BLE001 — surface ALL upload failures as grader errors
+        except Exception as exc:  # noqa: BLE001 — no generation started
+            release_paid_call(receipt)
             raise VideoGraderError(f"video upload failed: {exc}") from exc
 
         # 2. Invoke the Gemini judge with the video as media.
         try:
             invocation = self.client.invoke(
                 model=self.model,
-                prompt=self._build_prompt(rubric),
+                prompt=prompt,
                 media_uri=media.uri,
                 media_mime=getattr(media, "mime_type", None) or "video/mp4",
                 response_json=True,
@@ -314,8 +373,29 @@ class VideoQualityGrader:
                 # thinking can consume most of it and truncate the object.
                 thinking_budget=0,
             )
-        except Exception as exc:  # noqa: BLE001 — Gemini timeout / transient / terminal
+        except ProviderOutcomeUnknownError as exc:
+            mark_paid_call_unknown(receipt)
+            raise VideoGraderError(f"grader invocation outcome unknown: {exc}") from exc
+        except (TransientError, TerminalError) as exc:
+            release_paid_call(receipt)
             raise VideoGraderError(f"grader invocation failed: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 — unknown SDK boundary failure
+            mark_paid_call_unknown(receipt)
+            raise VideoGraderError(f"grader invocation failed: {exc}") from exc
+
+        settle_paid_call(
+            receipt,
+            UsageMeter(
+                tokens_in=int(getattr(invocation, "tokens_in", 0) or 0),
+                tokens_out=int(getattr(invocation, "tokens_out", 0) or 0),
+                tokens_thoughts=int(getattr(invocation, "tokens_thoughts", 0) or 0),
+                tokens_cached=int(getattr(invocation, "tokens_cached", 0) or 0),
+                tokens_tool=int(getattr(invocation, "tokens_tool", 0) or 0),
+                token_details=getattr(invocation, "token_details", None),
+                provider_request_id=getattr(invocation, "provider_request_id", None),
+                resolved_model=getattr(invocation, "model_used", None) or self.model,
+            ),
+        )
 
         raw_text = getattr(invocation, "raw_text", "") or ""
         tokens_in = int(getattr(invocation, "tokens_in", 0) or 0)

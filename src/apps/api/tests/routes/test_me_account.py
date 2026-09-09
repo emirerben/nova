@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from cryptography.fernet import Fernet
@@ -142,6 +142,17 @@ def test_delete_confirm_rejects_token_minted_for_a_different_user() -> None:
 def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
     user = _user()
     job = _job(user_id=user.id)
+    publication_id = uuid.uuid4()
+    # Snapshot worker committed its claim but has not yet persisted the
+    # deterministic copy path. Account erasure must still schedule that key.
+    publication = MagicMock(
+        id=publication_id,
+        user_id=user.id,
+        job_id=job.id,
+        source_object_path=f"generative-jobs/{job.id}/output.mp4",
+        snapshot_object_path=None,
+        processing_status="snapshotting",
+    )
     token = Fernet(_KEY.encode()).encrypt(str(user.id).encode()).decode()
 
     # execute() call order in confirm_account_deletion:
@@ -149,18 +160,18 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
     #   3. select+lock jobs (for job ids/raw paths/storage manifests)
     #   4-6. lock clips, publications, and existing deletion outboxes
     #   7. update Job.content_plan_item_id -> NULL
-    #   8. select tiktok OAuthToken rows
-    #   9-12. delete publications, tokens, Job, User
+    #   8. select+lock OAuthToken rows
+    #   9-12. delete captured publications, tokens, Jobs, then User
     db = _db(
         [
             _scalars([]),  # 1 — no plans
             MagicMock(),  # 2 — Persona lock
             _scalars([job]),  # 3
             _scalars([]),  # 4 — no JobClip rows
-            _scalars([]),  # 5 — no publications
+            _scalars([publication]),  # 5 — in-flight TikTok snapshot
             _scalars([]),  # 6 — no existing storage outbox
             MagicMock(),  # 7
-            _scalars([]),  # 8 — no tiktok token, nothing to revoke
+            _scalars([]),  # 8 — no OAuth token, nothing to revoke
             MagicMock(),  # 9
             MagicMock(),  # 10
             MagicMock(),  # 11
@@ -183,13 +194,26 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
     assert "personas" in lock_sql[1]
     assert "jobs" in lock_sql[2]
     db.commit.assert_awaited_once()
-    outbox = db.add.call_args.args[0]
+    added_rows = [call.args[0] for call in db.add.call_args_list]
+    outbox = next(row for row in added_rows if getattr(row, "job_id", None) == job.id)
     assert outbox.job_id == job.id
     assert outbox.object_paths["version"] == 2
     assert f"generative-jobs/{job.id}/" in {
         entry["prefix"] for entry in outbox.object_paths["prefixes"]
     }
-    dispatch.assert_awaited_once_with(outbox.id)
+    account_outbox = next(
+        row
+        for row in added_rows
+        if row is not outbox and getattr(row, "object_prefixes", None) == [f"users/{user.id}/"]
+    )
+    assert account_outbox.object_paths == [f"tiktok-publish/{publication_id}.mp4"]
+    assert account_outbox.next_attempt_at is not None
+    assert account_outbox.next_attempt_at > datetime.now(UTC) + timedelta(hours=24)
+    assert dispatch.await_count == 2
+    assert {call.args[0] for call in dispatch.await_args_list} == {
+        outbox.id,
+        account_outbox.id,
+    }
     mock_purge.assert_called_once_with(str(user.id), [str(job.id)], [job.raw_storage_path])
 
 
@@ -198,6 +222,8 @@ def test_delete_confirm_revokes_tiktok_token_before_deleting(monkeypatch) -> Non
     token = Fernet(_KEY.encode()).encrypt(str(user.id).encode()).decode()
 
     tiktok_row = MagicMock()
+    tiktok_row.id = uuid.uuid4()
+    tiktok_row.platform = "tiktok"
     tiktok_row.access_token = b"encrypted-blob"
 
     db = _db(

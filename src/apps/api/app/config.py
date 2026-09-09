@@ -68,8 +68,66 @@ class Settings(BaseSettings):
     # optimizes for editorial judgment. Keep these independently reversible.
     edit_copilot_model: str = "gemini-3.6-flash"
     edit_director_model: str = "gemini-3.1-pro-preview"
-    edit_director_fallback_model: str = "gemini-3.6-flash"
+    # Eval-only comparison model. It is never contacted by the production
+    # Director endpoint, whose explicit review is capped at one paid request.
+    edit_director_eval_comparison_model: str = "gemini-3.6-flash"
     edit_omni_model: str = "gemini-omni-flash-preview"
+
+    # Central paid-AI reservation ledger. The code ships dark so the expand
+    # migration can land before enforcement. Production enables it only after
+    # split-project API keys and alert budgets have been verified.
+    ai_cost_control_enabled: bool = False
+    ai_usage_environment: Literal["production", "development", "lab", "test"] = "development"
+    # Optional operator-approved envelope for a local development manual-QA
+    # session. It fills attribution for background Celery work that cannot
+    # inherit HTTP headers. All three values are required; production ignores
+    # them. Clear approval immediately after the session.
+    ai_manual_qa_test_run_id: str = ""
+    ai_manual_qa_max_cost_usd: float | None = Field(default=None, gt=0, le=2.0)
+    ai_manual_qa_reservation_approved: bool = False
+    # Provider usage is metered in USD even when Cloud Billing alerts are
+    # configured in GBP. These conservative USD limits correspond to the
+    # £22/£2/£2 allocations with exchange-rate headroom; operators may tighten
+    # them without a deploy.
+    ai_production_monthly_budget_usd: float = Field(default=28.0, gt=0, le=1000)
+    ai_development_monthly_budget_usd: float = Field(default=2.5, gt=0, le=1000)
+    ai_omni_lab_monthly_budget_usd: float = Field(default=2.5, gt=0, le=1000)
+    ai_release_canary_monthly_budget_usd: float = Field(default=2.5, gt=0, le=1000)
+    ai_weekly_smoke_max_cost_usd: float = Field(default=0.20, gt=0, le=2.0)
+    # Official Omni video output is $0.10/s (2026-09-04 pricing); reserve a
+    # small input/headroom allowance so the confirmation is conservative.
+    ai_omni_cost_per_second_usd: float = Field(default=0.11, gt=0, le=5.0)
+    # Stable operator-owned budget scope for all browser-confirmed Omni work in
+    # one lab session/month. The browser never chooses this identity or cap.
+    ai_omni_lab_test_run_id: str = ""
+    ai_omni_lab_run_max_cost_usd: float | None = Field(default=None, gt=0, le=2.5)
+    ai_omni_lab_reservation_approved: bool = False
+    ai_reservation_ttl_seconds: int = Field(default=900, ge=60, le=86_400)
+    ai_unknown_reservation_ttl_seconds: int = Field(default=86_400, ge=900, le=604_800)
+    ai_paid_test_attribution_required: bool = True
+    edit_director_daily_paid_limit: int = Field(default=3, ge=0, le=20)
+    edit_director_cache_ttl_days: int = Field(default=90, ge=1, le=365)
+    # Creator-scoped PostgreSQL ClipMeta reuse window. The Redis hot tier stays
+    # capped at 24 hours so account deletion leaves at most a short-lived cache
+    # copy; PostgreSQL rows are removed immediately by the creator FK cascade.
+    media_analysis_cache_ttl_days: int = Field(default=90, ge=1, le=365)
+    # Daily comparison of delayed Standard Usage Cost export with Nova's
+    # settled reservation ledger. Targets and project attribution stay JSON so
+    # both billing accounts can be added without shipping account IDs in git.
+    billing_reconciliation_enabled: bool = False
+    billing_export_targets_json: str = ""
+    billing_project_environment_map_json: str = ""
+    billing_reconciliation_delay_days: int = Field(default=3, ge=1, le=14)
+    billing_reconciliation_threshold_pct: float = Field(default=0.10, gt=0, le=1)
+    billing_reconciliation_pubsub_topic: str = ""
+    storage_retention_enabled: bool = False
+    storage_retention_delete_enabled: bool = False
+    storage_retention_warning_days: int = Field(default=83, ge=1, le=364)
+    storage_retention_inactive_days: int = Field(default=90, ge=2, le=3650)
+    storage_retention_final_days: int = Field(default=365, ge=30, le=3650)
+    storage_retention_superseded_days: int = Field(default=7, ge=1, le=90)
+    storage_retention_report_only_days: int = Field(default=7, ge=1, le=30)
+    storage_retention_scan_jobs: int = Field(default=100, ge=1, le=1000)
 
     # Admin
     admin_api_key: str = ""

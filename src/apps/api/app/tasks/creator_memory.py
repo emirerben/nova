@@ -84,6 +84,7 @@ def _extract_typed_direction(
     user_id: uuid.UUID,
     message: str,
     candidate: str,  # noqa: ANN001
+    request_id: str,
 ) -> dict | None:
     """Use the model only where current state or soft evidence needs judgment."""
 
@@ -105,6 +106,7 @@ def _extract_typed_direction(
         return None
 
     from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import RunContext  # noqa: PLC0415
     from app.agents.creator_memory_extractor import (  # noqa: PLC0415
         CreatorMemoryExtractorAgent,
         CreatorMemoryExtractorInput,
@@ -135,7 +137,18 @@ def _extract_typed_direction(
         candidate_hint=candidate,
         current_memory=current_memory,
     )
-    return CreatorMemoryExtractorAgent(default_client()).run(input_value).model_dump(mode="json")
+    return (
+        CreatorMemoryExtractorAgent(default_client())
+        .run(
+            input_value,
+            ctx=RunContext(
+                creator_id=str(user_id),
+                usage_purpose="optional_background",
+                request_id=request_id,
+            ),
+        )
+        .model_dump(mode="json")
+    )
 
 
 def _claim_rows(session, *, limit: int = _CLAIM_BATCH) -> list[str]:  # noqa: ANN001
@@ -381,6 +394,7 @@ def process_outbox(outbox_id: str) -> str:
                     user_id=row.user_id,
                     message=message,
                     candidate=candidate,
+                    request_id=f"creator-memory:{row.id}",
                 )
             except Exception:  # noqa: BLE001 - explicit rules have a safe local path
                 if candidate != "explicit" or requires_stateful_extraction(message):
