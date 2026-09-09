@@ -493,6 +493,93 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(Self.object(fake.lastRequest?.textElements?.first)?["text"], .string("Newer local edit"))
     }
 
+    func testSaveKeepsInFlightRevertDirtyAgainstAcknowledgedServerValue() async {
+        let threadID = UUID()
+        let textID = "text-1"
+        let snapshot: [String: JSONValue] = [
+            "editor_payload": .object([
+                "base_generation": .string("g1"),
+                "sections": .object([
+                    "text_elements": .array([.object([
+                        "id": .string(textID), "text": .string("Original"),
+                        "start_s": .number(0), "end_s": .number(2),
+                    ])]),
+                ]),
+            ]),
+        ]
+        let response = EditorCommitResponse(
+            ok: true, generation: "g2",
+            sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil
+        )
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["text_elements": .bool(true)])],
+            commitResponse: response,
+            suspendNextCommit: true
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        let loadedTextID = try! XCTUnwrap(session.document.textElements.first?.id)
+        session.updateTextContent(id: loadedTextID, content: "Submitted")
+
+        let saveTask = Task { await session.save() }
+        for _ in 0..<100 where !fake.commitIsSuspended {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        session.updateTextContent(id: loadedTextID, content: "Original")
+        fake.resumeCommit()
+        await saveTask.value
+
+        XCTAssertEqual(session.document.textElements.first?.text, "Original")
+        XCTAssertTrue(session.isDirty(.text))
+        XCTAssertTrue(session.hasUnsavedChanges)
+
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 2)
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
+        XCTAssertEqual(Self.object(fake.lastRequest?.textElements?.first)?["text"], .string("Original"))
+    }
+
+    func testPersistedCommitWithFailedEnqueueCanRetryRender() async {
+        let threadID = UUID()
+        let textID = "text-1"
+        let snapshot: [String: JSONValue] = [
+            "editor_payload": .object([
+                "base_generation": .string("g1"),
+                "sections": .object([
+                    "text_elements": .array([.object([
+                        "id": .string(textID), "text": .string("Original"),
+                        "start_s": .number(0), "end_s": .number(2),
+                    ])]),
+                ]),
+            ]),
+        ]
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["text_elements": .bool(true)])],
+            commitResponse: EditorCommitResponse(ok: false, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil)
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        let loadedTextID = try! XCTUnwrap(session.document.textElements.first?.id)
+        session.updateTextContent(id: loadedTextID, content: "Submitted")
+
+        await session.save()
+
+        XCTAssertEqual(session.saveState, .renderRetryNeeded("Your edit is saved. Its preview render did not start, so you can retry it safely."))
+        XCTAssertFalse(session.hasUnsavedChanges)
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 3, revisionHash: "revision-3", expectedDuration: nil)
+
+        await session.retryRender()
+
+        XCTAssertEqual(fake.commitCount, 2)
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "g2")
+        XCTAssertEqual(Self.object(fake.lastRequest?.textElements?.first)?["text"], .string("Submitted"))
+        XCTAssertEqual(session.saveState, .previewPending)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
     func testSaveConflictPreservesLocalDocumentSelectionAndUndo() async {
         let threadID = UUID()
         let clipID = UUID()
@@ -719,7 +806,7 @@ final class NativeEditorSessionTests: XCTestCase {
         session.setMusicWindow(startS: 2, alignment: "resync_beats"); session.setMusicLevel(0.8); session.setOriginalMixLevel(0.6)
         XCTAssertTrue(session.isDirty(.captions)); XCTAssertTrue(session.isDirty(.captionMeta)); XCTAssertTrue(session.isDirty(.music)); XCTAssertTrue(session.isDirty(.mix))
         await session.save()
-        XCTAssertEqual(fake.lastRequest?.captionCues?.count, 1); XCTAssertEqual(fake.lastRequest?.captionMeta?["highlight_color"], .string("#0f0")); XCTAssertEqual(fake.lastRequest?.musicWindow?.startS, 2); XCTAssertEqual(fake.lastRequest?.musicWindow?.alignment, .resyncBeats); XCTAssertEqual(fake.lastRequest?.mix?["music_level"], .number(0.8)); XCTAssertEqual(fake.lastRequest?.mix?["original_level"], .number(0.6)); XCTAssertEqual(session.saveState, .failed("The edit was saved, but its new preview could not be rendered."))
+        XCTAssertEqual(fake.lastRequest?.captionCues?.count, 1); XCTAssertEqual(fake.lastRequest?.captionMeta?["highlight_color"], .string("#0f0")); XCTAssertEqual(fake.lastRequest?.musicWindow?.startS, 2); XCTAssertEqual(fake.lastRequest?.musicWindow?.alignment, .resyncBeats); XCTAssertEqual(fake.lastRequest?.mix?["music_level"], .number(0.8)); XCTAssertEqual(fake.lastRequest?.mix?["original_level"], .number(0.6)); XCTAssertEqual(session.saveState, .renderRetryNeeded("Your edit is saved. Its preview render did not start, so you can retry it safely."))
     }
 
     func testCapabilityReasonIsExposedAndDisablesTypedMutation() {
@@ -812,7 +899,7 @@ private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     let openReceipt: OpenInEditorResponse?
     let authoritativeVariant: [String: JSONValue]?
     let editorVariantError: APIError?
-    let commitResponse: EditorCommitResponse?
+    var commitResponse: EditorCommitResponse?
     let commitError: APIError?
     let refreshedThread: CreationThread?
     private(set) var commitIsSuspended = false

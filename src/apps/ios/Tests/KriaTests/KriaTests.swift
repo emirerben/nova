@@ -257,6 +257,28 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(capabilities.formats.map(\.maxClips), [20, 20])
     }
 
+    func testSubmitTurnUsesCallerOwnedIdempotencyIdentity() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/creation-threads/\(PreviewFixtures.projectID.uuidString)/turns")
+            let body = Self.bodyData(request)
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(payload["client_event_id"] as? String, "stable-turn-identity")
+            XCTAssertEqual(payload["message"] as? String, "Try this")
+            return (202, Data(#"{"turn_id":"turn-1","thread_revision":4,"status":"pending"}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+
+        let accepted = try await api.submitTurn(
+            threadID: PreviewFixtures.projectID,
+            message: "Try this",
+            expectedRevision: 3,
+            clientEventID: "stable-turn-identity"
+        )
+
+        XCTAssertEqual(accepted.threadRevision, 4)
+    }
+
     func testCreationThreadPreservesURLFreeListVariants() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

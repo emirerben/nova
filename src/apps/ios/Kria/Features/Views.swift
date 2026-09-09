@@ -424,7 +424,7 @@ struct CreationThreadView: View {
                     TextField("Tell Kria what to emphasize", text: $prompt, axis: .vertical).textFieldStyle(.roundedBorder).font(KriaFont.body(16))
                     Button("Send") { Task { await send() } }.buttonStyle(KriaPrimaryButtonStyle()).disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                 }
-                FootagePickerView(projectID: project.id)
+                FootagePickerView(projectID: project.id, uploads: model.uploads)
             }
             .padding(20)
             .navigationTitle("Create with Kria")

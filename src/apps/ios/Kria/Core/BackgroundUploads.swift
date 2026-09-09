@@ -56,10 +56,12 @@ struct UploadRecoveryPolicy: Sendable {
     @Published private(set) var records: [UploadRecoveryRecord] = []
     @Published private(set) var progress: [UUID: Double] = [:]
     @Published private(set) var lastError: String?
+    @Published private(set) var attachedThreads: [UUID: CreationThread] = [:]
 
     private let api: KriaAPIClient
     private let defaultsKey = "kria.background-upload-recovery.v1"
     private var backgroundSession: URLSession!
+    private var attachmentTasks: [UUID: (token: UUID, task: Task<Void, Never>)] = [:]
 
     init(api: KriaAPIClient) {
         self.api = api
@@ -72,7 +74,8 @@ struct UploadRecoveryPolicy: Sendable {
         backgroundSession = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }
 
-    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose) async {
+    @discardableResult
+    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose) async -> Bool {
         do {
             try UploadCoordinator().validate(source: source, purpose: purpose, consentGiven: consentGiven)
             let preparedURL = try await prepare(fileURL: fileURL, projectID: projectID, purpose: purpose)
@@ -101,7 +104,11 @@ struct UploadRecoveryPolicy: Sendable {
                 clientUploadID: clientUploadID,
                 retryCount: 0
             )
-        } catch { lastError = error.localizedDescription }
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
     }
 
     func cancel(recordID: UUID) async {
@@ -225,6 +232,22 @@ struct UploadRecoveryPolicy: Sendable {
     }
 
     private func attach(_ record: UploadRecoveryRecord) async {
+        let projectID = record.projectID
+        let predecessor = attachmentTasks[projectID]?.task
+        let token = UUID()
+        let task = Task { @MainActor [weak self] in
+            await predecessor?.value
+            guard let self else { return }
+            await self.performAttachment(record)
+        }
+        attachmentTasks[projectID] = (token, task)
+        await task.value
+        if attachmentTasks[projectID]?.token == token {
+            attachmentTasks.removeValue(forKey: projectID)
+        }
+    }
+
+    private func performAttachment(_ record: UploadRecoveryRecord) async {
         guard
             let mediaID = record.mediaID,
             let gcsPath = record.gcsPath,
@@ -237,7 +260,7 @@ struct UploadRecoveryPolicy: Sendable {
         for _ in 0..<2 {
             do {
                 let current = try await api.project(threadID: record.projectID)
-                _ = try await api.attachProjectMedia(
+                let attachedThread = try await api.attachProjectMedia(
                     threadID: record.projectID,
                     mediaID: mediaID,
                     gcsPath: gcsPath,
@@ -246,6 +269,9 @@ struct UploadRecoveryPolicy: Sendable {
                     expectedRevision: current.revision,
                     clientEventID: "ios-attach-\(record.id.uuidString)"
                 )
+                // Publish the authoritative media_count before removing the
+                // pending record so clip capacity never briefly reopens.
+                attachedThreads[record.projectID] = attachedThread
                 remove(record.id, deleteLocalFile: true)
                 return
             } catch {

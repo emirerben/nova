@@ -89,6 +89,16 @@ struct NativeEditorSaveBanner: View {
             }
         case .failed(let message):
             banner(title: "Couldn’t save this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
+        case .renderRetryNeeded(let message):
+            VStack(spacing: 0) {
+                banner(title: "Saved — render didn’t start", detail: message, systemImage: "arrow.clockwise", tint: .orange)
+                Button("Retry render") { Task { await session.retryRender() } }
+                    .font(KriaFont.body(12).weight(.semibold))
+                    .foregroundStyle(KriaColor.ink)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(KriaColor.softZinc)
+                    .accessibilityIdentifier("native-editor-retry-render")
+            }
         case .loadFailed(let message):
             banner(title: "Couldn’t load this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
         case .previewFailed(let message):

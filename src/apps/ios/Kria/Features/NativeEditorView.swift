@@ -147,7 +147,7 @@ struct NativeEditorView: View {
         await session.save()
         guard !session.hasUnsavedChanges else { return }
         switch session.saveState {
-        case .conflict, .loadFailed, .failed:
+        case .conflict, .loadFailed, .failed, .renderRetryNeeded:
             return
         default:
             onBack()

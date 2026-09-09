@@ -281,6 +281,11 @@ def test_mobile_openapi_translates_nullable_bounds_and_constants() -> None:
         == "applyCreationAction"
     )
     assert (
+        document["paths"]["/creation-threads/capabilities"]["get"]["operationId"]
+        == "getCreationCapabilities"
+    )
+    assert "CreationCapabilitiesOut" in document["components"]["schemas"]
+    assert (
         document["paths"]["/me/jobs/{job_id}/open-in-editor"]["post"]["operationId"]
         == "openLibraryJobInEditor"
     )

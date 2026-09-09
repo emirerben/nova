@@ -8,6 +8,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
     case saving
     case saved
     case previewPending
+    case renderRetryNeeded(String)
     case conflict
     case loadFailed(String)
     case previewFailed(String)
@@ -105,6 +106,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var pendingPreviewGeneration: String?
     private var changedSections: Set<EditorSection> = []
     private var explicitlyDirtySections: Set<EditorSection> = []
+    private var pendingRenderRetrySections: Set<EditorSection> = []
     private var clipIDsBySlot: [String: UUID] = [:]
     private var compatibilityClipMetadata: [UUID: (sourceClipIndex: Int?, slotID: String?)] = [:]
     private var compatibilitySnapshot: [String: JSONValue] = [:]
@@ -395,7 +397,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             else { authoritativeVariant = nil }
             draft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
             configureCapabilities(from: authoritativeVariant)
-            cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
+            cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
             itemID = snapshot.itemID; variantKey = requestedVariantKey
             durationSourcesInvalidated = false
             setAuthoritativeDuration(Self.number(authoritativeVariant?["duration_s"]))
@@ -525,6 +527,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             redoStack.removeAll()
             changedSections.removeAll()
             explicitlyDirtySections.removeAll()
+            pendingRenderRetrySections.removeAll()
             hasUnsavedChanges = false
             saveState = .idle
             itemID = resolvedPlanItemID
@@ -1071,13 +1074,14 @@ enum NativeEditorLoadState: Equatable, Sendable {
         isSaving = true; saveState = .saving
         defer { isSaving = false }
         let submittedDocument = document
+        let submittedSections = changedSections
         let submittedUndoCount = undoStack.count
         let snapshot = document.encodeSnapshot()
         let payload = Self.object(snapshot["editor_payload"]); let sections = Self.object(payload?["sections"])
         let request = commitRequest(sections: sections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
         do {
             let response = try await api.editorCommit(itemID: itemID, variantID: variantKey, request: request)
-            let acknowledged = acknowledgedSections(response.sections)
+            let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
             let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
             let hasPostSubmitEdits = document != submittedDocument
             document.revision.number = response.revisionNumber ?? document.revision.number
@@ -1099,8 +1103,14 @@ enum NativeEditorLoadState: Equatable, Sendable {
             } else {
                 undoStack.removeAll(); redoStack.removeAll()
             }
-            saveState = response.ok ? .previewPending : .failed("The edit was saved, but its new preview could not be rendered.")
-            if response.ok { startPreviewRefresh(generation: response.generation) }
+            if response.ok {
+                pendingRenderRetrySections.removeAll()
+                saveState = .previewPending
+                startPreviewRefresh(generation: response.generation)
+            } else {
+                pendingRenderRetrySections = acknowledged
+                saveState = .renderRetryNeeded("Your edit is saved. Its preview render did not start, so you can retry it safely.")
+            }
         } catch APIError.conflict { saveState = .conflict }
         catch { saveState = .failed(error.localizedDescription) }
     }
@@ -1556,7 +1566,10 @@ enum NativeEditorLoadState: Equatable, Sendable {
         )
     }
 
-    private func acknowledgedSections(_ sections: EditorCommitSections) -> Set<EditorSection> {
+    private func acknowledgedSections(
+        _ sections: EditorCommitSections,
+        submittedSections: Set<EditorSection>
+    ) -> Set<EditorSection> {
         var result = Set<EditorSection>()
         if sections.timeline { result.insert(.timeline) }; if sections.textElements { result.insert(.text) }
         if sections.captionCues { result.insert(.captions) }; if sections.captionMeta { result.insert(.captionMeta) }
@@ -1566,7 +1579,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         if sections.mediaOverlays { result.insert(.mediaOverlays) }; if sections.visualBlocks { result.insert(.visualBlocks) }
         if sections.motionScenes { result.insert(.motionScenes) }; if sections.cameraEffects { result.insert(.cameraEffects) }
         if sections.carouselMoment { result.insert(.carouselMoment) }; if sections.title { result.insert(.title) }
-        return result.intersection(changedSections)
+        return result.intersection(submittedSections)
     }
 
     private func acknowledge(_ sections: Set<EditorSection>, generation: String, submittedDocument: EditorDocument) {
@@ -1783,6 +1796,13 @@ enum NativeEditorLoadState: Equatable, Sendable {
         startPreviewRefresh(generation: generation)
     }
 
+    func retryRender() async {
+        guard !isSaving, !pendingRenderRetrySections.isEmpty else { return }
+        explicitlyDirtySections.formUnion(pendingRenderRetrySections)
+        refreshDirtyState()
+        await save()
+    }
+
     /// The renderer may quantize requested durations to a 0.5-second or beat
     /// grid. Once its generation is ready, make those authoritative slots the
     /// new clean baseline so the handles and duration match the saved video.
@@ -1812,6 +1832,8 @@ enum NativeEditorLoadState: Equatable, Sendable {
         undoStack.removeAll()
         redoStack.removeAll()
         changedSections.removeAll()
+        explicitlyDirtySections.removeAll()
+        pendingRenderRetrySections.removeAll()
         hasUnsavedChanges = false
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
         configureCapabilities(from: variant)

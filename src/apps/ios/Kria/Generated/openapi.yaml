@@ -524,6 +524,99 @@
         "title": "CreateBody",
         "type": "object"
       },
+      "CreationCapabilitiesOut": {
+        "properties": {
+          "formats": {
+            "items": {
+              "$ref": "#/components/schemas/CreationFormatCapabilityOut"
+            },
+            "title": "Formats",
+            "type": "array"
+          },
+          "media": {
+            "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
+          }
+        },
+        "required": [
+          "formats",
+          "media"
+        ],
+        "title": "CreationCapabilitiesOut",
+        "type": "object"
+      },
+      "CreationClipCapabilitiesOut": {
+        "properties": {
+          "content_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Content Types",
+            "type": "array"
+          },
+          "max": {
+            "minimum": 1,
+            "title": "Max",
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "minimum": 1,
+            "title": "Max File Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max",
+          "max_file_bytes",
+          "content_types"
+        ],
+        "title": "CreationClipCapabilitiesOut",
+        "type": "object"
+      },
+      "CreationFormatCapabilityOut": {
+        "properties": {
+          "edit_format": {
+            "title": "Edit Format",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "max_clips": {
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Max Clips",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "edit_format",
+          "max_clips"
+        ],
+        "title": "CreationFormatCapabilityOut",
+        "type": "object"
+      },
+      "CreationMediaCapabilitiesOut": {
+        "properties": {
+          "clips": {
+            "$ref": "#/components/schemas/CreationClipCapabilitiesOut"
+          },
+          "visuals": {
+            "$ref": "#/components/schemas/CreationVisualCapabilitiesOut"
+          },
+          "voiceover": {
+            "$ref": "#/components/schemas/CreationVoiceoverCapabilitiesOut"
+          }
+        },
+        "required": [
+          "clips",
+          "visuals",
+          "voiceover"
+        ],
+        "title": "CreationMediaCapabilitiesOut",
+        "type": "object"
+      },
       "CreationThreadOut": {
         "properties": {
           "active_creator_agent_session_id": {
@@ -644,6 +737,80 @@
           "updated_at"
         ],
         "title": "CreationThreadOut",
+        "type": "object"
+      },
+      "CreationVisualCapabilitiesOut": {
+        "properties": {
+          "content_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Content Types",
+            "type": "array"
+          },
+          "max": {
+            "minimum": 1,
+            "title": "Max",
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "$ref": "#/components/schemas/CreationVisualFileSizeCapabilitiesOut"
+          }
+        },
+        "required": [
+          "max",
+          "max_file_bytes",
+          "content_types"
+        ],
+        "title": "CreationVisualCapabilitiesOut",
+        "type": "object"
+      },
+      "CreationVisualFileSizeCapabilitiesOut": {
+        "properties": {
+          "image": {
+            "minimum": 1,
+            "title": "Image",
+            "type": "integer"
+          },
+          "video": {
+            "minimum": 1,
+            "title": "Video",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "image",
+          "video"
+        ],
+        "title": "CreationVisualFileSizeCapabilitiesOut",
+        "type": "object"
+      },
+      "CreationVoiceoverCapabilitiesOut": {
+        "properties": {
+          "content_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Content Types",
+            "type": "array"
+          },
+          "max": {
+            "minimum": 1,
+            "title": "Max",
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "minimum": 1,
+            "title": "Max File Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max",
+          "max_file_bytes",
+          "content_types"
+        ],
+        "title": "CreationVoiceoverCapabilitiesOut",
         "type": "object"
       },
       "Crop": {
@@ -3452,6 +3619,16 @@
             "title": "In S",
             "type": "number"
           },
+          "layout": {
+            "default": null,
+            "enum": [
+              "fullscreen",
+              "supporting_card"
+            ],
+            "nullable": true,
+            "title": "Layout",
+            "type": "string"
+          },
           "look_adjustments": {
             "$ref": "#/components/schemas/LookAdjustments",
             "default": null,
@@ -4067,6 +4244,37 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CreationThreadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/capabilities": {
+      "get": {
+        "operationId": "getCreationCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationCapabilitiesOut"
                 }
               }
             },

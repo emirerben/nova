@@ -6,31 +6,38 @@ import CoreTransferable
 struct FootagePickerView: View {
     let projectID: UUID
     let maximumClipCount: Int
-    @EnvironmentObject private var model: AppModel
+    let attachedClipCount: Int
+    @ObservedObject private var uploads: BackgroundUploadCoordinator
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showingPhotosPicker = false
     @State private var showingFileImporter = false
     @State private var showingCloudConsent = false
     @State private var consentedSource: UploadSource = .photos
-    // Snapshot the already-attached/pending count when the picker opens. New
-    // selections are tracked by reservedClipCount so upload-record publishes do
-    // not count the same clip twice while this sheet remains presented.
-    @State private var baselineClipCount: Int
     @State private var reservedClipCount = 0
     @State private var selectionMessage: String?
 
-    init(projectID: UUID, maximumClipCount: Int = 10, existingClipCount: Int = 0) {
+    init(
+        projectID: UUID,
+        uploads: BackgroundUploadCoordinator,
+        maximumClipCount: Int = 10,
+        attachedClipCount: Int = 0
+    ) {
         self.projectID = projectID
+        self.uploads = uploads
         self.maximumClipCount = max(0, maximumClipCount)
-        _baselineClipCount = State(initialValue: max(0, existingClipCount))
+        self.attachedClipCount = max(0, attachedClipCount)
     }
 
     private var selectionCapacity: ClipSelectionCapacity {
         ClipSelectionCapacity(
             maximum: maximumClipCount,
-            existing: baselineClipCount,
+            existing: attachedClipCount + pendingUploadCount,
             reserved: reservedClipCount
         )
+    }
+
+    private var pendingUploadCount: Int {
+        uploads.records.filter { $0.projectID == projectID }.count
     }
 
     var body: some View {
@@ -74,22 +81,22 @@ struct FootagePickerView: View {
                     .font(KriaFont.body(12))
                     .foregroundStyle(KriaColor.zinc)
             }
-            ForEach(model.uploads.records.filter { $0.projectID == projectID }) { record in
+            ForEach(uploads.records.filter { $0.projectID == projectID }) { record in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text(record.filename).lineLimit(1)
                         Spacer()
                         if record.uploadCompleted == true {
-                            Button("Retry attach") { Task { await model.uploads.retryAttachment(recordID: record.id) } }
+                            Button("Retry attach") { Task { await uploads.retryAttachment(recordID: record.id) } }
                         } else {
-                            Button("Cancel") { Task { await model.uploads.cancel(recordID: record.id) } }
+                            Button("Cancel") { Task { await uploads.cancel(recordID: record.id) } }
                         }
                     }
-                    ProgressView(value: model.uploads.progress[record.id] ?? 0).tint(KriaColor.limeText)
+                    ProgressView(value: uploads.progress[record.id] ?? 0).tint(KriaColor.limeText)
                     if let deadline = record.retentionExpiresAt { Text("Temporary source removed by \(deadline.formatted(date: .abbreviated, time: .shortened)).").font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc) }
                 }
             }
-            if let error = model.uploads.lastError { Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
+            if let error = uploads.lastError { Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
         }.accessibilityElement(children: .contain)
     }
     private func importPhotoItems(_ items: [PhotosPickerItem]) async {
@@ -99,8 +106,14 @@ struct FootagePickerView: View {
         }
         reservedClipCount += acceptedCount
         for item in items.prefix(acceptedCount) {
-            guard let media = try? await item.loadTransferable(type: ImportedMedia.self) else { continue }
-            await model.uploads.enqueue(fileURL: media.url, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource)
+            guard let media = try? await item.loadTransferable(type: ImportedMedia.self) else {
+                reservedClipCount -= 1
+                continue
+            }
+            _ = await uploads.enqueue(fileURL: media.url, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource)
+            // enqueue publishes a live record before returning on success; on
+            // failure the reservation is free for another selection.
+            reservedClipCount -= 1
         }
         photoItems = []
     }
@@ -113,7 +126,8 @@ struct FootagePickerView: View {
         reservedClipCount += acceptedCount
         Task {
             for url in urls.prefix(acceptedCount) {
-                await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource)
+                _ = await uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource)
+                reservedClipCount -= 1
             }
         }
     }

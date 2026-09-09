@@ -44,6 +44,8 @@ final class KriaUITests: XCTestCase {
         XCTAssertTrue(prompt.waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Attach footage"].exists)
+        XCTAssertFalse(app.buttons["Attach footage"].isEnabled)
         XCTAssertTrue(app.staticTexts["Montage"].waitForExistence(timeout: 3))
         // The offline UI fixture cannot fetch server capabilities, so the
         // workspace must stay on its conservative Montage-only fallback.

@@ -86,6 +86,7 @@ protocol KriaAPIClient: Sendable {
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession
     func revokeMobileSession(_ refreshToken: String) async throws
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -109,6 +110,11 @@ protocol KriaAPIClient: Sendable {
 /// editor saves fail explicitly when the production commit endpoint is not
 /// implemented by a substitute.
 extension KriaAPIClient {
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
+        _ = clientEventID
+        return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision)
+    }
+
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
 
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
@@ -566,6 +572,7 @@ struct KriaAPI: KriaAPIClient {
     /// Compile-time sentinels: removing any critical native route from the
     /// server-owned mobile OpenAPI subset must break the iOS build.
     private static let checkedEditorOperationIDs = [
+        Operations.getCreationCapabilities.id,
         Operations.applyCreationAction.id,
         Operations.openLibraryJobInEditor.id,
         Operations.getGenerativeJobStatus.id,
@@ -587,7 +594,12 @@ struct KriaAPI: KriaAPIClient {
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession { try await request(path: "auth/mobile/exchange", method: "POST", bodyData: try JSONEncoder().encode(["id_token": credential.token, "provider": provider, "nonce": credential.nonce]), decode: MobileSession.self) }
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession { try await request(path: "auth/mobile/refresh", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: MobileSession.self) }
     func revokeMobileSession(_ refreshToken: String) async throws { _ = try await request(path: "auth/mobile/revoke", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: RevokeResponse.self) }
-    func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted { try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: UUID().uuidString, expectedThreadRevision: expectedRevision)), decode: TurnAccepted.self) }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: UUID().uuidString)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision)), decode: TurnAccepted.self)
+    }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
         try await request(
             path: "creation-threads/\(threadID.uuidString)/actions",

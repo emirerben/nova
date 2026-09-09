@@ -810,6 +810,7 @@ struct RecoveryCard: View {
 struct ChatComposer: View {
     @Binding var text: String
     let isSending: Bool
+    let canAttach: Bool
     let attach: () -> Void
     let send: () -> Void
 
@@ -837,7 +838,9 @@ struct ChatComposer: View {
                             .foregroundStyle(KriaColor.ink)
                             .frame(width: 40, height: 40)
                     }
+                    .disabled(!canAttach)
                     .accessibilityLabel("Attach footage")
+                    .accessibilityHint(canAttach ? "" : "Choose a video format first")
 
                     Spacer()
 

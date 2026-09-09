@@ -121,6 +121,96 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertEqual(CreationFormat.montage.fallbackMaximumClipCount, 10)
     }
 
+    func testAttachedClipCountIgnoresVoiceoverAndVisualMedia() {
+        let state: [String: JSONValue] = [
+            "media_count": .number(3),
+            "media": .array([
+                .object(["kind": .string("video")]),
+                .object(["kind": .string("audio")]),
+                .object(["kind": .string("image")]),
+            ]),
+        ]
+
+        XCTAssertEqual(attachedVideoClipCount(in: state), 1)
+        XCTAssertEqual(attachedVideoClipCount(in: ["media_count": .number(2)]), 2)
+    }
+
+    func testAmbiguousTurnRetryReusesIdentityUntilMessageChanges() {
+        let first = ChatTurnSubmissionIdentity(
+            message: "Keep this concise",
+            clientEventID: "turn-1",
+            expectedRevision: 7
+        )
+
+        XCTAssertEqual(
+            ChatTurnSubmissionIdentity.reusing(
+                first,
+                for: "  Keep   this concise ",
+                expectedRevision: 9
+            ),
+            first
+        )
+        XCTAssertEqual(
+            ChatTurnSubmissionIdentity.reusing(
+                first,
+                for: "  Keep   this concise ",
+                expectedRevision: 9
+            ).expectedRevision,
+            7
+        )
+        XCTAssertNotEqual(
+            ChatTurnSubmissionIdentity.reusing(
+                first,
+                for: "Use a warmer opening",
+                expectedRevision: 9
+            ).clientEventID,
+            first.clientEventID
+        )
+        XCTAssertEqual(
+            ChatTurnSubmissionIdentity.reusing(
+                first,
+                for: "Use a warmer opening",
+                expectedRevision: 9
+            ).expectedRevision,
+            9
+        )
+    }
+
+    func testDefinitiveConflictDoesNotReuseRetryEnvelope() {
+        let first = ChatTurnSubmissionIdentity(
+            message: "Keep this concise",
+            clientEventID: "turn-1",
+            expectedRevision: 7
+        )
+
+        let replacement = ChatTurnSubmissionIdentity.reusing(
+            nil,
+            for: first.message,
+            expectedRevision: 9
+        )
+
+        XCTAssertNotEqual(replacement.clientEventID, first.clientEventID)
+        XCTAssertEqual(replacement.expectedRevision, 9)
+    }
+
+    func testFormatChangeRefusesAnOverCapacityTalkingCut() {
+        XCTAssertNil(
+            formatClipCapacityError(
+                format: .talkingToCamera,
+                clipLimit: 1,
+                occupiedClipCount: 1
+            )
+        )
+        XCTAssertEqual(
+            formatClipCapacityError(
+                format: .talkingToCamera,
+                clipLimit: 1,
+                occupiedClipCount: 2
+            ),
+            "Talking supports 1 clip. Keep your current format or remove extra footage first."
+        )
+    }
+
     private func event(id: String, sequence: Int, content: String? = nil) -> ThreadEvent {
         ThreadEvent(
             id: id,

@@ -119,6 +119,7 @@ private struct CreationWorkspaceView: View {
     @State private var prompt = ""
     @State private var events: [ThreadEvent] = []
     @State private var pendingMessages: [PendingChatMessage] = []
+    @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var approval: ApprovalSnapshot?
     @State private var selectedFormat: CreationFormat?
     @State private var availableFormats: [CreationFormat] = [.montage]
@@ -150,7 +151,9 @@ private struct CreationWorkspaceView: View {
         events.compactMap(ChatTranscriptMessage.from(event:)) + pendingMessages.map(\.transcriptMessage)
     }
 
-    private var attachedMediaCount: Int { Int(threadState["media_count"]?.numberValue ?? 0) }
+    private var attachedClipCount: Int {
+        attachedVideoClipCount(in: threadState)
+    }
 
     private var selectedMaximumClipCount: Int {
         guard let selectedFormat else { return 10 }
@@ -231,7 +234,8 @@ private struct CreationWorkspaceView: View {
             ChatComposer(
                 text: $prompt,
                 isSending: isSending,
-                attach: { showsAttachments = true },
+                canAttach: selectedFormat != nil,
+                attach: { if selectedFormat != nil { showsAttachments = true } },
                 send: { Task { await send() } }
             )
         }
@@ -239,11 +243,15 @@ private struct CreationWorkspaceView: View {
             await refreshCapabilities()
             await pollUntilDismissed()
         }
+        .onReceive(model.uploads.$attachedThreads) { threads in
+            guard let thread = threads[project.id] else { return }
+            apply(thread)
+        }
         .sheet(isPresented: $showsAttachments) {
             AttachmentSheet(
                 projectID: project.id,
                 maximumClipCount: selectedMaximumClipCount,
-                existingClipCount: attachedMediaCount + pendingUploadCount
+                attachedClipCount: attachedClipCount
             )
                 .environmentObject(model)
                 .presentationDetents([.medium, .large])
@@ -268,13 +276,13 @@ private struct CreationWorkspaceView: View {
             if let selectedFormat {
                 FootageStage(
                     format: selectedFormat,
-                    mediaCount: attachedMediaCount,
+                    mediaCount: attachedClipCount,
                     maximumClipCount: selectedMaximumClipCount,
                     uploads: model.uploads.records.filter { $0.projectID == project.id },
                     progress: model.uploads.progress,
                     addFootage: { showsAttachments = true },
                     continueWithFootage: {
-                        Task { await send(message: "Continue with \(attachedMediaCount) clips") }
+                        Task { await send(message: "Continue with \(attachedClipCount) clips") }
                     },
                     changeFormat: { isChoosingFormat = true }
                 )
@@ -312,16 +320,35 @@ private struct CreationWorkspaceView: View {
         guard !isSending else { return }
         let message = (submittedMessage ?? prompt).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
+        let submission = ChatTurnSubmissionIdentity.reusing(
+            pendingTurnSubmission,
+            for: message,
+            expectedRevision: threadRevision
+        )
+        pendingTurnSubmission = submission
         isSending = true
         errorMessage = nil
         defer { isSending = false }
         let accepted: TurnAccepted
         do {
-            accepted = try await model.api.submitTurn(threadID: project.id, message: message, expectedRevision: threadRevision)
+            accepted = try await model.api.submitTurn(
+                threadID: project.id,
+                message: message,
+                expectedRevision: submission.expectedRevision,
+                clientEventID: submission.clientEventID
+            )
+        } catch APIError.conflict {
+            pendingTurnSubmission = nil
+            if let thread = try? await model.api.project(threadID: project.id) {
+                apply(thread)
+            }
+            errorMessage = "This conversation changed while you were sending. Review it and try again."
+            return
         } catch {
             errorMessage = "Your message wasn’t sent. \(error.localizedDescription)"
             return
         }
+        pendingTurnSubmission = nil
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         pendingMessages.append(PendingChatMessage(content: message))
         prompt = ""
@@ -338,6 +365,16 @@ private struct CreationWorkspaceView: View {
             isActing = true
             errorMessage = nil
             defer { isActing = false }
+            let clipLimit = maximumClipsByFormat[format] ?? format.fallbackMaximumClipCount
+            let occupiedClipCount = attachedClipCount + pendingUploadCount
+            if let capacityError = formatClipCapacityError(
+                format: format,
+                clipLimit: clipLimit,
+                occupiedClipCount: occupiedClipCount
+            ) {
+                errorMessage = capacityError
+                return
+            }
             let thread: CreationThread
             do {
                 thread = try await model.api.applyCreationAction(
@@ -492,6 +529,11 @@ private struct CreationWorkspaceView: View {
             return event.content?.normalizedChatText
         })
         pendingMessages.removeAll { durable.contains($0.content.normalizedChatText) }
+        if let submission = pendingTurnSubmission,
+           durable.contains(submission.message.normalizedChatText) {
+            pendingTurnSubmission = nil
+            if prompt.normalizedChatText == submission.message.normalizedChatText { prompt = "" }
+        }
     }
 
     private func synchronizeApproval() async throws {
@@ -705,7 +747,8 @@ enum CreationFormat: String, CaseIterable, Identifiable {
 private struct AttachmentSheet: View {
     let projectID: UUID
     let maximumClipCount: Int
-    let existingClipCount: Int
+    let attachedClipCount: Int
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -713,8 +756,9 @@ private struct AttachmentSheet: View {
             ScrollView {
                 FootagePickerView(
                     projectID: projectID,
+                    uploads: model.uploads,
                     maximumClipCount: maximumClipCount,
-                    existingClipCount: existingClipCount
+                    attachedClipCount: attachedClipCount
                 )
                 .padding(20)
             }
@@ -741,6 +785,26 @@ func acceptedMutationRefreshError(
     }
 }
 
+func attachedVideoClipCount(in threadState: [String: JSONValue]) -> Int {
+    guard let media = threadState["media"] else {
+        return Int(threadState["media_count"]?.numberValue ?? 0)
+    }
+    guard case .array(let entries) = media else { return 0 }
+    return entries.filter { entry in
+        guard case .object(let value) = entry else { return false }
+        return value["kind"]?.stringValue == "video"
+    }.count
+}
+
+func formatClipCapacityError(
+    format: CreationFormat,
+    clipLimit: Int,
+    occupiedClipCount: Int
+) -> String? {
+    guard occupiedClipCount > clipLimit else { return nil }
+    return "\(format.title) supports \(clipLimit) \(clipLimit == 1 ? "clip" : "clips"). Keep your current format or remove extra footage first."
+}
+
 extension ProjectSummary {
     var workspaceTitle: String {
         let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -761,6 +825,20 @@ extension JSONValue {
     var numberValue: Double? { if case .number(let value) = self { value } else { nil } }
 }
 
+struct ChatTurnSubmissionIdentity: Equatable, Sendable {
+    let message: String
+    let clientEventID: String
+    let expectedRevision: Int
+
+    static func reusing(_ current: Self?, for message: String, expectedRevision: Int) -> Self {
+        if let current, current.message.canonicalSubmissionText == message.canonicalSubmissionText {
+            return current
+        }
+        return Self(message: message, clientEventID: UUID().uuidString, expectedRevision: expectedRevision)
+    }
+}
+
 private extension String {
+    var canonicalSubmissionText: String { split(whereSeparator: \.isWhitespace).joined(separator: " ") }
     var normalizedChatText: String { split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() }
 }

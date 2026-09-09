@@ -36,6 +36,7 @@ from app.routes.creation_threads import (
     ActionBody,
     AttachBody,
     CreateBody,
+    CreationCapabilitiesOut,
     CreationThreadOut,
     UploadBody,
     UploadTarget,
@@ -85,6 +86,7 @@ MOBILE_API_MODELS = (
     MobileRevokeResponse,
     MobileLinkResponse,
     CreateBody,
+    CreationCapabilitiesOut,
     CreationThreadOut,
     UploadBody,
     UploadTarget,
@@ -363,6 +365,13 @@ def mobile_openapi_json() -> str:
                     "requestBody": _json_request(CreateBody),
                     "responses": _json_responses(CreationThreadOut, status_code="201"),
                 },
+            },
+            "/creation-threads/capabilities": {
+                "get": {
+                    "operationId": "getCreationCapabilities",
+                    "security": bearer,
+                    "responses": _json_responses(CreationCapabilitiesOut),
+                }
             },
             "/creation-threads/{thread_id}/turns": {
                 "parameters": [thread_id],
