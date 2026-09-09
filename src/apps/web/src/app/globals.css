@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DynaPuff:wght@700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -7,10 +7,25 @@
 /* Landing page design tokens */
 :root {
   --cream: #ffffff;
-  --ink: #0c0c0e;
-  --ink2: #3f3f46;
-  --ink3: #71717a;
+  --ink: #30352c;
+  --ink2: #526071;
+  --ink3: #677587;
   --ink4: #a1a1aa;
+
+  /* Kria Sunlit palette — Paper brand guidelines, September 2026. */
+  --brand-sky: #9bcaff;
+  --brand-butter: #fff0a6;
+  --brand-sage: #dde6cb;
+  --brand-lilac: #e7ddf5;
+  --brand-plum: #332847;
+  --brand-menu-icon: #faf8f0;
+  --brand-control-border: #677587;
+  --brand-divider: #cad2db;
+  --brand-success: #17633b;
+  --brand-warning: #8a4b08;
+  --brand-danger: #b42318;
+  --brand-info: #245e9b;
+
   --amber: #d97706;
   --amber-bg: #fffbeb;
   --amber-bd: #fde68a;
@@ -64,7 +79,7 @@
   --story-reduced-dur: 200ms;
   --story-ease-move: cubic-bezier(0.77, 0, 0.175, 1);
   --story-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --story-lime: #d7ff90;
+  --story-lime: var(--brand-butter);
 
   /* Nova Beam loader: decorative perimeter motion for video/AI wait states. */
   --beam-rotate-dur: 1.96s;
@@ -73,13 +88,18 @@
   --beam-ease: linear;
 }
 
-/* ── shadcn/ui semantic layer (stock shadcn/ui `new-york`, zinc — DESIGN.md
-   §15) ───────────────────────────────────────────────────────────────────
+/* ── shadcn/ui semantic layer ──────────────────────────────────────────────
    HSL triplets (no `hsl()` wrapper — consumed as `hsl(var(--token) / <alpha>)`
-   by tailwind.config.ts). Straight from the stock shadcn zinc theme —
-   owner decision 2026-08-22 replaces the hand-edited Kria ink/lime values
-   that lived here previously (see DESIGN.md §15 for the migration note). */
+   by tailwind.config.ts). The semantic surface tokens follow the Paper
+   Sunlit palette; the dark render/admin override remains the neutral theater
+   layer below. */
 @layer base {
+  body {
+    background: var(--cream);
+    color: var(--ink);
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  }
+
   :root {
     --background: 0 0% 100%;
     --foreground: 240 10% 3.9%;
@@ -89,23 +109,25 @@
     --popover: 0 0% 100%;
     --popover-foreground: 240 10% 3.9%;
 
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
+    --primary: 48 100% 83%;
+    --primary-foreground: 75 6% 19%;
 
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
+    --secondary: 211 100% 80%;
+    --secondary-foreground: 75 6% 19%;
 
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 3.8% 46.1%;
 
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
+    --accent: 270 47% 92%;
+    --accent-foreground: 276 33% 22%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
 
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
+    /* Keep the shared shadcn focus ring neutral; branded focus treatments
+       opt into --brand-sky where the surface calls for them. */
     --ring: 240 5.9% 10%;
 
     --radius: 0.5rem;

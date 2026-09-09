@@ -1,8 +1,9 @@
 // Ink pill CTA — the primary action button for the light editorial system.
 // Thin wrapper over the shadcn `Button` primitive (DESIGN.md §15) so every
 // existing `<InkButton>` call site keeps working unchanged.
-// variant="solid" = #0c0c0e fill, white text -> Button variant="ink".
-// variant="ghost" = transparent, #71717a text, underline on hover -> Button variant="link".
+// variant="solid" = Sunlit primary (Butter) fill with warm-ink text ->
+// Button variant="ink" (the legacy variant name is kept for call-site
+// compatibility). variant="ghost" stays a quiet text link.
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { Button } from "./button";
 
