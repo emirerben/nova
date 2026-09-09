@@ -300,6 +300,12 @@ content still invalidates suggestions. Opening Kria also loads asset description
 lane write permissions; `asset_context_status` distinguishes loading, ready,
 and unavailable descriptions.
 
+Each Copilot turn accepts up to 2,000 creator-authored characters. Before the
+request enters the prompt, role-like line prefixes and code fences are defanged
+without discarding the rest of the bounded instruction. Copilot may return up
+to 48 validated operations in one coherent bundle; unsupported or stale
+operations still fail closed under the existing parser and editor checks.
+
 The supported operation vocabulary, atomic application, stale-field checks,
 source-synced timing constraints, and Save/Undo behavior still apply. Context
 visibility does not imply a new renderer capability. Regression coverage spans
