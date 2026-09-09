@@ -72,6 +72,7 @@ import { useSfxPreview } from "../../_components/useSfxPreview";
 import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
+import SlidePostPanel from "./components/SlidePostPanel";
 import AskKriaPanel from "./components/AskKriaPanel";
 import { STYLE_TILES, TYPE_COPY } from "./components/SetupPicker";
 import {
@@ -2409,6 +2410,57 @@ export default function PlanItemPage() {
           ? "Finish or cancel the active Kria plan before creating this video."
           : null) ??
     (guidedEditActive && !guidedEditApproved ? guidedEditHint : null);
+
+  // Mixed-media "slide post" (plans/024): deliberately NOT the video editor
+  // below — none of its tabs/lanes apply (the backend closes every one for a
+  // "slides" variant), so this is a separate, self-contained page body.
+  if (item && item.edit_format === "slides") {
+    const slidesVariant = variants.find((v) => v.variant_id === "slides") ?? null;
+    return (
+      <LightShell size="wide">
+        <div className="motion-safe:animate-fade-up mx-auto max-w-3xl px-4 py-6">
+          <Link
+            href="/plan?view=gallery"
+            className="inline-flex items-center gap-1 text-[13px] font-semibold text-[#71717a] hover:text-[#0c0c0e]"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> Back
+          </Link>
+          <h1 className="font-display mt-2 text-[24px] text-[#0c0c0e]">
+            {item.theme || item.idea}
+          </h1>
+          {slidesVariant?.poster_url && (
+            <div className="mt-4 aspect-[3/4] w-40 overflow-hidden rounded-xl border border-zinc-200">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={slidesVariant.poster_url}
+                alt=""
+                className="h-full w-full object-cover"
+              />
+            </div>
+          )}
+          <div className="mt-5">
+            <SlidePostPanel item={item} variant={slidesVariant} onRefetch={refetch} />
+          </div>
+          {!slidesVariant && (
+            <div className="mt-5">
+              <Button
+                type="button"
+                onClick={() => handleGenerate()}
+                disabled={generating || (item.slide_post?.slides.length ?? 0) === 0}
+              >
+                {generating ? "Creating…" : "Create post"}
+              </Button>
+            </div>
+          )}
+          {error && (
+            <p className="mt-3 text-[13px] text-red-700" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+      </LightShell>
+    );
+  }
 
   return (
     <LightShell size="wide">

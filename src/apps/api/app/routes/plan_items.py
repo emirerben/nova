@@ -73,6 +73,7 @@ from app.routes._omni import (
 from app.routes.admin_music import _validate_voiceover_path
 from app.routes.generative_jobs import (
     CAPTION_EDIT_ARCHETYPES,
+    PLAYBACK_URL_TTL_MIN,
     BedLevelRequest,
     CaptionFontRequest,
     CaptionLanguageRequest,
@@ -97,6 +98,7 @@ from app.routes.generative_jobs import (
     TextElementsRequest,
     TimelineEditRequest,
     TimelineResponse,
+    _find_variant,
     _publish_committed_variant_render,
     cascade_removed_overlay_effect_groups,
     dispatch_apply_captions,
@@ -121,6 +123,7 @@ from app.routes.generative_jobs import (
     dispatch_set_orientation,
     dispatch_set_sound_effects,
     dispatch_set_text_elements,
+    dispatch_slide_post_edit,
     dispatch_swap_song,
     enqueue_editor_commit_render,
     guided_timeline_image_preview_paths,
@@ -155,6 +158,12 @@ from app.schemas.montage_preset import (
     MontagePreset,
     coerce_montage_preset,
     is_collage_montage_preset,
+)
+from app.schemas.slide_post import (
+    SlidePostDraft,
+    SlideRef,
+    bump_slide_post_version,
+    parse_slide_post,
 )
 from app.services.ai_usage_headers import paid_call_headers
 from app.services.content_plan_persona import (
@@ -569,6 +578,10 @@ class PlanItemResponse(BaseModel):
     # Versioned Plan edit envelope. Invalid legacy/corrupt JSON is serialized
     # as null by _edit_proposal_response; valid state stays OpenAPI-discoverable.
     edit_proposal: EditProposalResponse | None = None
+    # Mixed-media "slide post" draft (plans/024). Invalid/corrupt JSON is
+    # serialized as null by parse_slide_post; only meaningful when
+    # edit_format == "slides".
+    slide_post: SlidePostDraft | None = None
     guided_edit_available: bool = False
     guided_edit_conversation_available: bool = False
     # GUIDED_AUTO_DESIGN_ENABLED (config.py). False on an old API that predates
@@ -719,6 +732,7 @@ def plan_item_response(
         clip_gcs_paths=list(item.clip_gcs_paths or []),
         clip_assignments=reconciled_assignments,
         edit_proposal=_edit_proposal_response(item) if include_edit_proposal else None,
+        slide_post=parse_slide_post(item.slide_post),
         guided_edit_available=settings.guided_edit_capability_enabled and guided_applicable,
         guided_edit_conversation_available=(
             settings.guided_edit_conversation_enabled and guided_applicable
@@ -3980,6 +3994,234 @@ async def approve_item_edit_proposal(
     await db.commit()
     reloaded = await _load_owned_item(item_id, user.id, db)
     return plan_item_response(reloaded)
+
+
+def _require_slide_posts() -> None:
+    if not settings.slide_posts_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Slide posts are not available.",
+        )
+
+
+class SlidePostDraftBody(BaseModel):
+    """PUT /{item_id}/slide-post request — a full replacement of the draft's
+    user-editable fields. `version`/`rendered_version`/`user_edited` are
+    server-owned and never accepted from the client."""
+
+    platform_profile: str
+    slides: list[SlideRef]
+    cover_index: int = 0
+    caption: str = ""
+
+
+class SlidePostComposeBody(BaseModel):
+    """POST /{item_id}/slide-post/compose request. `asset_ids` omitted or
+    empty means "use every ready pool asset", in pool order."""
+
+    asset_ids: list[str] | None = None
+    platform_profile: str | None = None
+
+
+async def _owned_ready_slide_assets(
+    item: PlanItem, asset_ids: list[uuid.UUID] | None, db: AsyncSession
+) -> list[PlanItemAsset]:
+    """Ready `PlanItemAsset` rows for `item`, filtered to `asset_ids` when given.
+
+    Returns rows in the order requested by `asset_ids` when provided, else in
+    pool (created_at) order — never a raw ORM-default ordering a client could
+    mistake for authoritative sequence.
+    """
+    stmt = select(PlanItemAsset).where(
+        PlanItemAsset.plan_item_id == item.id,
+        PlanItemAsset.media_status == "ready",
+    )
+    if asset_ids:
+        stmt = stmt.where(PlanItemAsset.id.in_(asset_ids))
+    else:
+        stmt = stmt.order_by(PlanItemAsset.created_at)
+    rows = (await db.execute(stmt)).scalars().all()
+    if not asset_ids:
+        return list(rows)
+    by_id = {row.id: row for row in rows}
+    return [by_id[aid] for aid in asset_ids if aid in by_id]
+
+
+def _validate_slide_ref_ownership(
+    slides: list[SlideRef], owned_assets: list[PlanItemAsset]
+) -> None:
+    by_id = {row.id: row for row in owned_assets}
+    for ref in slides:
+        asset = by_id.get(ref.asset_id)
+        if asset is None or asset.kind != ref.kind:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="One or more slides reference an asset that is not available.",
+            )
+
+
+async def _maybe_rebuild_slide_post(item: PlanItem, user_id: uuid.UUID, db: AsyncSession) -> None:
+    """After a draft write, rebuild the rendered variant if one already exists.
+
+    A draft saved BEFORE the first Generate has nothing to rebuild — Generate
+    itself will pick it up. This only fires for a post-render edit.
+    """
+    if item.current_job_id is None:
+        return
+    job = await db.get(Job, item.current_job_id, populate_existing=True, with_for_update=True)
+    if job is None:
+        return
+    variants = (job.assembly_plan or {}).get("variants") or []
+    slides_variant = next(
+        (v for v in variants if isinstance(v, dict) and v.get("variant_id") == "slides"), None
+    )
+    if slides_variant is None or slides_variant.get("resolved_archetype") != "slides":
+        return
+    pending_publish = dispatch_slide_post_edit(job, "slides", publish=False)
+    await db.commit()
+    await _publish_committed_variant_render(pending_publish, db)
+
+
+@router.put("/{item_id}/slide-post", response_model=PlanItemResponse)
+async def put_slide_post_draft(
+    item_id: str,
+    body: SlidePostDraftBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Save a manually-edited slide-post draft: reorder, add, remove, cover,
+    caption, or platform-profile change. Rebuilds the rendered variant when
+    one already exists."""
+    _require_slide_posts()
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    if str(item.edit_format or "") != "slides":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Set this item's type to a slide post first.",
+        )
+    from app.pipeline.slide_post.profiles import coerce_platform_profile  # noqa: PLC0415
+
+    owned_assets = await _owned_ready_slide_assets(
+        item, [s.asset_id for s in body.slides] or None, db
+    )
+    _validate_slide_ref_ownership(body.slides, owned_assets)
+    current = parse_slide_post(item.slide_post)
+    platform_profile = coerce_platform_profile(body.platform_profile)
+    try:
+        if current is None:
+            new_draft = SlidePostDraft(
+                platform_profile=platform_profile,
+                slides=body.slides,
+                cover_index=body.cover_index,
+                caption=body.caption,
+                user_edited=True,
+            )
+        else:
+            new_draft = bump_slide_post_version(
+                current,
+                platform_profile=platform_profile,
+                slides=body.slides,
+                cover_index=body.cover_index,
+                caption=body.caption,
+            )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "slide_post_invalid", "message": str(exc)},
+        ) from exc
+    item.slide_post = new_draft.model_dump(mode="json")
+    flag_modified(item, "slide_post")
+    await db.commit()
+    await _maybe_rebuild_slide_post(item, user.id, db)
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    return plan_item_response(reloaded)
+
+
+@router.post("/{item_id}/slide-post/compose", response_model=PlanItemResponse)
+async def compose_slide_post(
+    request: Request,
+    item_id: str,
+    body: SlidePostComposeBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """AI-propose slide ordering, cover, and caption from the item's ready
+    pool assets (already-computed analysis — no new media analysis)."""
+    _require_slide_posts()
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    if str(item.edit_format or "") != "slides":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Set this item's type to a slide post first.",
+        )
+    from app.pipeline.slide_post.profiles import coerce_platform_profile  # noqa: PLC0415
+    from app.services.slide_post_compose import compose_slide_post_draft  # noqa: PLC0415
+
+    requested_ids: list[uuid.UUID] | None = None
+    if body.asset_ids:
+        try:
+            requested_ids = [uuid.UUID(a) for a in body.asset_ids]
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid asset id.",
+            ) from exc
+    owned_assets = await _owned_ready_slide_assets(item, requested_ids, db)
+    if not owned_assets:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Add at least one photo or video to this item first.",
+        )
+    current = parse_slide_post(item.slide_post)
+    inherited_profile = current.platform_profile if current is not None else "tiktok_photo"
+    platform_profile = coerce_platform_profile(body.platform_profile or inherited_profile)
+    new_draft = await compose_slide_post_draft(
+        item=item,
+        assets=owned_assets,
+        platform_profile=platform_profile,
+        previous_version=current.version if current is not None else 0,
+        run_context=_creator_run_context(
+            request,
+            creator_id=user.id,
+            request_id=_paid_agent_request_id("slide-post-compose", str(item.id), body),
+        ),
+    )
+    item.slide_post = new_draft.model_dump(mode="json")
+    flag_modified(item, "slide_post")
+    await db.commit()
+    await _maybe_rebuild_slide_post(item, user.id, db)
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    return plan_item_response(reloaded)
+
+
+@router.get("/{item_id}/variants/{variant_id}/slides/bundle")
+async def get_slide_post_bundle_url(
+    item_id: str,
+    variant_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Signed URL for the export bundle. 422s while the draft has unresolved
+    profile-validation errors — export is refused, not silently partial."""
+    _require_slide_posts()
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    variant = _find_variant(job, variant_id)
+    if variant is None or variant.get("resolved_archetype") != "slides":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    slide_post = variant.get("slide_post") or {}
+    validation = slide_post.get("validation") or {}
+    if validation.get("errors"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "slide_post_invalid", "errors": validation["errors"]},
+        )
+    bundle_path = slide_post.get("bundle_gcs_path")
+    if not bundle_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not ready yet")
+    url = storage.signed_download_url(
+        bundle_path, f"kria-{item_id}-slides.zip", expiration_minutes=PLAYBACK_URL_TTL_MIN
+    )
+    return {"url": url}
 
 
 @router.post("/{item_id}/generate", response_model=PlanItemResponse)

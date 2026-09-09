@@ -798,6 +798,71 @@ export interface PlanItem {
   /** BYO-Ideas provenance (M1 T5). Null = market-bank origin or pre-T5 item. */
   source_idea_seed_id?: string | null;
   source_idea_seed_text?: string | null;
+  /**
+   * Mixed-media "slide post" draft (plans/024). Only meaningful when
+   * edit_format === "slides". Mirrors `SlidePostDraft` in
+   * app/schemas/slide_post.py.
+   */
+  slide_post?: SlidePostDraft | null;
+}
+
+/** One item in a slide post's ordered sequence. References a pool asset by
+ *  id — never a raw GCS path. Mirrors `SlideRef` in app/schemas/slide_post.py. */
+export interface SlideRef {
+  id: string;
+  asset_id: string;
+  kind: "image" | "video";
+  alt?: string | null;
+}
+
+export type PlatformProfile = "tiktok_photo" | "instagram_carousel";
+
+/** The persisted slide-post draft. Mirrors `SlidePostDraft` in
+ *  app/schemas/slide_post.py. */
+export interface SlidePostDraft {
+  schema_version: number;
+  version: number;
+  platform_profile: PlatformProfile;
+  slides: SlideRef[];
+  cover_index: number;
+  caption: string;
+  rendered_version?: number | null;
+  user_edited: boolean;
+}
+
+/** One resolved, signed-preview slide on a rendered "slides" variant.
+ *  Mirrors the `slides` list `_variants_for_response` signs onto the variant. */
+export interface RenderedSlide {
+  index: number;
+  kind: "image" | "video";
+  asset_id: string;
+  asset_gcs_path: string;
+  preview_url?: string | null;
+  width?: number | null;
+  height?: number | null;
+  duration_s?: number | null;
+  alt?: string | null;
+}
+
+export interface SlidePostValidationIssue {
+  code: string;
+  message: string;
+  slide_id?: string | null;
+}
+
+/** The rendered "slides" variant's `slide_post` field — platform profile,
+ *  caption, cover, export bundle, and validation state. */
+export interface RenderedSlidePost {
+  platform_profile: PlatformProfile;
+  caption: string;
+  cover_index: number;
+  bundle_gcs_path?: string;
+  bundle_url?: string | null;
+  validation: {
+    ok: boolean;
+    errors: SlidePostValidationIssue[];
+    warnings: SlidePostValidationIssue[];
+  };
 }
 
 export interface SceneBlock {
@@ -2588,6 +2653,16 @@ export interface PlanItemVariant {
    * which drives the same full-render dispatch as intro_layout.
    */
   carousel_moment?: CarouselMoment | null;
+  /**
+   * Mixed-media "slide post" (plans/024). Present only when
+   * resolved_archetype === "slides" — every OTHER editor lane on this
+   * interface (text_elements, media_overlays, sound_effects, timeline, ...)
+   * is inert for a slides variant; `editor_capabilities` reports them all
+   * closed. `output_url`/`poster_url` above are still populated (a stitched
+   * preview + cover), so the ordinary hero player keeps working unbranched.
+   */
+  slides?: RenderedSlide[] | null;
+  slide_post?: RenderedSlidePost | null;
 }
 
 export function retimeVisualBlock(
@@ -2823,6 +2898,57 @@ export function setVariantCarouselMoment(
   config: CarouselMoment | null,
 ): Promise<PlanItem> {
   return editPlanItemVariant(itemId, variantId, { carousel_moment: config });
+}
+
+// ── Slide posts (mixed-media carousel/photo post, plans/024) ───────────────
+
+/**
+ * Save a manually-edited slide-post draft: reorder, add, remove, cover,
+ * caption, or platform-profile change. A full replacement of the draft's
+ * editable fields — `version`/`rendered_version`/`user_edited` are
+ * server-owned. Rebuilds the rendered variant when one already exists.
+ */
+export function putSlidePostDraft(
+  itemId: string,
+  draft: {
+    platform_profile: PlatformProfile;
+    slides: SlideRef[];
+    cover_index: number;
+    caption: string;
+  },
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/slide-post`, {
+    method: "PUT",
+    body: JSON.stringify(draft),
+  });
+}
+
+/**
+ * AI-propose slide ordering, cover, and caption from the item's ready pool
+ * assets. `assetIds` omitted or empty means "use every ready pool asset".
+ */
+export function composeSlidePost(
+  itemId: string,
+  options?: { assetIds?: string[]; platformProfile?: PlatformProfile },
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/slide-post/compose`, {
+    method: "POST",
+    body: JSON.stringify({
+      asset_ids: options?.assetIds ?? null,
+      platform_profile: options?.platformProfile ?? null,
+    }),
+  });
+}
+
+/** Signed URL for the export bundle. Rejects (422) while the draft has
+ *  unresolved profile-validation errors. */
+export function getSlidePostBundleUrl(
+  itemId: string,
+  variantId: string,
+): Promise<{ url: string }> {
+  return request<{ url: string }>(
+    `/plan-items/${itemId}/variants/${variantId}/slides/bundle`,
+  );
 }
 
 export function changePlanItemStyle(

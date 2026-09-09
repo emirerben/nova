@@ -18,6 +18,7 @@ from app.agents._schemas.edit_format import (
     DEFAULT_EDIT_FORMAT,
     EDIT_FORMATS,
     SINGLE_HERO_RENDERER_VERSION,
+    SLIDES_RENDERER_VERSION,
     coerce_edit_format,
 )
 from app.models import Job
@@ -326,6 +327,11 @@ def build_generative_job(
         # Explicit worker contract: a mixed-version worker must not silently
         # normalize this new guided format back to montage.
         all_candidates["single_hero_renderer_version"] = SINGLE_HERO_RENDERER_VERSION
+    if declared_edit_format == "slides":
+        # Same class of deploy-fence, even though slides is not a
+        # GUIDED_EDIT_FORMATS member: a mixed API/worker deploy must never
+        # let an old worker silently coerce a "slides" job to montage.
+        all_candidates["slides_renderer_version"] = SLIDES_RENDERER_VERSION
     if declared_edit_format and declared_edit_format not in EDIT_FORMATS:
         all_candidates["declared_edit_format"] = declared_edit_format
     if variant_policy in {
