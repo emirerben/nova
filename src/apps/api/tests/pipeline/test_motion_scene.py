@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -78,7 +79,18 @@ def test_motion_contract_accepts_bounded_preset_and_normalizes_colors() -> None:
             "palette": {"primary": "#8B5CF6", "accent": "#D9FF43"},
         }
     ]
-    assert MOTION_RUNTIME_HASH.startswith("motion-v5:ck0.40.0:")
+    assert MOTION_RUNTIME_HASH.startswith("motion-v6:ck0.40.0:")
+
+
+def test_motion_contract_accepts_optional_text_appearance_and_preserves_legacy_shape() -> None:
+    scene = _evolving_scene(text_appearance={"stroke_width": 3, "shadow_enabled": False})
+    validated = validate_motion_instances([scene], duration_frames=159)
+    assert validated[0]["text_appearance"] == {"stroke_width": 3, "shadow_enabled": False}
+    assert (
+        "text_appearance"
+        not in validate_motion_instances([_evolving_scene()], duration_frames=159)[0]
+    )
+    assert MOTION_RUNTIME_HASH.startswith("motion-v6:ck0.40.0:")
 
 
 def test_motion_contract_accepts_evolving_type_v2_with_reference_defaults() -> None:
@@ -552,3 +564,12 @@ def test_sparse_segments_composite_at_exact_offsets_with_final_encoder_policy(
     assert command[command.index("-preset") + 1] == "fast"
     assert uploaded and uploaded[0][1] == "generative-jobs/job/motion.mp4"
     assert generation_downloads == [("generative-jobs/job/base.mp4", "source-generation-7")]
+
+
+def test_offline_render_requests_use_current_runtime_hash():
+    fixtures = Path(__file__).resolve().parents[4] / "packages" / "motion-runtime" / "fixtures"
+    requests = list(fixtures.glob("*.json"))
+    assert requests, "offline renderer fixtures must exist"
+    for request_path in requests:
+        request = json.loads(request_path.read_text())
+        assert request["runtime_hash"] == MOTION_RUNTIME_HASH, request_path.name

@@ -23,6 +23,7 @@ import EditorTimelineBody, {
 } from "@/app/plan/items/[id]/_editor/EditorTimelineBody";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import { buildVirtualTimeline } from "@/app/plan/items/[id]/_editor/virtual-timeline";
+import { resolveEditorTimelineDuration } from "@/lib/timeline/timeline-scale";
 
 // jsdom's DragEvent doesn't accept `clientX` via the init dict the way
 // MouseEvent does (fireEvent.drop(el, {clientX}) silently drops it, leaving
@@ -58,14 +59,16 @@ const FOUR_SLOTS: DraftSlot[] = [
 ];
 
 function baseProps(over: Partial<EditorTimelineBodyProps> = {}): EditorTimelineBodyProps {
-  const timelineProjection = buildVirtualTimeline(FOUR_SLOTS, [], [], over.carouselBlock
+  const slots = over.slots ?? FOUR_SLOTS;
+  const grid = over.grid ?? [];
+  const timelineProjection = buildVirtualTimeline(slots, [], grid, over.carouselBlock
     ? {
         position: over.carouselBlock.position,
         durationS: over.carouselBlock.durationS,
       }
     : null);
   return {
-    durationS: 8,
+    durationS: over.durationS ?? 8,
     timelineProjection,
     currentTimeS: 0,
     zoom: 1,
@@ -74,8 +77,8 @@ function baseProps(over: Partial<EditorTimelineBodyProps> = {}): EditorTimelineB
     onClear: jest.fn(),
     textBars: [],
     visualBlocks: [],
-    slots: FOUR_SLOTS,
-    grid: [],
+    slots,
+    grid,
     clipsLoading: false,
     filmstripClips: [],
     sfx: [],
@@ -307,4 +310,71 @@ describe("EditorTimelineBody — unused source clips", () => {
     fireEvent.click(addLastClip);
     expect(onAddClip).toHaveBeenCalledWith(5);
   });
+});
+
+describe("EditorTimelineBody — rendered duration contract", () => {
+  it("keeps virtual preview on its assembled projected clock", () => {
+    expect(
+      resolveEditorTimelineDuration({
+        mode: "virtual",
+        projectedDurationS: 59,
+        renderedOutputDurationS: 30,
+        fallbackDurationS: 0,
+      }),
+    ).toBe(59);
+  });
+
+  it("uses the rendered 30s clock for ruler and scrub bounds on the 71-slot shape", () => {
+    const stressSlots: DraftSlot[] = Array.from({ length: 71 }, (_, index) => ({
+      ...slot({ key: `stress-${index}`, clipIndex: index }),
+      durationS: index === 70 ? 3 : 0.8,
+    }));
+    const onScrub = jest.fn();
+
+    render(
+      <EditorTimelineBody
+        {...baseProps({
+          slots: stressSlots,
+          durationS: 59,
+          renderedOutputDurationS: 30,
+          clipPreviewMode: "rendered",
+          currentTimeS: 59,
+          onScrub,
+        })}
+      />,
+    );
+
+    expect(screen.getAllByText("0:30").length).toBeGreaterThan(0);
+    expect(screen.queryByText("0:59")).not.toBeInTheDocument();
+
+    const ruler = screen.getByTestId("editor-timeline-ruler");
+    expect(ruler).toHaveStyle({ width: "236px" });
+    expect(screen.getByTestId("editor-timeline-end-marker")).toHaveStyle({ left: "120px" });
+    for (const playline of screen.getAllByTestId("editor-timeline-playline")) {
+      expect(playline).toHaveStyle({ left: "120px" });
+    }
+    const pointerDown = new Event("pointerdown", { bubbles: true, cancelable: true });
+    Object.defineProperty(pointerDown, "clientX", { value: 1000 });
+    Object.defineProperty(pointerDown, "pointerId", { value: 1 });
+    fireEvent(ruler, pointerDown);
+    expect(onScrub).toHaveBeenCalledWith(30);
+  });
+
+  it.each([
+    ["virtual", Number.NaN, 30, 12, 12],
+    ["rendered", Number.POSITIVE_INFINITY, -1, 12, 12],
+    ["rendered", 0, Number.NaN, -1, 0],
+  ] as const)(
+    "falls back safely for invalid %s timeline durations",
+    (mode, projectedDurationS, renderedOutputDurationS, fallbackDurationS, expected) => {
+      expect(
+        resolveEditorTimelineDuration({
+          mode,
+          projectedDurationS,
+          renderedOutputDurationS,
+          fallbackDurationS,
+        }),
+      ).toBe(expected);
+    },
+  );
 });

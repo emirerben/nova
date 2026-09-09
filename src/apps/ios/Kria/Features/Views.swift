@@ -79,7 +79,7 @@ struct MainShellView: View {
             NavigationStack { ProjectsView() }.tabItem { Label("Projects", systemImage: "square.stack.3d.up") }.tag(0)
             NavigationStack { GalleryView() }.tabItem { Label("Gallery", systemImage: "play.rectangle") }.tag(1)
             NavigationStack { AccountView() }.tabItem { Label("Account", systemImage: "person") }.tag(2)
-        }.task { await model.uploads.restorePendingTasks(); await model.loadProjects() }
+        }.task { await model.openWorkspace() }
     }
 }
 
@@ -90,9 +90,34 @@ struct ProjectsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .firstTextBaseline) { Text("Projects").font(KriaFont.display(34)); Spacer(); Button(action: { Task { await model.createProject() } }) { Image(systemName: "plus").font(.headline).frame(width: 44, height: 44).background(KriaColor.lime).clipShape(Circle()) }.accessibilityLabel("New project") }
                 Text("A home for the stories you’re shaping.").foregroundStyle(KriaColor.zinc)
-                if let error = model.errorMessage { Text(error).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc).accessibilityAddTraits(.isStaticText) }
-                if model.projects.isEmpty && !model.isLoading { KriaEmptyState(title: "Start with a few clips.", action: "Create a project") { Task { await model.createProject() } } }
-                else { ForEach(model.projects) { project in ProjectRow(project: project).onTapGesture { model.selectedProject = project } } }
+                if model.projects.isEmpty {
+                    switch model.projectsState {
+                    case .idle, .loading:
+                        VStack(alignment: .leading, spacing: 12) {
+                            ProgressView().tint(KriaColor.limeText)
+                            Text("Loading your projects…").font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
+                        .accessibilityElement(children: .combine)
+                    case .failed(let message):
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Projects couldn’t load.").font(KriaFont.display(24))
+                            Text(message).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+                            Button("Try again") { Task { await model.loadProjects() } }
+                                .buttonStyle(KriaSecondaryButtonStyle())
+                        }
+                    case .empty, .loaded:
+                        KriaEmptyState(title: "Start with a few clips.", action: "Create a project") { Task { await model.createProject() } }
+                    }
+                } else {
+                    if let error = model.errorMessage {
+                        Text(error).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc).accessibilityAddTraits(.isStaticText)
+                    }
+                    ForEach(model.projects) { project in
+                        Button { model.selectedProject = project } label: { ProjectRow(project: project) }
+                            .buttonStyle(.plain)
+                    }
+                }
             }.padding(20)
         }
         .navigationTitle("").navigationDestination(item: $model.selectedProject) { project in ProjectDetailView(project: project) }
@@ -103,8 +128,10 @@ struct ProjectRow: View {
     let project: ProjectSummary
     var body: some View {
         HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 12).fill(KriaColor.ink.opacity(0.12)).frame(width: 88, height: 112).overlay(Image(systemName: project.status == .ready ? "play.fill" : "film").foregroundStyle(KriaColor.ink))
-            VStack(alignment: .leading, spacing: 8) { Text(project.title).font(KriaFont.display(21)); KriaStatusPill(text: project.status.rawValue.capitalized); Text(project.updatedAt, style: .relative).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
+            ProjectPosterView(project: project)
+                .frame(width: 88, height: 112)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            VStack(alignment: .leading, spacing: 8) { Text(project.title).font(KriaFont.display(21)); KriaStatusPill(status: project.status); Text(project.updatedAt, style: .relative).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
             Spacer(); Image(systemName: "chevron.right").foregroundStyle(KriaColor.zinc)
         }.padding(12).background(Color.white.opacity(0.7)).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous)).accessibilityElement(children: .combine).accessibilityHint("Open project")
     }
@@ -117,8 +144,23 @@ struct ProjectDetailView: View {
     private var currentProject: ProjectSummary { model.projects.first(where: { $0.id == project.id }) ?? project }
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
-            Text(currentProject.title).font(KriaFont.display(34)); KriaStatusPill(text: currentProject.status.rawValue.capitalized)
-            RoundedRectangle(cornerRadius: 22).fill(KriaColor.ink).aspectRatio(9/16, contentMode: .fit).frame(maxWidth: 240).overlay(Image(systemName: "play.fill").font(.largeTitle).foregroundStyle(KriaColor.lime))
+            Text(currentProject.title).font(KriaFont.display(34)); KriaStatusPill(status: currentProject.status)
+            if currentProject.status == .ready {
+                NavigationLink(destination: ResultsView(project: currentProject)) {
+                    ProjectPosterView(project: currentProject)
+                        .aspectRatio(9/16, contentMode: .fit)
+                        .frame(maxWidth: 240)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .overlay(Image(systemName: "play.fill").font(.largeTitle).foregroundStyle(KriaColor.lime))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Play finished cut")
+            } else {
+                ProjectPosterView(project: currentProject)
+                    .aspectRatio(9/16, contentMode: .fit)
+                    .frame(maxWidth: 240)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
             Button("Create with Kria") { showThread = true }
                 .buttonStyle(KriaPrimaryButtonStyle())
             if currentProject.status == .ready { NavigationLink("View finished cut", destination: ResultsView(project: currentProject)).font(KriaFont.body(16).weight(.semibold)) }
@@ -128,20 +170,217 @@ struct ProjectDetailView: View {
     }
 }
 
+struct ProjectPosterView: View {
+    let project: ProjectSummary
+
+    var body: some View {
+        Group {
+            if let posterURL = project.posterURL {
+                AsyncImage(url: posterURL) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else if phase.error == nil {
+                        ZStack { KriaColor.softZinc; ProgressView().tint(KriaColor.limeText) }
+                    } else {
+                        fallback
+                    }
+                }
+            } else {
+                fallback
+            }
+        }
+        .clipped()
+        .accessibilityLabel("Poster for \(project.workspaceTitle)")
+    }
+
+    private var fallback: some View {
+        BundledPosterImage(name: project.status == .ready ? "montage" : "voiceover")
+            .scaledToFill()
+    }
+}
+
 struct GalleryView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var auth: AuthStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var filter: GalleryFilter = .all
+
+    private var projects: [ProjectSummary] {
+        switch filter {
+        case .all: model.libraryProjects
+        case .ready: model.libraryProjects.filter { $0.status == .ready }
+        case .inProgress: model.libraryProjects.filter { $0.status == .draft || $0.status == .rendering }
+        }
+    }
+
+    private var initial: String {
+        String((auth.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).first ?? "E")).uppercased()
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Gallery").font(KriaFont.display(34))
-                Text("Finished cuts, ready to revisit.").foregroundStyle(KriaColor.zinc)
-                if model.libraryProjects.isEmpty {
-                    KriaEmptyState(title: "Your next cut will live here.", action: "Refresh") { Task { await model.loadLibrary() } }
-                } else {
-                    ForEach(model.libraryProjects) { project in NavigationLink(destination: ResultsView(project: project)) { ProjectRow(project: project) }.buttonStyle(.plain) }
+        VStack(spacing: 0) {
+            ZStack {
+                Text("Gallery")
+                    .font(KriaFont.body(14).weight(.semibold))
+
+                HStack {
+                    Button("Projects") { dismiss() }
+                        .font(KriaFont.body(14).weight(.medium))
+                        .frame(minWidth: 68, minHeight: 44, alignment: .leading)
+                    Spacer()
+                    Text(initial)
+                        .font(KriaFont.body(13).weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(KriaColor.softZinc)
+                        .clipShape(Circle())
                 }
-            }.padding(20)
-        }.navigationTitle("").task { await model.loadLibrary() }
+                .padding(.horizontal, 16)
+            }
+            .frame(height: 54)
+
+            Rectangle().fill(KriaColor.line).frame(height: 1)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Your gallery")
+                            .font(KriaFont.display(29))
+                        Text("Finished cuts and the stories still taking shape.")
+                            .font(KriaFont.body(14))
+                            .foregroundStyle(KriaColor.zinc)
+                    }
+
+                    HStack(spacing: 8) {
+                        ForEach(GalleryFilter.allCases) { option in
+                            Button(option.title) { filter = option }
+                                .font(KriaFont.body(12).weight(.medium))
+                                .foregroundStyle(filter == option ? Color.white : KriaColor.ink)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 44)
+                                .background(filter == option ? KriaColor.ink : Color.white)
+                                .overlay(Capsule().stroke(KriaColor.border, lineWidth: filter == option ? 0 : 1))
+                                .clipShape(Capsule())
+                        }
+                    }
+
+                    if projects.isEmpty {
+                        switch model.libraryState {
+                        case .idle, .loading:
+                            VStack(alignment: .leading, spacing: 10) {
+                                ProgressView().tint(KriaColor.limeText)
+                                Text("Loading your cuts…")
+                                    .font(KriaFont.body(14))
+                                    .foregroundStyle(KriaColor.zinc)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
+                            .accessibilityElement(children: .combine)
+                        case .failed(let message):
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Your gallery couldn’t load.")
+                                    .font(KriaFont.display(22))
+                                Text(message)
+                                    .font(KriaFont.body(13))
+                                    .foregroundStyle(KriaColor.zinc)
+                                Button("Try again") { Task { await model.loadLibrary() } }
+                                    .font(KriaFont.body(13).weight(.semibold))
+                                    .frame(minHeight: 44)
+                            }
+                            .padding(.top, 34)
+                        case .empty, .loaded:
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Your next cut will live here.")
+                                    .font(KriaFont.display(22))
+                                Button("Refresh") { Task { await model.loadLibrary() } }
+                                    .font(KriaFont.body(13).weight(.semibold))
+                                    .frame(minHeight: 44)
+                            }
+                            .padding(.top, 34)
+                        }
+                    } else {
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())], spacing: 20) {
+                            ForEach(projects) { project in
+                                if project.status == .ready {
+                                    NavigationLink(destination: ResultsView(project: project, libraryJobID: project.id)) {
+                                        GalleryProjectCard(project: project)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Play \(project.workspaceTitle)")
+                                } else {
+                                    Button {
+                                        model.selectProject(project)
+                                        dismiss()
+                                    } label: {
+                                        GalleryProjectCard(project: project)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Open \(project.workspaceTitle), \(project.workspaceStatusLabel)")
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 42)
+                .padding(.bottom, 28)
+            }
+        }
+        .background(Color.white)
+        .toolbar(.hidden, for: .navigationBar)
+        .task { await model.loadLibrary() }
+    }
+}
+
+private enum GalleryFilter: CaseIterable, Identifiable {
+    case all, ready, inProgress
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .ready: "Ready"
+        case .inProgress: "In progress"
+        }
+    }
+}
+
+private struct GalleryProjectCard: View {
+    let project: ProjectSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Group {
+                if let posterURL = project.posterURL {
+                    AsyncImage(url: posterURL) { phase in
+                        if let image = phase.image { image.resizable().scaledToFill() }
+                        else { BundledPosterImage(name: "montage").scaledToFill() }
+                    }
+                } else {
+                    BundledPosterImage(name: project.status == .ready ? "montage" : "voiceover")
+                        .scaledToFill()
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(0.75, contentMode: .fit)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                Text(project.workspaceStatusLabel.uppercased())
+                    .font(KriaFont.body(8).weight(.bold))
+                    .tracking(0.8)
+                    .foregroundStyle(project.status == .ready ? KriaColor.limeText : KriaColor.ink)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 5)
+                    .background(project.status == .ready ? KriaColor.limeSoft : Color.white.opacity(0.9))
+                    .clipShape(Capsule())
+                    .padding(7)
+            }
+
+            Text(project.workspaceTitle)
+                .font(KriaFont.body(13).weight(.semibold))
+                .lineLimit(1)
+            Text(project.updatedAt, style: .relative)
+                .font(KriaFont.body(11))
+                .foregroundStyle(KriaColor.zinc)
+        }
     }
 }
 
@@ -174,13 +413,8 @@ struct CreationThreadView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         if events.isEmpty { Text("What should this cut make someone feel?").font(KriaFont.display(24)) }
-                        ForEach(events) { event in
-                            if let content = event.content {
-                                Text(content)
-                                    .font(event.role == "assistant" ? KriaFont.display(24) : KriaFont.body(17))
-                                    .frame(maxWidth: .infinity, alignment: event.role == "user" ? .trailing : .leading)
-                                    .accessibilityLabel("\(event.role): \(content)")
-                            }
+                        ForEach(events.compactMap(ChatTranscriptMessage.from(event:))) { message in
+                            ChatMessageRow(message: message)
                         }
                         if let approval { ApprovalCard(approval: approval, decide: decide) }
                         if let errorMessage { Text(errorMessage).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
@@ -190,7 +424,7 @@ struct CreationThreadView: View {
                     TextField("Tell Kria what to emphasize", text: $prompt, axis: .vertical).textFieldStyle(.roundedBorder).font(KriaFont.body(16))
                     Button("Send") { Task { await send() } }.buttonStyle(KriaPrimaryButtonStyle()).disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                 }
-                FootagePickerView(projectID: project.id)
+                FootagePickerView(projectID: project.id, uploads: model.uploads)
             }
             .padding(20)
             .navigationTitle("Create with Kria")
@@ -205,7 +439,7 @@ struct CreationThreadView: View {
         defer { isSending = false }
         do {
             let accepted = try await model.api.submitTurn(threadID: project.id, message: message, expectedRevision: threadRevision)
-            threadRevision = accepted.threadRevision
+            threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
             prompt = ""
             try await refreshDelta()
         } catch { errorMessage = error.localizedDescription }
@@ -225,13 +459,20 @@ struct CreationThreadView: View {
     }
     @discardableResult private func refreshDelta() async throws -> Bool {
         let delta = try await model.api.threadDelta(threadID: project.id, afterSequence: afterSequence)
-        threadRevision = delta.threadRevision
+        threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: delta.threadRevision)
         let known = Set(events.map(\.id))
         let fresh = delta.events.filter { !known.contains($0.id) }
-        events.append(contentsOf: fresh)
-        afterSequence = delta.nextAfterSequence
+        events = ChatTranscriptHistory.merge(events, with: fresh)
+        afterSequence = ChatTranscriptHistory.nextAfterSequence(
+            current: afterSequence,
+            response: delta.nextAfterSequence,
+            events: events
+        )
         if let current = try? await model.api.project(threadID: project.id) {
-            model.updateProject(current.summary)
+            if ThreadRevisionOrder.acceptsProjection(current: threadRevision, incoming: current.revision) {
+                threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: current.revision)
+                model.updateProject(current.summary)
+            }
         }
         if let approvalEvent = fresh.last(where: { $0.eventType == "approval_requested" }),
            let identifier = approvalEvent.payload?["approval_id"]?.stringValue.flatMap(UUID.init(uuidString:)) {

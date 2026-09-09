@@ -13,6 +13,7 @@ import copy
 import json
 import types
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,10 +22,12 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import app.routes.generative_jobs as gj
+from app.agents._schemas.text_element import TextElement
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
 from app.models import ContentPlan, Persona, PlanItem
+from app.pipeline.narrated_assembler import is_valid_caption_font
 
 REGEN = "app.tasks.generative_build.regenerate_generative_variant"
 REBURN_NARRATED = "app.tasks.generative_build.reburn_narrated_captions"
@@ -39,6 +42,37 @@ _VALID_ELEMENT = {
     "role": "generative_intro",
     "position": "middle",
 }
+
+
+def test_ios_picker_fixture_matches_editor_commit_models() -> None:
+    fixture_path = (
+        Path(__file__).resolve().parents[3]
+        / "ios"
+        / "Tests"
+        / "Fixtures"
+        / "editor-commit-picker-contract.json"
+    )
+    contract = json.loads(fixture_path.read_text())
+    for look_preset in contract["look_presets"]:
+        gj.TimelineSlotEdit(clip_index=0, in_s=0, duration_s=1, look_preset=look_preset)
+    for transition in contract["transitions"]:
+        gj.TimelineSlotEdit(
+            clip_index=0,
+            in_s=0,
+            duration_s=1,
+            transition_after=transition,
+            transition_duration_s=0 if transition == "cut" else 0.1,
+            look_preset="none",
+        )
+    for effect in contract["text_animations"]:
+        TextElement.model_validate({**_VALID_ELEMENT, "effect": effect})
+    for alignment in contract["music_alignments"]:
+        gj.EditorCommitMusicWindow(start_s=0, alignment=alignment)
+    assert all(is_valid_caption_font(font) for font in contract["caption_fonts"])
+    for size_px in contract["caption_size_px"].values():
+        gj.EditorCommitCaptionMeta(size_px=size_px)
+    for y_frac in contract["caption_y_frac"].values():
+        gj.EditorCommitCaptionMeta(y_frac=y_frac)
 
 
 def _narrated_guided_job():
@@ -4624,6 +4658,7 @@ def test_endpoint_media_motion_loads_asset_pool_without_visual_block_edit(
 
     assert resp.status_code == 200, resp.text
     assert job.assembly_plan["variants"][0]["motion_scenes"] == [scene]
+    assert resp.json()["sections"]["motion_scenes"] is True
     # Initial + locked PlanItem reads, owned Persona read, and asset-pool read.
     assert db.execute.await_count == 4
     regen.apply_async.assert_called_once()

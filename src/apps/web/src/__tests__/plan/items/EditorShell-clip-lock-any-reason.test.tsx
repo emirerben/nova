@@ -307,7 +307,7 @@ describe("EditorShell — clip lane locks for ANY server timeline ineligibility"
     expect(screen.getByRole("button", { name: "Delete selected" })).toBeEnabled();
   });
 
-  it("uses the staged slot-layout duration in the transport when virtual preview is unavailable", async () => {
+  it("uses the rendered playback duration when virtual preview is unavailable", async () => {
     mockFirstSlotDurationS = 1;
     await renderShell(makeVariant(EDITABLE_CAPABILITIES));
     const renderedVideo = document.querySelector("video");
@@ -315,12 +315,12 @@ describe("EditorShell — clip lane locks for ANY server timeline ineligibility"
     Object.defineProperty(renderedVideo, "duration", { configurable: true, value: 24 });
     fireEvent.loadedMetadata(renderedVideo as HTMLVideoElement);
 
-    expect(screen.getByLabelText("Playback position")).toHaveTextContent("0:00 / 0:04");
+    expect(screen.getByLabelText("Playback position")).toHaveTextContent("0:00 / 0:24");
     expect(screen.getByText("Clip changes preview after Save")).toBeInTheDocument();
 
     renderedVideo!.currentTime = 23;
     fireEvent.timeUpdate(renderedVideo as HTMLVideoElement);
-    expect(screen.getByLabelText("Playback position")).toHaveTextContent("0:04 / 0:04");
+    expect(screen.getByLabelText("Playback position")).toHaveTextContent("0:23 / 0:24");
   });
 
   it("adds an uploaded source omitted from the rendered cut, with undo and save support", async () => {

@@ -105,6 +105,7 @@ import {
   resolveLookAdjustments,
 } from "@/lib/look-presets";
 import { formatTimecode } from "@/lib/timeline/time-format";
+import { resolveEditorTimelineDuration } from "@/lib/timeline/timeline-scale";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import {
   applyCopilotOps,
@@ -280,6 +281,7 @@ import {
   unprojectOutputTime,
   type VirtualCarouselSplice,
 } from "./virtual-timeline";
+import { resolveVirtualPreviewAudio } from "./preview-audio";
 import {
   deleteKeyAllowed,
   escapeAction,
@@ -1388,6 +1390,7 @@ export default function EditorShell({
   const [virtualFallback, setVirtualFallback] = useState(false);
   const virtualRefetchAttemptedRef = useRef(false);
   const virtualRefetchInFlightRef = useRef(false);
+  const virtualAudioRefetchAttemptedRef = useRef(false);
 
   // Virtual-preview music recovery state. The retry budget is one refetch per
   // edit session per track — a missing audio blob mints a fresh (still broken)
@@ -1429,6 +1432,7 @@ export default function EditorShell({
       setVirtualFallback(false);
       virtualRefetchAttemptedRef.current = false;
       virtualRefetchInFlightRef.current = false;
+      virtualAudioRefetchAttemptedRef.current = false;
       setVirtualMusicUnavailable(false);
       musicRefetchAttemptedRef.current = false;
       virtualMusicAutoFetchRef.current = false;
@@ -2182,7 +2186,12 @@ export default function EditorShell({
     });
     if (!musicRefetchAttemptedRef.current) {
       musicRefetchAttemptedRef.current = true;
+      // Refresh both authorities. Gallery tracks get a new preview URL from
+      // getMusicTracks(), while matched/unpublished and smart-background
+      // tracks only exist on the owner-scoped variant payload. Refreshing just
+      // the gallery retried the same expired variant URL and then went silent.
       void refreshMusicTracks();
+      setLoadNonce((nonce) => nonce + 1);
       return;
     }
     setVirtualMusicUnavailable(true);
@@ -2313,6 +2322,37 @@ export default function EditorShell({
     virtualMusicBlob?.trackId === effectiveAudioTrackId && !virtualMusicUnavailable
       ? virtualMusicBlob.url
       : virtualMusicRemoteUrl;
+  const virtualPreviewAudio = resolveVirtualPreviewAudio({
+    virtualPreviewRequested,
+    clipDirty,
+    musicDirty: musicWindowDirty,
+    backgroundMusicDirty,
+    musicTrackActive: effectiveAudioTrackId != null,
+    musicAudioUrl: virtualMusicAudioUrl,
+    musicStartS: virtualMusicStartS,
+    sourceAudioMix,
+    sourceAudioOptions: variant?.source_audio_options ?? [],
+    baseVideoUrl: variant?.base_video_url ?? null,
+    narrationApplied: variant?.render_receipt?.narration_applied === true,
+    videoMuted,
+    soundMuted,
+  });
+  const handleVirtualPreviewAudioError = useCallback(() => {
+    if (virtualPreviewAudio.kind === "music") {
+      handleVirtualMusicError();
+      return;
+    }
+    // Source/narration beds come from the owner-gated status payload rather
+    // than the public music gallery. Re-read once to refresh their signed URL;
+    // a second failure falls back to the last rendered composite, whose audio
+    // remains authoritative, instead of leaking raw clip sound.
+    if (!virtualAudioRefetchAttemptedRef.current) {
+      virtualAudioRefetchAttemptedRef.current = true;
+      setLoadNonce((nonce) => nonce + 1);
+      return;
+    }
+    setVirtualFallback(true);
+  }, [handleVirtualMusicError, virtualPreviewAudio.kind]);
   const backgroundMusicTrackDurationS =
     effectiveBackgroundMusicTrackId != null
       ? (virtualMusicTrack?.duration_s ?? variant?.background_music?.track_duration_s ?? null)
@@ -2389,18 +2429,18 @@ export default function EditorShell({
     grid: clip.state.grid,
     carousel: carouselSplice,
     currentTime,
-    muted: videoMuted || (sourceAudioMix !== "interleaved" && sourceAudioMix !== null),
-    musicAudioUrl: virtualMusicAudioUrl,
-    musicStartS: virtualMusicStartS,
-    soundMuted,
-    musicTrackActive: effectiveAudioTrackId != null,
+    muted: videoMuted,
+    musicAudioUrl: virtualPreviewAudio.url,
+    musicStartS: virtualPreviewAudio.startS,
+    soundMuted: virtualPreviewAudio.muted,
+    musicTrackActive: virtualPreviewAudio.active,
     frameDriven: FRAME_DRIVEN_PREVIEW_ENABLED,
     onFrameTimeUpdate: playbackClock?.publish,
     onTimeUpdate: commitPlaybackTime,
     onDuration: () => {},
     onPlayingChange: setPlaying,
     onSourceError: handleVirtualSourceError,
-    onMusicError: handleVirtualMusicError,
+    onMusicError: handleVirtualPreviewAudioError,
   });
   const virtualPreviewActive =
     virtualPreviewRequested &&
@@ -2604,15 +2644,20 @@ export default function EditorShell({
       }),
     [previewSfxPlacements, projectCanvasRange],
   );
-  // `sequentialSlotLayout` is the canonical staged timeline. Even when the
-  // rendered MP4 is the only available visual preview, clip edits must keep
-  // the transport, ruler, and seek bounds on the staged total rather than the
-  // stale rendered duration. Save will replace the visual source.
+  // Edit-space may extend beyond the current MP4, but every playback control
+  // must share the duration of the source it can actually show. The full
+  // staged tail remains visible as annotated timeline geometry until save.
   const previewDuration = clipDirty
     ? timelineDuration
     : virtualPreviewActive
       ? virtualPreview.timeline.totalDurationS
       : duration;
+  const transportDuration = resolveEditorTimelineDuration({
+    mode: virtualPreviewActive ? "virtual" : "rendered",
+    projectedDurationS: virtualPreview.timeline.totalDurationS,
+    renderedOutputDurationS: duration,
+    fallbackDurationS: timelineDuration,
+  });
   const smartPlacementCandidates = useMemo(() => {
     const targetBars = isMasonryVariant(variant)
       ? visibleTextBars.filter((bar) => bar.role !== "narrated_caption")
@@ -2651,7 +2696,7 @@ export default function EditorShell({
     }
     const rendered = videoRef.current;
     if (!rendered) return;
-    const clamped = Math.max(0, Math.min(previewDuration || currentTime, currentTime));
+    const clamped = Math.max(0, Math.min(transportDuration || currentTime, currentTime));
     if (Math.abs(currentTime - clamped) > 0.001) {
       setCurrentTime(clamped);
     }
@@ -2660,7 +2705,7 @@ export default function EditorShell({
     }
   }, [
     currentTime,
-    previewDuration,
+    transportDuration,
     seekVirtualPreview,
     setCurrentTime,
     virtualPreview.timeline.totalDurationS,
@@ -2677,7 +2722,7 @@ export default function EditorShell({
 
   const seekPlaybackTo = useCallback(
     (seconds: number) => {
-      const clamped = Math.max(0, Math.min(previewDuration || seconds, seconds));
+      const clamped = Math.max(0, Math.min(transportDuration || seconds, seconds));
       if (virtualPreviewActive) seekVirtualPreview(clamped);
       else {
         const v = videoRef.current;
@@ -2689,7 +2734,7 @@ export default function EditorShell({
       }
     },
     [
-      previewDuration,
+      transportDuration,
       seekVirtualPreview,
       setCurrentTime,
       virtualPreviewActive,
@@ -3283,7 +3328,14 @@ export default function EditorShell({
       const patches = state.bars
         .filter(isCaptionBar)
         .map((bar) => ({ id: bar.id, patch: barPatch }));
-      if (patches.length > 0) dispatch({ type: "PATCH_BARS", patches });
+      if (patches.length > 0) {
+        dispatch({ type: "PATCH_BARS", patches });
+        // Global appearance also clears per-cue overrides; persist that clear
+        // only when cue editing is available (meta-only drafts keep their cues).
+        if (variant?.base_video_path && (patch.stroke_width !== undefined || patch.shadow_enabled !== undefined)) {
+          setCaptionDirty(true);
+        }
+      }
     },
     [history, readOnly, state.bars, variant],
   );
@@ -5647,7 +5699,7 @@ export default function EditorShell({
       const beforeSfxIds = new Set(localSfx.map((sfx) => sfx.id));
       const beforeOverlayById = new Map(localOverlays.map((overlay) => [overlay.id, overlay]));
       result.textActions.forEach((action) => dispatch(action));
-      if (result.textActions.some((action) => {
+      if (variant?.base_video_path && result.textActions.some((action) => {
         if ("id" in action) return isCaptionBar(state.bars.find((bar) => bar.id === action.id));
         if (action.type === "PATCH_BARS") {
           return action.patches.some((patch) =>
@@ -8356,7 +8408,7 @@ export default function EditorShell({
             <LightTransport
               playing={playing}
               currentTime={currentTime}
-              duration={previewDuration}
+              duration={transportDuration}
               onPlayPause={togglePlay}
               onScrub={seekTo}
               compact
@@ -8365,7 +8417,7 @@ export default function EditorShell({
               <div className="bg-white">
                 <MiniStrip
                   segments={miniStripSegments}
-                  durationS={virtualPreview.timeline.totalDurationS || timelineDuration || previewDuration}
+                  durationS={transportDuration}
                   currentTimeS={currentTime}
                   playbackClock={playbackClock}
                   selectedClipId={selection?.kind === "clip" ? selection.id : null}
@@ -8434,7 +8486,7 @@ export default function EditorShell({
           <LightTransport
             playing={playing}
             currentTime={currentTime}
-            duration={previewDuration}
+            duration={transportDuration}
             onPlayPause={togglePlay}
             onScrub={seekTo}
           />
@@ -8447,7 +8499,7 @@ export default function EditorShell({
         <TransportBar
           playing={playing}
           currentTime={currentTime}
-          duration={previewDuration}
+          duration={transportDuration}
           onPlayPause={togglePlay}
           canSplit={canSplit}
           splitReason={splitReason}

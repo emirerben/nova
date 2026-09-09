@@ -166,6 +166,7 @@ const baseProperties = {
   end_frame_exclusive: { $ref: "#/$defs/frame_end" },
   palette: { $ref: "#/$defs/palette" },
   intensity: { $ref: "#/$defs/intensity" },
+  text_appearance: { $ref: "#/$defs/text_appearance" },
 };
 const commonRequired = [
   "id", "preset_id", "preset_version", "start_frame", "end_frame_exclusive", "palette", "intensity",
@@ -218,6 +219,14 @@ function generateSchema() {
       },
     },
     intensity: { type: "number", minimum: 0, maximum: 1 },
+    text_appearance: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        stroke_width: { type: "number", minimum: 0, maximum: 20 },
+        shadow_enabled: { type: "boolean" },
+      },
+    },
     asset: {
       type: "object",
       additionalProperties: false,

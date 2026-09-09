@@ -111,6 +111,9 @@ export interface TextElementBar {
   cue_font_family?: string | null;
   cue_text_color?: string | null;
   cue_size_px?: number | null;
+  /** Per-cue caption appearance overrides; undefined preserves the original. */
+  cue_stroke_width?: number | null;
+  cue_shadow_enabled?: boolean | null;
 }
 
 const LYRIC_ALLOWED_PATCH_FIELDS = new Set([
@@ -120,6 +123,8 @@ const LYRIC_ALLOWED_PATCH_FIELDS = new Set([
   "font_family",
   "size_px",
   "size_class",
+  "stroke_width",
+  "shadow_enabled",
 ]);
 
 function isLyricLine(bar: TextElementBar | undefined): boolean {
