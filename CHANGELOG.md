@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - The new "slides" render archetype reuses the existing plan-item pipeline end to end: one variant carries a stitched preview alongside the ordered slide list and export bundle, so every existing reader (player, library, TikTok-publish exclusion) keeps working unbranched. Every other editor lane (captions, sound effects, overlays, timeline) is explicitly closed for this archetype at the same choke point every one of those routes already shares. Ships default on, gated by `SLIDE_POSTS_ENABLED` / `NEXT_PUBLIC_SLIDE_POSTS_ENABLED`.
+## [0.75.3.0] - 2026-09-09
+
+### Changed
+- **Creators can give the editor copilot longer, multi-part editing instructions.** Requests now support up to 2,000 characters and can return up to 48 coordinated edits, making it practical to update a full set of text and timeline changes in one turn.
+
 ## [0.75.2.0] - 2026-09-09
 
 ### Changed
