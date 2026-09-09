@@ -1259,6 +1259,82 @@ describe("ChatCreationWorkspace", () => {
     expect(screen.getByRole("button", { name: "Project actions for Untitled video" })).toBeInTheDocument();
   });
 
+  it.each(["", "   ", "Untitled video"])("dismisses unchanged or empty inline name %j without saving", async (value) => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    fireEvent.change(input, { target: { value } });
+    fireEvent.blur(input);
+    expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument();
+    expect(renameCreationThread).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed inline rename while retaining the entered name", async () => {
+    const user = userEvent.setup();
+    jest.mocked(renameCreationThread).mockRejectedValueOnce(new Error("offline"));
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    fireEvent.change(input, { target: { value: "Harbor arrival" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t rename that project");
+    expect(input).toHaveValue("Harbor arrival");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument());
+    expect(renameCreationThread).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not submit Enter while composing a project name", async () => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    fireEvent.change(input, { target: { value: "港の到着" } });
+    expect(fireEvent.keyDown(input, { key: "Enter", isComposing: true })).toBe(false);
+    expect(renameCreationThread).not.toHaveBeenCalled();
+    expect(input).toHaveValue("港の到着");
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(renameCreationThread).toHaveBeenCalledWith(baseThread, "港の到着"));
+  });
+
+  it("deduplicates Enter and blur while an inline rename is pending", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<CreationThread>();
+    jest.mocked(renameCreationThread).mockReturnValueOnce(pending.promise);
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    fireEvent.change(input, { target: { value: "  Harbor arrival  " } });
+    fireEvent.submit(input.closest("form")!);
+    fireEvent.blur(input);
+    fireEvent.submit(input.closest("form")!);
+    expect(renameCreationThread).toHaveBeenCalledTimes(1);
+    expect(renameCreationThread).toHaveBeenCalledWith(baseThread, "Harbor arrival");
+    expect(input).toHaveAttribute("readonly");
+    await act(async () => pending.resolve({ ...baseThread, title: "Harbor arrival" }));
+    expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument();
+  });
+
+  it("opens and cancels project deletion from the Gallery sidebar", async () => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Gallery" }));
+    await user.click(screen.getByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete project" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("Delete project?")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(deleteCreationThread).not.toHaveBeenCalled();
+  });
+
   it("prevents empty names and caps project names at 120 characters", async () => {
     const user = userEvent.setup();
     const titled = { ...baseThread, title: "Old name" };

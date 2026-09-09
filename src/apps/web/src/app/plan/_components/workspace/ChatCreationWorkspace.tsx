@@ -1145,7 +1145,6 @@ export default function ChatCreationWorkspace({
   const clipCount = clipMedia.length || (media.length === 0 ? mediaCount : 0);
   const accountName = session?.user?.name ?? session?.user?.email ?? "Account";
 
-
   const scrollToLiveEdge = useCallback(() => {
     const transcript = transcriptRef.current;
     if (!transcript) return;
@@ -1753,11 +1752,11 @@ export default function ChatCreationWorkspace({
         <Film className="size-6" aria-hidden="true" />
         Gallery
       </Button>
-      <div className="flex flex-col gap-1" data-testid="recent-chats-section">
+      <div className="flex min-h-0 flex-1 flex-col gap-1" data-testid="recent-chats-section">
         <div className="flex h-8 shrink-0 items-center px-3">
           <p className="text-[13px] font-semibold text-muted-foreground">Recent chats</p>
         </div>
-      <nav className="space-y-1 overflow-y-auto" aria-label="Recent projects">
+      <nav className="min-h-0 space-y-1 overflow-y-auto" aria-label="Recent projects">
         {projects.slice(0, 10).map((project) => {
           const title = projectTitle(project);
           const sidebarTitle = projectSidebarTitle(project);
@@ -1771,7 +1770,7 @@ export default function ChatCreationWorkspace({
                 >
                   <input
                     aria-label="Project name"
-                    className="block h-5 w-full min-w-0 appearance-none rounded-none border-0 bg-transparent p-0 text-sm font-medium leading-5 text-inherit shadow-none outline-none focus:ring-0"
+                    className="block h-5 w-full min-w-0 appearance-none rounded-none border-0 bg-transparent p-0 text-sm font-medium leading-5 text-inherit shadow-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c]"
                     value={renameValue}
                     maxLength={120}
                     readOnly={projectActionBusy}
@@ -2002,10 +2001,12 @@ export default function ChatCreationWorkspace({
       {sidebarShell}
       {collapsedProjectRail}
       {projectSheet}
-      <section className="flex min-w-0 flex-1 flex-col gap-8 overflow-hidden px-12 py-14">
+      {projectDialogs}
+      <section className="flex min-w-0 flex-1 flex-col gap-6 overflow-hidden px-4 py-6 sm:gap-8 sm:px-8 sm:py-10 lg:px-12 lg:py-14">
         {productionPreview ? <div className="flex shrink-0 items-center justify-center gap-2 border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong><span>Read-only playback</span></div> : null}
-        <header className="flex shrink-0 items-end justify-between gap-6">
+        <header className="flex shrink-0 flex-wrap items-end justify-between gap-4 sm:gap-6">
           <div className="flex min-w-0 items-end gap-3">
+            <Button type="button" variant="ghost" size="icon" className="mb-1 size-11 shrink-0 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
             <div className="flex min-w-0 flex-col gap-2">
               <h1 className="font-display text-[40px] font-medium leading-[48px] text-[#30352C]">Gallery</h1>
               <p className="text-sm leading-[21px] text-muted-foreground">Finished videos and works in progress.</p>
