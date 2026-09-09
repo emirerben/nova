@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -563,3 +564,12 @@ def test_sparse_segments_composite_at_exact_offsets_with_final_encoder_policy(
     assert command[command.index("-preset") + 1] == "fast"
     assert uploaded and uploaded[0][1] == "generative-jobs/job/motion.mp4"
     assert generation_downloads == [("generative-jobs/job/base.mp4", "source-generation-7")]
+
+
+def test_offline_render_requests_use_current_runtime_hash():
+    fixtures = Path(__file__).resolve().parents[4] / "packages" / "motion-runtime" / "fixtures"
+    requests = list(fixtures.glob("*.json"))
+    assert requests, "offline renderer fixtures must exist"
+    for request_path in requests:
+        request = json.loads(request_path.read_text())
+        assert request["runtime_hash"] == MOTION_RUNTIME_HASH, request_path.name
