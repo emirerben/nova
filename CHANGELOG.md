@@ -2,10 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.73.5.0] — 2026-09-09
+## [0.73.8.0] — 2026-09-09
 
 ### Fixed
 - **Kria can remove outlines and shadows from all editable text in one request.** Titles, captions, editable lyrics, and Creator Blocks share complete scope checks, including drafts with more than twelve targets. Explicit subsets stay scoped, stale or unsupported targets reject the whole request, and one Undo restores every affected lane. Caption preview, Save, and rendered output preserve zero outlines and disabled shadows.
+
+## [0.73.6.0] — 2026-09-09
+
+### Fixed
+- **Preview text no longer covers the editor's own controls.** Text added to a video preview could paint over the Text panel and its "Add text" button, including making the button unclickable while a layer was selected. The preview now stays behind editor chrome in every layout.
 
 ## [0.73.4.0] — 2026-09-09
 
