@@ -295,9 +295,15 @@ test.describe("Kria chat-first creation fixture", () => {
 
     await page.goto("/plan/thread-e2e");
     await expect(page).toHaveURL(/\/plan\/thread-e2e$/);
-    await expect(page.getByTestId("project-title")).toBeVisible();
-    await expect(page.getByTestId("project-title")).toHaveText("Untitled video");
-    await expect(page.getByTestId("project-title")).not.toHaveText("Create with Kria");
+    const projects = page.getByRole("navigation", { name: "Recent projects" });
+    await expect(projects.getByRole("button", { name: /^Untitled video/ })).toBeVisible();
+    await projects.getByRole("button", { name: "Project actions for Untitled video" }).click();
+    await page.getByRole("menuitem", { name: "Rename project", exact: true }).click();
+    const projectName = page.getByRole("textbox", { name: "Project name", exact: true });
+    await expect(projectName).toHaveValue("Untitled video");
+    await expect(projectName).toBeFocused();
+    await projectName.press("Escape");
+    await expect(projectName).not.toBeVisible();
     await expect(page.getByLabel("Attach primary video clips")).toBeVisible();
     await page.getByRole("button", { name: "Change format" }).click();
     await expect(page.getByRole("button", { name: /^Montage/ })).toBeVisible();

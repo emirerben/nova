@@ -512,7 +512,7 @@ function ConfigTabContent({
             href={track.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-violet-400 hover:text-violet-300 font-mono text-xs break-all"
+            className="text-violet-400 hover:text-zinc-100 font-mono text-xs break-all"
           >
             {track.source_url}
           </a>
@@ -693,7 +693,7 @@ function ConfigTabContent({
               type="submit"
               disabled={saving || previewSlots === 0}
               data-testid="save-config-btn"
-              className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+              className="bg-violet-600 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
             >
               {saving ? "Saving…" : "Save config"}
             </button>
