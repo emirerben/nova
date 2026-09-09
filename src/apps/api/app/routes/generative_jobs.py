@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
 from app.agents._schemas.text_element import (
+    CAPTION_CUE_SOURCE,
     append_ai_text_tombstones,
     merge_projected_text_elements_for_variant,
 )
@@ -7529,7 +7530,7 @@ def _project_guided_revision_lanes(
                 lane == "text_elements"
                 and isinstance(source_params, dict)
                 and (
-                    source_params.get("source") == "caption_cue"
+                    source_params.get("source") == CAPTION_CUE_SOURCE
                     or (narration_label_kind is not None and narration_label_kind != "participant")
                 )
             ):

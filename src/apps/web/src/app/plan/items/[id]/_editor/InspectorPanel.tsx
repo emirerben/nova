@@ -1710,7 +1710,21 @@ function TextInspector({
   // Stroke row starts expanded when the bar already carries a stroke.
   const [strokeOpen, setStrokeOpen] = useState((bar.stroke_width ?? 0) > 0);
   const isLyric = bar.role === "lyric_line";
+  // NOTE — every other `isCaption` reference below this line means CUE
+  // caption specifically: it gates the CaptionCue-derived fields/sections
+  // (smart_role, cue_font_family/cue_text_color/cue_size_px, "This caption",
+  // "Edit all captions") that only exist for narrated/subtitled variants and
+  // have no equivalent for a guided-story narration caption. A guided-story
+  // narration caption is a real, persisted TextElement, so it falls through
+  // to the ordinary font/size/width/alignment/style controls below — those
+  // already round-trip through text_elements. Use `isCaptionUnit` instead of
+  // `isCaption` only where the UI-wide "is this a caption at all" question
+  // is being asked (the heading, hiding Smart Place) — see its doc comment.
   const isCaption = bar.role === "narrated_caption";
+  const isNarrationCaption = bar.source_params?.source === "caption_cue";
+  // UI-wide: is this bar a caption unit at all (either representation)?
+  // Never gates a cue-only control — see the note above (KRI-18).
+  const isCaptionUnit = isCaption || isNarrationCaption;
   // 4b: role badge + Emphasize toggle. smart_role is server-authored/read-only;
   // the toggle only ever writes smart_style/smart_emphasis (see editor-bars.ts
   // smartStyleForRole).
@@ -1778,7 +1792,7 @@ function TextInspector({
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 pt-4 motion-safe:animate-fade-up motion-safe:[animation-duration:150ms]">
       <div className="flex items-center justify-between">
         <h2 className="flex items-center gap-2 font-display text-[18px] text-[#0c0c0e]">
-          {isCaption ? "Captions" : "Text"}
+          {isCaptionUnit ? "Captions" : "Text"}
           {smartRoleBadge && (
             <span
               aria-label={`Caption role: ${smartRoleBadge}`}
@@ -1821,7 +1835,7 @@ function TextInspector({
       />
       {!isLyric && (
         <>
-          {!isCaption && (
+          {!isCaptionUnit && (
             <Button
               type="button"
               variant="outline"
@@ -1838,15 +1852,22 @@ function TextInspector({
               label="Start"
               value={bar.start_s}
               min={0}
+              disabled={isNarrationCaption}
               onChange={(value) => onPatchTiming({ start_s: value })}
             />
             <TimingNumberInput
               label="End"
               value={bar.end_s}
               min={0}
+              disabled={isNarrationCaption}
               onChange={(value) => onPatchTiming({ end_s: value })}
             />
           </TimingSection>
+          {isNarrationCaption && (
+            <p className="-mt-2 mb-3 text-[11px] text-[#71717a]">
+              Caption timing follows your narration.
+            </p>
+          )}
         </>
       )}
 

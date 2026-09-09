@@ -61,7 +61,8 @@ import {
   deriveTextLaneRows,
   sortMediaTimelineBars,
   isAiSequenceBar,
-  isCaptionBar,
+  isCaptionUnitBar,
+  isNarrationCaptionBar,
   TEXT_LANE_ROW_GAP_PX,
   TEXT_LANE_BASE_HEIGHT_PX,
 } from "./editor-bars";
@@ -675,8 +676,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const ticks = rulerTicks(effectiveDurationS, pps);
   // Captions get their own lane. Before this split they shared the Text lane,
   // where 30-40 cues crushed the creator's own text into unreadable slivers.
-  const captionBars = textBars.filter(isCaptionBar);
-  const plainTextBars = textBars.filter((bar) => !isCaptionBar(bar));
+  const captionBars = textBars.filter(isCaptionUnitBar);
+  const plainTextBars = textBars.filter((bar) => !isCaptionUnitBar(bar));
   const hasCaptionLane = captionBars.length > 0;
   const captionsLaneHeight = !hasCaptionLane
     ? 0
@@ -1414,6 +1415,11 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             6,
                             secondsToPx(b.end_s - b.start_s, pps),
                           );
+                          // Guided-story narration captions have server-pinned
+                          // timing (start_s/end_s/word_timings are silently
+                          // overwritten on save) — dragging/trimming them here
+                          // would promise an edit the server discards.
+                          const timingLocked = isNarrationCaptionBar(b);
                           return (
                             <BarButton
                               key={b.id}
@@ -1430,18 +1436,34 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                               dataKind="text"
                               dataId={b.id}
                               dataRowIndex={0}
-                              onPointerDown={(e) => startTextDrag(e, b)}
+                              onPointerDown={
+                                timingLocked ? undefined : (e) => startTextDrag(e, b)
+                              }
                               onPointerMove={(e) => updateDrag(e.clientX)}
                               onPointerUp={(e) => finishDrag(e, "text", b.id)}
                               onPointerCancel={cancelDrag}
                               suppressClickRef={suppressClickRef}
-                              showTrimHandles
+                              showTrimHandles={!timingLocked}
+                              title={
+                                timingLocked
+                                  ? "Caption timing follows your narration."
+                                  : undefined
+                              }
                               flashing={flashIds?.has(b.id) ?? false}
                               className="bg-[#0c0c0e] text-white"
                             >
                               <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
                                 <span className="font-semibold">C</span>
                                 <span className="truncate">{b.text || "Caption"}</span>
+                                {timingLocked && (
+                                  <span
+                                    aria-label="Caption timing locked"
+                                    title="Caption timing follows your narration."
+                                    className="shrink-0 rounded border border-white/30 px-1 text-[9px] opacity-90"
+                                  >
+                                    {"\u{1F512}"}
+                                  </span>
+                                )}
                               </span>
                             </BarButton>
                           );
