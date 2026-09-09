@@ -1,0 +1,256 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-09-v41",
+  "input": {
+    "utterance": "remove shadow and stroke everywhere, then set the intro text size to 96 pixels",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "text",
+        "caption",
+        "motion"
+      ],
+      "text_appearance_version": 1,
+      "text_appearance": {
+        "version": 1,
+        "targets": [
+          {
+            "id": "t1",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t1-fingerprint"
+          },
+          {
+            "id": "t2",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t2-fingerprint"
+          },
+          {
+            "id": "t3",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t3-fingerprint"
+          },
+          {
+            "id": "t4",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t4-fingerprint"
+          },
+          {
+            "id": "t5",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t5-fingerprint"
+          },
+          {
+            "id": "t6",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t6-fingerprint"
+          },
+          {
+            "id": "t7",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t7-fingerprint"
+          },
+          {
+            "id": "t8",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t8-fingerprint"
+          },
+          {
+            "id": "t9",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t9-fingerprint"
+          },
+          {
+            "id": "t10",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t10-fingerprint"
+          },
+          {
+            "id": "t11",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t11-fingerprint"
+          },
+          {
+            "id": "t12",
+            "kind": "caption",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t12-fingerprint"
+          },
+          {
+            "id": "t13",
+            "kind": "motion",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t13-fingerprint"
+          }
+        ]
+      },
+      "text_bars": [
+        {
+          "id": "t1",
+          "role": "generative_intro",
+          "text": "The hook",
+          "start_s": 0,
+          "end_s": 3,
+          "size_px": 64,
+          "font_family": "Inter",
+          "color": "#FFFFFF"
+        }
+      ]
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_appearance\",\"selector\":{\"scope\":\"editable_text\",\"quantifier\":\"all\"},\"patch\":{\"shadow_enabled\":false,\"stroke_width\":0},\"text_appearance_version\":1},{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"size_px\":96}}],\"confidence\":0.9,\"reply\":\"Removed appearance effects everywhere and enlarged the intro.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all"
+        },
+        "patch": {
+          "shadow_enabled": false,
+          "stroke_width": 0
+        },
+        "text_appearance_version": 1
+      },
+      {
+        "op": "patch_text_style",
+        "bar_index": 0,
+        "patch": {
+          "size_px": 96
+        }
+      }
+    ],
+    "confidence": 0.9,
+    "reply": "Removed appearance effects everywhere and enlarged the intro.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "mixed appearance over twelve targets",
+    "exact_edit_ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all"
+        },
+        "patch": {
+          "shadow_enabled": false,
+          "stroke_width": 0
+        },
+        "text_appearance_version": 1
+      },
+      {
+        "op": "patch_text_style",
+        "bar_index": 0,
+        "patch": {
+          "size_px": 96
+        }
+      }
+    ]
+  }
+}

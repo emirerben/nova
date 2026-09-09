@@ -11,6 +11,7 @@ import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement, VisualBlock } from "@/lib/plan-api";
 import { barsToCaptionCues } from "@/app/plan/items/[id]/_editor/editor-bars";
+import { validateCopilotOp } from "@/lib/edit-copilot/ops";
 import {
   CREATOR_MOTION_RUNTIME_HASH_V4,
   creatorBlockDurationFramesV2,
@@ -1230,7 +1231,7 @@ describe("applyCopilotOps", () => {
     );
 
     expect(res.textActions).toEqual([
-      { type: "PATCH_BAR", id: "bar-1", patch: { size_px: 50, size_class: undefined } },
+      { type: "PATCH_BAR", id: "bar-1", patch: { size_px: 50, shadow_enabled: false, size_class: undefined } },
     ]);
   });
 
@@ -3422,5 +3423,11 @@ describe("selective component edits", () => {
     ], ctx({ bars, capabilities }));
     expect(result.textActions).toEqual([]);
     expect(result.rejected).toEqual([expect.objectContaining({ reason: "unsupported_field" })]);
+  });
+
+  it("round-trips explicit zero stroke and false shadow cue overrides", () => {
+    const cue = bar({ id: "caption-0", role: "narrated_caption", cue_stroke_width: 0, cue_shadow_enabled: false });
+    const persisted = barsToCaptionCues([cue]);
+    expect(persisted[0]).toMatchObject({ stroke_width: 0, shadow_enabled: false });
   });
 });

@@ -1,3 +1,4 @@
+import type { TextAppearanceInventory } from "./text-appearance";
 import fontRegistryJson from "@/data/font-registry.json";
 import type { CarouselMoment, EditorTransition } from "@/lib/generative-api";
 import {
@@ -55,6 +56,7 @@ export const TEXT_STYLE_PATCH_KEYS = [
   "line_spacing",
   "max_width_frac",
   "stroke_width",
+  "shadow_enabled",
   "position",
   "x_frac",
   "y_frac",
@@ -88,6 +90,18 @@ export const CAPTION_META_KEYS = [
 
 export type CaptionMetaKey = (typeof CAPTION_META_KEYS)[number];
 
+export interface TextAppearanceSelector {
+  scope: "editable_text";
+  quantifier: "all";
+  category?: "text" | "caption" | "motion";
+  target_ids?: string[];
+}
+
+export type TextAppearancePatch = Partial<{
+  stroke_width: number;
+  shadow_enabled: boolean;
+}>;
+
 export type TextStylePatch = Partial<{
   font_family: string;
   size_px: number;
@@ -100,6 +114,7 @@ export type TextStylePatch = Partial<{
   line_spacing: number;
   max_width_frac: number;
   stroke_width: number;
+  shadow_enabled: boolean;
   position: string;
   x_frac: number | null;
   y_frac: number | null;
@@ -158,6 +173,11 @@ export type MotionCopilotPatch = Partial<{
 export type CopilotOp =
   | { op: "edit_text"; bar_index: number; text: string }
   | { op: "patch_text_style"; bar_index: number; patch: TextStylePatch }
+  | { op: "patch_text_appearance"; selector: TextAppearanceSelector; patch: TextAppearancePatch;
+      text_appearance_version: 1;
+      target_ids?: string[];
+      target_identities?: Array<{ id: string; kind: "text" | "caption" | "motion"; identity: string }>;
+    }
   | { op: "set_text_timing"; bar_index: number; start_s?: number; end_s?: number }
   | { op: "add_text"; text: string; start_s: number; end_s: number }
   | { op: "remove_text"; bar_index: number }
@@ -339,7 +359,29 @@ type CaptionMetaPatchValidation =
   | { ok: true; patch: CaptionMetaPatch }
   | { ok: false; rejection: OpValidationRejection };
 
+type TextAppearancePatchValidation =
+  | { ok: true; patch: TextAppearancePatch }
+  | { ok: false; rejection: OpValidationRejection };
+
+function validateTextAppearancePatch(raw: unknown): TextAppearancePatchValidation {
+  if (!isRecord(raw)) return { ok: false, rejection: { reason: "missing_required", message: "patch_text_appearance requires patch" } };
+  const out: TextAppearancePatch = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key === "shadow_enabled") {
+      if (typeof value !== "boolean") return { ok: false, rejection: { reason: "invalid_type", message: "shadow_enabled must be boolean" } };
+      out.shadow_enabled = value;
+    } else if (key === "stroke_width") {
+      if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0 || value > 12) return { ok: false, rejection: { reason: "invalid_value", message: "stroke_width must be between 0 and 12" } };
+      out.stroke_width = value;
+    } else return { ok: false, rejection: { reason: "invalid_value", message: `unsupported appearance field: ${key}` } };
+  }
+  if (Object.keys(out).length === 0) return { ok: false, rejection: { reason: "empty_patch", message: "appearance patch cannot be empty" } };
+  return { ok: true, patch: out };
+}
+
 export interface CopilotValidationSnapshot {
+  text_appearance_version?: number;
+  text_appearance?: TextAppearanceInventory;
   guided_revision?: {
     revision_number: number;
     base_generation: string;
@@ -637,9 +679,12 @@ function validateStylePatch(raw: unknown): StylePatchValidation {
         return rejectStyle("invalid_type", `${key} must be a number or null`);
       }
       patch[key] = value;
+    } else if (key === "shadow_enabled") {
+      if (typeof value !== "boolean") return rejectStyle("invalid_type", "shadow_enabled must be boolean");
+      patch.shadow_enabled = value;
     } else {
       if (!finiteNumber(value)) return rejectStyle("invalid_type", `${key} must be a number`);
-      patch[key as Exclude<TextStylePatchKey, "font_family" | "color" | "highlight_color" | "effect" | "alignment" | "text_case" | "position" | "x_frac" | "y_frac">] = value;
+      (patch as Record<string, unknown>)[key] = value;
     }
   }
   if (Object.keys(patch).length === 0) return rejectStyle("empty_patch", "patch contains no v1 style fields");
@@ -1035,6 +1080,53 @@ export function validateCopilotOp(
       const patch = validateStylePatch(raw.patch);
       if (!patch.ok) return patch;
       return { ok: true, op: { op: opName, bar_index: raw.bar_index, patch: patch.patch } };
+    }
+    case "patch_text_appearance": {
+      if (raw.text_appearance_version !== 1 ||
+          snapshot?.text_appearance_version !== 1 || snapshot.text_appearance?.version !== 1) {
+        return reject("invalid_value", "text appearance is not supported by this editor version", opName);
+      }
+      const selector = raw.selector;
+      if (!isRecord(selector)) return reject("missing_required", "patch_text_appearance requires selector", opName);
+      if (Object.keys(selector).some((key) => !["scope", "quantifier", "category", "target_ids"].includes(key)) ||
+          selector.scope !== "editable_text" || selector.quantifier !== "all") {
+        return reject("invalid_value", "invalid text appearance selector", opName);
+      }
+      if (selector.category !== undefined && !["text", "caption", "motion"].includes(String(selector.category))) {
+        return reject("invalid_value", "selector.category is unsupported", opName);
+      }
+      if (selector.category !== undefined && selector.target_ids !== undefined) {
+        return reject("invalid_value", "select a category or explicit targets, not both", opName);
+      }
+      if (selector.target_ids !== undefined && (!Array.isArray(selector.target_ids) || !selector.target_ids.length ||
+          selector.target_ids.some((id) => typeof id !== "string" || !id.trim()) ||
+          new Set(selector.target_ids).size !== selector.target_ids.length)) {
+        return reject("invalid_type", "selector.target_ids must contain unique nonempty IDs", opName);
+      }
+      const patch = validateTextAppearancePatch(raw.patch);
+      if (!patch.ok) return patch;
+      if (raw.target_ids !== undefined && (!Array.isArray(raw.target_ids) ||
+          raw.target_ids.some((id) => typeof id !== "string" || !id) ||
+          new Set(raw.target_ids).size !== raw.target_ids.length)) {
+        return reject("invalid_value", "invalid appearance target receipt", opName);
+      }
+      if (raw.target_identities !== undefined && (!Array.isArray(raw.target_identities) ||
+          raw.target_identities.some((target) => !isRecord(target) || typeof target.id !== "string" ||
+            !["text", "caption", "motion"].includes(String(target.kind)) || typeof target.identity !== "string"))) {
+        return reject("invalid_value", "invalid appearance target identity", opName);
+      }
+      return { ok: true, op: {
+        op: opName, text_appearance_version: 1,
+        selector: {
+          scope: "editable_text", quantifier: "all",
+          ...(selector.category ? { category: selector.category as "text" | "caption" | "motion" } : {}),
+          ...(Array.isArray(selector.target_ids) ? { target_ids: selector.target_ids as string[] } : {}),
+        }, patch: patch.patch,
+        ...(raw.target_ids !== undefined ? { target_ids: raw.target_ids as string[] } : {}),
+        ...(raw.target_identities !== undefined ? { target_identities: raw.target_identities as Array<{
+          id: string; kind: "text" | "caption" | "motion"; identity: string;
+        }> } : {}),
+      } };
     }
     case "set_text_timing": {
       if (!integerIndex(raw.bar_index)) {

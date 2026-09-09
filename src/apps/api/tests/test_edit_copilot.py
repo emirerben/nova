@@ -4144,11 +4144,13 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # consecutive individual-clip slideshow with no implicit Creator Block, then
     # (2026-08-28-v37) so only the newest assistant turn can provide structured
     # clarification and pending-action context, then (2026-09-08-v40) for
-    # bounded generic component provenance in negotiated context — update this pin whenever
+    # bounded generic component provenance in negotiated context, then
+    # (2026-09-09-v41) for the negotiated text appearance inventory and atomic
+    # selector operation — update this pin whenever
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-08-v40"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-09-v41"
 
 
 def _motion_snapshot() -> dict:
@@ -4426,3 +4428,142 @@ def test_copilot_sfx_at_s_not_zeroed_when_total_duration_unknown() -> None:
     snap["total_duration_s"] = 0
     out = _parse([{"op": "add_sfx", "effect_id": "pop", "at_s": 46.22, "gain": 0.7}], snapshot=snap)
     assert out.ops[0]["at_s"] == 46.22
+
+
+def test_copilot_text_appearance_bulk_selector_attaches_inventory_identity() -> None:
+    snapshot = _full_snapshot(allowed=["text"])
+    snapshot["text_appearance_version"] = 1
+    snapshot["text_appearance"] = {
+        "version": 1,
+        "targets": [
+            {
+                "id": "hook",
+                "kind": "text",
+                "supported_fields": ["stroke_width", "shadow_enabled"],
+                "values": {"stroke_width": 0, "shadow_enabled": False},
+                "identity": "hook-fingerprint",
+            },
+            {
+                "id": "cue-1",
+                "kind": "caption",
+                "supported_fields": ["stroke_width", "shadow_enabled"],
+                "values": {"stroke_width": 2, "shadow_enabled": False},
+                "identity": "cue-fingerprint",
+            },
+        ],
+    }
+    out = _parse(
+        [
+            {
+                "op": "patch_text_appearance",
+                "selector": {"scope": "editable_text", "quantifier": "all"},
+                "patch": {"shadow_enabled": True},
+                "text_appearance_version": 1,
+            }
+        ],
+        snapshot=snapshot,
+    )
+    assert out.ops[0]["target_ids"] == ["hook", "cue-1"]
+    assert out.ops[0]["target_identities"][1]["identity"] == "cue-fingerprint"
+
+
+def test_copilot_text_appearance_subset_rejects_missing_target_atomically() -> None:
+    snapshot = _full_snapshot(allowed=["text"])
+    snapshot["text_appearance_version"] = 1
+    snapshot["text_appearance"] = {
+        "version": 1,
+        "targets": [
+            {
+                "id": "hook",
+                "kind": "text",
+                "supported_fields": ["shadow_enabled"],
+                "values": {"shadow_enabled": False},
+                "identity": "hook-fingerprint",
+            }
+        ],
+    }
+    out = _parse(
+        [
+            {
+                "op": "patch_text_appearance",
+                "selector": {
+                    "scope": "editable_text",
+                    "quantifier": "all",
+                    "target_ids": ["hook", "gone"],
+                },
+                "patch": {"shadow_enabled": True},
+                "text_appearance_version": 1,
+            }
+        ],
+        snapshot=snapshot,
+    )
+    assert out.ops == []
+    assert out.rejection_reasons[0]["reason"] == "stale_target"
+
+
+@pytest.mark.parametrize("stroke", [1.5, 13, True])
+def test_copilot_text_appearance_stroke_requires_integer_in_caption_range(stroke: object) -> None:
+    snapshot = _full_snapshot(allowed=["text"])
+    snapshot["text_appearance_version"] = 1
+    snapshot["text_appearance"] = {
+        "version": 1,
+        "targets": [
+            {
+                "id": "hook",
+                "kind": "text",
+                "supported_fields": ["stroke_width"],
+                "values": {"stroke_width": 0},
+                "identity": "hook-fingerprint",
+            }
+        ],
+    }
+    out = _parse(
+        [
+            {
+                "op": "patch_text_appearance",
+                "selector": {"scope": "editable_text", "quantifier": "all"},
+                "patch": {"stroke_width": stroke},
+                "text_appearance_version": 1,
+            }
+        ],
+        snapshot=snapshot,
+    )
+    assert out.ops == []
+
+
+@pytest.mark.parametrize(
+    "current,requested,allowed", [(False, False, True), (False, True, False), (True, False, False)]
+)
+def test_text_appearance_unsupported_field_only_allows_explicit_noop(current, requested, allowed):
+    snapshot = _full_snapshot(allowed=["text"])
+    snapshot["text_appearance_version"] = 1
+    snapshot["text_appearance"] = {
+        "version": 1,
+        "targets": [
+            {
+                "id": "readonly",
+                "kind": "motion",
+                "identity": "m1-known",
+                "supported_fields": [],
+                "values": {"shadow_enabled": current},
+            }
+        ],
+    }
+    out = _parse(
+        [
+            {
+                "op": "patch_text_appearance",
+                "text_appearance_version": 1,
+                "selector": {"scope": "editable_text", "quantifier": "all"},
+                "patch": {"shadow_enabled": requested},
+            }
+        ],
+        snapshot=snapshot,
+    )
+    assert out.ops == []
+    if allowed:
+        assert out.outcome == "no_effect"
+        assert "already has that appearance" in out.reply
+        assert out.rejection_reasons == []
+    else:
+        assert out.rejection_reasons[0]["reason"] == "capability_unavailable"

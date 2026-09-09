@@ -1,7 +1,7 @@
 {
   "width": 540,
   "height": 960,
-  "runtime_hash": "motion-v5:ck0.40.0:b2556106:2abfa191:creator-blocks-v4-capacity",
+  "runtime_hash": "motion-v6:ck0.40.0:b2556106:2abfa191:creator-blocks-v5-text-appearance",
   "instances": [
     {
       "id": "evolving-type-reference",

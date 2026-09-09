@@ -1755,6 +1755,7 @@ def check_edit_copilot(output: Any) -> list[str]:
     valid_ops = {
         "edit_text",
         "patch_text_style",
+        "patch_text_appearance",
         "set_text_timing",
         "add_text",
         "remove_text",

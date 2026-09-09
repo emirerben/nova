@@ -6,6 +6,7 @@ the shared eval harness conventions.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -168,6 +169,47 @@ def test_edit_copilot_eval(
         f"  judge: {result.judge.reasoning if result.judge else ''}\n"
         f"  output: {result.output}"
     )
+
+    if "exact_edit_ops" in fixture.meta:
+        assert result.output is not None
+        assert result.output["intent"] == "edit"
+        assert result.output["needs_clarification"] is False
+
+        def semantic_ops(ops):
+            rows = [
+                {
+                    key: value
+                    for key, value in op.items()
+                    if key not in {"target_ids", "target_identities"}
+                }
+                for op in ops
+            ]
+            for row in rows:
+                if isinstance(row.get("selector"), dict) and "target_ids" in row["selector"]:
+                    row["selector"] = {
+                        **row["selector"],
+                        "target_ids": sorted(row["selector"]["target_ids"]),
+                    }
+            return sorted(rows, key=lambda row: json.dumps(row, sort_keys=True))
+
+        assert semantic_ops(result.output["ops"]) == semantic_ops(fixture.meta["exact_edit_ops"])
+        inventory = fixture.input["variant_snapshot"]["text_appearance"]["targets"]
+        for op in result.output["ops"]:
+            if op["op"] != "patch_text_appearance":
+                continue
+            selector = op["selector"]
+            targets = [
+                target
+                for target in inventory
+                if ("category" not in selector or target["kind"] == selector["category"])
+                and ("target_ids" not in selector or target["id"] in selector["target_ids"])
+            ]
+            assert set(op["target_ids"]) == {target["id"] for target in targets}
+            assert len(op["target_ids"]) == len(targets)
+            assert sorted(op["target_identities"], key=lambda target: target["id"]) == sorted(
+                [{key: target[key] for key in ("id", "kind", "identity")} for target in targets],
+                key=lambda target: target["id"],
+            )
 
     if "exact_component_ops" in fixture.meta:
         assert result.output is not None

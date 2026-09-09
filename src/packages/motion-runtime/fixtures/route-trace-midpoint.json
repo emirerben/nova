@@ -2,7 +2,7 @@
   "width": 1080,
   "height": 1920,
   "frame": 30,
-  "runtime_hash": "motion-v5:ck0.40.0:b2556106:2abfa191:creator-blocks-v4-capacity",
+  "runtime_hash": "motion-v6:ck0.40.0:b2556106:2abfa191:creator-blocks-v5-text-appearance",
   "instances": [
     {
       "id": "route-trace-demo",

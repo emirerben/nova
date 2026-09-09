@@ -472,6 +472,12 @@ def _cue_style_override_tags(cue: dict[str, Any]) -> str:
     text_color = cue.get("text_color")
     if text_color:
         tags.append("{" + _ass_color_tag(text_color) + "}")
+    stroke = _clamp_optional_int(cue.get("stroke_width"), 0, 12)
+    if stroke is not None:
+        tags.append(f"{{\\bord{stroke}}}")
+    shadow = cue.get("shadow_enabled")
+    if isinstance(shadow, bool):
+        tags.append(f"{{\\shad{1 if shadow else 0}}}")
     return "".join(tags)
 
 
@@ -753,7 +759,11 @@ def _word_windows_for_cue(cue: dict) -> list[dict]:
 
 
 def _compose_word_pop_text(
-    tokens: list[str], active_idx: int, *, active_color: str = _ACTIVE_WORD_ASS_COLOR
+    tokens: list[str],
+    active_idx: int,
+    *,
+    active_color: str = _ACTIVE_WORD_ASS_COLOR,
+    cue_tags: str = "",
 ) -> str:
     """The full line, sanitized, with only `tokens[active_idx]` popped in lime (revert
     to the white style default after via `\\r`)."""
@@ -761,10 +771,10 @@ def _compose_word_pop_text(
     for j, tok in enumerate(tokens):
         clean = sanitize_ass_text(tok)
         if j == active_idx:
-            parts.append(f"{{\\c{active_color}&}}{clean}{{\\r}}")
+            parts.append(f"{{\\c{active_color}&}}{clean}{{\\r}}{cue_tags}")
         else:
             parts.append(clean)
-    return " ".join(parts)
+    return cue_tags + " ".join(parts)
 
 
 def generate_word_pop_ass(
@@ -797,6 +807,10 @@ def generate_word_pop_ass(
         if not windows:
             continue
         tokens = [w["text"] for w in windows]
+        cue_tags = _cue_style_override_tags(cue)
+        cue_size = _cue_size_override(cue)
+        if cue_size is not None:
+            cue_tags += f"{{\\fs{cue_size}}}"
         n = len(windows)
         for i, w in enumerate(windows):
             # Clamp against the previous event: whisper word timestamps occasionally
@@ -807,7 +821,9 @@ def generate_word_pop_ass(
             nxt = float(windows[i + 1]["start_s"]) if i + 1 < n else float(w["end_s"])
             end = max(start + 0.01, nxt)
             prev_end = end
-            text = _compose_word_pop_text(tokens, i, active_color=active_ass_color)
+            text = _compose_word_pop_text(
+                tokens, i, active_color=active_ass_color, cue_tags=cue_tags
+            )
             lines.append(
                 f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,0,,{text}"
             )

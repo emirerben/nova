@@ -1,0 +1,87 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-09-v41",
+  "input": {
+    "utterance": "remove all shadow and stroke from every text element",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "text",
+        "caption",
+        "motion"
+      ],
+      "text_appearance_version": 1,
+      "text_appearance": {
+        "version": 1,
+        "targets": [
+          {
+            "id": "t1",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 4,
+              "shadow_enabled": true
+            },
+            "identity": "t1-fingerprint"
+          },
+          {
+            "id": "t2",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t2-fingerprint"
+          }
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_appearance\",\"selector\":{\"scope\":\"editable_text\",\"quantifier\":\"all\"},\"patch\":{\"shadow_enabled\":false,\"stroke_width\":0},\"text_appearance_version\":1}],\"confidence\":0.96,\"reply\":\"Removed shadow and stroke from all text.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all"
+        },
+        "patch": {
+          "shadow_enabled": false,
+          "stroke_width": 0
+        },
+        "text_appearance_version": 1
+      }
+    ],
+    "confidence": 0.96,
+    "reply": "Removed shadow and stroke from all text.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "exact all appearance removal",
+    "exact_edit_ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all"
+        },
+        "patch": {
+          "shadow_enabled": false,
+          "stroke_width": 0
+        },
+        "text_appearance_version": 1
+      }
+    ]
+  }
+}

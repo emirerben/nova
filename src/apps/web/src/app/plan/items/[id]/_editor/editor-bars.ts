@@ -184,9 +184,13 @@ export function captionBarPatchFromMetaPatch(
   if (typeof patch.highlight_color === "string") {
     barPatch.highlight_color = patch.highlight_color;
   }
-  if (typeof patch.stroke_width === "number") barPatch.stroke_width = patch.stroke_width;
+  if (typeof patch.stroke_width === "number") {
+    barPatch.stroke_width = patch.stroke_width;
+    barPatch.cue_stroke_width = null;
+  }
   if (typeof patch.shadow_enabled === "boolean") {
     barPatch.shadow_enabled = patch.shadow_enabled;
+    barPatch.cue_shadow_enabled = null;
   }
   if (typeof patch.y_frac === "number") barPatch.y_frac = patch.y_frac;
   return barPatch;
@@ -217,6 +221,8 @@ export function localCaptionBarPatchFromPatch(
     "cue_font_family",
     "cue_text_color",
     "cue_size_px",
+    "cue_stroke_width",
+    "cue_shadow_enabled",
   ] as const) {
     if (Object.prototype.hasOwnProperty.call(patch, key)) {
       (localPatch as Record<string, unknown>)[key] = patch[key];
@@ -400,6 +406,8 @@ export function convertCaptionCues(
     cue_font_family: c.font_family ?? undefined,
     cue_text_color: c.text_color ?? undefined,
     cue_size_px: c.size_px ?? undefined,
+    cue_stroke_width: c.stroke_width ?? undefined,
+    cue_shadow_enabled: c.shadow_enabled ?? undefined,
   }));
 }
 
@@ -715,6 +723,8 @@ export function barsToCaptionCues(
       if (bar.cue_font_family !== undefined) cue.font_family = bar.cue_font_family;
       if (bar.cue_text_color !== undefined) cue.text_color = bar.cue_text_color;
       if (bar.cue_size_px !== undefined) cue.size_px = bar.cue_size_px;
+      if (bar.cue_stroke_width !== undefined) cue.stroke_width = bar.cue_stroke_width;
+      if (bar.cue_shadow_enabled !== undefined) cue.shadow_enabled = bar.cue_shadow_enabled;
       return cue;
     });
 }
