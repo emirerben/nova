@@ -38,6 +38,59 @@ describe("CopilotDrawer layout modes", () => {
     expect(screen.getByTestId("copilot-light")).toBeInTheDocument();
   });
 
+  it("accepts a two-thousand-character edit request", () => {
+    render(<CopilotDrawer {...baseProps} layoutMode="full" />);
+
+    const composer = screen.getByLabelText("Tell Kria what to change");
+    const request = "x".repeat(2000);
+    expect(composer).toHaveAttribute("maxlength", "2000");
+    fireEvent.change(composer, { target: { value: request } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(baseProps.onSend).toHaveBeenCalledWith(request);
+  });
+
+  it("clamps restored composer text to the API request limit", () => {
+    render(
+      <CopilotDrawer
+        {...baseProps}
+        layoutMode="full"
+        restoredInput={"x".repeat(2001)}
+      />,
+    );
+
+    expect(screen.getByLabelText("Tell Kria what to change")).toHaveValue("x".repeat(2000));
+    expect(baseProps.onClearRestoredInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("clamps an oversized programmatic composer change before it can be sent", () => {
+    render(<CopilotDrawer {...baseProps} layoutMode="full" />);
+
+    const composer = screen.getByLabelText("Tell Kria what to change");
+    fireEvent.change(composer, { target: { value: "x".repeat(2001) } });
+    expect(composer).toHaveValue("x".repeat(2000));
+  });
+
+  it("keeps a complete emoji at the Unicode request boundary", () => {
+    render(<CopilotDrawer {...baseProps} layoutMode="full" />);
+
+    const composer = screen.getByLabelText("Tell Kria what to change");
+    const request = `${"x".repeat(1999)}🎬more`;
+    const expected = `${"x".repeat(1999)}🎬`;
+    fireEvent.change(composer, { target: { value: request } });
+    expect(composer).toHaveValue(expected);
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(baseProps.onSend).toHaveBeenCalledWith(expected);
+  });
+
+  it("shows the character counter at the long-request warning threshold", () => {
+    render(<CopilotDrawer {...baseProps} layoutMode="full" />);
+
+    fireEvent.change(screen.getByLabelText("Tell Kria what to change"), {
+      target: { value: "x".repeat(1600) },
+    });
+    expect(screen.getByText("1600/2000")).toBeInTheDocument();
+  });
+
   it("edits a queued follow-up only after explicit submission", () => {
     render(
       <CopilotDrawer

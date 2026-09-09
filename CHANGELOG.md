@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.75.2.1] — 2026-09-09
+## [0.75.3.1] — 2026-09-09
 
 ### Fixed
 - **Generated voiceover captions now show up as captions, not stray text.** Captions from the latest voiceover flow appear side by side on their own captions track, get the caption editing controls (font, size, color) instead of the generic text panel, and no longer break the editor layout when clicked. Caption text and styling changes save and reflect in the preview; timing stays locked to the narration, with an honest reason shown in the panel.
@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - Added `CAPTION_CUE_SOURCE`, a shared constant replacing a hand-typed string that classified a caption across five call sites, plus a producer-side contract test pinning it.
+
+## [0.75.3.0] - 2026-09-09
+
+### Changed
+- **Creators can give the editor copilot longer, multi-part editing instructions.** Requests now support up to 2,000 characters and can return up to 48 coordinated edits, making it practical to update a full set of text and timeline changes in one turn.
 
 ## [0.75.2.0] - 2026-09-09
 
