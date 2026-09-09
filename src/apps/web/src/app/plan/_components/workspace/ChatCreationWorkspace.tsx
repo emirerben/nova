@@ -21,14 +21,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter,
-  DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AgentApprovalCard } from "@/components/chat/AgentApprovalCard";
@@ -51,7 +46,6 @@ import {
   isCreationThreadRevisionConflict,
   creationVariantPlayable, latestCreationDirection,
   renameCreationThread, sendKriaTurn, undoKriaDraft,
-  creationDirectionReceiptLabel,
   type CreationFormat, type CreationSpeechCleanupChoice, type CreationThread,
   type CreationThreadEvent,
 } from "@/lib/creation-thread-api";
@@ -481,6 +475,9 @@ export default function ChatCreationWorkspace({
   const [threadUnavailable, setThreadUnavailable] = useState(false);
   const [renameTarget, setRenameTarget] = useState<CreationThread | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameInFlightRef = useRef(false);
+  const renameCancelledRef = useRef(false);
   const [deleteTarget, setDeleteTarget] = useState<CreationThread | null>(null);
   const [projectActionBusy, setProjectActionBusy] = useState(false);
   const [projectActionError, setProjectActionError] = useState<string | null>(null);
@@ -1147,11 +1144,7 @@ export default function ChatCreationWorkspace({
   const clipMedia = media.filter((item) => item.kind === "video");
   const clipCount = clipMedia.length || (media.length === 0 ? mediaCount : 0);
   const accountName = session?.user?.name ?? session?.user?.email ?? "Account";
-  const headerSubtitle = productionPreview && isProductionLibraryThread(thread)
-    ? `${projectStatusLabel(thread!)} · ${String(thread?.state.production_mode ?? "Kria").replaceAll("_", " ")}`
-    : format
-      ? `${creationFormatLabel(format)} · ${clipCount} ${clipCount === 1 ? "clip" : "clips"}`
-      : "Start with a format, then tell me what you’re imagining";
+
 
   const scrollToLiveEdge = useCallback(() => {
     const transcript = transcriptRef.current;
@@ -1456,6 +1449,7 @@ export default function ChatCreationWorkspace({
   }
 
   function beginRename(project: CreationThread) {
+    renameCancelledRef.current = false;
     setRenameTarget(project);
     setRenameValue(projectTitle(project));
     setProjectActionError(null);
@@ -1464,7 +1458,13 @@ export default function ChatCreationWorkspace({
   async function renameProject() {
     const target = renameTarget;
     const name = renameValue.trim();
-    if (!target || !name || projectActionBusy) return;
+    if (!target || projectActionBusy || renameInFlightRef.current || renameCancelledRef.current) return;
+    if (!name || name === projectTitle(target)) {
+      setRenameTarget(null);
+      setProjectActionError(null);
+      return;
+    }
+    renameInFlightRef.current = true;
     setProjectActionBusy(true);
     setProjectActionError(null);
     setError(null);
@@ -1473,6 +1473,7 @@ export default function ChatCreationWorkspace({
       setProjects((items) => items.map((item) => item.id === target.id ? next : item));
       setThread((current) => current?.id === target.id ? next : current);
       setRenameTarget(null);
+      renameInFlightRef.current = false;
       setProjectActionBusy(false);
       return;
     }
@@ -1483,8 +1484,8 @@ export default function ChatCreationWorkspace({
       setRenameTarget(null);
     } catch {
       setProjectActionError("I couldn’t rename that project. Try again in a moment.");
-      setError("I couldn’t rename that project. Try again in a moment.");
     } finally {
+      renameInFlightRef.current = false;
       setProjectActionBusy(false);
     }
   }
@@ -1734,7 +1735,7 @@ export default function ChatCreationWorkspace({
   const sidebar = (
     <aside className="flex h-full w-[260px] shrink-0 flex-col gap-6 border-r border-border bg-background px-[14px] pb-8 pt-6" aria-label="Projects">
       <div className="flex h-11 shrink-0 items-center justify-between px-3">
-        <span className="flex items-center justify-start gap-2 text-[#9BCAFF]" role="img" aria-label="Kria"><KriaWordmark className="h-7 w-[76px] text-[24px]" /></span>
+        <span className="flex items-center justify-start gap-2 text-[45px] text-[#9BCAFF]" role="img" aria-label="Kria"><KriaWordmark className="h-[54px] w-[143px]" /></span>
         <Button type="button" variant="ghost" size="icon" className="size-11 md:size-9" aria-label="Hide project sidebar" onClick={() => setSidebarHidden(true)}><PanelLeftClose /></Button>
       </div>
       <Button
@@ -1762,10 +1763,44 @@ export default function ChatCreationWorkspace({
           const sidebarTitle = projectSidebarTitle(project);
           return (
             <div key={project.id} className="flex min-w-0 items-center gap-1">
+              {renameTarget?.id === project.id ? (
+                <form
+                  className={cn("min-h-11 min-w-0 flex-1 rounded-md px-4 py-2 text-sm font-medium", project.id === thread?.id && "bg-[#EBF3FF] text-[#245E9B]")}
+                  aria-label={`Rename ${title}`}
+                  onSubmit={(event) => { event.preventDefault(); void renameProject(); }}
+                >
+                  <input
+                    aria-label="Project name"
+                    className="block h-5 w-full min-w-0 appearance-none rounded-none border-0 bg-transparent p-0 text-sm font-medium leading-5 text-inherit shadow-none outline-none focus:ring-0"
+                    value={renameValue}
+                    maxLength={120}
+                    readOnly={projectActionBusy}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    ref={renameInputRef}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onBlur={() => { void renameProject(); }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && event.nativeEvent.isComposing) event.preventDefault();
+                      if (event.key === "Escape" && !projectActionBusy) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        renameCancelledRef.current = true;
+                        setRenameTarget(null);
+                        setProjectActionError(null);
+                      }
+                    }}
+                    aria-invalid={Boolean(projectActionError)}
+                    aria-describedby={projectActionError ? `rename-error-${project.id}` : undefined}
+                  />
+                  <span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span>
+                  {projectActionError ? <p id={`rename-error-${project.id}`} className="mt-1 text-xs text-destructive" role="alert">{projectActionError}</p> : null}
+                </form>
+              ) : (
               <Button type="button" variant="ghost" className={cn("h-auto min-h-11 min-w-0 flex-1 justify-start text-left", project.id === thread?.id ? "bg-[#EBF3FF] text-[#245E9B] hover:bg-[#EBF3FF] hover:text-[#245E9B]" : "hover:bg-[#F7F7F8] hover:text-foreground")} disabled={busy || thinking || uploading} onClick={() => void openProject(project)}><span className="min-w-0"><span className="block truncate">{sidebarTitle}</span><span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span></span></Button>
+              )}
               <DropdownMenu>
               <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:size-9" aria-label={`Project actions for ${title}`} disabled={busy || thinking || uploading}><MoreHorizontal /></Button></DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent align="end" onCloseAutoFocus={(event) => { if (renameInputRef.current) { event.preventDefault(); requestAnimationFrame(() => renameInputRef.current?.focus()); } }}>
                   <DropdownMenuItem onSelect={() => beginRename(project)}>Rename project{productionPreview ? " (preview)" : ""}</DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={projectDeletionBlocked(project)} title={projectDeletionBlocked(project) ? "Finish the active render before deleting this project." : undefined} onSelect={() => setDeleteTarget(project)}>{projectDeletionBlocked(project) ? "Delete after rendering" : `Delete project${productionPreview ? " (preview)" : ""}`}</DropdownMenuItem>
@@ -1841,16 +1876,6 @@ export default function ChatCreationWorkspace({
 
   const projectDialogs = (
     <>
-      <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open && !projectActionBusy) setRenameTarget(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Rename project{productionPreview ? " in preview" : ""}</DialogTitle><DialogDescription>{productionPreview ? "This changes only this browser preview and resets on reload. Your production project is untouched." : "Choose a short name you’ll recognize in your project list."}</DialogDescription></DialogHeader>
-          <form onSubmit={(event) => { event.preventDefault(); void renameProject(); }} className="space-y-4">
-            <Input aria-label="Project name" value={renameValue} maxLength={120} onChange={(event) => setRenameValue(event.target.value)} autoFocus aria-describedby={projectActionError ? "project-action-error" : undefined} />
-            {projectActionError ? <p id="project-action-error" className="text-sm text-destructive" role="alert">{projectActionError}</p> : null}
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={projectActionBusy}>Cancel</Button></DialogClose><Button type="submit" disabled={!renameValue.trim() || projectActionBusy}>{projectActionBusy ? "Saving…" : "Save name"}</Button></DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !projectActionBusy) setDeleteTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>{productionPreview ? "Preview the deleted state?" : "Delete project?"}</AlertDialogTitle><AlertDialogDescription>{productionPreview ? `“${deleteTarget ? projectTitle(deleteTarget) : "This project"}” will disappear only from this browser preview and return on reload. No production data will be changed.` : `“${deleteTarget ? projectTitle(deleteTarget) : "This project"}” will permanently delete this chat, its uploads, edit data, and completed Kria videos. This cannot be recovered. Published TikTok posts remain on TikTok.`}</AlertDialogDescription></AlertDialogHeader>
@@ -1864,48 +1889,6 @@ export default function ChatCreationWorkspace({
     <>
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Kria creation chat">
       {productionPreview ? <div className="flex shrink-0 items-center justify-center gap-2 border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950" role="status" data-testid="production-preview-banner"><span className="size-2 rounded-full bg-lime-600" aria-hidden="true" /><strong>Live production data</strong><span>Read-only. Rename and delete are local previews that reset on reload.</span></div> : null}
-      <header className="flex h-14 shrink-0 items-center border-b px-4 sm:px-6">
-        <div className="flex min-w-0 flex-1 items-center" data-testid="workspace-header-start">
-          <div
-            className={cn(
-              "hidden shrink-0 overflow-hidden md:grid",
-              "motion-safe:transition-[grid-template-columns,margin-right,opacity] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
-              sidebarHidden
-                ? "md:mr-3 md:grid-cols-[2.75rem] md:opacity-100"
-                : "pointer-events-none md:mr-0 md:grid-cols-[0rem] md:opacity-0",
-            )}
-            data-state={sidebarHidden ? "open" : "closed"}
-            data-testid="sidebar-toggle-slot"
-          >
-            <div className="min-w-0 overflow-hidden">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "size-11 shrink-0 motion-safe:transition-[transform,opacity] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
-                  sidebarHidden ? "translate-x-0 scale-100 opacity-100" : "-translate-x-1 scale-95 opacity-0",
-                )}
-                aria-label="Show project sidebar"
-                aria-hidden={!sidebarHidden}
-                disabled={!sidebarHidden}
-                tabIndex={sidebarHidden ? 0 : -1}
-                onClick={() => setSidebarHidden(false)}
-              >
-                <PanelLeftOpen />
-              </Button>
-            </div>
-          </div>
-          <div className="min-w-0">
-            <h1 data-testid="project-title" className="truncate font-display text-xl font-medium">{thread ? projectTitle(thread) : "Loading project…"}</h1>
-            <p className="truncate text-xs capitalize text-muted-foreground">{headerSubtitle}</p>
-            {CREATOR_MEMORY_ENABLED && creationDirectionReceiptLabel(thread) ? <p className="truncate text-[11px] text-muted-foreground"><Link href="/plan/profile" className="hover:text-foreground">{creationDirectionReceiptLabel(thread)}</Link></p> : null}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
-        </div>
-      </header>
       {CREATOR_MEMORY_ENABLED && thread?.direction_receipt ? <div className="px-4 sm:px-6"><CreatorDirectionReceipt receipt={thread.direction_receipt} projectId={thread.id} expectedRevision={thread.direction_receipt.memory_revision} /></div> : null}
       <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="creation-live-announcer">{announcement}</p>
       <p className="sr-only" role="status" aria-atomic="true" data-testid="speech-cleanup-live-announcer">{liveAnnouncement}</p>
@@ -1949,7 +1932,7 @@ export default function ChatCreationWorkspace({
         {thinking ? <ChatThinking /> : null}
       </div></div>
       {hasNewUpdate ? <div className="flex shrink-0 justify-center border-t bg-background/95 px-3 py-2"><Button type="button" variant="secondary" className="min-h-11" onClick={scrollToLiveEdge}>New update</Button></div> : null}
-      <div className={cn("shrink-0 bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4", !hasNewUpdate && "border-t")}><AgentComposer ref={composerRef} className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview} submitDisabled={thinking || !thread} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
+      <div className={cn("shrink-0 bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4", !hasNewUpdate && "border-t")}><AgentComposer ref={composerRef} className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview} submitDisabled={thinking || !thread} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
     </section>
     {projectDialogs}
     </>
@@ -1987,6 +1970,21 @@ export default function ChatCreationWorkspace({
       </div>
     </div>
   );
+  const collapsedProjectRail = sidebarHidden ? (
+    <nav aria-label="Project navigation" className="hidden w-16 shrink-0 flex-col items-center border-r border-border bg-background pt-6 md:flex">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="size-11 shrink-0"
+        aria-label="Show project sidebar"
+        title="Show projects"
+        onClick={() => setSidebarHidden(false)}
+      >
+        <PanelLeftOpen aria-hidden="true" />
+      </Button>
+    </nav>
+  ) : null;
   const projectSheet = (
     <Sheet open={projectsOpen} onOpenChange={setProjectsOpen}>
       <SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]">
@@ -2002,12 +2000,12 @@ export default function ChatCreationWorkspace({
   if (galleryOpen) return (
     <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       {sidebarShell}
+      {collapsedProjectRail}
       {projectSheet}
       <section className="flex min-w-0 flex-1 flex-col gap-8 overflow-hidden px-12 py-14">
         {productionPreview ? <div className="flex shrink-0 items-center justify-center gap-2 border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong><span>Read-only playback</span></div> : null}
         <header className="flex shrink-0 items-end justify-between gap-6">
           <div className="flex min-w-0 items-end gap-3">
-            {sidebarHidden ? <Button type="button" variant="ghost" size="icon" className="mb-1 size-11 shrink-0" aria-label="Show project sidebar" onClick={() => setSidebarHidden(false)}><PanelLeftOpen /></Button> : null}
             <div className="flex min-w-0 flex-col gap-2">
               <h1 className="font-display text-[40px] font-medium leading-[48px] text-[#30352C]">Gallery</h1>
               <p className="text-sm leading-[21px] text-muted-foreground">Finished videos and works in progress.</p>
@@ -2049,6 +2047,7 @@ export default function ChatCreationWorkspace({
   return (
     <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       {sidebarShell}
+      {collapsedProjectRail}
       {projectSheet}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {hasReady && editorOpen ? (

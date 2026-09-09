@@ -95,7 +95,7 @@ export default function ToolRail({
   return (
     <div
       data-region="tool-rail"
-      className="flex w-16 flex-col items-center gap-1 border-r border-border bg-background pt-3"
+      className="flex w-16 shrink-0 flex-col items-center gap-1 border-r border-border bg-background pt-3"
     >
       {tools.map((tool) => {
         const active = activeTool === tool.id;
@@ -117,7 +117,7 @@ export default function ToolRail({
               if (!enabled) return; // focusable-disabled: reachable, inert
               onToggleTool(tool.id);
             }}
-            className={`relative flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c] ${
+            className={`relative flex h-16 w-full shrink-0 flex-col items-center justify-center gap-1 rounded-md px-1 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c] ${
               active
                 ? "bg-muted text-foreground hover:bg-muted"
                 : enabled
@@ -133,7 +133,7 @@ export default function ToolRail({
             )}
             <span
               aria-hidden
-              className={`flex h-5 w-5 items-center justify-start text-[17px] leading-none ${
+              className={`flex h-6 w-10 shrink-0 items-center justify-center text-center text-[17px] leading-none ${
                 active ? "font-bold" : ""
               }`}
             >
@@ -143,7 +143,7 @@ export default function ToolRail({
                 tool.icon
               )}
             </span>
-            <span className={`text-[11px] ${active ? "font-semibold" : ""}`}>
+            <span className={`block w-full text-center text-[11px] leading-4 ${active ? "font-semibold" : ""}`}>
               {tool.label}
             </span>
             {!enabled && (

@@ -150,13 +150,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import KriaWordmark from "@/components/KriaWordmark";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
@@ -323,8 +316,6 @@ import {
   type MotionPresetPatch,
 } from "@nova/motion-runtime";
 import type { CreatorBlockMotionControlPatch } from "./MotionInspector";
-
-const ZOOM_OPTIONS = [100, 125, 150] as const;
 
 function revokeLocalObjectUrl(url: string | null | undefined): void {
   if (url?.startsWith("blob:") && typeof URL.revokeObjectURL === "function") {
@@ -1014,7 +1005,6 @@ export default function EditorShell({
   const [activeTool, setActiveTool] = useState<EditorTool | null>(null); // drawer CLOSED at first paint
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("basic");
   const [lightSheetOpen, setLightSheetOpen] = useState(false);
-  const [zoomPct, setZoomPct] = useState<number>(100);
   const [flashTextIds, setFlashTextIds] = useState<Set<string>>(new Set());
   const [flashOverlayIds, setFlashOverlayIds] = useState<Set<string>>(new Set());
   const [flashTimelineIds, setFlashTimelineIds] = useState<Set<string>>(new Set());
@@ -7760,18 +7750,6 @@ export default function EditorShell({
             >
               <RedoIcon className="h-4 w-4" />
             </Button>
-            <Select value={String(zoomPct)} onValueChange={(v) => setZoomPct(Number(v))}>
-              <SelectTrigger aria-label="Canvas zoom" className="h-9 w-[88px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ZOOM_OPTIONS.map((z) => (
-                  <SelectItem key={z} value={String(z)}>
-                    {z}%
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             {orientationToggle}
           </div>
 
@@ -7815,9 +7793,6 @@ export default function EditorShell({
               <Badge variant="outline" className="max-w-[280px] truncate font-normal">
                 {saveMessage}
               </Badge>
-            )}
-            {(lyricsDirty || orientationDirty) && (
-              <Badge variant="outline">Re-renders on Save</Badge>
             )}
             <Button
               type="button"
@@ -8238,7 +8213,7 @@ export default function EditorShell({
             virtualDeckLookAdjustments={virtualDeckLookAdjustments}
             playing={playing}
             masonryDurationS={previewDuration}
-            zoomPct={zoomPct}
+            zoomPct={100}
             tool="select"
             videoRef={videoRef}
             onSelectText={selectText}
