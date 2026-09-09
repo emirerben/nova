@@ -33,6 +33,7 @@ def test_vocabulary_and_default() -> None:
         "narrated",
         "narrated_planned",
         "narrated_ready",
+        "slides",
     }
 
 
@@ -75,7 +76,12 @@ def test_render_program_for_intent_is_exhaustive(
 
 def test_guided_and_audio_led_vocabularies_are_disjoint_and_exhaustive() -> None:
     assert GUIDED_EDIT_FORMATS.isdisjoint(AUDIO_LED_EDIT_FORMATS)
-    assert GUIDED_EDIT_FORMATS | AUDIO_LED_EDIT_FORMATS == set(EDIT_FORMATS)
+    # "slides" is deliberately the first format in NEITHER group: it has no
+    # speech/audio spine (not audio-led) and is not an audio-destructive
+    # guided renderer (not guided) — render_program_for_intent's own
+    # exhaustiveness guard falls through to "native" for exactly this case.
+    # The two groups plus this one still exhaustively cover every format.
+    assert GUIDED_EDIT_FORMATS | AUDIO_LED_EDIT_FORMATS | {"slides"} == set(EDIT_FORMATS)
 
 
 @pytest.mark.parametrize(

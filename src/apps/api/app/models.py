@@ -2640,6 +2640,13 @@ class PlanItem(Base):
     # and last approval together so media changes can mark it stale without
     # erasing the creator's prior decision. NULL until Plan edit is used.
     edit_proposal: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Reviewable mixed-media "slide post" draft (ordered images + videos, e.g. a TikTok
+    # photo-mode post or Instagram carousel) — see app/schemas/slide_post.py. Same
+    # envelope shape as edit_proposal (draft + last-approved + user_edited) but kept as
+    # a separate column: a slide draft must never trip guided_edit_applicable's
+    # media-sync/staleness machinery, which is specific to the guided-story renderer.
+    # NULL until edit_format == "slides" and the user (or the composer agent) drafts one.
+    slide_post: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # ConformanceFeedbackAgent result at clip-attach time (best-effort, display-only).
     # {verdict, confidence, summary, mismatches[], suggestions[]}. NULL until
     # CONFORMANCE_FEEDBACK_ENABLED=True and the agent runs; never blocks Generate.

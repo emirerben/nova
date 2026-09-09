@@ -962,6 +962,15 @@ class Settings(BaseSettings):
             "flip Fly + restart both API and worker processes."
         ),
     )
+    # Mixed-media "slide post" output (ordered images + videos — TikTok photo mode /
+    # Instagram carousel), plans/024. Ships default ON per policy — unlike
+    # edit_format_day_vlog_enabled above, there is no staged rollout for this one.
+    # Off: the slide-post routes 404 and edit_format="slides" coerces to montage
+    # (coerce_edit_format falls back on anything it doesn't recognize as active).
+    # Read by API and workers; flip Fly + restart both, then rebuild Vercel for the
+    # NEXT_PUBLIC_SLIDE_POSTS_ENABLED twin. Rollback:
+    #   fly secrets set SLIDE_POSTS_ENABLED=false --app nova-video (api + worker)
+    slide_posts_enabled: bool = True
     main_creator_agent_freeform_uploads_enabled: bool = False
     main_creator_agent_workspace_enabled: bool = False
     main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)

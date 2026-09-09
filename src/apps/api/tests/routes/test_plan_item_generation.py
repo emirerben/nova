@@ -95,6 +95,7 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.audio_mode = "kria"
     item.voiceover_bed_level = None
     item.voiceover_caption_style = None
+    item.slide_post = None
     plan = MagicMock()
     plan.id = item.content_plan_id
     plan.user_id = user_id
@@ -240,6 +241,46 @@ def test_generate_requires_clips(client: TestClient) -> None:
     app.dependency_overrides[get_db] = lambda: db
     resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 409
+
+
+def test_generate_rejects_slides_item_with_empty_draft(client: TestClient) -> None:
+    """A slides item has no clips by design — the clip-required guard must
+    still 409 it while its slide_post draft has no slides (plans/024 regression:
+    caught by manual local testing, not by the task-layer dispatch tests —
+    this route-level guard runs BEFORE dispatch ever sees the item)."""
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[])
+    item.edit_format = "slides"
+    item.slide_post = None
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Upload at least one clip before generating"
+
+
+def test_generate_allows_slides_item_with_no_clips_when_draft_has_slides(
+    client: TestClient,
+) -> None:
+    """The slides asset-only allowance: no clip_gcs_paths at all, dispatch must
+    still proceed because the draft carries real slides (plans/024)."""
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[])
+    item.edit_format = "slides"
+    item.slide_post = {
+        "version": 1,
+        "platform_profile": "tiktok_photo",
+        "slides": [{"id": "s0", "asset_id": str(uuid.uuid4()), "kind": "image"}],
+        "cover_index": 0,
+        "caption": "",
+    }
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with _patch_dispatch_ok():
+        resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 200
 
 
 def test_generate_allows_current_approved_asset_only_story(monkeypatch, client: TestClient) -> None:

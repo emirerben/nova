@@ -1,4 +1,9 @@
-export type PickerEditFormat = "montage" | "narrated_planned" | "subtitled" | "talking_head";
+export type PickerEditFormat =
+  | "montage"
+  | "narrated_planned"
+  | "subtitled"
+  | "talking_head"
+  | "slides";
 
 /**
  * Planner-only vocab the item page must normalize AND persist before a render
@@ -24,6 +29,8 @@ export function resolvePickerFormat(
       return subtitledEnabled ? "subtitled" : "montage";
     case "talking_head":
       return "talking_head";
+    case "slides":
+      return "slides";
     case "narrated":
     case "narrated_planned":
     case "narrated_ready":

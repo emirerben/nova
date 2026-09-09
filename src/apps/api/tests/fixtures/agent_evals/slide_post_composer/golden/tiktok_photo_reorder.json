@@ -1,0 +1,27 @@
+{
+  "agent": "nova.plan.slide_post_composer",
+  "prompt_version": "2026-09-09-kria",
+  "input": {
+    "theme": "",
+    "idea": "",
+    "notes": "",
+    "persona_summary": "",
+    "platform_profile": "tiktok_photo",
+    "media": [
+      {"id": "p1", "kind": "image", "description": "messy kitchen counter, ingredients out"},
+      {"id": "p2", "kind": "image", "description": "finished plate, overhead shot, garnished"},
+      {"id": "p3", "kind": "image", "description": "close-up of the first bite on a fork"}
+    ]
+  },
+  "raw_text": "{\"order\": [\"p1\", \"p3\", \"p2\"], \"cover_id\": \"p2\", \"caption\": \"\", \"alt_text\": {}}",
+  "output": {
+    "order": ["p1", "p3", "p2"],
+    "cover_id": "p2",
+    "caption": "",
+    "alt_text": {}
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "No theme/idea/persona context supplied (the public one-off-post case) — empty caption and alt_text are valid, not a failure. Also exercises out-of-order input (p3 before p2 despite id order) to confirm the agent isn't just echoing input order."
+  }
+}

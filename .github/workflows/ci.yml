@@ -190,7 +190,7 @@ jobs:
           python -m alembic upgrade 0073
           python scripts/verify_content_plan_owner_constraint.py verify-installed
           python -m alembic downgrade -1
-          python -m alembic upgrade head
+          python -m alembic upgrade 0103
           python scripts/verify_0103_downgrade_state.py seed
           python -m alembic downgrade -1
           python scripts/verify_0103_downgrade_state.py verify
