@@ -3577,14 +3577,23 @@ function FocusedResults({
     agent_text: "Original audio",
     none: "Original audio",
   };
+  // KRI-20: a talking-to-camera (subtitled/narrated) variant has no main song
+  // but can still carry an explicit, editor-selected background-music bed
+  // (`background_music`) — the pill must say so instead of silently reading
+  // "Original audio" while music actually plays underneath.
+  const hasAudibleBackgroundMusic = !!variant?.background_music && !variant.background_music.muted;
   const modePill = variant
     ? variant.resolved_archetype === "narrated"
-      ? "Narration"
+      ? hasAudibleBackgroundMusic
+        ? "Narration + music"
+        : "Narration"
       : variant.track_title || variant.music_track_id
         ? variant.text_mode === "lyrics"
           ? "With lyrics"
           : "Music"
-      : (TEXT_MODE_PILL[variant.text_mode] ?? "Original audio")
+        : hasAudibleBackgroundMusic
+          ? "Original audio + music"
+          : (TEXT_MODE_PILL[variant.text_mode] ?? "Original audio")
     : null;
 
   // Flag-gated Edit entry into the full-screen TikTok-style editor shell.

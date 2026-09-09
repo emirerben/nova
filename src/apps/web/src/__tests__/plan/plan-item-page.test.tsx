@@ -928,6 +928,106 @@ describe("PlanItemPage — result cleanup", () => {
     expect(screen.queryByText("Kria's pick · Original audio")).toBeNull();
   });
 
+  // KRI-20: a talking-to-camera (subtitled) variant has no main song, but can
+  // still carry an explicit editor-selected background-music bed — the pill
+  // must disclose it instead of claiming plain "Original audio".
+  it("labels a subtitled variant with a background-music bed as original audio + music", async () => {
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-subtitled",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variant = {
+      ...makeVariant("subtitled_1", "ready", "https://cdn/subtitled.mp4"),
+      resolved_archetype: "subtitled",
+      background_music: {
+        track_id: "track-9",
+        title: "Quiet Bed",
+        preview_url: "https://cdn/preview.mp3",
+        src_gcs_path: "music/t9/audio.m4a",
+        start_s: 0,
+        end_s: 10,
+        duration_s: 10,
+        track_duration_s: 30,
+        gain_db: -18,
+        muted: false,
+        enabled: true,
+      },
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: makeJob({ status: "variants_ready", variants: [variant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Kria's pick · Original audio + music")).toBeInTheDocument();
+    expect(screen.queryByText("Kria's pick · Original audio")).toBeNull();
+  });
+
+  it("labels a subtitled variant with no background music as plain original audio", async () => {
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-subtitled-no-music",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variant = {
+      ...makeVariant("subtitled_1", "ready", "https://cdn/subtitled.mp4"),
+      resolved_archetype: "subtitled",
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: makeJob({ status: "variants_ready", variants: [variant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Kria's pick · Original audio")).toBeInTheDocument();
+  });
+
+  it("labels a narrated variant with a background-music bed as narration + music", async () => {
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-narrated",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variant = {
+      ...makeVariant("narrated_1", "ready", "https://cdn/narrated.mp4"),
+      resolved_archetype: "narrated",
+      background_music: {
+        track_id: "track-9",
+        title: "Quiet Bed",
+        preview_url: "https://cdn/preview.mp3",
+        src_gcs_path: "music/t9/audio.m4a",
+        start_s: 0,
+        end_s: 10,
+        duration_s: 10,
+        track_duration_s: 30,
+        gain_db: -18,
+        muted: false,
+        enabled: true,
+      },
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: makeJob({ status: "variants_ready", variants: [variant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Kria's pick · Narration + music")).toBeInTheDocument();
+    expect(screen.queryByText("Kria's pick · Narration")).toBeNull();
+  });
+
   it("replaces a failed preview in-frame with recovery actions", async () => {
     const item = makeItem({
       status: "ready",
