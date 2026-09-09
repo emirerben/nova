@@ -288,6 +288,7 @@ import {
   unprojectOutputTime,
   type VirtualCarouselSplice,
 } from "./virtual-timeline";
+import { resolveVirtualPreviewAudio } from "./preview-audio";
 import {
   deleteKeyAllowed,
   escapeAction,
@@ -1439,6 +1440,7 @@ export default function EditorShell({
   const [virtualFallback, setVirtualFallback] = useState(false);
   const virtualRefetchAttemptedRef = useRef(false);
   const virtualRefetchInFlightRef = useRef(false);
+  const virtualAudioRefetchAttemptedRef = useRef(false);
 
   // Virtual-preview music recovery state. The retry budget is one refetch per
   // edit session per track — a missing audio blob mints a fresh (still broken)
@@ -1480,6 +1482,7 @@ export default function EditorShell({
       setVirtualFallback(false);
       virtualRefetchAttemptedRef.current = false;
       virtualRefetchInFlightRef.current = false;
+      virtualAudioRefetchAttemptedRef.current = false;
       setVirtualMusicUnavailable(false);
       musicRefetchAttemptedRef.current = false;
       virtualMusicAutoFetchRef.current = false;
@@ -2233,7 +2236,12 @@ export default function EditorShell({
     });
     if (!musicRefetchAttemptedRef.current) {
       musicRefetchAttemptedRef.current = true;
+      // Refresh both authorities. Gallery tracks get a new preview URL from
+      // getMusicTracks(), while matched/unpublished and smart-background
+      // tracks only exist on the owner-scoped variant payload. Refreshing just
+      // the gallery retried the same expired variant URL and then went silent.
       void refreshMusicTracks();
+      setLoadNonce((nonce) => nonce + 1);
       return;
     }
     setVirtualMusicUnavailable(true);
@@ -2364,6 +2372,37 @@ export default function EditorShell({
     virtualMusicBlob?.trackId === effectiveAudioTrackId && !virtualMusicUnavailable
       ? virtualMusicBlob.url
       : virtualMusicRemoteUrl;
+  const virtualPreviewAudio = resolveVirtualPreviewAudio({
+    virtualPreviewRequested,
+    clipDirty,
+    musicDirty: musicWindowDirty,
+    backgroundMusicDirty,
+    musicTrackActive: effectiveAudioTrackId != null,
+    musicAudioUrl: virtualMusicAudioUrl,
+    musicStartS: virtualMusicStartS,
+    sourceAudioMix,
+    sourceAudioOptions: variant?.source_audio_options ?? [],
+    baseVideoUrl: variant?.base_video_url ?? null,
+    narrationApplied: variant?.render_receipt?.narration_applied === true,
+    videoMuted,
+    soundMuted,
+  });
+  const handleVirtualPreviewAudioError = useCallback(() => {
+    if (virtualPreviewAudio.kind === "music") {
+      handleVirtualMusicError();
+      return;
+    }
+    // Source/narration beds come from the owner-gated status payload rather
+    // than the public music gallery. Re-read once to refresh their signed URL;
+    // a second failure falls back to the last rendered composite, whose audio
+    // remains authoritative, instead of leaking raw clip sound.
+    if (!virtualAudioRefetchAttemptedRef.current) {
+      virtualAudioRefetchAttemptedRef.current = true;
+      setLoadNonce((nonce) => nonce + 1);
+      return;
+    }
+    setVirtualFallback(true);
+  }, [handleVirtualMusicError, virtualPreviewAudio.kind]);
   const backgroundMusicTrackDurationS =
     effectiveBackgroundMusicTrackId != null
       ? (virtualMusicTrack?.duration_s ?? variant?.background_music?.track_duration_s ?? null)
@@ -2440,18 +2479,18 @@ export default function EditorShell({
     grid: clip.state.grid,
     carousel: carouselSplice,
     currentTime,
-    muted: videoMuted || (sourceAudioMix !== "interleaved" && sourceAudioMix !== null),
-    musicAudioUrl: virtualMusicAudioUrl,
-    musicStartS: virtualMusicStartS,
-    soundMuted,
-    musicTrackActive: effectiveAudioTrackId != null,
+    muted: videoMuted,
+    musicAudioUrl: virtualPreviewAudio.url,
+    musicStartS: virtualPreviewAudio.startS,
+    soundMuted: virtualPreviewAudio.muted,
+    musicTrackActive: virtualPreviewAudio.active,
     frameDriven: FRAME_DRIVEN_PREVIEW_ENABLED,
     onFrameTimeUpdate: playbackClock?.publish,
     onTimeUpdate: commitPlaybackTime,
     onDuration: () => {},
     onPlayingChange: setPlaying,
     onSourceError: handleVirtualSourceError,
-    onMusicError: handleVirtualMusicError,
+    onMusicError: handleVirtualPreviewAudioError,
   });
   const virtualPreviewActive =
     virtualPreviewRequested &&
