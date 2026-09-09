@@ -409,7 +409,7 @@ export default function TextLane({
               variant="ghost"
               onClick={handleAdd}
               disabled={readOnly}
-              className="absolute inset-0 h-auto w-auto min-h-11 items-center justify-center rounded-none text-[10px] text-zinc-400 hover:bg-transparent hover:text-amber-500 disabled:pointer-events-none disabled:cursor-default sm:min-h-0"
+              className="absolute inset-0 h-auto w-auto min-h-11 items-center justify-center rounded-none text-[10px] text-zinc-400 hover:bg-transparent hover:text-zinc-700 disabled:pointer-events-none disabled:cursor-default sm:min-h-0"
             >
               No text yet — ＋ Add text
             </Button>
@@ -434,17 +434,11 @@ export default function TextLane({
                   "absolute inset-y-1 rounded select-none border flex items-center overflow-hidden",
                   "transition-opacity",
                   isBeingDragged ? "opacity-60 z-10 shadow-lg" : "opacity-100",
-                  bar.role === "narrated_caption"
-                    ? locked
-                      ? "bg-teal-50 border-teal-200 cursor-not-allowed opacity-60"
-                      : isExpanded
-                      ? "bg-teal-200 border-teal-400 ring-1 ring-teal-300 cursor-grab active:cursor-grabbing"
-                      : "bg-teal-100 border-teal-300 hover:bg-teal-150 cursor-grab active:cursor-grabbing"
-                    : locked
-                    ? "bg-amber-50 border-amber-200 cursor-not-allowed opacity-60"
+                  locked
+                    ? "bg-[#EBF3FF] border-[#9BCAFF] cursor-not-allowed opacity-60"
                     : isExpanded
-                    ? "bg-amber-200 border-amber-400 ring-1 ring-amber-300 cursor-grab active:cursor-grabbing"
-                    : "bg-amber-100 border-amber-300 hover:bg-amber-150 cursor-grab active:cursor-grabbing",
+                    ? "bg-[#CFE5FF] border-[#6EAEF5] ring-1 ring-[#9BCAFF] cursor-grab active:cursor-grabbing"
+                    : "bg-[#EBF3FF] border-[#9BCAFF] hover:bg-[#E2EEFC] cursor-grab active:cursor-grabbing",
                 ].join(" ")}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 onPointerDown={(e) => handleBarPointerDown(e, bar)}
@@ -463,12 +457,12 @@ export default function TextLane({
                     className="absolute left-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 flex items-center justify-center hover:bg-black/10"
                     aria-hidden="true"
                   >
-                    <div className={`w-px h-3 rounded-full ${bar.role === "narrated_caption" ? "bg-teal-500/60" : "bg-amber-500/60"}`} />
+                    <div className="w-px h-3 rounded-full bg-[#6EAEF5]" />
                   </div>
                 )}
 
                 {/* Text preview */}
-                <span className={`px-2 text-[9px] truncate pointer-events-none leading-none ${bar.role === "narrated_caption" ? "text-teal-700" : "text-amber-700"}`}>
+                <span className="px-2 text-[9px] truncate pointer-events-none leading-none text-[#245E9B]">
                   {textPreview}
                 </span>
 
@@ -478,7 +472,7 @@ export default function TextLane({
                     className="absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 flex items-center justify-center hover:bg-black/10"
                     aria-hidden="true"
                   >
-                    <div className={`w-px h-3 rounded-full ${bar.role === "narrated_caption" ? "bg-teal-500/60" : "bg-amber-500/60"}`} />
+                    <div className="w-px h-3 rounded-full bg-[#6EAEF5]" />
                   </div>
                 )}
               </div>
@@ -493,7 +487,7 @@ export default function TextLane({
               onClick={(e) => { e.stopPropagation(); handleAdd(); }}
               title="Add text block"
               aria-label="Add text block"
-              className={`absolute right-0.5 top-0.5 z-20 h-11 w-8 items-center justify-center rounded text-xs leading-none sm:h-5 sm:w-5 ${bars[0]?.role === "narrated_caption" ? "text-teal-400/50 hover:bg-teal-500/10 hover:text-teal-300" : "text-amber-400/50 hover:bg-amber-500/10 hover:text-amber-300"}`}
+              className="absolute right-0.5 top-0.5 z-20 h-11 w-8 items-center justify-center rounded text-xs leading-none text-zinc-500 hover:bg-zinc-100 hover:text-[#30352c] sm:h-5 sm:w-5"
             >
               +
             </Button>
@@ -562,7 +556,7 @@ export default function TextLane({
       {/* T8: one-time "now user-owned" note for sequence (Editorial) variants. */}
       {showSequenceNote && (
         <div className="ml-14 mr-0 mt-1">
-          <div className="text-xs text-amber-400 bg-amber-950/40 rounded px-2 py-1">
+          <div className="rounded border border-zinc-200 bg-zinc-100 px-2 py-1 text-xs text-[#3f3f46]">
             Editing this flow makes it yours — Kria won&apos;t regenerate it automatically.
           </div>
         </div>
@@ -719,7 +713,7 @@ function TextPropertyPanel({
           }}
           maxLength={500}
           rows={3}
-          className="min-h-0 text-xs bg-zinc-50 rounded-lg px-2 py-1.5 text-zinc-900 placeholder-zinc-400 focus-visible:ring-amber-400 resize-none leading-relaxed"
+          className="min-h-0 text-xs bg-zinc-50 rounded-lg px-2 py-1.5 text-zinc-900 placeholder-zinc-400 focus-visible:ring-[#30352c] resize-none leading-relaxed"
           placeholder="Enter text…"
         />
         <div
@@ -774,7 +768,7 @@ function TextPropertyPanel({
               aria-pressed={bar.size_class === p.value}
               className={`h-auto min-h-11 flex-1 rounded py-1 text-[10px] sm:min-h-0 ${
                 bar.size_class === p.value
-                  ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
+                  ? "bg-[#30352c] text-white font-semibold hover:bg-[#30352c]"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
@@ -803,7 +797,7 @@ function TextPropertyPanel({
             onKeyDown={(e) => { if (e.key === "Enter") commitColor(colorDraft); }}
             maxLength={7}
             placeholder="#ffffff"
-            className="h-auto flex-1 text-xs bg-zinc-50 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus-visible:ring-amber-400 font-mono"
+            className="h-auto flex-1 text-xs bg-zinc-50 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus-visible:ring-[#30352c] font-mono"
             aria-label="Text color (6-digit hex)"
           />
         </div>
@@ -835,7 +829,7 @@ function TextPropertyPanel({
             onKeyDown={(e) => { if (e.key === "Enter") commitHighlight(hlDraft); }}
             maxLength={7}
             placeholder="#ffee00 or empty"
-            className="h-auto flex-1 text-xs bg-zinc-50 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus-visible:ring-amber-400 font-mono"
+            className="h-auto flex-1 text-xs bg-zinc-50 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus-visible:ring-[#30352c] font-mono"
             aria-label="Highlight color (6-digit hex, optional)"
           />
           {bar.highlight_color && (
@@ -887,7 +881,7 @@ function TextPropertyPanel({
               aria-label={`Align text ${a}`}
               className={`h-auto min-h-11 flex-1 rounded py-1 text-[10px] sm:min-h-0 ${
                 alignment === a
-                  ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
+                  ? "bg-[#30352c] text-white font-semibold hover:bg-[#30352c]"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
@@ -923,7 +917,7 @@ function TextPropertyPanel({
               aria-label={`Place box ${position}`}
               className={`h-auto min-h-11 flex-1 rounded py-1 text-[10px] sm:min-h-0 ${
                 boxPosition === position
-                  ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
+                  ? "bg-[#30352c] text-white font-semibold hover:bg-[#30352c]"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
@@ -992,7 +986,7 @@ function TextPropertyPanel({
               aria-pressed={bar.effect === opt.value}
               className={`h-auto min-h-11 rounded px-2 py-1 text-[10px] sm:min-h-0 ${
                 bar.effect === opt.value
-                  ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
+                  ? "bg-[#30352c] text-white font-semibold hover:bg-[#30352c]"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
@@ -1059,7 +1053,7 @@ function TextPropertyPanel({
                 aria-pressed={active}
                 className={`h-auto min-h-11 rounded px-2 py-1 text-[10px] sm:min-h-0 ${
                   active
-                    ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
+                    ? "bg-[#30352c] text-white font-semibold hover:bg-[#30352c]/90"
                     : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
                 }`}
               >
@@ -1084,7 +1078,7 @@ function TextPropertyPanel({
               }
               maxLength={1}
               placeholder="center"
-              className="mt-1 h-8 w-full bg-zinc-50 px-2 text-xs normal-case tracking-normal text-zinc-900 placeholder-zinc-400 focus-visible:ring-amber-400"
+              className="mt-1 h-8 w-full bg-zinc-50 px-2 text-xs normal-case tracking-normal text-zinc-900 placeholder-zinc-400 focus-visible:ring-[#30352c]"
               aria-label="Target glyph"
             />
           </label>
@@ -1107,7 +1101,7 @@ function TextPropertyPanel({
               style={{ fontFamily: f.cssFamily, fontWeight: f.weight }}
               className={`h-auto min-h-11 justify-start truncate rounded px-2 py-1.5 text-left text-[11px] sm:min-h-0 ${
                 bar.font_family === f.name
-                  ? "bg-lime-400 text-black hover:bg-lime-400"
+                  ? "bg-[#30352c] text-white hover:bg-[#30352c]"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
@@ -1137,7 +1131,7 @@ function TextPropertyPanel({
               onClick={() => setTab(t)}
               className={`h-auto min-h-11 flex-1 rounded-none py-2 text-xs capitalize hover:bg-transparent ${
                 tab === t
-                  ? "text-zinc-900 font-semibold border-b-2 border-amber-500"
+                  ? "text-zinc-900 font-semibold border-b-2 border-[#30352c]"
                   : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
@@ -1175,7 +1169,7 @@ function TextPropertyPanel({
             type="button"
             variant="default"
             onClick={() => onApply?.(bars)}
-            className="h-auto min-h-11 rounded-full bg-lime-400 px-4 py-1.5 text-xs font-semibold text-black hover:bg-lime-300 active:bg-lime-500 sm:min-h-0"
+            className="h-auto min-h-11 rounded-full bg-[#30352c] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#30352c]/90 active:bg-[#30352c] sm:min-h-0"
           >
             Apply
           </Button>

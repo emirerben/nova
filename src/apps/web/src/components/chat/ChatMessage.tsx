@@ -58,7 +58,7 @@ export function ChatMessage({
         "whitespace-pre-line [overflow-wrap:anywhere]",
         animate && "motion-safe:animate-chat-message-in motion-reduce:animate-chat-fade-in",
         isUser
-          ? "ml-auto max-w-[85%] rounded-[18px] rounded-br-[6px] bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground"
+            ? "ml-auto max-w-[85%] rounded-[18px] rounded-br-[6px] bg-[#EBF3FF] px-3 py-2 text-sm leading-relaxed text-[#245E9B]"
           : "mr-auto w-full max-w-prose text-sm leading-5 text-foreground",
         pending && "opacity-60",
         className,

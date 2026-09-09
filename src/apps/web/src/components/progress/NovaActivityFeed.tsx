@@ -120,7 +120,7 @@ export function NovaActivityFeed({
     const mutedColor = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
     const linkColor =
       tone === "light"
-        ? "text-lime-700 hover:text-lime-800"
+        ? "text-lime-700 hover:text-ink"
         : "text-amber-300 hover:text-amber-200";
 
     return (
@@ -176,7 +176,7 @@ export function NovaActivityFeed({
     const checkColor = tone === "light" ? "text-lime-700" : "text-amber-300";
     const mutedColor = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
     const linkColor =
-      tone === "light" ? "text-lime-700 hover:text-lime-800" : "text-amber-300 hover:text-amber-200";
+      tone === "light" ? "text-lime-700 hover:text-ink" : "text-amber-300 hover:text-amber-200";
     return (
       <div>
         {announceRegion}

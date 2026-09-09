@@ -1774,7 +1774,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           event.stopPropagation();
                           onAddClip?.(source.clip_index);
                         }}
-                        className="h-6 shrink-0 rounded border-dashed border-zinc-300 bg-white px-2 text-[9px] font-semibold text-[#3f3f46] hover:border-lime-500 hover:bg-white hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+                        className="h-6 shrink-0 rounded border-dashed border-zinc-300 bg-white px-2 text-[9px] font-semibold text-[#3f3f46] hover:border-lime-500 hover:bg-white hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         + Clip {source.clip_index + 1}
                       </Button>

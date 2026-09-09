@@ -1136,7 +1136,7 @@ function TestTab({
           <button
             onClick={handleRerun}
             disabled={rerolling}
-            className="px-4 py-2 text-sm bg-purple-700 hover:bg-purple-600 text-white rounded disabled:opacity-50"
+            className="px-4 py-2 text-sm bg-purple-700 hover:bg-zinc-700 text-white rounded disabled:opacity-50"
           >
             {rerolling ? "Starting..." : "Rerun"}
           </button>

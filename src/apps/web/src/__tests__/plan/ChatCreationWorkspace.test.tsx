@@ -206,18 +206,18 @@ describe("ChatCreationWorkspace", () => {
 
   it("renders the three Paper formats and keeps the project rail", async () => {
     render(<ChatCreationWorkspace />);
-    expect(await screen.findByRole("heading", { name: "Untitled video" })).toBeInTheDocument();
+    expect((await screen.findAllByText("Untitled video"))[0]).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Montage Music-led/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Narrated Let/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Talking to camera A clean/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument();
   });
 
   it("opens profile and memory from the sidebar account icon", async () => {
     const user = userEvent.setup();
     render(<ChatCreationWorkspace />);
 
-    await screen.findByRole("heading", { name: "Untitled video" });
+    (await screen.findAllByText("Untitled video"))[0];
     expect(screen.queryByText("Test creator")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Account menu" }));
@@ -409,33 +409,28 @@ describe("ChatCreationWorkspace", () => {
     await waitFor(() => expect(composer).toHaveFocus());
   });
 
-  it("keeps the sidebar toggle left of the title and animates the collapsed spacing", async () => {
+  it("keeps project navigation available without the chat header", async () => {
     const user = userEvent.setup();
     render(<ChatCreationWorkspace />);
 
-    const title = await screen.findByTestId("project-title");
+    await screen.findByRole("textbox", { name: "Message Kria" });
+    expect(screen.queryByTestId("project-title")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open projects" })).toBeInTheDocument();
     const sidebarShell = screen.getByTestId("project-sidebar-shell");
     const sidebarPanel = screen.getByTestId("project-sidebar-panel");
-    const toggleSlot = screen.getByTestId("sidebar-toggle-slot");
 
     expect(sidebarShell).toHaveAttribute("data-state", "open");
     expect(sidebarShell).toHaveClass("md:w-[260px]", "motion-safe:transition-[width]");
     await user.click(screen.getByRole("button", { name: "Hide project sidebar" }));
 
     const showSidebar = await screen.findByRole("button", { name: "Show project sidebar" });
-    expect(screen.getByTestId("workspace-header-start").firstElementChild).toBe(toggleSlot);
-    expect(toggleSlot.nextElementSibling).toContainElement(title);
-    expect(showSidebar.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(toggleSlot).toHaveAttribute("data-state", "open");
-    expect(toggleSlot).toHaveClass("md:mr-3", "md:grid-cols-[2.75rem]");
+    expect(screen.getByRole("navigation", { name: "Project navigation" })).toContainElement(showSidebar);
     expect(sidebarShell).toHaveAttribute("data-state", "closed");
     expect(sidebarShell).toHaveAttribute("inert", "");
     expect(sidebarShell).toHaveClass("md:w-0", "motion-safe:duration-[var(--t-accordion-dur)]");
     expect(sidebarPanel).toHaveClass("md:-translate-x-full", "md:opacity-0");
 
     await user.click(showSidebar);
-    expect(toggleSlot).toHaveAttribute("data-state", "closed");
-    expect(toggleSlot).toHaveClass("md:mr-0", "md:grid-cols-[0rem]");
     expect(sidebarShell).toHaveAttribute("data-state", "open");
     expect(sidebarShell).not.toHaveAttribute("inert");
     expect(sidebarShell).toHaveClass("md:w-[260px]");
@@ -475,21 +470,21 @@ describe("ChatCreationWorkspace", () => {
     render(<ChatCreationWorkspace productionPreview />);
 
     expect(await screen.findByTestId("production-preview-banner")).toHaveTextContent("Live production data");
-    expect(await screen.findByRole("heading", { name: "A real weekend in Corfu" })).toBeInTheDocument();
+    expect((await screen.findAllByText("A real weekend in Corfu"))[0]).toBeInTheDocument();
     expect(screen.getByTestId("production-video-player")).toHaveAttribute(
       "src",
       "https://storage.example/real-video.mp4",
     );
     expect(screen.getByRole("textbox", { name: "Message Kria" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "New video" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Project actions for A real weekend in Corfu" }));
     await user.click(screen.getByRole("menuitem", { name: "Rename project (preview)" }));
     const nameInput = screen.getByRole("textbox", { name: "Project name" });
     await user.clear(nameInput);
     await user.type(nameInput, "Corfu preview name");
-    await user.click(screen.getByRole("button", { name: "Save name" }));
-    expect(await screen.findByRole("heading", { name: "Corfu preview name" })).toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect((await screen.findAllByText("Corfu preview name"))[0]).toBeInTheDocument();
 
     expect(createCreationThread).not.toHaveBeenCalled();
     expect(renameCreationThread).not.toHaveBeenCalled();
@@ -607,9 +602,10 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(listCreationThreads).mockResolvedValueOnce([constrainedThread]);
     jest.mocked(refreshCreationThread).mockResolvedValueOnce(constrainedThread);
     render(<ChatCreationWorkspace />);
-    await screen.findByText("Montage · 0 clips");
+    await screen.findByRole("textbox", { name: "Message Kria" });
 
     const picker = document.getElementById("creation-file-picker") as HTMLInputElement;
+    await waitFor(() => expect(picker).not.toBeDisabled());
     fireEvent.change(picker, {
       target: { files: [new File(["12345"], "too-large.mp4", { type: "video/mp4" })] },
     });
@@ -681,25 +677,25 @@ describe("ChatCreationWorkspace", () => {
   it("creates only one empty project when Strict Mode replays the boot effect", async () => {
     jest.mocked(listCreationThreads).mockResolvedValue([]);
     render(<StrictMode><ChatCreationWorkspace /></StrictMode>);
-    await screen.findByRole("heading", { name: "Untitled video" });
+    (await screen.findAllByText("Untitled video"))[0];
     await waitFor(() => expect(createCreationThread).toHaveBeenCalledTimes(1));
   });
 
-  it("does not create a second project when New video is clicked during initial loading", async () => {
+  it("does not create a second project when New chat is clicked during initial loading", async () => {
     const listed = deferred<typeof baseThread[]>();
     const capabilities = deferred<Awaited<ReturnType<typeof getCreationCapabilities>>>();
     jest.mocked(listCreationThreads).mockReturnValueOnce(listed.promise);
     jest.mocked(getCreationCapabilities).mockReturnValueOnce(capabilities.promise);
 
     render(<ChatCreationWorkspace />);
-    const newVideo = screen.getByRole("button", { name: "New video" });
-    expect(newVideo).toBeDisabled();
-    fireEvent.click(newVideo);
+    const newChat = screen.getByRole("button", { name: "New chat" });
+    expect(newChat).toBeDisabled();
+    fireEvent.click(newChat);
     expect(createCreationThread).not.toHaveBeenCalled();
 
     listed.resolve([baseThread]);
     capabilities.resolve({ formats: [], media: {} });
-    await screen.findByRole("heading", { name: "Untitled video" });
+    (await screen.findAllByText("Untitled video"))[0];
     expect(createCreationThread).not.toHaveBeenCalled();
     expect(mockReplace).not.toHaveBeenCalledWith("/plan/undefined", expect.anything());
   });
@@ -717,7 +713,7 @@ describe("ChatCreationWorkspace", () => {
     expect(listCreationThreads).toHaveBeenCalledTimes(2);
 
     retry.resolve([baseThread]);
-    await screen.findByRole("heading", { name: "Untitled video" });
+    (await screen.findAllByText("Untitled video"))[0];
     expect(createCreationThread).not.toHaveBeenCalled();
   });
 
@@ -762,8 +758,8 @@ describe("ChatCreationWorkspace", () => {
     };
     jest.mocked(sendCreationMessage).mockResolvedValueOnce(reply);
     render(<ChatCreationWorkspace />);
-    await screen.findByRole("heading", { name: "Untitled video" });
-    fireEvent.click(await screen.findByRole("button", { name: "New video" }));
+    (await screen.findAllByText("Untitled video"))[0];
+    fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
     await screen.findByRole("alert");
     const composer = screen.getByRole("textbox", { name: "Message Kria" });
     fireEvent.change(composer, { target: { value: "Keep this project" } });
@@ -778,7 +774,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(listCreationThreads).mockResolvedValueOnce([hydrated]);
     jest.mocked(refreshCreationThread).mockResolvedValueOnce(hydrated);
     render(<ChatCreationWorkspace />);
-    expect(await screen.findByText("Montage · 3 clips")).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Message Kria" })).toBeInTheDocument();
   });
 
   it("preserves typed direction when sending fails", async () => {
@@ -846,6 +842,7 @@ describe("ChatCreationWorkspace", () => {
     }], next_cursor: null });
     render(<ChatCreationWorkspace />);
     fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+    expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Play preview" })).toBeInTheDocument();
     expect(screen.getByText("Ready to post")).toBeInTheDocument();
   });
@@ -1211,7 +1208,7 @@ describe("ChatCreationWorkspace", () => {
     const input = screen.getByRole("textbox", { name: "Project name" });
     await user.clear(input);
     await user.type(input, "New name");
-    await user.click(screen.getByRole("button", { name: "Save name" }));
+    await user.keyboard("{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t rename that project");
   });
 
@@ -1229,7 +1226,7 @@ describe("ChatCreationWorkspace", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t delete that project");
   });
 
-  it("renames a project without sending the name as creative direction", async () => {
+  it("renames a project inline with Enter without sending creative direction", async () => {
     const user = userEvent.setup();
     const titled = { ...baseThread, title: "Old name" };
     jest.mocked(listCreationThreads).mockResolvedValueOnce([titled]);
@@ -1239,11 +1236,103 @@ describe("ChatCreationWorkspace", () => {
     await user.click(await screen.findByRole("button", { name: "Project actions for Old name" }));
     await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
     const input = screen.getByRole("textbox", { name: "Project name" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(input.closest("nav")).toHaveAttribute("aria-label", "Recent projects");
+    await waitFor(() => expect(input).toHaveFocus());
     await user.clear(input);
     await user.type(input, "Harbor arrival");
-    await user.click(screen.getByRole("button", { name: "Save name" }));
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(renameCreationThread).toHaveBeenCalledWith(titled, "Harbor arrival"));
     expect(sendCreationMessage).not.toHaveBeenCalled();
+  });
+
+  it("cancels an inline rename with Escape without saving", async () => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const name = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(name);
+    await user.type(name, "Discard this name{Escape}");
+    expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument();
+    expect(renameCreationThread).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Project actions for Untitled video" })).toBeInTheDocument();
+  });
+
+  it.each(["", "   ", "Untitled video"])("dismisses unchanged or empty inline name %j without saving", async (value) => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    fireEvent.change(input, { target: { value } });
+    fireEvent.blur(input);
+    expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument();
+    expect(renameCreationThread).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed inline rename while retaining the entered name", async () => {
+    const user = userEvent.setup();
+    jest.mocked(renameCreationThread).mockRejectedValueOnce(new Error("offline"));
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    fireEvent.change(input, { target: { value: "Harbor arrival" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t rename that project");
+    expect(input).toHaveValue("Harbor arrival");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument());
+    expect(renameCreationThread).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not submit Enter while composing a project name", async () => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    fireEvent.change(input, { target: { value: "港の到着" } });
+    expect(fireEvent.keyDown(input, { key: "Enter", isComposing: true })).toBe(false);
+    expect(renameCreationThread).not.toHaveBeenCalled();
+    expect(input).toHaveValue("港の到着");
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(renameCreationThread).toHaveBeenCalledWith(baseThread, "港の到着"));
+  });
+
+  it("deduplicates Enter and blur while an inline rename is pending", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<CreationThread>();
+    jest.mocked(renameCreationThread).mockReturnValueOnce(pending.promise);
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    fireEvent.change(input, { target: { value: "  Harbor arrival  " } });
+    fireEvent.submit(input.closest("form")!);
+    fireEvent.blur(input);
+    fireEvent.submit(input.closest("form")!);
+    expect(renameCreationThread).toHaveBeenCalledTimes(1);
+    expect(renameCreationThread).toHaveBeenCalledWith(baseThread, "Harbor arrival");
+    expect(input).toHaveAttribute("readonly");
+    await act(async () => pending.resolve({ ...baseThread, title: "Harbor arrival" }));
+    expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument();
+  });
+
+  it("opens and cancels project deletion from the Gallery sidebar", async () => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Gallery" }));
+    await user.click(screen.getByRole("button", { name: "Project actions for Untitled video" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete project" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("Delete project?")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(deleteCreationThread).not.toHaveBeenCalled();
   });
 
   it("prevents empty names and caps project names at 120 characters", async () => {
@@ -1256,12 +1345,13 @@ describe("ChatCreationWorkspace", () => {
     await user.click(await screen.findByRole("button", { name: "Project actions for Old name" }));
     await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
     const input = screen.getByRole("textbox", { name: "Project name" });
-    const save = screen.getByRole("button", { name: "Save name" });
+    expect(screen.queryByRole("button", { name: "Save name" })).not.toBeInTheDocument();
     await user.clear(input);
-    expect(save).toBeDisabled();
+    expect(renameCreationThread).not.toHaveBeenCalled();
     await user.type(input, "x".repeat(121));
     expect(input).toHaveValue("x".repeat(120));
-    expect(save).toBeEnabled();
+    await user.tab();
+    await waitFor(() => expect(renameCreationThread).toHaveBeenCalledWith(titled, "x".repeat(120)));
   });
 
   it("keeps the last good cut playable when an editor replacement fails", async () => {
@@ -1908,7 +1998,7 @@ describe("ChatCreationWorkspace", () => {
 
   it("keeps Gallery navigation and the URL projection in sync", async () => {
     render(<ChatCreationWorkspace />);
-    await screen.findByRole("heading", { name: "Untitled video" });
+    (await screen.findAllByText("Untitled video"))[0];
     fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
     expect(mockReplace).toHaveBeenCalledWith("/plan/thread-1?view=gallery", { scroll: false });
     fireEvent.click(await screen.findByRole("button", { name: "Back to chat" }));

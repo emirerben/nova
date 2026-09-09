@@ -263,7 +263,7 @@ export default function CaptionsDrawer({
                   aria-label="Change caption language"
                   disabled={locked}
                   onClick={() => setPendingLang(language === "tr" ? "en" : "tr")}
-                  className="h-auto min-h-11 items-center px-1 text-[11px] font-semibold text-lime-700 underline underline-offset-2 hover:text-lime-800 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                  className="h-auto min-h-11 items-center px-1 text-[11px] font-semibold text-lime-700 underline underline-offset-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                 >
                   Change
                 </Button>

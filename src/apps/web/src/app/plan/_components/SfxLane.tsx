@@ -343,7 +343,7 @@ export default function SfxLane({
                   "transition-opacity",
                   isBeingDragged ? "opacity-60 z-10 shadow-lg" : "opacity-100",
                   sfxDisabled ? "opacity-40 cursor-not-allowed" : "cursor-grab active:cursor-grabbing",
-                  "bg-lime-100 border-lime-300 hover:bg-lime-200",
+                  "bg-lime-100 border-lime-300 hover:bg-sky-soft",
                 ].join(" ")}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 onPointerDown={(e) => handleBarPointerDown(e, p)}
