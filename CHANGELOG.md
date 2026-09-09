@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.73.3.0] — 2026-09-08
+## [0.73.3.0] — 2026-09-09
 
 ### Added
 - **The Gallery can warn creators before inactive editing media expires.** The staged retention policy warns ahead of cleanup, preserves referenced work, and keeps the latest final video and poster for the configured long-term window.
