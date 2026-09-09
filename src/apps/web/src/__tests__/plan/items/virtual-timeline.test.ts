@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
-import type { DraftSlot } from "@/app/generative/timeline-math";
+import { draftFromTimeline, type DraftSlot } from "@/app/generative/timeline-math";
+import type { TimelineResponse } from "@/lib/generative-api";
 import {
   buildVirtualTimeline,
   mapVirtualTimeToMusicTime,
@@ -72,6 +73,48 @@ it("keeps image media typed when a mixed cut is resized and a neighbor is remove
   expect(mapVirtualTime(mixed, 4.19)?.sourceTimeS).toBeCloseTo(5.44);
   expect(mixed.totalDurationS).toBe(4.4);
   expect(mixed.hasMissingSource).toBe(false);
+});
+
+it("propagates guided media layout from the API timeline into the virtual preview", () => {
+  const response: TimelineResponse = {
+    editable: true,
+    reason: null,
+    beat_grid: [],
+    total_duration_s: 4,
+    has_user_edits: false,
+    slots: [
+      {
+        slot_id: "card",
+        clip_index: 0,
+        source_gcs_path: "slot-uploads/card.mp4",
+        source_duration_s: 4,
+        in_s: 0,
+        duration_s: 4,
+        duration_beats: null,
+        order: 0,
+        moment_energy: null,
+        moment_description: null,
+        layout: "supporting_card",
+      },
+    ],
+    clips: [
+      {
+        clip_index: 0,
+        signed_url: "https://source.example/card.mp4",
+        duration_s: 4,
+        used: true,
+      },
+    ],
+  };
+
+  const draft = draftFromTimeline(response);
+  expect(draft[0]?.layout).toBe("supporting_card");
+
+  const virtual = buildVirtualTimeline(draft, response.clips);
+  expect(clipEntry(virtual.entries[0])).toMatchObject({
+    slotKey: "card",
+    layout: "supporting_card",
+  });
 });
 
 it("re-seeds a clean refreshed timeline but preserves a dirty local draft", () => {

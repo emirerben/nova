@@ -3779,6 +3779,10 @@ export default function EditorShell({
           durationBeats: null,
           durationS,
           removed: false,
+          // The Guided Story renderer defaults newly inserted media to a
+          // fullscreen crop. Carry that default into the unsaved preview so
+          // adding a landscape source cannot temporarily letterbox it.
+          layout: source?.layout ?? "fullscreen",
           momentDescription: null,
           transitionAfter: "cut",
           transitionDurationS: null,
@@ -5436,6 +5440,7 @@ export default function EditorShell({
         capabilities,
         grid: clip.state.grid,
         videoDurationS: timelineDuration,
+        defaultAddedSlotLayout: guidedStoryV2 ? "fullscreen" : undefined,
         evolvingTypeEnabled: evolvingTypeExposureEnabled,
         sfx: localSfx,
         sfxCatalog: sfxGlossaryEffects,
@@ -5476,6 +5481,7 @@ export default function EditorShell({
       evolvingTypeExposureEnabled,
       history.canUndo,
       history.version,
+      guidedStoryV2,
       localOverlays,
       localCameraEffects,
       localVisualBlocks,

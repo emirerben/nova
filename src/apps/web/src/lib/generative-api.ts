@@ -807,6 +807,7 @@ export type TimelineErrorCode =
   | "sources_expired";
 
 export type EditorTransition = "cut" | "crossfade" | "dip_to_black" | "flash";
+export type TimelineMediaLayout = "fullscreen" | "supporting_card";
 export type LookPreset =
   | "none"
   | "stadium_diffusion"
@@ -838,6 +839,8 @@ export interface TimelineSlot {
   moment_energy: number | null;
   moment_description: string | null;
   removed?: boolean;
+  /** Guided-story media fit for this slot. Omitted on legacy timelines. */
+  layout?: TimelineMediaLayout | null;
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
   look_preset?: LookPreset;
@@ -856,6 +859,8 @@ export interface TimelineClip {
   media_id?: string | null;
   generation?: string | null;
   kind?: "image" | "video" | null;
+  /** Canonical Guided Story fit, including currently unused sources. */
+  layout?: TimelineMediaLayout | null;
 }
 
 export interface TimelineResponse {
@@ -891,6 +896,7 @@ export interface TimelineEditSlotPayload {
   duration_beats: number | null;
   duration_s: number | null;
   removed: boolean;
+  layout?: TimelineMediaLayout | null;
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
   look_preset?: LookPreset;

@@ -2001,15 +2001,25 @@ def compile_guided_runtime_plan(
         # an allowlist that would make every legitimate swap fail at render.
         source_by_id = {ref.media_id: ref for ref in snapshot.media}
         base_by_media: dict[str, dict[str, Any]] = {}
+        base_by_moment_id: dict[str, dict[str, Any]] = {}
         for moment in canonical.story_timeline:
-            base_by_media.setdefault(moment.media_id, moment.model_dump(mode="json"))
+            dumped = moment.model_dump(mode="json")
+            base_by_media.setdefault(moment.media_id, dumped)
+            base_by_moment_id[moment.moment_id] = dumped
         moments: list[dict[str, Any]] = []
         beat_windows: list[dict[str, Any]] = []
         for index, segment in enumerate(normalized_revision["segments"]):
             source = source_by_id.get(segment["media_id"])
             if source is None:
                 raise ValueError("revision source is not in the approved snapshot")
-            base = dict(base_by_media.get(segment["media_id"]) or {})
+            base = {}
+            for identity in (segment.get("segment_id"), segment.get("parent_segment_id")):
+                if identity is not None:
+                    base = dict(base_by_moment_id.get(str(identity)) or {})
+                    if base:
+                        break
+            if not base:
+                base = dict(base_by_media.get(segment["media_id"]) or {})
             if not base:
                 # Unused media in the immutable approval is part of the V2
                 # source pool but has no canonical story moment to inherit.
@@ -2019,6 +2029,12 @@ def compile_guided_runtime_plan(
                     "image_motion": None,
                     "required": True,
                 }
+            segment_layout = segment.get("layout")
+            if isinstance(segment_layout, str) and segment_layout in {
+                "fullscreen",
+                "supporting_card",
+            }:
+                base["layout"] = segment_layout
             start = float(segment["output_start_s"])
             end = float(segment["output_end_s"])
             # A source may be reused by multiple split segments.  Runtime

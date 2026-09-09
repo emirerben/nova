@@ -90,6 +90,34 @@ test("virtual landscape preview preserves 16:9 geometry in a constrained host", 
   await expect(page.locator('[data-virtual-preview-deck="a"]')).toBeAttached();
 });
 
+test("portrait virtual fullscreen video uses cover without a backdrop", async ({ page }) => {
+  await page.goto(url("hostWidth=900&hostHeight=700&canvas=portrait&zoom=100&stageHeightCss=420px&preview=virtual&mediaUrl=/landing/raw-story/alberobello.mp4&layout=fullscreen"));
+  const video = page.locator('video[data-virtual-preview-deck="a"]');
+  await expect(video).toHaveClass(/object-cover/);
+  await expect(video).not.toHaveClass(/object-contain/);
+  await expect(video).toHaveAttribute("data-virtual-preview-layout", "fullscreen");
+  await expect(page.locator('video[data-virtual-preview-video-backdrop="a"]')).toHaveCount(0);
+  await expect(video).toHaveJSProperty("videoWidth", 1280);
+  await expect(video).toHaveJSProperty("videoHeight", 720);
+  expect((await stageMetrics(page)).ratio).toBeCloseTo(1080 / 1920, 3);
+});
+
+test("portrait virtual supporting-card video contains over a blurred backdrop", async ({ page }) => {
+  await page.goto(url("hostWidth=900&hostHeight=700&canvas=portrait&zoom=100&stageHeightCss=420px&preview=virtual&mediaUrl=/landing/raw-story/alberobello.mp4&layout=supporting_card"));
+  const video = page.locator('video[data-virtual-preview-deck="a"]');
+  await expect(video).toHaveClass(/object-contain/);
+  await expect(video).not.toHaveClass(/object-cover/);
+  await expect(video).toHaveAttribute("data-virtual-preview-layout", "supporting_card");
+  const backdrop = page.locator('video[data-virtual-preview-video-backdrop="a"]');
+  await expect(backdrop).toHaveCount(1);
+  await expect(backdrop).toHaveCSS("filter", /blur\(20px\)/);
+  await expect(video).toHaveJSProperty("videoWidth", 1280);
+  await expect(video).toHaveJSProperty("videoHeight", 720);
+  await expect(backdrop).toHaveJSProperty("videoWidth", 1280);
+  await expect(backdrop).toHaveJSProperty("videoHeight", 720);
+  expect((await stageMetrics(page)).ratio).toBeCloseTo(1080 / 1920, 3);
+});
+
 test("150% and 200% zoom expand the scrollable canvas without changing its aspect ratio", async ({ page }) => {
   await page.goto(url("hostWidth=600&hostHeight=700&canvas=portrait&zoom=100&stageHeightCss=420px"));
   const baseline = await stageMetrics(page);
