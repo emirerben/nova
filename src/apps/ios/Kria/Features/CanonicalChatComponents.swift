@@ -385,6 +385,7 @@ struct FormatStage: View {
 struct FootageStage: View {
     let format: CreationFormat
     let mediaCount: Int
+    let maximumClipCount: Int
     let uploads: [UploadRecoveryRecord]
     let progress: [UUID: Double]
     let addFootage: () -> Void
@@ -401,7 +402,7 @@ struct FootageStage: View {
                 title: "Add your footage",
                 bodyText: format == .talkingToCamera
                     ? "Choose one clear take. I’ll keep your voice at the center."
-                    : "Choose the moments you want me to work with. You can add up to 10 clips."
+                    : "Choose the moments you want me to work with. You can add up to \(maximumClipCount) clips."
             )
 
             Button(action: addFootage) {
@@ -415,7 +416,7 @@ struct FootageStage: View {
                     Text("Choose videos")
                         .font(KriaFont.body(14).weight(.semibold))
                         .foregroundStyle(KriaColor.ink)
-                    Text("MP4, MOV · up to 10 clips")
+                    Text("MP4, MOV · up to \(maximumClipCount) clips")
                         .font(KriaFont.body(11))
                         .foregroundStyle(KriaColor.zinc)
                 }

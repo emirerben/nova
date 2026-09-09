@@ -5,12 +5,34 @@ import CoreTransferable
 
 struct FootagePickerView: View {
     let projectID: UUID
+    let maximumClipCount: Int
     @EnvironmentObject private var model: AppModel
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showingPhotosPicker = false
     @State private var showingFileImporter = false
     @State private var showingCloudConsent = false
     @State private var consentedSource: UploadSource = .photos
+    // Snapshot the already-attached/pending count when the picker opens. New
+    // selections are tracked by reservedClipCount so upload-record publishes do
+    // not count the same clip twice while this sheet remains presented.
+    @State private var baselineClipCount: Int
+    @State private var reservedClipCount = 0
+    @State private var selectionMessage: String?
+
+    init(projectID: UUID, maximumClipCount: Int = 10, existingClipCount: Int = 0) {
+        self.projectID = projectID
+        self.maximumClipCount = max(0, maximumClipCount)
+        _baselineClipCount = State(initialValue: max(0, existingClipCount))
+    }
+
+    private var selectionCapacity: ClipSelectionCapacity {
+        ClipSelectionCapacity(
+            maximum: maximumClipCount,
+            existing: baselineClipCount,
+            reserved: reservedClipCount
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             KriaSectionLabel(title: "Add footage")
@@ -18,18 +40,39 @@ struct FootagePickerView: View {
                 Label("Choose from Photos", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 48)
             }
             .buttonStyle(KriaSecondaryButtonStyle())
-            .photosPicker(isPresented: $showingPhotosPicker, selection: $photoItems, maxSelectionCount: 10, matching: .videos)
+            .disabled(selectionCapacity.remaining == 0)
+            .photosPicker(
+                isPresented: $showingPhotosPicker,
+                selection: $photoItems,
+                maxSelectionCount: max(1, selectionCapacity.remaining),
+                matching: .videos
+            )
             .onChange(of: photoItems) { _, items in Task { await importPhotoItems(items) } }
             Button { consentedSource = .files; showingCloudConsent = true } label: {
                 Label("Choose from Files or iCloud", systemImage: "folder").frame(maxWidth: .infinity, minHeight: 48)
             }
             .buttonStyle(KriaSecondaryButtonStyle())
-            .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.movie], allowsMultipleSelection: true, onCompletion: importFiles)
+            .disabled(selectionCapacity.remaining == 0)
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: [.movie],
+                allowsMultipleSelection: selectionCapacity.remaining > 1,
+                onCompletion: importFiles
+            )
             .sheet(isPresented: $showingCloudConsent) {
                 CloudUploadConsentView {
                     if consentedSource == .photos { showingPhotosPicker = true }
                     else { showingFileImporter = true }
                 }
+            }
+            if selectionCapacity.remaining == 0 {
+                Text("This format already has its maximum number of clips.")
+                    .font(KriaFont.body(12))
+                    .foregroundStyle(KriaColor.zinc)
+            } else if let selectionMessage {
+                Text(selectionMessage)
+                    .font(KriaFont.body(12))
+                    .foregroundStyle(KriaColor.zinc)
             }
             ForEach(model.uploads.records.filter { $0.projectID == projectID }) { record in
                 VStack(alignment: .leading, spacing: 6) {
@@ -50,14 +93,41 @@ struct FootagePickerView: View {
         }.accessibilityElement(children: .contain)
     }
     private func importPhotoItems(_ items: [PhotosPickerItem]) async {
-        for item in items {
+        let acceptedCount = selectionCapacity.acceptedCount(requested: items.count)
+        if acceptedCount < items.count {
+            selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
+        }
+        reservedClipCount += acceptedCount
+        for item in items.prefix(acceptedCount) {
             guard let media = try? await item.loadTransferable(type: ImportedMedia.self) else { continue }
             await model.uploads.enqueue(fileURL: media.url, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource)
         }
+        photoItems = []
     }
     private func importFiles(_ result: Result<[URL], any Error>) {
         guard case .success(let urls) = result else { return }
-        Task { for url in urls { await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource) } }
+        let acceptedCount = selectionCapacity.acceptedCount(requested: urls.count)
+        if acceptedCount < urls.count {
+            selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
+        }
+        reservedClipCount += acceptedCount
+        Task {
+            for url in urls.prefix(acceptedCount) {
+                await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource)
+            }
+        }
+    }
+}
+
+struct ClipSelectionCapacity: Equatable, Sendable {
+    let maximum: Int
+    let existing: Int
+    let reserved: Int
+
+    var remaining: Int { max(0, maximum - existing - reserved) }
+
+    func acceptedCount(requested: Int) -> Int {
+        min(max(0, requested), remaining)
     }
 }
 

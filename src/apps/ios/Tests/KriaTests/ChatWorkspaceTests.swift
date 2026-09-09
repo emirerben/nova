@@ -81,6 +81,46 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertEqual(CreationFormat.available(in: [prompt]), [.montage, .narrated])
     }
 
+    func testAcceptedMutationRefreshFailureDoesNotReportTheMutationAsRejected() async throws {
+        let message = await acceptedMutationRefreshError(
+            "Your message was sent, but the conversation couldn’t refresh.",
+            refresh: { throw APIError.requestFailed }
+        )
+
+        XCTAssertEqual(
+            message,
+            "Your message was sent, but the conversation couldn’t refresh. \(APIError.requestFailed.localizedDescription)"
+        )
+        XCTAssertFalse(try XCTUnwrap(message).contains("wasn’t sent"))
+    }
+
+    func testAcceptedMutationRefreshSuccessNeedsNoRecoveryMessage() async {
+        let message = await acceptedMutationRefreshError(
+            "The mutation succeeded.",
+            refresh: { true }
+        )
+
+        XCTAssertNil(message)
+    }
+
+    func testClipSelectionCapacityHonorsServerLimitAcrossRepeatedSelections() {
+        let initial = ClipSelectionCapacity(maximum: 1, existing: 0, reserved: 0)
+        XCTAssertEqual(initial.acceptedCount(requested: 4), 1)
+
+        let afterReservation = ClipSelectionCapacity(maximum: 1, existing: 0, reserved: 1)
+        XCTAssertEqual(afterReservation.remaining, 0)
+        XCTAssertEqual(afterReservation.acceptedCount(requested: 1), 0)
+
+        let partiallyFilled = ClipSelectionCapacity(maximum: 20, existing: 17, reserved: 1)
+        XCTAssertEqual(partiallyFilled.remaining, 2)
+        XCTAssertEqual(partiallyFilled.acceptedCount(requested: 8), 2)
+    }
+
+    func testCreationFormatFallbackClipLimitProtectsTalkingToCameraOffline() {
+        XCTAssertEqual(CreationFormat.talkingToCamera.fallbackMaximumClipCount, 1)
+        XCTAssertEqual(CreationFormat.montage.fallbackMaximumClipCount, 10)
+    }
+
     private func event(id: String, sequence: Int, content: String? = nil) -> ThreadEvent {
         ThreadEvent(
             id: id,

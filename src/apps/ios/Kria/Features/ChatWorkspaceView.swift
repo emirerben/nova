@@ -122,6 +122,7 @@ private struct CreationWorkspaceView: View {
     @State private var approval: ApprovalSnapshot?
     @State private var selectedFormat: CreationFormat?
     @State private var availableFormats: [CreationFormat] = [.montage]
+    @State private var maximumClipsByFormat: [CreationFormat: Int] = [:]
     @State private var capabilitiesAreAuthoritative = false
     @State private var isChoosingFormat = false
     @State private var threadState: [String: JSONValue] = [:]
@@ -150,6 +151,15 @@ private struct CreationWorkspaceView: View {
     }
 
     private var attachedMediaCount: Int { Int(threadState["media_count"]?.numberValue ?? 0) }
+
+    private var selectedMaximumClipCount: Int {
+        guard let selectedFormat else { return 10 }
+        return maximumClipsByFormat[selectedFormat] ?? selectedFormat.fallbackMaximumClipCount
+    }
+
+    private var pendingUploadCount: Int {
+        model.uploads.records.filter { $0.projectID == project.id }.count
+    }
 
     private var isUITesting: Bool {
         #if DEBUG
@@ -230,7 +240,11 @@ private struct CreationWorkspaceView: View {
             await pollUntilDismissed()
         }
         .sheet(isPresented: $showsAttachments) {
-            AttachmentSheet(projectID: project.id)
+            AttachmentSheet(
+                projectID: project.id,
+                maximumClipCount: selectedMaximumClipCount,
+                existingClipCount: attachedMediaCount + pendingUploadCount
+            )
                 .environmentObject(model)
                 .presentationDetents([.medium, .large])
         }
@@ -255,6 +269,7 @@ private struct CreationWorkspaceView: View {
                 FootageStage(
                     format: selectedFormat,
                     mediaCount: attachedMediaCount,
+                    maximumClipCount: selectedMaximumClipCount,
                     uploads: model.uploads.records.filter { $0.projectID == project.id },
                     progress: model.uploads.progress,
                     addFootage: { showsAttachments = true },
@@ -300,16 +315,21 @@ private struct CreationWorkspaceView: View {
         isSending = true
         errorMessage = nil
         defer { isSending = false }
+        let accepted: TurnAccepted
         do {
-            let accepted = try await model.api.submitTurn(threadID: project.id, message: message, expectedRevision: threadRevision)
-            threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
-            pendingMessages.append(PendingChatMessage(content: message))
-            prompt = ""
-            isThinking = true
-            try await refreshDelta()
+            accepted = try await model.api.submitTurn(threadID: project.id, message: message, expectedRevision: threadRevision)
         } catch {
             errorMessage = "Your message wasn’t sent. \(error.localizedDescription)"
+            return
         }
+        threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
+        pendingMessages.append(PendingChatMessage(content: message))
+        prompt = ""
+        isThinking = true
+        errorMessage = await acceptedMutationRefreshError(
+            "Your message was sent, but the conversation couldn’t refresh.",
+            refresh: { try await refreshDelta() }
+        )
     }
 
     private func selectFormat(_ format: CreationFormat) {
@@ -318,32 +338,44 @@ private struct CreationWorkspaceView: View {
             isActing = true
             errorMessage = nil
             defer { isActing = false }
+            let thread: CreationThread
             do {
-                let thread = try await model.api.applyCreationAction(
+                thread = try await model.api.applyCreationAction(
                     threadID: project.id,
                     action: "select_format",
                     payload: ["format": .string(format.serverValue)],
                     expectedRevision: threadRevision
                 )
-                apply(thread)
-                selectedFormat = CreationFormat(thread: thread) ?? format
-                isChoosingFormat = false
-                try await refreshDelta()
             } catch let error as APIError where error == .conflict {
                 await refreshCapabilities()
                 await refreshNow()
                 errorMessage = "That format is no longer available. Choose one of the refreshed options."
+                return
             } catch {
                 errorMessage = "That format wasn’t saved. \(error.localizedDescription)"
+                return
             }
+            apply(thread)
+            selectedFormat = CreationFormat(thread: thread) ?? format
+            isChoosingFormat = false
+            errorMessage = await acceptedMutationRefreshError(
+                "The format was saved, but the conversation couldn’t refresh.",
+                refresh: { try await refreshDelta() }
+            )
         }
     }
 
     private func refreshCapabilities() async {
         do {
             let response = try await model.api.creationCapabilities()
-            let formats = response.formats.compactMap { CreationFormat(serverValue: $0.id) }
+            var limits: [CreationFormat: Int] = [:]
+            let formats = response.formats.compactMap { capability -> CreationFormat? in
+                guard let format = CreationFormat(serverValue: capability.id) else { return nil }
+                limits[format] = max(1, capability.maxClips)
+                return format
+            }
             if !formats.isEmpty { availableFormats = formats }
+            maximumClipsByFormat = limits
             capabilitiesAreAuthoritative = true
         } catch {
             capabilitiesAreAuthoritative = false
@@ -502,12 +534,16 @@ private struct CreationWorkspaceView: View {
                     expectedDraftRevision: draftRevision,
                     fingerprint: approval.approvalFingerprint
                 )
-                self.approval = nil
-                isThinking = decision == "approve"
-                try await refreshDelta()
             } catch {
                 errorMessage = "Kria couldn’t record that decision. \(error.localizedDescription)"
+                return
             }
+            self.approval = nil
+            isThinking = decision == "approve"
+            errorMessage = await acceptedMutationRefreshError(
+                "Kria recorded that decision, but the conversation couldn’t refresh.",
+                refresh: { try await refreshDelta() }
+            )
         }
     }
 }
@@ -619,6 +655,10 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         }
     }
 
+    var fallbackMaximumClipCount: Int {
+        self == .talkingToCamera ? 1 : 10
+    }
+
     init?(thread: CreationThread) {
         if let format = thread.state?["format"]?.stringValue {
             self.init(serverValue: format)
@@ -664,11 +704,20 @@ enum CreationFormat: String, CaseIterable, Identifiable {
 
 private struct AttachmentSheet: View {
     let projectID: UUID
+    let maximumClipCount: Int
+    let existingClipCount: Int
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            ScrollView { FootagePickerView(projectID: projectID).padding(20) }
+            ScrollView {
+                FootagePickerView(
+                    projectID: projectID,
+                    maximumClipCount: maximumClipCount,
+                    existingClipCount: existingClipCount
+                )
+                .padding(20)
+            }
                 .background(KriaColor.paper)
                 .navigationTitle("Add footage")
                 .navigationBarTitleDisplayMode(.inline)
@@ -676,6 +725,19 @@ private struct AttachmentSheet: View {
                     ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
                 }
         }
+    }
+}
+
+@MainActor
+func acceptedMutationRefreshError(
+    _ failurePrefix: String,
+    refresh: () async throws -> Bool
+) async -> String? {
+    do {
+        _ = try await refresh()
+        return nil
+    } catch {
+        return "\(failurePrefix) \(error.localizedDescription)"
     }
 }
 

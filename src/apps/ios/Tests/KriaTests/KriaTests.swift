@@ -254,6 +254,7 @@ final class KriaTests: XCTestCase {
         let capabilities = try await api.creationCapabilities()
 
         XCTAssertEqual(capabilities.formats.map(\.id), ["montage", "narrated"])
+        XCTAssertEqual(capabilities.formats.map(\.maxClips), [20, 20])
     }
 
     func testCreationThreadPreservesURLFreeListVariants() throws {
