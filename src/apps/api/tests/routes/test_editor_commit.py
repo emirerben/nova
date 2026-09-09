@@ -899,6 +899,144 @@ def test_guided_timeline_projection_signs_browser_safe_image_preview(monkeypatch
     assert projected["slots"][0]["source_gcs_path"] == image_path
 
 
+@pytest.mark.parametrize("invalid_layout", ["unknown", {}, []])
+def test_guided_v2_projection_projects_media_layout_without_changing_revision(
+    monkeypatch,
+    invalid_layout,
+) -> None:
+    job = _job(resolved_archetype="guided_story")
+    variant = job.assembly_plan["variants"][0]
+    revision = {
+        "revision_number": 3,
+        "state_hash": "revision-hash",
+        "sources": [
+            {"media_id": "m1", "gcs_path": "m1.mp4", "duration_s": 2.0},
+            {"media_id": "m2", "gcs_path": "m2.mp4", "duration_s": 2.0},
+            {"media_id": "m3", "gcs_path": "m3.mp4", "duration_s": 2.0},
+            {"media_id": "m4", "gcs_path": "m4.mp4", "duration_s": 2.0},
+        ],
+        "segments": [
+            {
+                "segment_id": "s1",
+                "media_id": "m1",
+                "duration_s": 1.0,
+                "output_start_s": 0.0,
+                "output_end_s": 1.0,
+            },
+            {
+                "segment_id": "s2",
+                "media_id": "m2",
+                "duration_s": 1.0,
+                "output_start_s": 1.0,
+                "output_end_s": 2.0,
+            },
+            {
+                "segment_id": "s3",
+                "media_id": "m3",
+                "duration_s": 1.0,
+                "output_start_s": 2.0,
+                "output_end_s": 3.0,
+            },
+        ],
+        "audio": {"mode": "none"},
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: revision)
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, _ttl: f"https://signed/{path}")
+    variant["story_timeline"] = [
+        {"media_id": "m1", "layout": "fullscreen"},
+        {"media_id": "m2", "layout": "supporting_card"},
+        {"media_id": "m3", "layout": "supporting_card"},
+        {"media_id": "m4", "layout": "supporting_card"},
+    ]
+    job.assembly_plan["guided_story_execution_plan"] = {
+        "story_timeline": [
+            {"media_id": "m1", "layout": "supporting_card"},
+            {"media_id": "m1", "layout": "fullscreen"},
+            {"media_id": "m2", "layout": "fullscreen"},
+            {"media_id": "m3", "layout": invalid_layout},
+            {"media_id": "m4", "layout": "supporting_card"},
+        ]
+    }
+    revision_before = copy.deepcopy(revision)
+
+    projected = gj._guided_v2_timeline_projection(job, variant)
+    response = gj.TimelineResponse.model_validate(projected)
+
+    assert [slot["layout"] for slot in projected["slots"]] == [
+        "supporting_card",
+        "fullscreen",
+        "fullscreen",
+    ]
+    assert [slot.layout for slot in response.slots] == [
+        "supporting_card",
+        "fullscreen",
+        "fullscreen",
+    ]
+    assert [clip.layout for clip in response.clips] == [
+        "supporting_card",
+        "fullscreen",
+        "fullscreen",
+        "supporting_card",
+    ]
+    assert revision == revision_before
+    assert projected["revision_hash"] == "revision-hash"
+
+    del job.assembly_plan["guided_story_execution_plan"]
+    fallback = gj._guided_v2_timeline_projection(job, variant)
+    assert [slot["layout"] for slot in fallback["slots"]] == [
+        "fullscreen",
+        "supporting_card",
+        "supporting_card",
+    ]
+    assert [clip["layout"] for clip in fallback["clips"]] == [
+        "fullscreen",
+        "supporting_card",
+        "supporting_card",
+        "supporting_card",
+    ]
+
+
+def test_guided_v2_projection_prefers_segment_and_parent_layout_over_media_fallback(monkeypatch):
+    job = _job(resolved_archetype="guided_story")
+    variant = job.assembly_plan["variants"][0]
+    revision = {
+        "revision_number": 3,
+        "sources": [{"media_id": "m1", "gcs_path": "m1.mp4", "duration_s": 4.0}],
+        "segments": [
+            {
+                "segment_id": "draft-first",
+                "media_id": "m1",
+                "duration_s": 1.0,
+                "output_start_s": 0.0,
+                "output_end_s": 1.0,
+                "layout": "fullscreen",
+            },
+            {
+                "segment_id": "split-child",
+                "parent_segment_id": "canonical-second",
+                "media_id": "m1",
+                "duration_s": 1.0,
+                "output_start_s": 1.0,
+                "output_end_s": 2.0,
+            },
+        ],
+        "audio": {"mode": "none"},
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: revision)
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, _ttl: f"https://signed/{path}")
+    job.assembly_plan["guided_story_execution_plan"] = {
+        "story_timeline": [
+            {"moment_id": "canonical-first", "media_id": "m1", "layout": "supporting_card"},
+            {"moment_id": "canonical-second", "media_id": "m1", "layout": "fullscreen"},
+        ]
+    }
+
+    projected = gj._guided_v2_timeline_projection(job, variant)
+
+    assert [slot["layout"] for slot in projected["slots"]] == ["fullscreen", "fullscreen"]
+    assert projected["clips"][0]["layout"] == "fullscreen"
+
+
 @pytest.mark.asyncio
 async def test_guided_timeline_image_preview_paths_returns_owned_ready_derivatives() -> None:
     result = MagicMock()
@@ -6939,8 +7077,12 @@ def test_guided_timeline_projection_uses_left_segment_transition_and_parent_id(m
             },
         ],
         "segments": [
-            {"segment_id": "approved-first", "media_id": "m0"},
-            {"segment_id": "approved-second", "media_id": "m1"},
+            {
+                "segment_id": "approved-first",
+                "media_id": "m0",
+                "layout": "supporting_card",
+            },
+            {"segment_id": "approved-second", "media_id": "m1", "layout": "fullscreen"},
         ],
         "audio": {"mode": "none"},
     }
@@ -6959,6 +7101,7 @@ def test_guided_timeline_projection_uses_left_segment_transition_and_parent_id(m
                     clip_index=0,
                     in_s=0.0,
                     duration_s=2.0,
+                    layout="fullscreen",
                     transition_after="crossfade",
                     transition_duration_s=0.2,
                 ),
@@ -6976,6 +7119,8 @@ def test_guided_timeline_projection_uses_left_segment_transition_and_parent_id(m
     assert result["segments"][0]["parent_segment_id"] == "approved-first"
     assert result["segments"][0]["transition_after"] == "crossfade"
     assert result["segments"][0]["transition_duration_s"] == pytest.approx(0.2)
+    assert result["segments"][0]["layout"] == "fullscreen"
+    assert result["segments"][1]["layout"] == "fullscreen"
     # The overlap belongs to the transition AFTER new-first, not new-second.
     assert result["segments"][1]["output_start_s"] == pytest.approx(1.8)
 

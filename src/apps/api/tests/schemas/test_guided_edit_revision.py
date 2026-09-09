@@ -55,6 +55,69 @@ def test_normalization_hashes_canonical_revision_and_keeps_unused_source() -> No
     assert [source["media_id"] for source in normalized["sources"]] == ["clip-1", "asset-1"]
 
 
+def test_legacy_revision_hash_remains_valid_without_segment_layout() -> None:
+    normalized = normalize_guided_editor_revision(_revision())
+
+    # Frozen from the pre-layout schema. Adding an optional field must not
+    # invalidate already-persisted revisions whose hash covered this payload.
+    assert normalized["state_hash"] == (
+        "d84ad87dd5ac7246c938bfe673d11510af6586a1675f09083b83d5c0e41c30ca"
+    )
+    assert "layout" not in normalized["segments"][0]
+    assert GuidedEditorRevision.model_validate(normalized).segments[0].layout is None
+
+
+def test_initial_revision_copies_layout_per_repeated_media_occurrence() -> None:
+    revision = guided_editor_revision_from_approval(
+        proposal_version=1,
+        media_digest="a" * 64,
+        snapshot={
+            "media": [
+                {
+                    "media_id": "clip-1",
+                    "lane": "clip",
+                    "gcs_path": "users/u/clip.mp4",
+                    "generation": "1",
+                    "kind": "video",
+                    "duration_s": 8.0,
+                }
+            ]
+        },
+        execution_plan={
+            "story_timeline": [
+                {
+                    "moment_id": "one",
+                    "media_id": "clip-1",
+                    "source_start_s": 0.0,
+                    "source_end_s": 2.0,
+                    "duration_s": 2.0,
+                    "output_start_s": 0.0,
+                    "output_end_s": 2.0,
+                    "layout": "supporting_card",
+                },
+                {
+                    "moment_id": "two",
+                    "media_id": "clip-1",
+                    "source_start_s": 2.0,
+                    "source_end_s": 4.0,
+                    "duration_s": 2.0,
+                    "output_start_s": 2.0,
+                    "output_end_s": 4.0,
+                    "layout": "fullscreen",
+                },
+            ],
+            "transition_policy": {"type": "none", "duration_s": 0.0},
+            "text_elements": [],
+            "output_orientation": "portrait",
+        },
+    )
+
+    assert [segment["layout"] for segment in revision["segments"]] == [
+        "supporting_card",
+        "fullscreen",
+    ]
+
+
 def test_guided_caption_lane_is_bounded_without_the_authored_text_ceiling() -> None:
     elements = [
         {"id": f"narration-caption-{index}", "text": "word", "start_s": 0, "end_s": 1}

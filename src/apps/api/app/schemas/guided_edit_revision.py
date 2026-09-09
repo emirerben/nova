@@ -70,6 +70,13 @@ class GuidedEditorSegment(BaseModel):
     source_start_s: float = Field(default=0.0, ge=0)
     source_end_s: float | None = Field(default=None, gt=0)
     duration_s: float = Field(gt=0, le=MAX_GUIDED_EDITOR_DURATION_S)
+    # Layout is authored per timeline occurrence, not per source media ID.
+    # Keep it optional and omit nulls so revisions written before this field
+    # existed retain their exact state hash and continue to validate.
+    layout: Literal["fullscreen", "supporting_card"] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     transition_after: Literal["cut", "crossfade", "dip_to_black", "flash"] = "cut"
     transition_duration_s: float = Field(default=0.0, ge=0, le=0.3)
     look_preset: str = "none"
@@ -429,6 +436,12 @@ def guided_editor_revision_from_approval(
                 source_start_s=float(moment.get("source_start_s") or 0.0),
                 source_end_s=float(moment.get("source_end_s") or duration),
                 duration_s=max(MIN_GUIDED_EDITOR_SEGMENT_S, duration),
+                layout=(
+                    moment.get("layout")
+                    if isinstance(moment.get("layout"), str)
+                    and moment.get("layout") in {"fullscreen", "supporting_card"}
+                    else None
+                ),
                 transition_after=(
                     approved_transition
                     if index < len(execution_plan.get("story_timeline") or []) - 1

@@ -61,6 +61,7 @@ describe("buildEditorCommitRequest", () => {
           durationS: 1.2,
           durationBeats: null,
           removed: false,
+          layout: "supporting_card",
           lookPreset: "olive_film",
           lookAdjustments: {
             intensity: 0.75,
@@ -129,6 +130,7 @@ describe("buildEditorCommitRequest", () => {
           duration_s: 1.2,
           duration_beats: null,
           removed: false,
+          layout: "supporting_card",
           transition_after: "cut",
           transition_duration_s: null,
           look_preset: "olive_film",

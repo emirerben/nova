@@ -300,6 +300,68 @@ describe("applyCopilotOps", () => {
     expect(result.rejected[0]?.detail).toContain("only 103 additional timeline slots");
   });
 
+  it("uses the renderer's fullscreen default for Guided Story bulk additions", () => {
+    const slots = [slot({ key: "existing", slotId: "existing", clipIndex: 0 })];
+    const sourcePool = [
+      { clip_index: 0, media_id: "existing", kind: "video" as const, generation: "g1", duration_s: 4, used: true, status: "ready", signed_url: null },
+      { clip_index: 1, media_id: "unused", kind: "video" as const, generation: "g1", duration_s: 4, used: false, status: "ready", signed_url: null },
+    ];
+    const capabilities = { text_elements: true, timeline: true };
+    const snapshot = buildCopilotSnapshot([], slots, sourcePool, capabilities, [], { sourcePool });
+    const result = applyCopilotOps([
+      {
+        op: "add_unused_sources",
+        selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" },
+        integrity: bulkIntegrity(snapshot, slots, sourcePool, "unused_sources", "all"),
+      },
+    ], {
+      bars: [],
+      slots,
+      clips: sourcePool,
+      sourcePool,
+      snapshot,
+      capabilities,
+      defaultAddedSlotLayout: "fullscreen",
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots?.[1]).toMatchObject({ clipIndex: 1, layout: "fullscreen" });
+    expect(result.nextSlots?.[0]?.layout).toBeUndefined();
+  });
+
+  it("restores a canonical source layout for Guided Story bulk additions", () => {
+    const slots = [slot({ key: "existing", slotId: "existing", clipIndex: 0 })];
+    const sourcePool = [
+      { clip_index: 0, media_id: "existing", kind: "video" as const, generation: "g1", duration_s: 4, used: true, status: "ready", signed_url: null },
+      { clip_index: 1, media_id: "unused", kind: "video" as const, generation: "g1", duration_s: 4, used: false, status: "ready", signed_url: null },
+    ];
+    const clipsWithLayout = sourcePool.map((source) => ({
+      ...source,
+      layout: source.clip_index === 1 ? "supporting_card" as const : null,
+    }));
+    const capabilities = { text_elements: true, timeline: true };
+    const snapshot = buildCopilotSnapshot([], slots, sourcePool, capabilities, [], { sourcePool });
+    const result = applyCopilotOps([{
+      op: "add_unused_sources",
+      selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" },
+      integrity: bulkIntegrity(snapshot, slots, sourcePool, "unused_sources", "all"),
+    }], {
+      bars: [],
+      slots,
+      clips: clipsWithLayout,
+      sourcePool,
+      snapshot,
+      capabilities,
+      defaultAddedSlotLayout: "fullscreen",
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots?.[1]).toMatchObject({
+      clipIndex: 1,
+      layout: "supporting_card",
+    });
+  });
+
   it("fails closed at 50 slots while the API still advertises the v4 runtime", () => {
     const slots = Array.from({ length: 49 }, (_, index) => slot({
       key: `slot-${index}`,
@@ -669,6 +731,55 @@ describe("applyCopilotOps", () => {
     expect(result.textActions).not.toContainEqual(expect.objectContaining({ id: "guided-thought-2" }));
     expect(result.textActions).not.toContainEqual({ type: "DELETE_BAR", id: "creator-note" });
     expect(result.appliedOps).toHaveLength(1);
+  });
+
+  it("uses canonical layout before the fullscreen default for new direction sources", () => {
+    const slots = [
+      slot({ key: "a", slotId: "a", clipIndex: 0, durationS: 3, layout: "supporting_card" }),
+    ];
+    const snapshot = buildCopilotSnapshot(
+      [],
+      slots,
+      clips,
+      { text_elements: true, timeline: true },
+      [],
+      {
+        guidedRevision: { revision_number: 3, base_generation: "render-abc" },
+        editDirectionAvailable: true,
+      },
+    );
+
+    const result = applyCopilotOpsAtomic(
+      [{
+        op: "set_edit_direction",
+        direction: "fast_montage",
+        revision_number: 3,
+        base_generation: "render-abc",
+        server_planned: true,
+        cuts: [
+          { media_id: "media-b", start_s: 0.5, duration_s: 1 },
+          { media_id: "media-c", start_s: 0.5, duration_s: 1 },
+        ],
+        hard_cuts: true,
+        minimal_text: true,
+      }],
+      {
+        bars: [],
+        slots,
+        clips: timelineClips.map((source) => ({
+          ...source,
+          layout: source.media_id === "media-c" ? "supporting_card" as const : null,
+        })),
+        snapshot,
+        defaultAddedSlotLayout: "fullscreen",
+      },
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots).toEqual([
+      expect.objectContaining({ clipIndex: 1, layout: "fullscreen" }),
+      expect.objectContaining({ clipIndex: 2, layout: "supporting_card" }),
+    ]);
   });
 
   it("rejects a fast montage cut outside the source clip", () => {
@@ -2529,7 +2640,7 @@ describe("Director editor operations", () => {
     shots: [],
   };
 
-  function directorCtx() {
+  function directorCtx(sourceLayout?: DraftSlot["layout"]) {
     const slots = [
       slot({ key: "a", slotId: "a", durationS: 3 }),
       slot({
@@ -2537,6 +2648,7 @@ describe("Director editor operations", () => {
         slotId: "b",
         clipIndex: 1,
         durationS: 3,
+        ...(sourceLayout !== undefined ? { layout: sourceLayout } : {}),
         lookPreset: "olive_film",
         lookAdjustments: {
           intensity: 0.7,
@@ -2854,6 +2966,10 @@ describe("Director editor operations", () => {
   });
 
   it("inserts a completed generated asset at the nearest clip boundary", () => {
+    const guidedContext = {
+      ...directorCtx(),
+      defaultAddedSlotLayout: "fullscreen" as const,
+    };
     const result = applyCopilotOpsAtomic(
       [{
         op: "insert_generated_asset",
@@ -2862,7 +2978,7 @@ describe("Director editor operations", () => {
         insert_at_s: 3.1,
         duration_s: 5,
       }],
-      directorCtx(),
+      guidedContext,
     );
 
     expect(result.rejected).toEqual([]);
@@ -2871,8 +2987,21 @@ describe("Director editor operations", () => {
       key: "generated-asset-omni-1",
       clipIndex: 3,
       durationS: 5,
+      layout: "fullscreen",
       momentDescription: "Generated by Kria",
     });
+
+    const legacyResult = applyCopilotOpsAtomic(
+      [{
+        op: "insert_generated_asset",
+        asset_id: "asset-omni-legacy",
+        clip_index: 3,
+        insert_at_s: 3.1,
+        duration_s: 5,
+      }],
+      directorCtx(),
+    );
+    expect(legacyResult.nextSlots?.[1]?.layout).toBeUndefined();
   });
 
   it("replaces the selected source segment for an Omni restyle", () => {
@@ -2886,7 +3015,10 @@ describe("Director editor operations", () => {
         source_end_s: 3,
         duration_s: 4,
       }],
-      directorCtx(),
+      {
+        ...directorCtx("supporting_card"),
+        defaultAddedSlotLayout: "fullscreen",
+      },
     );
 
     expect(result.rejected).toEqual([]);
@@ -2895,6 +3027,7 @@ describe("Director editor operations", () => {
       key: "generated-asset-omni-restyle",
       clipIndex: 3,
       durationS: 4,
+      layout: "supporting_card",
       momentDescription: "Restyled by Kria",
       lookPreset: "olive_film",
       lookAdjustments: {

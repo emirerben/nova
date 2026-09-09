@@ -6,9 +6,16 @@ import type {
   VirtualPreviewVideoProps,
 } from "@/app/plan/items/[id]/_editor/useVirtualPreview";
 import type { DraftSlot } from "@/app/generative/timeline-math";
+import type { TimelineMediaLayout } from "@/lib/generative-api";
+
+export interface EditorCanvasVirtualPreviewOptions {
+  mediaUrl?: string | null;
+  layout?: TimelineMediaLayout | null;
+}
 
 export function createEditorCanvasVirtualPreview(
   noop: () => void = () => undefined,
+  options: EditorCanvasVirtualPreviewOptions = {},
 ): VirtualPreviewController {
   const slots: DraftSlot[] = [{
     key: "geometry-slot",
@@ -18,11 +25,12 @@ export function createEditorCanvasVirtualPreview(
     durationBeats: null,
     durationS: 2,
     removed: false,
+    layout: options.layout,
     momentDescription: null,
   }];
   const timeline = buildVirtualTimeline(slots, [{
     clip_index: 0,
-    signed_url: null,
+    signed_url: options.mediaUrl ?? null,
     kind: "video",
   }], []);
   const videoProps = (
