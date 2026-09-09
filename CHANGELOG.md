@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.8.1] — 2026-09-09
+
+### Fixed
+- **Editor changes no longer replace the chosen soundtrack with the video's original audio.** Unsaved visual and timeline previews preserve selected music, narration, uploaded audio, and prepared match audio. Expired preview links refresh from both the music catalog and the video's private status before falling back safely.
+
+### Internal
+- Split source-audio loading from transport synchronization so playback ticks cannot restart an alternate audio file. Added deterministic resolver, component, recovery, and gated local-browser fixtures for audio-authority parity.
+
 ## [0.73.8.0] — 2026-09-09
 
 ### Fixed
