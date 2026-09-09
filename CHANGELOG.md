@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.5.0] — 2026-09-09
+
+### Changed
+- **Kria's web surfaces now use the Paper Sunlit brand system.** Landing and light-product routes share the approved Sky, Butter, Sage, Lilac, Plum, warm-ink, DynaPuff wordmark, Fraunces, and Inter treatment, with refreshed browser chrome and component tokens while dark render and admin surfaces remain contained in their neutral theater style.
+
 ## [0.73.4.0] — 2026-09-09
 
 ### Fixed
