@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import KriaWordmark from "@/components/KriaWordmark";
 
 /**
  * ToolRail — the left icon-over-label rail (plan §2).
@@ -36,8 +37,8 @@ export const NOVA_TOOL_SEEN_KEY = "nova-tool-seen";
 // subtitled/narrated edit captions are the most-edited object on screen. The
 // glyph stays in the rail's text-glyph family (`T`, `Aa` in InspectorRail) —
 // "CC" reads as captions everywhere without importing an icon set.
-const TOOLS: Array<{ id: EditorTool; icon: string; label: string }> = [
-  { id: "nova", icon: "✧", label: "Kria" },
+const TOOLS: Array<{ id: EditorTool; icon: string | null; label: string }> = [
+  { id: "nova", icon: null, label: "Kria" },
   { id: "text", icon: "T", label: "Text" },
   { id: "captions", icon: "CC", label: "Captions" },
   { id: "visuals", icon: "▦", label: "Visuals" },
@@ -116,7 +117,7 @@ export default function ToolRail({
               if (!enabled) return; // focusable-disabled: reachable, inert
               onToggleTool(tool.id);
             }}
-            className={`relative flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+            className={`relative flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c] ${
               active
                 ? "bg-muted text-foreground hover:bg-muted"
                 : enabled
@@ -126,17 +127,21 @@ export default function ToolRail({
           >
             {showNovaPing && (
               <span className="pointer-events-none absolute ml-8 mt-[-42px] flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-lime-500 opacity-75 motion-safe:animate-ping" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-lime-600" />
+                <span className="absolute inline-flex h-full w-full rounded-full bg-[#30352c] opacity-30 motion-safe:animate-ping" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#30352c]" />
               </span>
             )}
             <span
               aria-hidden
-              className={`flex h-5 w-5 items-center justify-center text-[17px] leading-none ${
+              className={`flex h-5 w-5 items-center justify-start text-[17px] leading-none ${
                 active ? "font-bold" : ""
               }`}
             >
-              {tool.icon}
+              {tool.id === "nova" ? (
+                <KriaWordmark className="text-[16px] leading-none text-current" />
+              ) : (
+                tool.icon
+              )}
             </span>
             <span className={`text-[11px] ${active ? "font-semibold" : ""}`}>
               {tool.label}

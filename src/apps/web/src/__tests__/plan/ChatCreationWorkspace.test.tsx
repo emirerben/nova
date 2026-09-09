@@ -210,7 +210,7 @@ describe("ChatCreationWorkspace", () => {
     expect(await screen.findByRole("button", { name: /Montage Music-led/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Narrated Let/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Talking to camera A clean/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument();
   });
 
   it("opens profile and memory from the sidebar account icon", async () => {
@@ -481,7 +481,7 @@ describe("ChatCreationWorkspace", () => {
       "https://storage.example/real-video.mp4",
     );
     expect(screen.getByRole("textbox", { name: "Message Kria" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "New video" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Project actions for A real weekend in Corfu" }));
     await user.click(screen.getByRole("menuitem", { name: "Rename project (preview)" }));
@@ -685,16 +685,16 @@ describe("ChatCreationWorkspace", () => {
     await waitFor(() => expect(createCreationThread).toHaveBeenCalledTimes(1));
   });
 
-  it("does not create a second project when New video is clicked during initial loading", async () => {
+  it("does not create a second project when New chat is clicked during initial loading", async () => {
     const listed = deferred<typeof baseThread[]>();
     const capabilities = deferred<Awaited<ReturnType<typeof getCreationCapabilities>>>();
     jest.mocked(listCreationThreads).mockReturnValueOnce(listed.promise);
     jest.mocked(getCreationCapabilities).mockReturnValueOnce(capabilities.promise);
 
     render(<ChatCreationWorkspace />);
-    const newVideo = screen.getByRole("button", { name: "New video" });
-    expect(newVideo).toBeDisabled();
-    fireEvent.click(newVideo);
+    const newChat = screen.getByRole("button", { name: "New chat" });
+    expect(newChat).toBeDisabled();
+    fireEvent.click(newChat);
     expect(createCreationThread).not.toHaveBeenCalled();
 
     listed.resolve([baseThread]);
@@ -763,7 +763,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(sendCreationMessage).mockResolvedValueOnce(reply);
     render(<ChatCreationWorkspace />);
     await screen.findByRole("heading", { name: "Untitled video" });
-    fireEvent.click(await screen.findByRole("button", { name: "New video" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
     await screen.findByRole("alert");
     const composer = screen.getByRole("textbox", { name: "Message Kria" });
     fireEvent.change(composer, { target: { value: "Keep this project" } });
@@ -846,6 +846,7 @@ describe("ChatCreationWorkspace", () => {
     }], next_cursor: null });
     render(<ChatCreationWorkspace />);
     fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+    expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Play preview" })).toBeInTheDocument();
     expect(screen.getByText("Ready to post")).toBeInTheDocument();
   });

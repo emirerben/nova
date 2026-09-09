@@ -1130,7 +1130,7 @@ export function MiniStrip({
                     className={cn(
                       "absolute inset-0 overflow-hidden rounded-md border bg-muted",
                       selected
-                        ? "border-2 border-lime-600 ring-1 ring-foreground/70"
+                        ? "border-2 border-[#30352c] ring-1 ring-foreground/70"
                         : "border-border",
                     )}
                   >
@@ -1158,14 +1158,14 @@ export function MiniStrip({
                         if (suppressClickRef.current) return;
                         onSelectClip(segment.id, segment.startS);
                       }}
-                      className="absolute inset-0 h-full w-full rounded-none bg-transparent p-0 hover:bg-foreground/5 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-lime-500 focus-visible:ring-0"
+                      className="absolute inset-0 h-full w-full rounded-none bg-transparent p-0 hover:bg-foreground/5 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#30352c] focus-visible:ring-0"
                     >
                       <span className="sr-only">Select clip {index + 1}</span>
                     </Button>
                     {segment.hasMarks && (
                       <span
                         aria-hidden="true"
-                        className="absolute bottom-1 left-1/2 z-10 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-lime-600 ring-1 ring-white"
+                        className="absolute bottom-1 left-1/2 z-10 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-[#30352c] ring-1 ring-white"
                       />
                     )}
                     {selected && (
@@ -1203,7 +1203,7 @@ export function MiniStrip({
                           handleTrimKey(event, segment, handle)
                         }
                         className={cn(
-                          "absolute inset-y-0 z-30 h-16 w-11 rounded-none bg-transparent p-0 hover:bg-lime-100/35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 focus-visible:ring-0",
+                          "absolute inset-y-0 z-30 h-16 w-11 rounded-none bg-transparent p-0 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c] focus-visible:ring-0",
                           handle === "left"
                             ? "-left-[22px]"
                             : "-right-[22px]",
@@ -1215,7 +1215,7 @@ export function MiniStrip({
                         <span
                           aria-hidden="true"
                           className={cn(
-                            "h-10 w-[3px] rounded-full bg-lime-600 shadow-sm",
+                            "h-10 w-[3px] rounded-full bg-[#30352c] shadow-sm",
                             handle === "left"
                               ? "mr-auto ml-[20px]"
                               : "ml-auto mr-[20px]",
@@ -1246,12 +1246,12 @@ export function MiniStrip({
                     (mark.endS - mark.startS) * pixelsPerSecond,
                   ),
                 }}
-                className="absolute top-[35px] z-20 h-11 min-w-11 rounded-none bg-transparent p-0 hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 focus-visible:ring-0"
+                className="absolute top-[35px] z-20 h-11 min-w-11 rounded-none bg-transparent p-0 hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c] focus-visible:ring-0"
               >
                 <span
                   aria-hidden="true"
                   className={cn(
-                    "absolute inset-x-0 bottom-1 h-2 min-w-2 rounded-full bg-lime-600/85",
+                    "absolute inset-x-0 bottom-1 h-2 min-w-2 rounded-full bg-[#30352c]/85",
                     selectedMarkId === mark.id && "ring-2 ring-background",
                   )}
                 />
@@ -1304,16 +1304,16 @@ export function MiniStrip({
                             onSelectLaneItem?.(item, item.startS);
                           }}
                           className={cn(
-                            "absolute inset-0 h-11 w-full min-w-11 justify-start overflow-hidden rounded-md border px-2 text-[10px] font-semibold shadow-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 focus-visible:ring-0",
+                            "absolute inset-0 h-11 w-full min-w-11 justify-start overflow-hidden rounded-md border px-2 text-[10px] font-semibold shadow-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c] focus-visible:ring-0",
                             item.kind === "text"
-                              ? "border-violet-300 bg-violet-100 text-violet-950 hover:bg-violet-100"
+                              ? "border-[#9BCAFF] bg-[#EBF3FF] text-[#245E9B] hover:bg-[#E2EEFC]"
                               : item.kind === "sfx" || item.kind === "music"
-                                ? "border-sky-300 bg-sky-100 text-sky-950 hover:bg-sky-100"
+                                ? "border-zinc-300 bg-zinc-100 text-zinc-950 hover:bg-zinc-100"
                                 : item.kind === "overlay"
-                                  ? "border-amber-300 bg-amber-100 text-amber-950 hover:bg-amber-100"
+                                  ? "border-zinc-300 bg-zinc-100 text-zinc-950 hover:bg-zinc-100"
                                   : "border-zinc-300 bg-zinc-100 text-zinc-950 hover:bg-zinc-100",
                             selected &&
-                              "border-foreground ring-2 ring-lime-500 ring-offset-1",
+                              "border-foreground ring-2 ring-[#30352c] ring-offset-1",
                           )}
                         >
                           <span className="truncate">{item.label}</span>
@@ -1347,7 +1347,7 @@ export function MiniStrip({
                                 handleLaneResizeKey(event, item, handle)
                               }
                               className={cn(
-                                "absolute inset-y-0 z-30 h-11 w-11 rounded-none bg-transparent p-0 hover:bg-lime-100/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 focus-visible:ring-0",
+                                "absolute inset-y-0 z-30 h-11 w-11 rounded-none bg-transparent p-0 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c] focus-visible:ring-0",
                                 handle === "left"
                                   ? "-left-[22px]"
                                   : "-right-[22px]",
@@ -1359,7 +1359,7 @@ export function MiniStrip({
                               <span
                                 aria-hidden="true"
                                 className={cn(
-                                  "h-8 w-[3px] rounded-full bg-lime-600 shadow-sm",
+                                  "h-8 w-[3px] rounded-full bg-[#30352c] shadow-sm",
                                   handle === "left"
                                     ? "mr-auto ml-[20px]"
                                     : "ml-auto mr-[20px]",

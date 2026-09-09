@@ -148,8 +148,8 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import KriaWordmark from "@/components/KriaWordmark";
 import {
   Select,
   SelectContent,
@@ -157,7 +157,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
@@ -669,44 +668,6 @@ export function resolveCopilotApplyFeedback({
   return { textIds, slotIds, first: null };
 }
 
-function SelectCursorIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-[18px] w-[18px]"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M4 3l8 18 2.2-7.2L21 11 4 3z" />
-      <path d="M13.5 13.5 19 19" />
-    </svg>
-  );
-}
-
-function PanHandIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-[18px] w-[18px]"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M8 11V6.5a2 2 0 0 1 4 0V11" />
-      <path d="M12 11V5.5a2 2 0 0 1 4 0V12" />
-      <path d="M16 12V8.5a2 2 0 0 1 4 0V15" />
-      <path d="M8 12.5V10a2 2 0 0 0-4 0v4.5C4 19 7 22 12 22h1c4 0 7-3 7-7" />
-    </svg>
-  );
-}
-
 function SaveSpinner() {
   return (
     <span
@@ -1053,14 +1014,12 @@ export default function EditorShell({
   const [activeTool, setActiveTool] = useState<EditorTool | null>(null); // drawer CLOSED at first paint
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("basic");
   const [lightSheetOpen, setLightSheetOpen] = useState(false);
-  const [canvasTool, setCanvasTool] = useState<"select" | "pan">("select");
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [flashTextIds, setFlashTextIds] = useState<Set<string>>(new Set());
   const [flashOverlayIds, setFlashOverlayIds] = useState<Set<string>>(new Set());
   const [flashTimelineIds, setFlashTimelineIds] = useState<Set<string>>(new Set());
   const [sessionHasCopilotEdits, setSessionHasCopilotEdits] = useState(false);
   const [copilotSaveNoticeDismissed, setCopilotSaveNoticeDismissed] = useState(true);
-  const panEnabled = zoomPct > 100;
   const playbackClockRef = useRef<EditorPlaybackClock | null>(null);
   if (FRAME_DRIVEN_PREVIEW_ENABLED && playbackClockRef.current == null) {
     playbackClockRef.current = createEditorPlaybackClock(0);
@@ -2760,7 +2719,6 @@ export default function EditorShell({
       // Pocket mode routes every tool through sheets instead of force-closing
       // them; legacy light mode keeps the nova-only gate.
       if (!POCKET_UI) setActiveTool((tool) => (tool === "nova" ? tool : null));
-      setCanvasTool("select");
     } else {
       setLightSheetOpen(false);
       dispatchPocket({ type: "CLOSE_SHEET" });
@@ -2789,12 +2747,6 @@ export default function EditorShell({
       window.removeEventListener("pagehide", onPageHide);
     };
   }, [pocketActive, pausePlayback]);
-
-  useEffect(() => {
-    if (!panEnabled && canvasTool === "pan") {
-      setCanvasTool("select");
-    }
-  }, [canvasTool, panEnabled]);
 
   useEffect(() => {
     try {
@@ -6940,7 +6892,7 @@ export default function EditorShell({
                     variant="link"
                     aria-label={`Retry ${upload.filename}`}
                     onClick={() => poolUploader.retry(upload.localId)}
-                    className="h-auto min-h-7 p-0 text-[13px] text-lime-700 underline underline-offset-2 hover:text-lime-700"
+                    className="h-auto min-h-7 p-0 text-[13px] text-[#30352c] underline underline-offset-2 hover:text-[#30352c]/80"
                   >
                     Retry
                   </Button>
@@ -6980,7 +6932,7 @@ export default function EditorShell({
                       variant="link"
                       aria-label={`Retry analysis ${asset.source_filename ?? "visual"}`}
                       onClick={() => handleRetryPoolAsset(asset)}
-                      className="h-auto min-h-7 p-0 text-[13px] text-lime-700 underline underline-offset-2 hover:text-lime-700"
+                      className="h-auto min-h-7 p-0 text-[13px] text-[#30352c] underline underline-offset-2 hover:text-[#30352c]/80"
                     >
                       Retry analysis
                     </Button>
@@ -7781,47 +7733,10 @@ export default function EditorShell({
             >
               <ArrowLeftIcon className="h-4 w-4" />
             </Button>
-            <Input
-              type="text"
-              value={title}
-              onChange={(e) => {
-                if (readOnly || capabilities?.intro_controls === false) return;
-                  // Coalesce typing bursts into one undo step.
-                  history.record("title");
-                  setTitleDirty(true);
-                  setTitle(e.target.value);
-              }}
-              readOnly={!introControlsEditable}
-              placeholder="Untitled video"
-              aria-label="Video title"
-              className="h-9 w-[260px] border-transparent bg-transparent shadow-none hover:bg-muted focus-visible:border-input focus-visible:bg-background"
-            />
           </div>
 
-          {/* Center cluster — visually quiet; the active tool gets the muted chip */}
+          {/* Center cluster — document history and viewing controls. */}
           <div className="flex items-center gap-2">
-            <ToggleGroup
-              type="single"
-              value={canvasTool}
-              onValueChange={(value) => {
-                if (!value) return; // one tool always stays selected
-                setCanvasTool(value as "select" | "pan");
-              }}
-              className="gap-0.5 rounded-md border border-border bg-background p-0.5"
-            >
-              <ToggleGroupItem value="select" size="sm" aria-label="Select" title="Select">
-                <SelectCursorIcon />
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="pan"
-                size="sm"
-                aria-label="Pan — drag to move around the canvas when zoomed in"
-                title={panEnabled ? "Pan — drag to move around the canvas when zoomed in" : "Zoom in to pan"}
-                disabled={!panEnabled}
-              >
-                <PanHandIcon />
-              </ToggleGroupItem>
-            </ToggleGroup>
             {/* Undo/redo — unified document command stack (plan §7). */}
             <Button
               type="button"
@@ -7866,7 +7781,7 @@ export default function EditorShell({
                 type="button"
                 variant="outline"
                 onClick={restoreGuidedTombstones}
-                className="h-auto min-h-8 rounded-lg border-amber-300 bg-amber-50 px-3 text-[12px] text-amber-950 hover:border-amber-500 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                className="h-auto min-h-8 rounded-lg border-zinc-300 bg-zinc-50 px-3 text-[12px] text-zinc-700 hover:border-zinc-400 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c]"
                 title="These anchored items were removed because their complete clip interval disappeared."
               >
                 {activeGuidedTombstones.length} removed · Restore
@@ -7908,7 +7823,7 @@ export default function EditorShell({
               type="button"
               variant="outline"
               size="sm"
-              className="focus-visible:!outline-lime-500"
+              className="focus-visible:!outline-[#30352c]"
               onClick={requestLeave}
             >
               Cancel
@@ -7916,7 +7831,7 @@ export default function EditorShell({
             <Button
               type="button"
               size="sm"
-              className="gap-2 focus-visible:!outline-lime-500"
+              className="gap-2 bg-[#30352c] text-white hover:bg-[#30352c]/90 focus-visible:!outline-[#30352c] disabled:!bg-[#e4e4e7] disabled:!text-[#a1a1aa] disabled:!opacity-100"
               disabled={!dirty || saving || readOnly}
               onClick={() => void handleSave()}
             >
@@ -8324,7 +8239,7 @@ export default function EditorShell({
             playing={playing}
             masonryDurationS={previewDuration}
             zoomPct={zoomPct}
-            tool={canvasTool}
+            tool="select"
             videoRef={videoRef}
             onSelectText={selectText}
             onSelectOverlay={(id) => selectElement("overlay", id)}
@@ -9151,9 +9066,9 @@ function LightTopBar({
           aria-label="Open Kria"
           disabled={readOnly}
           onClick={onOpenNova}
-          className="text-[15px]"
+          className="flex items-center justify-start text-[15px]"
         >
-          ✧
+          <KriaWordmark className="text-[15px] leading-none text-current" />
         </Button>
       )}
       <Button
@@ -9161,6 +9076,7 @@ function LightTopBar({
         size="sm"
         disabled={!dirty || saving || readOnly}
         onClick={onSave}
+        className="bg-[#30352c] text-white hover:bg-[#30352c]/90 disabled:!bg-[#e4e4e7] disabled:!text-[#a1a1aa] disabled:!opacity-100"
       >
         {saveState === "saving" ? "Saving..." : "Save"}
       </Button>
@@ -9200,8 +9116,8 @@ function LightTransport({
           aria-label={playing ? "Pause video" : "Play video"}
           aria-pressed={playing}
           onClick={onPlayPause}
-          variant={compact ? "ghost" : "default"}
-          className={compact ? "size-11 flex-none" : "flex-none"}
+          variant="ghost"
+          className={`${compact ? "size-11" : ""} flex-none bg-[#30352c] text-white hover:bg-[#30352c]/90 disabled:!bg-[#e4e4e7] disabled:!text-[#a1a1aa] disabled:!opacity-100`}
         >
           {playing ? (
             <PauseIcon className="h-5 w-5" />
@@ -9222,7 +9138,7 @@ function LightTransport({
           value={safeDuration > 0 ? safeTime : 0}
           disabled={safeDuration <= 0}
           onChange={(e) => onScrub(Number(e.target.value))}
-          className="h-11 min-w-0 flex-1 cursor-pointer accent-lime-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-11 min-w-0 flex-1 cursor-pointer accent-[#30352c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c] disabled:cursor-not-allowed disabled:opacity-40"
         />
         <span
           aria-label="Playback position"
@@ -9335,6 +9251,7 @@ function LightEditSheet({
           size="sm"
           disabled={!dirty || saving || readOnly}
           onClick={onSave}
+          className="bg-[#30352c] text-white hover:bg-[#30352c]/90 disabled:!bg-[#e4e4e7] disabled:!text-[#a1a1aa] disabled:!opacity-100"
         >
           {saveState === "saving" ? "Saving..." : "Save"}
         </Button>
