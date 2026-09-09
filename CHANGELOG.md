@@ -2,15 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.7.0] — 2026-09-09
+
+### Changed
+- **Kria's web surfaces now use the Paper Sunlit brand system.** Landing and light-product routes share the approved Sky, Butter, Sage, Lilac, Plum, warm-ink, DynaPuff wordmark, Fraunces, and Inter treatment, with refreshed browser chrome and component tokens while dark render and admin surfaces remain contained in their neutral theater style.
+
 ## [0.73.6.0] — 2026-09-09
 
 ### Fixed
 - **Preview text no longer covers the editor's own controls.** Text added to a video preview could paint over the Text panel and its "Add text" button, including making the button unclickable while a layer was selected. The preview now stays behind editor chrome in every layout.
-
-## [0.73.5.0] — 2026-09-09
-
-### Changed
-- **Kria's web surfaces now use the Paper Sunlit brand system.** Landing and light-product routes share the approved Sky, Butter, Sage, Lilac, Plum, warm-ink, DynaPuff wordmark, Fraunces, and Inter treatment, with refreshed browser chrome and component tokens while dark render and admin surfaces remain contained in their neutral theater style.
 
 ## [0.73.4.0] — 2026-09-09
 
