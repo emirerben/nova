@@ -178,3 +178,10 @@ def test_lyrics_capabilities_flag_on(monkeypatch, variant, expected) -> None:
         assert caps["split_clips"] is False
         assert caps["reason"] == "lyrics_sync"
     assert caps["lyrics"] == expected
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_text_appearance_requires_rollout_gate(monkeypatch, enabled):
+    monkeypatch.setattr(settings, "text_appearance_enabled", enabled)
+    caps = gj._editor_capabilities(_job(), _variant())
+    assert caps.get("text_appearance_version") == (1 if enabled else None)

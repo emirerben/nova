@@ -102,6 +102,20 @@
       "minimum": 0,
       "maximum": 1
     },
+    "text_appearance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stroke_width": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "shadow_enabled": {
+          "type": "boolean"
+        }
+      }
+    },
     "asset": {
       "type": "object",
       "additionalProperties": false,
@@ -154,6 +168,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         }
       }
     },
@@ -191,6 +208,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",
@@ -243,6 +263,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",
@@ -328,6 +351,9 @@
         "intensity": {
           "$ref": "#/$defs/intensity"
         },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
+        },
         "params": {
           "type": "object",
           "additionalProperties": false,
@@ -384,6 +410,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",
@@ -474,6 +503,9 @@
         "intensity": {
           "$ref": "#/$defs/intensity"
         },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
+        },
         "params": {
           "type": "object",
           "additionalProperties": false,
@@ -530,6 +562,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",
@@ -620,6 +655,9 @@
         "intensity": {
           "$ref": "#/$defs/intensity"
         },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
+        },
         "params": {
           "type": "object",
           "additionalProperties": false,
@@ -676,6 +714,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",
@@ -766,6 +807,9 @@
         "intensity": {
           "$ref": "#/$defs/intensity"
         },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
+        },
         "params": {
           "type": "object",
           "additionalProperties": false,
@@ -823,6 +867,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",
@@ -914,6 +961,9 @@
         "intensity": {
           "$ref": "#/$defs/intensity"
         },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
+        },
         "params": {
           "type": "object",
           "additionalProperties": false,
@@ -968,6 +1018,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",
@@ -1056,6 +1109,9 @@
         "intensity": {
           "$ref": "#/$defs/intensity"
         },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
+        },
         "params": {
           "type": "object",
           "additionalProperties": false,
@@ -1110,6 +1166,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",
@@ -1198,6 +1257,9 @@
         "intensity": {
           "$ref": "#/$defs/intensity"
         },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
+        },
         "params": {
           "type": "object",
           "additionalProperties": false,
@@ -1255,6 +1317,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",
@@ -1346,6 +1411,9 @@
         },
         "intensity": {
           "$ref": "#/$defs/intensity"
+        },
+        "text_appearance": {
+          "$ref": "#/$defs/text_appearance"
         },
         "params": {
           "type": "object",

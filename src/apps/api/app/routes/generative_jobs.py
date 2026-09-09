@@ -2507,6 +2507,8 @@ class CaptionCue(BaseModel):
     font_family: str | None = None
     text_color: str | None = None
     size_px: int | None = Field(None, ge=36, le=160)
+    stroke_width: int | None = Field(None, ge=0, le=12)
+    shadow_enabled: bool | None = Field(None, strict=True)
 
     @field_validator("font_family")
     @classmethod
@@ -5799,6 +5801,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "timeline": bool(revision is not None),
                 "timeline_max_slots": _TIMELINE_MAX_SLOTS,
                 "copilot_snapshot_wire_version": 1,
+                **({"text_appearance_version": 1} if settings.text_appearance_enabled else {}),
                 "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
                 "split_clips": bool(revision is not None),
                 "clips": clips,
@@ -5893,6 +5896,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             "timeline": False,
             "timeline_max_slots": _TIMELINE_MAX_SLOTS,
             "copilot_snapshot_wire_version": 1,
+            **({"text_appearance_version": 1} if settings.text_appearance_enabled else {}),
             "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
             "split_clips": False,
             "automatic_cut": False,
@@ -6023,6 +6027,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "timeline": timeline_ok,
         "timeline_max_slots": _TIMELINE_MAX_SLOTS,
         "copilot_snapshot_wire_version": 1,
+        **({"text_appearance_version": 1} if settings.text_appearance_enabled else {}),
         "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
         # Splitting a clip is a timeline-override operation — same eligibility.
         "split_clips": timeline_ok,

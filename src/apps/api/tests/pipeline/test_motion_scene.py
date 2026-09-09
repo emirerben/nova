@@ -78,7 +78,18 @@ def test_motion_contract_accepts_bounded_preset_and_normalizes_colors() -> None:
             "palette": {"primary": "#8B5CF6", "accent": "#D9FF43"},
         }
     ]
-    assert MOTION_RUNTIME_HASH.startswith("motion-v5:ck0.40.0:")
+    assert MOTION_RUNTIME_HASH.startswith("motion-v6:ck0.40.0:")
+
+
+def test_motion_contract_accepts_optional_text_appearance_and_preserves_legacy_shape() -> None:
+    scene = _evolving_scene(text_appearance={"stroke_width": 3, "shadow_enabled": False})
+    validated = validate_motion_instances([scene], duration_frames=159)
+    assert validated[0]["text_appearance"] == {"stroke_width": 3, "shadow_enabled": False}
+    assert (
+        "text_appearance"
+        not in validate_motion_instances([_evolving_scene()], duration_frames=159)[0]
+    )
+    assert MOTION_RUNTIME_HASH.startswith("motion-v6:ck0.40.0:")
 
 
 def test_motion_contract_accepts_evolving_type_v2_with_reference_defaults() -> None:

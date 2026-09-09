@@ -33,7 +33,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-08-v40"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-09-v41"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -81,6 +81,7 @@ _CONTEXT_URL_RE = re.compile(r"(?i)(?:https?|gs|s3)://[^\s'\"]+|www\.[^\s'\"]+")
 _VALID_INTENTS = {"edit", "clarify", "describe", "reject", "unknown"}
 _TEXT_OPS = {"edit_text", "set_text_timing", "add_text", "remove_text"}
 _STYLE_OPS = {"patch_text_style"}
+_TEXT_APPEARANCE_OPS = {"patch_text_appearance"}
 _CLIP_OPS = {
     "set_clip_duration",
     "set_clip_in",
@@ -137,6 +138,7 @@ _HISTORY_OPS = frozenset({"undo_last_edit", "repeat_last_edit"})
 _VALID_OPS = (
     _TEXT_OPS
     | _STYLE_OPS
+    | _TEXT_APPEARANCE_OPS
     | _CLIP_OPS
     | _SFX_OPS
     | _OVERLAY_OPS
@@ -158,6 +160,7 @@ _VALID_OPS = (
 _OP_REQUIRED: dict[str, frozenset[str]] = {
     "edit_text": frozenset({"bar_index", "text"}),
     "patch_text_style": frozenset({"bar_index", "patch"}),
+    "patch_text_appearance": frozenset({"selector", "patch", "text_appearance_version"}),
     "set_text_timing": frozenset({"bar_index"}),
     "add_text": frozenset({"text", "start_s", "end_s"}),
     "remove_text": frozenset({"bar_index"}),
@@ -211,6 +214,9 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
 _OP_FIELDS: dict[str, frozenset[str]] = {
     "edit_text": frozenset({"bar_index", "text"}),
     "patch_text_style": frozenset({"bar_index", "patch"}),
+    "patch_text_appearance": frozenset(
+        {"selector", "patch", "text_appearance_version", "target_ids", "target_identities"}
+    ),
     "set_text_timing": frozenset({"bar_index", "start_s", "end_s"}),
     "add_text": frozenset({"text", "start_s", "end_s"}),
     "remove_text": frozenset({"bar_index"}),
@@ -455,11 +461,14 @@ _STYLE_PATCH_FIELDS = frozenset(
         "line_spacing",
         "max_width_frac",
         "stroke_width",
+        "shadow_enabled",
         "position",
         "x_frac",
         "y_frac",
     }
 )
+_TEXT_APPEARANCE_FIELDS = frozenset({"stroke_width", "shadow_enabled"})
+_TEXT_APPEARANCE_KINDS = {"text", "caption", "motion"}
 
 _VALID_ALIGNMENT = {"left", "center", "right"}
 _VALID_TEXT_CASE = {"none", "upper", "lower", "title"}
@@ -1041,6 +1050,16 @@ def _format_snapshot(snapshot: dict) -> str:
         f"allowed_op_families: {', '.join(str(x) for x in allowed) if allowed else empty_families}",
         f"has_narrated_captions: {has_captions}",
     ]
+    appearance = _text_appearance_inventory(snapshot)
+    if snapshot.get("text_appearance_version") == 1 or appearance["targets"]:
+        lines.append("TEXT APPEARANCE: version=1; targets=")
+        for target in appearance["targets"]:
+            lines.append(
+                "  "
+                + _clean_prompt_data(
+                    json.dumps(target, ensure_ascii=False, separators=(",", ":")), max_chars=500
+                )
+            )
     if component_context_enabled:
         lines.append("component_context_version=1 (negotiated full component inspection)")
         asset_context_status = snapshot.get("asset_context_status")
@@ -2686,7 +2705,18 @@ def _drop_normalized_no_effect_ops(
     first_output_start = _first_number(slots[0], ("output_start_s",)) if slots else None
     filtered: list[dict] = []
     removed_trim_start: float | None = None
+    appearance_unchanged = False
     for op in ops:
+        if op.get("op") == "patch_text_appearance":
+            targets = _appearance_target_rows(snapshot, op.get("selector")) or []
+            patch = op.get("patch") or {}
+            if targets and all(
+                key in target.get("values", {}) and target["values"].get(key) == value
+                for target in targets
+                for key, value in patch.items()
+            ):
+                appearance_unchanged = True
+                continue
         if op.get("op") == "trim_output_start" and first_output_start is not None:
             requested = _first_number(op, ("start_s",))
             if (
@@ -2702,6 +2732,8 @@ def _drop_normalized_no_effect_ops(
         message = (
             f"The draft already starts at {removed_trim_start:g} seconds, so I didn't change it."
         )
+    if appearance_unchanged and not filtered and message is None:
+        message = "All selected text already has that appearance; no changes were staged."
     return filtered, message
 
 
@@ -2889,6 +2921,12 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 detail="caption-wide replacement must be one atomic operation",
             )
             raw_ops = []
+        appearance_requested = any(
+            isinstance(raw_op, dict)
+            and str(raw_op.get("op") or raw_op.get("type") or "").strip() == "patch_text_appearance"
+            for raw_op in raw_ops
+        )
+        appearance_parse_failed = False
         for raw_op in raw_ops:
             # A bulk caption replacement is one atomic client operation no
             # matter how many cues it changes. Keep it outside the ordinary
@@ -2918,6 +2956,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                     ordinary_op_count += 1
             elif raw_name in _BULK_OPS:
                 bulk_parse_failed = True
+            elif raw_name == "patch_text_appearance":
+                appearance_parse_failed = True
 
         if bulk_parse_failed:
             state.reject(
@@ -2927,6 +2967,13 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                     "one or more bulk media actions could not resolve every eligible target; "
                     "the complete bundle was rejected without partial operations"
                 ),
+            )
+            ops = []
+        if appearance_requested and appearance_parse_failed:
+            state.reject(
+                op="bundle",
+                reason="invalid_value",
+                detail="text appearance changes are atomic; no sibling operation was applied",
             )
             ops = []
 
@@ -3226,6 +3273,8 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         return True
     if name in _TEXT_OPS:
         aliases = {"text", "text_timeline"}
+    elif name in _TEXT_APPEARANCE_OPS:
+        aliases = {"text", "caption", "captions", "style", "motion", "creator_blocks"}
     elif name in _STYLE_OPS:
         aliases = {"style", "text", "text_style"}
     elif name == "split_clip":
@@ -3363,6 +3412,139 @@ def _section_len(snapshot: dict, section: str, key: str) -> int:
     return len(_section_list(snapshot, section, key))
 
 
+def _text_appearance_inventory(snapshot: dict) -> dict[str, Any]:
+    """Return the bounded, stable target inventory for appearance edits."""
+    source = snapshot.get("text_appearance") if isinstance(snapshot, dict) else None
+    if not isinstance(source, dict):
+        return {"version": 1, "targets": []}
+    targets = source.get("targets")
+    return {
+        "version": source.get("version"),
+        "targets": targets if isinstance(targets, list) else [],
+    }
+
+
+def _appearance_target_rows(snapshot: dict, selector: object) -> list[dict[str, Any]] | None:
+    """Resolve an appearance selector, returning None for any invalid scope."""
+    if not isinstance(selector, dict):
+        return None
+    if set(selector) - {"scope", "quantifier", "category", "target_ids"}:
+        return None
+    if selector.get("scope") != "editable_text" or selector.get("quantifier") != "all":
+        return None
+    category = selector.get("category")
+    if category is not None and category not in _TEXT_APPEARANCE_KINDS:
+        return None
+    if category is not None and selector.get("target_ids") is not None:
+        return None
+    inventory = _text_appearance_inventory(snapshot)
+    if inventory["version"] != 1:
+        return None
+    targets = inventory["targets"]
+    seen: set[str] = set()
+    for target in targets:
+        if not isinstance(target, dict):
+            return None
+        target_id = target.get("id")
+        if (
+            not isinstance(target_id, str)
+            or not target_id.strip()
+            or target_id in seen
+            or target.get("kind") not in _TEXT_APPEARANCE_KINDS
+            or not isinstance(target.get("identity"), str)
+            or not isinstance(target.get("supported_fields"), list)
+            or not isinstance(target.get("values"), dict)
+        ):
+            return None
+        seen.add(target_id)
+    eligible = [row for row in targets if category is None or row.get("kind") == category]
+    target_ids = selector.get("target_ids")
+    if target_ids is None:
+        return eligible
+    if (
+        not isinstance(target_ids, list)
+        or not target_ids
+        or any(not isinstance(value, str) or not value.strip() for value in target_ids)
+    ):
+        return None
+    requested = [value.strip() for value in target_ids]
+    if len(set(requested)) != len(requested):
+        return None
+    by_id = {str(row.get("id")): row for row in eligible if row.get("id") is not None}
+    if any(value not in by_id for value in requested):
+        return None
+    return [by_id[value] for value in requested]
+
+
+def _coerce_text_appearance(
+    name: str, payload: dict, snapshot: dict, state: _ParseState
+) -> dict | None:
+    version = payload.get("text_appearance_version")
+    inventory_version = _text_appearance_inventory(snapshot).get("version")
+    if (
+        snapshot.get("text_appearance_version") != 1
+        or isinstance(snapshot.get("text_appearance_version"), bool)
+        or version != 1
+        or isinstance(version, bool)
+        or inventory_version != 1
+        or isinstance(inventory_version, bool)
+    ):
+        state.invalid_value()
+        return None
+    selector = payload.get("selector")
+    targets = _appearance_target_rows(snapshot, selector)
+    if targets is None or not targets:
+        state.reject(
+            op=name,
+            reason="stale_target",
+            detail="the appearance selector has no valid targets in this snapshot",
+        )
+        return None
+    patch = payload.get("patch")
+    if not isinstance(patch, dict):
+        state.invalid_value()
+        return None
+    clean: dict[str, Any] = {}
+    for key, value in patch.items():
+        if key not in _TEXT_APPEARANCE_FIELDS:
+            state.invalid_value()
+            return None
+        if key == "shadow_enabled" and not isinstance(value, bool):
+            state.invalid_value()
+            return None
+        if key == "stroke_width" and (
+            isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 12
+        ):
+            state.invalid_value()
+            return None
+        if any(
+            key not in (target.get("supported_fields") or [])
+            and (key not in (target.get("values") or {}) or target["values"].get(key) != value)
+            for target in targets
+        ):
+            state.reject(
+                op=name,
+                reason="capability_unavailable",
+                detail=f"{key} is not supported by every selected appearance target",
+            )
+            return None
+        clean[key] = value
+    if not clean:
+        state.invalid_value()
+        return None
+    identities = [
+        {"id": str(row.get("id")), "kind": row.get("kind"), "identity": row.get("identity")}
+        for row in targets
+    ]
+    return {
+        "selector": dict(selector),
+        "patch": clean,
+        "text_appearance_version": 1,
+        "target_ids": [row["id"] for row in identities],
+        "target_identities": identities,
+    }
+
+
 def _index_in_bounds(value: object, count: int) -> bool:
     if count <= 0:
         return False
@@ -3389,6 +3571,8 @@ def _coerce_payload(
 
     if name in _BULK_OPS:
         return _clean_bulk_operation(name, out, snapshot, state)
+    if name == "patch_text_appearance":
+        return _coerce_text_appearance(name, out, snapshot, state)
 
     if name == "set_edit_direction":
         if out.get("direction") != "fast_montage":
@@ -4241,6 +4425,11 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
                 state.invalid_value()
                 return {}
             out[key] = max(0.0, min(20.0, num))
+        elif key == "shadow_enabled":
+            if not isinstance(value, bool):
+                state.invalid_value()
+                return {}
+            out[key] = value
         elif key in {"x_frac", "y_frac"}:
             num = _as_float(value)
             if num is None:

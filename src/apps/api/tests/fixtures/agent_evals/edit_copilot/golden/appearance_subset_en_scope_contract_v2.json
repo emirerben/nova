@@ -1,0 +1,131 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-09-v41",
+  "input": {
+    "utterance": "remove the shadow from the hook and outro text only",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "text"
+      ],
+      "text_appearance_version": 1,
+      "text_appearance": {
+        "version": 1,
+        "targets": [
+          {
+            "id": "hook",
+            "kind": "text",
+            "supported_fields": [
+              "shadow_enabled"
+            ],
+            "values": {
+              "shadow_enabled": true
+            },
+            "identity": "hook"
+          },
+          {
+            "id": "middle",
+            "kind": "text",
+            "supported_fields": [
+              "shadow_enabled"
+            ],
+            "values": {
+              "shadow_enabled": true
+            },
+            "identity": "middle"
+          },
+          {
+            "id": "outro",
+            "kind": "text",
+            "supported_fields": [
+              "shadow_enabled"
+            ],
+            "values": {
+              "shadow_enabled": true
+            },
+            "identity": "outro"
+          }
+        ]
+      },
+      "text_bars": [
+        {
+          "id": "hook",
+          "text": "hook text",
+          "role": "generative_intro",
+          "semantic_role": "hook",
+          "start_s": 0,
+          "end_s": 2,
+          "size_px": 64,
+          "shadow_enabled": true
+        },
+        {
+          "id": "middle",
+          "text": "middle text",
+          "role": "generative_intro",
+          "semantic_role": "middle",
+          "start_s": 2,
+          "end_s": 4,
+          "size_px": 64,
+          "shadow_enabled": true
+        },
+        {
+          "id": "outro",
+          "text": "outro text",
+          "role": "generative_intro",
+          "semantic_role": "outro",
+          "start_s": 4,
+          "end_s": 6,
+          "size_px": 64,
+          "shadow_enabled": true
+        }
+      ],
+      "component_context_version": 1
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_appearance\",\"selector\":{\"scope\":\"editable_text\",\"quantifier\":\"all\",\"target_ids\":[\"hook\",\"outro\"]},\"patch\":{\"shadow_enabled\":false},\"text_appearance_version\":1}],\"confidence\":0.93,\"reply\":\"Removed shadow from the hook and outro.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all",
+          "target_ids": [
+            "hook",
+            "outro"
+          ]
+        },
+        "patch": {
+          "shadow_enabled": false
+        },
+        "text_appearance_version": 1
+      }
+    ],
+    "confidence": 0.93,
+    "reply": "Removed shadow from the hook and outro.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "explicit appearance subset",
+    "exact_edit_ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all",
+          "target_ids": [
+            "hook",
+            "outro"
+          ]
+        },
+        "patch": {
+          "shadow_enabled": false
+        },
+        "text_appearance_version": 1
+      }
+    ]
+  }
+}
