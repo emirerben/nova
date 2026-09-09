@@ -751,26 +751,44 @@ export default function EditorCanvas({
     () => sourceAudioOptions.find((option) => option.mix === (sourceAudioMix ?? "interleaved")),
     [sourceAudioMix, sourceAudioOptions],
   );
+  const selectedSourceAudioUrl = selectedSourceAudio?.audio_url ?? null;
+  const selectedSourceAudioMix = selectedSourceAudio?.mix ?? null;
   useEffect(() => {
     const audio = sourceAudioRef.current;
-    if (!audio || !selectedSourceAudio || selectedSourceAudio.mix === "interleaved") {
+    if (
+      hasVirtualPreview ||
+      !audio ||
+      !selectedSourceAudioUrl ||
+      selectedSourceAudioMix === "interleaved"
+    ) {
       audio?.pause();
       return;
     }
-    audio.src = selectedSourceAudio.audio_url;
+    // Source identity changes own load(). Playback-clock ticks only seek below;
+    // reloading here on every committed time update restarted the file roughly
+    // five times a second and made alternate/uploaded audio effectively silent.
+    audio.src = selectedSourceAudioUrl;
     audio.load();
-    audio.currentTime = Math.max(0, committedCurrentTime);
     audio.muted = false;
-    if (playing) void audio.play().catch(() => {});
-    else audio.pause();
-  }, [committedCurrentTime, playing, selectedSourceAudio]);
+  }, [hasVirtualPreview, selectedSourceAudioMix, selectedSourceAudioUrl]);
   useEffect(() => {
     const audio = sourceAudioRef.current;
-    if (!audio || !selectedSourceAudio || selectedSourceAudio.mix === "interleaved") return;
+    if (
+      hasVirtualPreview ||
+      !audio ||
+      !selectedSourceAudioUrl ||
+      selectedSourceAudioMix === "interleaved"
+    ) return;
+    if (playing) void audio.play().catch(() => {});
+    else audio.pause();
+  }, [hasVirtualPreview, playing, selectedSourceAudioMix, selectedSourceAudioUrl]);
+  useEffect(() => {
+    const audio = sourceAudioRef.current;
+    if (!audio || !selectedSourceAudioUrl || selectedSourceAudioMix === "interleaved") return;
     if (Math.abs(audio.currentTime - committedCurrentTime) > 0.15) {
       audio.currentTime = Math.max(0, committedCurrentTime);
     }
-  }, [committedCurrentTime, selectedSourceAudio]);
+  }, [committedCurrentTime, selectedSourceAudioMix, selectedSourceAudioUrl]);
   const hasPreview = Boolean(src || virtualPreview);
   const virtualVideoARef = virtualPreview?.videoAProps.ref;
   const virtualVideoBRef = virtualPreview?.videoBProps.ref;
@@ -1806,14 +1824,16 @@ export default function EditorCanvas({
                 No preview for this variant yet
               </div>
             )}
-            {selectedSourceAudio && selectedSourceAudio.mix !== "interleaved" && (
-              <audio
-                ref={sourceAudioRef}
-                data-testid="intercut-source-audio-preview"
-                preload="auto"
-                className="hidden"
-              />
-            )}
+            {!virtualPreview &&
+              selectedSourceAudio &&
+              selectedSourceAudio.mix !== "interleaved" && (
+                <audio
+                  ref={sourceAudioRef}
+                  data-testid="intercut-source-audio-preview"
+                  preload="auto"
+                  className="hidden"
+                />
+              )}
 
             {!virtualPreview &&
               hasPreview &&
