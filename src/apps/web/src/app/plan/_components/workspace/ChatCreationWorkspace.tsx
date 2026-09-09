@@ -24,6 +24,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AgentApprovalCard } from "@/components/chat/AgentApprovalCard";
@@ -1768,7 +1769,7 @@ export default function ChatCreationWorkspace({
                   aria-label={`Rename ${title}`}
                   onSubmit={(event) => { event.preventDefault(); void renameProject(); }}
                 >
-                  <input
+                  <Input
                     aria-label="Project name"
                     className="block h-5 w-full min-w-0 appearance-none rounded-none border-0 bg-transparent p-0 text-sm font-medium leading-5 text-inherit shadow-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c]"
                     value={renameValue}
