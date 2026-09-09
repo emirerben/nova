@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.73.6.1] — 2026-09-09
+
+### Internal
+- Parallelize the complete web CI suite across five balanced groups, preserving fresh interaction-test processes and a stable aggregate check. Add coverage partition guards and per-suite timing artifacts.
 ## [0.73.7.0] — 2026-09-09
 
 ### Changed

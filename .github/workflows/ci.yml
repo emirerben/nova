@@ -52,14 +52,21 @@ jobs:
       - name: Run lint
         run: make lint
 
-  test-web:
+  test-web-suites:
+    name: web (${{ matrix.group }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [interaction-1, interaction-2, interaction-3, interaction-4, remaining]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - uses: denoland/setup-deno@v2
+        if: matrix.group == 'remaining'
         with:
           deno-version: v2.7.13
       - uses: pnpm/action-setup@v3
@@ -77,6 +84,7 @@ jobs:
         working-directory: src/apps/web
         run: pnpm install --no-frozen-lockfile
       - name: Cache offline CanvasKit motion dependencies
+        if: matrix.group == 'remaining'
         working-directory: src/apps/web
         run: |
           deno cache --no-config --node-modules-dir=none \
@@ -85,40 +93,38 @@ jobs:
           deno cache --no-config --node-modules-dir=none \
             ../../packages/motion-runtime/server/render-sequence.ts \
             ../../packages/motion-runtime/server/render-frame.ts
-      - name: Run interaction-heavy web tests
-        working-directory: src/apps/web
-        # Each suite passes quickly in a fresh process, but reusing one JSDOM
-        # worker for this set accumulates enough event-loop work to starve
-        # Radix/JSDOM interactions on hosted runners. Give each suite a clean
-        # process and a bounded CI-only ceiling; the other 3,265 tests retain
-        # Jest's strict 5s default.
-        run: |
-          for test_file in \
-            src/__tests__/plan/edit-proposal-card.test.tsx \
-            src/__tests__/library/LibraryTile.test.tsx \
-            src/__tests__/plan/unified-timeline.test.tsx \
-            src/__tests__/plan/items/ToolDrawer-visuals.test.tsx \
-            src/__tests__/plan/items/inspector-panel-text-horizontal.test.tsx \
-            src/__tests__/plan/ChatCreationWorkspace.test.tsx \
-            src/__tests__/plan/PersonalizationPage.test.tsx \
-            src/__tests__/components/header.test.tsx \
-            src/__tests__/plan/TikTokConnectionPanel.test.tsx \
-            src/__tests__/ui/select.test.tsx \
-            src/__tests__/ui/dropdown-menu.test.tsx \
-            src/__tests__/ui/tooltip.test.tsx \
-            src/__tests__/ui/popover.test.tsx
-          do
-            pnpm test -- --runInBand --testTimeout=300000 --runTestsByPath "$test_file"
-          done
-      - name: Run remaining web tests
-        working-directory: src/apps/web
-        # Jest only. CI previously ran lint + pytest but never the web Jest
-        # suite, so frontend tests that hard-code values (overlay constants,
-        # font-vibe counts) silently rotted when those values changed — the
-        # suite was red on main for multiple releases before anyone noticed.
-        run: >-
-          pnpm test --
-          --testPathIgnorePatterns='src/__tests__/(plan/edit-proposal-card|library/LibraryTile|plan/unified-timeline|plan/items/ToolDrawer-visuals|plan/items/inspector-panel-text-horizontal|plan/ChatCreationWorkspace|plan/PersonalizationPage|plan/TikTokConnectionPanel|components/header|ui/(select|dropdown-menu|tooltip|popover))\.test\.tsx$'
+      - name: Verify CI runner contracts
+        run: node --test scripts/ci/web-tests.test.mjs
+      - name: Run web tests with timing reports
+        run: node scripts/ci/web-tests.mjs "${{ matrix.group }}"
+      - name: Upload web test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-tests-${{ matrix.group }}-${{ github.run_attempt }}
+          path: test-results/web/
+          if-no-files-found: warn
+      - name: Record job outcome
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: echo "Web group ${{ matrix.group }} job outcome (including setup) $JOB_STATUS" >> "$GITHUB_STEP_SUMMARY"
+
+  # Keep a stable check name for consumers. An absent/skipped/cancelled matrix
+  # must not turn into a green check through Actions' default needs skipping.
+  test-web:
+    if: always()
+    needs: [test-web-suites]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Require every web test group to pass
+        env:
+          WEB_TEST_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci/web-tests.mjs gate
 
   test-api:
     runs-on: ubuntu-latest
