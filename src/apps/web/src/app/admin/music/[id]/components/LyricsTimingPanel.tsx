@@ -239,7 +239,7 @@ export function LyricsTimingPanel({
           onClick={() =>
             onSubmit("full_test", lineTimingEnabled ? { ...working } : undefined)
           }
-          className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Render full test job
         </button>

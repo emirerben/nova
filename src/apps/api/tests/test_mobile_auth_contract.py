@@ -276,3 +276,28 @@ def test_mobile_openapi_translates_nullable_bounds_and_constants() -> None:
         document["paths"]["/creation-threads/{thread_id}/media"]["post"]["operationId"]
         == "attachCreationThreadMedia"
     )
+    assert (
+        document["paths"]["/creation-threads/{thread_id}/actions"]["post"]["operationId"]
+        == "applyCreationAction"
+    )
+    assert (
+        document["paths"]["/creation-threads/capabilities"]["get"]["operationId"]
+        == "getCreationCapabilities"
+    )
+    assert "CreationCapabilitiesOut" in document["components"]["schemas"]
+    assert (
+        document["paths"]["/me/jobs/{job_id}/open-in-editor"]["post"]["operationId"]
+        == "openLibraryJobInEditor"
+    )
+    assert (
+        document["paths"]["/generative-jobs/{job_id}/status"]["get"]["operationId"]
+        == "getGenerativeJobStatus"
+    )
+    assert (
+        document["paths"]["/plan-items/{item_id}/variants/{variant_id}/editor-commit"]["post"][
+            "operationId"
+        ]
+        == "commitPlanItemEditor"
+    )
+    assert "EditorCommitRequest" in document["components"]["schemas"]
+    assert "EditorCommitResponse" in document["components"]["schemas"]

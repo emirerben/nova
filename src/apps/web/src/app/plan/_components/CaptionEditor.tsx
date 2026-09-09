@@ -601,7 +601,7 @@ export default function CaptionEditor({
                 onClick={() => void chooseCaptionPosition(opt.yFrac)}
                 className={`h-auto min-h-[44px] px-3 py-2 ${
                   active
-                    ? "border-lime-600 bg-lime-50 text-lime-900 hover:bg-lime-50 hover:text-lime-900"
+                    ? "border-lime-600 bg-lime-50 text-lime-900 hover:bg-lime-50 hover:text-ink"
                     : "text-[#3f3f46]"
                 }`}
               >
@@ -634,7 +634,7 @@ export default function CaptionEditor({
                 style={{ fontFamily: opt.cssFamily, fontWeight: opt.weight }}
                 className={`h-auto min-h-[44px] shrink-0 whitespace-nowrap px-3 py-1.5 ${
                   active
-                    ? "border-lime-600 bg-lime-50 text-lime-900 hover:bg-lime-50 hover:text-lime-900"
+                    ? "border-lime-600 bg-lime-50 text-lime-900 hover:bg-lime-50 hover:text-ink"
                     : "text-[#3f3f46]"
                 }`}
               >
@@ -687,7 +687,7 @@ export default function CaptionEditor({
                 onClick={() => jumpToCue(i)}
                 className={`h-auto min-h-[44px] w-full justify-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-normal ${
                   i === activeIndex
-                    ? "bg-lime-50 text-lime-900 hover:bg-lime-50 hover:text-lime-900"
+                    ? "bg-lime-50 text-lime-900 hover:bg-lime-50 hover:text-ink"
                     : "text-[#3f3f46]"
                 }`}
               >

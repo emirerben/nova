@@ -947,7 +947,7 @@ export default function EditProposalCard({
           type="button"
           variant="ghost"
           size="sm"
-          className="w-fit px-0 text-lime-800 hover:bg-transparent hover:text-lime-900"
+          className="w-fit px-0 text-lime-800 hover:bg-transparent hover:text-ink"
           onClick={() => {
             if (conversationEnabled) {
               setConversationOpen(true);

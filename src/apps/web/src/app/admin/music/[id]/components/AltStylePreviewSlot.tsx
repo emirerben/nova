@@ -88,7 +88,7 @@ export function AltStylePreviewSlot({
           type="button"
           onClick={generate}
           disabled={submitting || isPolling}
-          className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 disabled:bg-zinc-700 disabled:text-zinc-500"
+          className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:bg-zinc-700 disabled:text-zinc-500"
         >
           {submitting || isPolling ? "Rendering…" : "Preview"}
         </button>
@@ -135,7 +135,7 @@ export function AltStylePreviewSlot({
                 href={outputUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-violet-400 hover:text-violet-300"
+                className="text-xs text-violet-400 hover:text-zinc-100"
               >
                 Open in new tab
               </a>

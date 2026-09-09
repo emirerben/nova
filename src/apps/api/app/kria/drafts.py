@@ -158,21 +158,35 @@ async def _target(
                 recovery="refresh_replan",
                 current_revision=int(thread.revision),
             )
-        preferred = None
+        state = dict(thread.state or {})
+        selected_variant_id = state.get("selected_variant_id")
+        preferred_candidates: list[str] = []
+        if isinstance(selected_variant_id, str) and selected_variant_id.strip():
+            preferred_candidates.append(selected_variant_id.strip())
         session = (
             await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
             if thread.active_creator_agent_session_id is not None
             else None
         )
-        if session is not None and session.target_job_id == job.id:
-            preferred = session.target_variant_id
+        if (
+            session is not None
+            and session.target_job_id == job.id
+            and isinstance(session.target_variant_id, str)
+            and session.target_variant_id not in preferred_candidates
+        ):
+            preferred_candidates.append(session.target_variant_id)
         variants = [
             value
             for value in (job.assembly_plan or {}).get("variants") or []
             if isinstance(value, dict) and value.get("variant_id")
         ]
         selected = next(
-            (value for value in variants if str(value.get("variant_id")) == str(preferred)),
+            (
+                value
+                for preferred in preferred_candidates
+                for value in variants
+                if str(value.get("variant_id")) == preferred
+            ),
             variants[0] if len(variants) == 1 else None,
         )
         if selected is None:

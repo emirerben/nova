@@ -2001,7 +2001,7 @@ function TextInspector({
             type="button"
             variant="link"
             onClick={onOpenCaptionsPanel}
-            className="h-auto p-0 text-[12px] font-semibold text-lime-700 underline underline-offset-2 hover:text-lime-800"
+            className="h-auto p-0 text-[12px] font-semibold text-lime-700 underline underline-offset-2 hover:text-ink"
           >
             Edit all captions
           </Button>

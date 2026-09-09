@@ -27,6 +27,8 @@ jobs:
       - name: Install web dependencies
         working-directory: src/apps/web
         run: pnpm install --no-frozen-lockfile
+      - name: Disable unused Chrome apt source
+        run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
       - name: Install Playwright Chromium
         working-directory: src/apps/web
         run: pnpm exec playwright install --with-deps chromium

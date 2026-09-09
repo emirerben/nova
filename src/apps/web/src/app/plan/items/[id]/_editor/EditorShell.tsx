@@ -105,6 +105,7 @@ import {
   resolveLookAdjustments,
 } from "@/lib/look-presets";
 import { formatTimecode } from "@/lib/timeline/time-format";
+import { resolveEditorTimelineDuration } from "@/lib/timeline/timeline-scale";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import {
   applyCopilotOps,
@@ -148,16 +149,8 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import KriaWordmark from "@/components/KriaWordmark";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
@@ -327,8 +320,6 @@ import {
   type MotionPresetPatch,
 } from "@nova/motion-runtime";
 import type { CreatorBlockMotionControlPatch } from "./MotionInspector";
-
-const ZOOM_OPTIONS = [100, 125, 150] as const;
 
 function revokeLocalObjectUrl(url: string | null | undefined): void {
   if (url?.startsWith("blob:") && typeof URL.revokeObjectURL === "function") {
@@ -670,44 +661,6 @@ export function resolveCopilotApplyFeedback({
   }
 
   return { textIds, slotIds, first: null };
-}
-
-function SelectCursorIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-[18px] w-[18px]"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M4 3l8 18 2.2-7.2L21 11 4 3z" />
-      <path d="M13.5 13.5 19 19" />
-    </svg>
-  );
-}
-
-function PanHandIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-[18px] w-[18px]"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M8 11V6.5a2 2 0 0 1 4 0V11" />
-      <path d="M12 11V5.5a2 2 0 0 1 4 0V12" />
-      <path d="M16 12V8.5a2 2 0 0 1 4 0V15" />
-      <path d="M8 12.5V10a2 2 0 0 0-4 0v4.5C4 19 7 22 12 22h1c4 0 7-3 7-7" />
-    </svg>
-  );
 }
 
 function SaveSpinner() {
@@ -1065,14 +1018,11 @@ export default function EditorShell({
   const [captionsLaneExpanded, setCaptionsLaneExpanded] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("basic");
   const [lightSheetOpen, setLightSheetOpen] = useState(false);
-  const [canvasTool, setCanvasTool] = useState<"select" | "pan">("select");
-  const [zoomPct, setZoomPct] = useState<number>(100);
   const [flashTextIds, setFlashTextIds] = useState<Set<string>>(new Set());
   const [flashOverlayIds, setFlashOverlayIds] = useState<Set<string>>(new Set());
   const [flashTimelineIds, setFlashTimelineIds] = useState<Set<string>>(new Set());
   const [sessionHasCopilotEdits, setSessionHasCopilotEdits] = useState(false);
   const [copilotSaveNoticeDismissed, setCopilotSaveNoticeDismissed] = useState(true);
-  const panEnabled = zoomPct > 100;
   const playbackClockRef = useRef<EditorPlaybackClock | null>(null);
   if (FRAME_DRIVEN_PREVIEW_ENABLED && playbackClockRef.current == null) {
     playbackClockRef.current = createEditorPlaybackClock(0);
@@ -2716,15 +2666,20 @@ export default function EditorShell({
       }),
     [previewSfxPlacements, projectCanvasRange],
   );
-  // `sequentialSlotLayout` is the canonical staged timeline. Even when the
-  // rendered MP4 is the only available visual preview, clip edits must keep
-  // the transport, ruler, and seek bounds on the staged total rather than the
-  // stale rendered duration. Save will replace the visual source.
+  // Edit-space may extend beyond the current MP4, but every playback control
+  // must share the duration of the source it can actually show. The full
+  // staged tail remains visible as annotated timeline geometry until save.
   const previewDuration = clipDirty
     ? timelineDuration
     : virtualPreviewActive
       ? virtualPreview.timeline.totalDurationS
       : duration;
+  const transportDuration = resolveEditorTimelineDuration({
+    mode: virtualPreviewActive ? "virtual" : "rendered",
+    projectedDurationS: virtualPreview.timeline.totalDurationS,
+    renderedOutputDurationS: duration,
+    fallbackDurationS: timelineDuration,
+  });
   const smartPlacementCandidates = useMemo(() => {
     const targetBars = isMasonryVariant(variant)
       ? visibleTextBars.filter((bar) => bar.role !== "narrated_caption")
@@ -2763,7 +2718,7 @@ export default function EditorShell({
     }
     const rendered = videoRef.current;
     if (!rendered) return;
-    const clamped = Math.max(0, Math.min(previewDuration || currentTime, currentTime));
+    const clamped = Math.max(0, Math.min(transportDuration || currentTime, currentTime));
     if (Math.abs(currentTime - clamped) > 0.001) {
       setCurrentTime(clamped);
     }
@@ -2772,7 +2727,7 @@ export default function EditorShell({
     }
   }, [
     currentTime,
-    previewDuration,
+    transportDuration,
     seekVirtualPreview,
     setCurrentTime,
     virtualPreview.timeline.totalDurationS,
@@ -2789,7 +2744,7 @@ export default function EditorShell({
 
   const seekPlaybackTo = useCallback(
     (seconds: number) => {
-      const clamped = Math.max(0, Math.min(previewDuration || seconds, seconds));
+      const clamped = Math.max(0, Math.min(transportDuration || seconds, seconds));
       if (virtualPreviewActive) seekVirtualPreview(clamped);
       else {
         const v = videoRef.current;
@@ -2801,7 +2756,7 @@ export default function EditorShell({
       }
     },
     [
-      previewDuration,
+      transportDuration,
       seekVirtualPreview,
       setCurrentTime,
       virtualPreviewActive,
@@ -2821,7 +2776,6 @@ export default function EditorShell({
       // Pocket mode routes every tool through sheets instead of force-closing
       // them; legacy light mode keeps the nova-only gate.
       if (!POCKET_UI) setActiveTool((tool) => (tool === "nova" ? tool : null));
-      setCanvasTool("select");
     } else {
       setLightSheetOpen(false);
       dispatchPocket({ type: "CLOSE_SHEET" });
@@ -2850,12 +2804,6 @@ export default function EditorShell({
       window.removeEventListener("pagehide", onPageHide);
     };
   }, [pocketActive, pausePlayback]);
-
-  useEffect(() => {
-    if (!panEnabled && canvasTool === "pan") {
-      setCanvasTool("select");
-    }
-  }, [canvasTool, panEnabled]);
 
   useEffect(() => {
     try {
@@ -7018,7 +6966,7 @@ export default function EditorShell({
                     variant="link"
                     aria-label={`Retry ${upload.filename}`}
                     onClick={() => poolUploader.retry(upload.localId)}
-                    className="h-auto min-h-7 p-0 text-[13px] text-lime-700 underline underline-offset-2 hover:text-lime-700"
+                    className="h-auto min-h-7 p-0 text-[13px] text-[#30352c] underline underline-offset-2 hover:text-[#30352c]/80"
                   >
                     Retry
                   </Button>
@@ -7058,7 +7006,7 @@ export default function EditorShell({
                       variant="link"
                       aria-label={`Retry analysis ${asset.source_filename ?? "visual"}`}
                       onClick={() => handleRetryPoolAsset(asset)}
-                      className="h-auto min-h-7 p-0 text-[13px] text-lime-700 underline underline-offset-2 hover:text-lime-700"
+                      className="h-auto min-h-7 p-0 text-[13px] text-[#30352c] underline underline-offset-2 hover:text-[#30352c]/80"
                     >
                       Retry analysis
                     </Button>
@@ -7871,47 +7819,10 @@ export default function EditorShell({
             >
               <ArrowLeftIcon className="h-4 w-4" />
             </Button>
-            <Input
-              type="text"
-              value={title}
-              onChange={(e) => {
-                if (readOnly || capabilities?.intro_controls === false) return;
-                  // Coalesce typing bursts into one undo step.
-                  history.record("title");
-                  setTitleDirty(true);
-                  setTitle(e.target.value);
-              }}
-              readOnly={!introControlsEditable}
-              placeholder="Untitled video"
-              aria-label="Video title"
-              className="h-9 w-[260px] border-transparent bg-transparent shadow-none hover:bg-muted focus-visible:border-input focus-visible:bg-background"
-            />
           </div>
 
-          {/* Center cluster — visually quiet; the active tool gets the muted chip */}
+          {/* Center cluster — document history and viewing controls. */}
           <div className="flex items-center gap-2">
-            <ToggleGroup
-              type="single"
-              value={canvasTool}
-              onValueChange={(value) => {
-                if (!value) return; // one tool always stays selected
-                setCanvasTool(value as "select" | "pan");
-              }}
-              className="gap-0.5 rounded-md border border-border bg-background p-0.5"
-            >
-              <ToggleGroupItem value="select" size="sm" aria-label="Select" title="Select">
-                <SelectCursorIcon />
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="pan"
-                size="sm"
-                aria-label="Pan — drag to move around the canvas when zoomed in"
-                title={panEnabled ? "Pan — drag to move around the canvas when zoomed in" : "Zoom in to pan"}
-                disabled={!panEnabled}
-              >
-                <PanHandIcon />
-              </ToggleGroupItem>
-            </ToggleGroup>
             {/* Undo/redo — unified document command stack (plan §7). */}
             <Button
               type="button"
@@ -7935,18 +7846,6 @@ export default function EditorShell({
             >
               <RedoIcon className="h-4 w-4" />
             </Button>
-            <Select value={String(zoomPct)} onValueChange={(v) => setZoomPct(Number(v))}>
-              <SelectTrigger aria-label="Canvas zoom" className="h-9 w-[88px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ZOOM_OPTIONS.map((z) => (
-                  <SelectItem key={z} value={String(z)}>
-                    {z}%
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             {orientationToggle}
           </div>
 
@@ -7956,7 +7855,7 @@ export default function EditorShell({
                 type="button"
                 variant="outline"
                 onClick={restoreGuidedTombstones}
-                className="h-auto min-h-8 rounded-lg border-amber-300 bg-amber-50 px-3 text-[12px] text-amber-950 hover:border-amber-500 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                className="h-auto min-h-8 rounded-lg border-zinc-300 bg-zinc-50 px-3 text-[12px] text-zinc-700 hover:border-zinc-400 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c]"
                 title="These anchored items were removed because their complete clip interval disappeared."
               >
                 {activeGuidedTombstones.length} removed · Restore
@@ -7991,14 +7890,11 @@ export default function EditorShell({
                 {saveMessage}
               </Badge>
             )}
-            {(lyricsDirty || orientationDirty) && (
-              <Badge variant="outline">Re-renders on Save</Badge>
-            )}
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="focus-visible:!outline-lime-500"
+              className="focus-visible:!outline-[#30352c]"
               onClick={requestLeave}
             >
               Cancel
@@ -8006,7 +7902,7 @@ export default function EditorShell({
             <Button
               type="button"
               size="sm"
-              className="gap-2 focus-visible:!outline-lime-500"
+              className="gap-2 bg-[#30352c] text-white hover:bg-[#30352c]/90 focus-visible:!outline-[#30352c] disabled:!bg-[#e4e4e7] disabled:!text-[#a1a1aa] disabled:!opacity-100"
               disabled={!dirty || saving || readOnly}
               onClick={() => void handleSave()}
             >
@@ -8413,8 +8309,8 @@ export default function EditorShell({
             virtualDeckLookAdjustments={virtualDeckLookAdjustments}
             playing={playing}
             masonryDurationS={previewDuration}
-            zoomPct={zoomPct}
-            tool={canvasTool}
+            zoomPct={100}
+            tool="select"
             videoRef={videoRef}
             onSelectText={selectText}
             onSelectOverlay={(id) => selectElement("overlay", id)}
@@ -8558,7 +8454,7 @@ export default function EditorShell({
             <LightTransport
               playing={playing}
               currentTime={currentTime}
-              duration={previewDuration}
+              duration={transportDuration}
               onPlayPause={togglePlay}
               onScrub={seekTo}
               compact
@@ -8567,7 +8463,7 @@ export default function EditorShell({
               <div className="bg-white">
                 <MiniStrip
                   segments={miniStripSegments}
-                  durationS={virtualPreview.timeline.totalDurationS || timelineDuration || previewDuration}
+                  durationS={transportDuration}
                   currentTimeS={currentTime}
                   playbackClock={playbackClock}
                   selectedClipId={selection?.kind === "clip" ? selection.id : null}
@@ -8636,7 +8532,7 @@ export default function EditorShell({
           <LightTransport
             playing={playing}
             currentTime={currentTime}
-            duration={previewDuration}
+            duration={transportDuration}
             onPlayPause={togglePlay}
             onScrub={seekTo}
           />
@@ -8649,7 +8545,7 @@ export default function EditorShell({
         <TransportBar
           playing={playing}
           currentTime={currentTime}
-          duration={previewDuration}
+          duration={transportDuration}
           onPlayPause={togglePlay}
           canSplit={canSplit}
           splitReason={splitReason}
@@ -9243,9 +9139,9 @@ function LightTopBar({
           aria-label="Open Kria"
           disabled={readOnly}
           onClick={onOpenNova}
-          className="text-[15px]"
+          className="flex items-center justify-start text-[15px]"
         >
-          ✧
+          <KriaWordmark className="text-[15px] leading-none text-current" />
         </Button>
       )}
       <Button
@@ -9253,6 +9149,7 @@ function LightTopBar({
         size="sm"
         disabled={!dirty || saving || readOnly}
         onClick={onSave}
+        className="bg-[#30352c] text-white hover:bg-[#30352c]/90 disabled:!bg-[#e4e4e7] disabled:!text-[#a1a1aa] disabled:!opacity-100"
       >
         {saveState === "saving" ? "Saving..." : "Save"}
       </Button>
@@ -9292,8 +9189,8 @@ function LightTransport({
           aria-label={playing ? "Pause video" : "Play video"}
           aria-pressed={playing}
           onClick={onPlayPause}
-          variant={compact ? "ghost" : "default"}
-          className={compact ? "size-11 flex-none" : "flex-none"}
+          variant="ghost"
+          className={`${compact ? "size-11" : ""} flex-none bg-[#30352c] text-white hover:bg-[#30352c]/90 disabled:!bg-[#e4e4e7] disabled:!text-[#a1a1aa] disabled:!opacity-100`}
         >
           {playing ? (
             <PauseIcon className="h-5 w-5" />
@@ -9314,7 +9211,7 @@ function LightTransport({
           value={safeDuration > 0 ? safeTime : 0}
           disabled={safeDuration <= 0}
           onChange={(e) => onScrub(Number(e.target.value))}
-          className="h-11 min-w-0 flex-1 cursor-pointer accent-lime-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-11 min-w-0 flex-1 cursor-pointer accent-[#30352c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c] disabled:cursor-not-allowed disabled:opacity-40"
         />
         <span
           aria-label="Playback position"
@@ -9427,6 +9324,7 @@ function LightEditSheet({
           size="sm"
           disabled={!dirty || saving || readOnly}
           onClick={onSave}
+          className="bg-[#30352c] text-white hover:bg-[#30352c]/90 disabled:!bg-[#e4e4e7] disabled:!text-[#a1a1aa] disabled:!opacity-100"
         >
           {saveState === "saving" ? "Saving..." : "Save"}
         </Button>

@@ -118,8 +118,9 @@
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 3.8% 46.1%;
 
-    --accent: 270 47% 92%;
-    --accent-foreground: 276 33% 22%;
+    /* Shared hover and menu-highlight surface: never purple/lilac. */
+    --accent: 214 100% 96%;
+    --accent-foreground: 75 6% 19%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;

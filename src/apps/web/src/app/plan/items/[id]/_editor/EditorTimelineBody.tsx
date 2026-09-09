@@ -36,6 +36,7 @@ import {
 import {
   fitPxPerSecond,
   pxToSeconds,
+  resolveEditorTimelineDuration,
   resolveEditorTimelineScale,
   rulerTicks,
   scaledTrackWidth,
@@ -529,12 +530,28 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     clipPreviewMode === "rendered"
       ? renderedSequentialSlotLayout(slots, grid, renderedLayoutOptions)
       : baseSlotLayout;
-  const effectiveDurationS =
-    timelineProjection.totalDurationS > 0
-      ? timelineProjection.totalDurationS
-      : renderedSlotLayout.totalDurationS > 0
+  // Rendered preview has two clocks: edit-space slot geometry can be longer
+  // than the actual MP4 while the latter is authoritative for the ruler,
+  // playhead, and scrub bounds. Virtual preview uses its assembled timeline.
+  const effectiveDurationS = resolveEditorTimelineDuration({
+    mode: clipPreviewMode,
+    projectedDurationS: timelineProjection.totalDurationS,
+    renderedOutputDurationS,
+    fallbackDurationS:
+      renderedSlotLayout.totalDurationS > 0
         ? renderedSlotLayout.totalDurationS
-        : durationS;
+        : durationS,
+  });
+  // Preserve the projected edit-space tail in rendered mode so stale/virtual
+  // regions remain visible after the rendered-output end marker. They are not
+  // part of the rendered transport clock above.
+  const geometryDurationS = Math.max(
+    effectiveDurationS,
+    timelineProjection.totalDurationS,
+  );
+  const boundedCurrentTimeS = Number.isFinite(currentTimeS)
+    ? Math.min(effectiveDurationS, Math.max(0, currentTimeS))
+    : 0;
 
   const trackViewportW = Math.max(0, viewportW);
   const liveFitPps = fitPxPerSecond(trackViewportW, effectiveDurationS);
@@ -545,7 +562,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       zoom,
       frozenFitPxPerSecond: frozenFitPps,
     });
-  const trackW = Math.max(trackViewportW, scaledTrackWidth(effectiveDurationS, pps));
+  const trackW = Math.max(trackViewportW, scaledTrackWidth(geometryDurationS, pps));
   const videoEndPx = secondsToPx(effectiveDurationS, pps);
   const showEndMarker = videoEndPx > 0 && videoEndPx < trackW - 1;
 
@@ -1261,7 +1278,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   </span>
                 </div>
               ))}
-              <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} withHead />
+              <Playline currentTimeS={boundedCurrentTimeS} playbackClock={playbackClock} pps={pps} durationS={effectiveDurationS} withHead />
             </div>
           </div>
           <div
@@ -1281,7 +1298,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 heightPx={textLane.totalHeightPx}
                 testId="editor-text-lane"
               >
-                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
+                <Playline currentTimeS={boundedCurrentTimeS} playbackClock={playbackClock} pps={pps} durationS={effectiveDurationS} />
                 {plainTextBars.length === 0 ? (
                   <GhostRow text="Add text from the Text tool" />
                 ) : (
@@ -1403,7 +1420,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   heightPx={captionsLaneHeight}
                   testId="editor-captions-lane"
                 >
-                  <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
+                  <Playline currentTimeS={boundedCurrentTimeS} playbackClock={playbackClock} pps={pps} durationS={effectiveDurationS} />
                   <div
                     className={captionsEnabled ? undefined : "opacity-40"}
                     style={{ height: captionsLaneHeight }}
@@ -1475,7 +1492,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             secondsToPx(b.end_s - b.start_s, pps),
                           );
                           const playing =
-                            currentTimeS >= b.start_s && currentTimeS < b.end_s;
+                            boundedCurrentTimeS >= b.start_s && boundedCurrentTimeS < b.end_s;
                           return (
                             <Button
                               key={b.id}
@@ -1500,7 +1517,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 heightPx={visualLane.totalHeightPx}
                 testId="editor-visuals-lane"
               >
-                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
+                <Playline currentTimeS={boundedCurrentTimeS} playbackClock={playbackClock} pps={pps} durationS={effectiveDurationS} />
                 {visualBlocks.length === 0 ? (
                   <GhostRow text="Montages and text cards appear here" />
                 ) : (
@@ -1563,7 +1580,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   heightPx={motionLane.totalHeightPx}
                   testId="editor-motion-lane"
                 >
-                  <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
+                  <Playline currentTimeS={boundedCurrentTimeS} playbackClock={playbackClock} pps={pps} durationS={effectiveDurationS} />
                   {motionBlocks.length === 0 ? (
                     <GhostRow text="Creator Blocks appear here" />
                   ) : (
@@ -1615,7 +1632,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   heightPx={cameraLane.totalHeightPx}
                   testId="editor-camera-lane"
                 >
-                  <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
+                  <Playline currentTimeS={boundedCurrentTimeS} playbackClock={playbackClock} pps={pps} durationS={effectiveDurationS} />
                   {cameraLane.rows.map(
                     ({ item: effect, rowIndex, topPx, heightPx }) => {
                       const left = secondsToPx(effect.start_s, pps);
@@ -1663,7 +1680,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 onDragOver={handleCarouselDragOver}
                 onDrop={handleCarouselDrop}
               >
-                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
+                  <Playline currentTimeS={boundedCurrentTimeS} playbackClock={playbackClock} pps={pps} durationS={effectiveDurationS} />
                 {clipsLoading ? (
                   <div className="absolute inset-1 rounded bg-zinc-200/60 motion-safe:animate-pulse" />
                 ) : (
@@ -1779,7 +1796,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           event.stopPropagation();
                           onAddClip?.(source.clip_index);
                         }}
-                        className="h-6 shrink-0 rounded border-dashed border-zinc-300 bg-white px-2 text-[9px] font-semibold text-[#3f3f46] hover:border-lime-500 hover:bg-white hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+                        className="h-6 shrink-0 rounded border-dashed border-zinc-300 bg-white px-2 text-[9px] font-semibold text-[#3f3f46] hover:border-lime-500 hover:bg-white hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         + Clip {source.clip_index + 1}
                       </Button>
@@ -1862,7 +1879,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
               {/* ── Sound lane (SFX sub-row above the music bed) ── */}
               <LaneTrack trackW={trackW} heightPx={soundLaneHeight}>
-                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
+                <Playline currentTimeS={boundedCurrentTimeS} playbackClock={playbackClock} pps={pps} durationS={effectiveDurationS} />
                 {/* SFX rows above the fixed music bed. */}
                 <div
                   className="absolute inset-x-0 top-0"
@@ -1982,7 +1999,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 heightPx={overlayLane.totalHeightPx}
                 testId="editor-overlays-lane"
               >
-                <Playline currentTimeS={currentTimeS} playbackClock={playbackClock} pps={pps} />
+                <Playline currentTimeS={boundedCurrentTimeS} playbackClock={playbackClock} pps={pps} durationS={effectiveDurationS} />
                 {overlays.length === 0 ? (
                   <GhostRow text="Overlays appear here" />
                 ) : (
@@ -2079,18 +2096,25 @@ function Playline({
   currentTimeS,
   playbackClock,
   pps,
+  durationS,
   withHead = false,
 }: {
   currentTimeS: number;
   playbackClock?: EditorPlaybackClock | null;
   pps: number;
+  durationS?: number;
   withHead?: boolean;
 }) {
   const playbackTimeS = useEditorPlaybackTime(playbackClock, currentTimeS);
+  const boundedPlaybackTimeS =
+    durationS == null
+      ? playbackTimeS
+      : Math.min(durationS, Math.max(0, playbackTimeS));
   return (
     <div
+      data-testid="editor-timeline-playline"
       className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-[#0c0c0e]/80"
-      style={{ left: secondsToPx(playbackTimeS, pps) }}
+      style={{ left: secondsToPx(boundedPlaybackTimeS, pps) }}
       aria-hidden
     >
       {withHead && (
@@ -2103,6 +2127,7 @@ function Playline({
 function EndOfVideoMarker({ left }: { left: number }) {
   return (
     <div
+      data-testid="editor-timeline-end-marker"
       className="pointer-events-none absolute bottom-0 top-0 z-10 w-px bg-zinc-400/40"
       style={{ left }}
       aria-hidden

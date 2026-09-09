@@ -673,7 +673,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                           type="button"
                           variant="link"
                           onClick={() => void handleSaveEditedShot(shot)}
-                          className="h-auto p-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                          className="h-auto p-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-ink focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
                         >
                           Save
                         </Button>
@@ -781,7 +781,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                               variant="ghost"
                               aria-label={`Remove clip ${name}`}
                               onClick={() => void handleRemoveExtraClip(sid, a.gcs_path)}
-                              className="h-auto w-auto ml-0.5 p-0 text-lime-600 hover:bg-transparent hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                              className="h-auto w-auto ml-0.5 p-0 text-lime-600 hover:bg-transparent hover:text-ink focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
                             >
                               ✕
                             </Button>
@@ -995,7 +995,7 @@ function SlotWell({ shot, shotIndex, state, anyFilled, accept, onFile, onCancel,
                 type="button"
                 variant="link"
                 onClick={onKeepMatch}
-                className="h-auto shrink-0 p-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                className="h-auto shrink-0 p-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-ink focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
               >
                 Keep
               </Button>
