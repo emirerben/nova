@@ -6,6 +6,7 @@ import type {
   QueuedCopilotMessage,
 } from "@/lib/edit-copilot/useEditCopilot";
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
+import { useKeyboardOffset } from "./useKeyboardOffset";
 import DirectorSuggestions from "./DirectorSuggestions";
 import type { UseEditDirectorResult } from "@/lib/edit-copilot/useEditDirector";
 import { NovaActivityFeed, NovaStepRow } from "@/components/progress";
@@ -28,26 +29,6 @@ const STARTERS = [
 ];
 
 const MAX_CHARS = 500;
-
-function useKeyboardOffset(active: boolean): number {
-  const [offset, setOffset] = useState(0);
-  useEffect(() => {
-    if (!active || typeof window === "undefined" || !window.visualViewport) return;
-    const viewport = window.visualViewport;
-    const update = () => {
-      const hidden = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
-      setOffset(hidden);
-    };
-    update();
-    viewport.addEventListener("resize", update);
-    viewport.addEventListener("scroll", update);
-    return () => {
-      viewport.removeEventListener("resize", update);
-      viewport.removeEventListener("scroll", update);
-    };
-  }, [active]);
-  return offset;
-}
 
 function parseApplied(summary: string): { label: string; value: string } {
   const [label, rest] = summary.split(/:\s*/, 2);
@@ -195,12 +176,40 @@ export default function CopilotDrawer({
         ? "flex h-[220px] w-full flex-col rounded-xl border border-border bg-background shadow-[0_18px_48px_rgba(12,12,14,0.18)]"
         : "fixed inset-x-0 bottom-0 z-[95] flex max-h-[74dvh] min-h-[360px] flex-col rounded-t-2xl border-t border-border bg-background shadow-[0_-18px_48px_rgba(12,12,14,0.2)]";
 
+  // Keyboard-open sizing (light/mobile only — KRI-19 bugs 10/12/14).
+  //
+  // `bottom-0`/`max-h-[74dvh]` pin the drawer to the LAYOUT viewport, which
+  // iOS does not shrink for the on-screen keyboard — the keyboard just
+  // visually covers the bottom portion of that layout. The previous fix
+  // (`paddingBottom: keyboardOffset`) tried to keep the composer above the
+  // keyboard by padding the box's own content area, but padding is INSIDE
+  // the still-74dvh-tall border box: on an iPhone the message thread
+  // collapsed to a ~15px sliver, which is why a just-sent message and a
+  // live edit both appeared to "not show up".
+  //
+  // The fix here keeps the drawer's TOP edge exactly where it already sits
+  // (unchanged from the no-keyboard case) and shrinks its BOTTOM up to meet
+  // the top of the keyboard: shift `bottom` up by the hidden height, and
+  // shrink `max-height` by that same amount, so the box occupies exactly
+  // the still-visible slice of the screen instead of extending behind the
+  // keyboard. `min-height` is dropped while the keyboard is open so short
+  // devices/tall keyboards can't force the box back off the top of the
+  // screen.
+  const keyboardStyle =
+    layoutMode === "light" && keyboardOffset > 0
+      ? {
+          bottom: keyboardOffset,
+          maxHeight: `calc(74dvh - ${keyboardOffset}px)`,
+          minHeight: 0,
+        }
+      : undefined;
+
   return (
     <section
       data-testid={`copilot-${layoutMode}`}
       aria-label="Kria editor copilot"
       className={rootClass}
-      style={layoutMode === "light" ? { paddingBottom: keyboardOffset } : undefined}
+      style={keyboardStyle}
     >
       {layoutMode === "light" && (
         <div aria-hidden className="flex justify-center py-2 touch-none">
@@ -514,7 +523,7 @@ export default function CopilotDrawer({
         )}
       </div>
 
-      <div className="flex-none px-4 pb-4">
+      <div className="flex-none px-4 pb-[max(16px,env(safe-area-inset-bottom))]">
         <AgentComposer
           ref={inputRef}
           value={draft}
