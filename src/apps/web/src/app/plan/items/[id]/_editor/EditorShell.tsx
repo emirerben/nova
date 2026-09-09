@@ -105,6 +105,7 @@ import {
   resolveLookAdjustments,
 } from "@/lib/look-presets";
 import { formatTimecode } from "@/lib/timeline/time-format";
+import { resolveEditorTimelineDuration } from "@/lib/timeline/timeline-scale";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import {
   applyCopilotOps,
@@ -2694,15 +2695,20 @@ export default function EditorShell({
       }),
     [previewSfxPlacements, projectCanvasRange],
   );
-  // `sequentialSlotLayout` is the canonical staged timeline. Even when the
-  // rendered MP4 is the only available visual preview, clip edits must keep
-  // the transport, ruler, and seek bounds on the staged total rather than the
-  // stale rendered duration. Save will replace the visual source.
+  // Edit-space may extend beyond the current MP4, but every playback control
+  // must share the duration of the source it can actually show. The full
+  // staged tail remains visible as annotated timeline geometry until save.
   const previewDuration = clipDirty
     ? timelineDuration
     : virtualPreviewActive
       ? virtualPreview.timeline.totalDurationS
       : duration;
+  const transportDuration = resolveEditorTimelineDuration({
+    mode: virtualPreviewActive ? "virtual" : "rendered",
+    projectedDurationS: virtualPreview.timeline.totalDurationS,
+    renderedOutputDurationS: duration,
+    fallbackDurationS: timelineDuration,
+  });
   const smartPlacementCandidates = useMemo(() => {
     const targetBars = isMasonryVariant(variant)
       ? visibleTextBars.filter((bar) => bar.role !== "narrated_caption")
@@ -2741,7 +2747,7 @@ export default function EditorShell({
     }
     const rendered = videoRef.current;
     if (!rendered) return;
-    const clamped = Math.max(0, Math.min(previewDuration || currentTime, currentTime));
+    const clamped = Math.max(0, Math.min(transportDuration || currentTime, currentTime));
     if (Math.abs(currentTime - clamped) > 0.001) {
       setCurrentTime(clamped);
     }
@@ -2750,7 +2756,7 @@ export default function EditorShell({
     }
   }, [
     currentTime,
-    previewDuration,
+    transportDuration,
     seekVirtualPreview,
     setCurrentTime,
     virtualPreview.timeline.totalDurationS,
@@ -2767,7 +2773,7 @@ export default function EditorShell({
 
   const seekPlaybackTo = useCallback(
     (seconds: number) => {
-      const clamped = Math.max(0, Math.min(previewDuration || seconds, seconds));
+      const clamped = Math.max(0, Math.min(transportDuration || seconds, seconds));
       if (virtualPreviewActive) seekVirtualPreview(clamped);
       else {
         const v = videoRef.current;
@@ -2779,7 +2785,7 @@ export default function EditorShell({
       }
     },
     [
-      previewDuration,
+      transportDuration,
       seekVirtualPreview,
       setCurrentTime,
       virtualPreviewActive,
@@ -8512,7 +8518,7 @@ export default function EditorShell({
             <LightTransport
               playing={playing}
               currentTime={currentTime}
-              duration={previewDuration}
+              duration={transportDuration}
               onPlayPause={togglePlay}
               onScrub={seekTo}
               compact
@@ -8521,7 +8527,7 @@ export default function EditorShell({
               <div className="bg-white">
                 <MiniStrip
                   segments={miniStripSegments}
-                  durationS={virtualPreview.timeline.totalDurationS || timelineDuration || previewDuration}
+                  durationS={transportDuration}
                   currentTimeS={currentTime}
                   playbackClock={playbackClock}
                   selectedClipId={selection?.kind === "clip" ? selection.id : null}
@@ -8590,7 +8596,7 @@ export default function EditorShell({
           <LightTransport
             playing={playing}
             currentTime={currentTime}
-            duration={previewDuration}
+            duration={transportDuration}
             onPlayPause={togglePlay}
             onScrub={seekTo}
           />
@@ -8603,7 +8609,7 @@ export default function EditorShell({
         <TransportBar
           playing={playing}
           currentTime={currentTime}
-          duration={previewDuration}
+          duration={transportDuration}
           onPlayPause={togglePlay}
           canSplit={canSplit}
           splitReason={splitReason}

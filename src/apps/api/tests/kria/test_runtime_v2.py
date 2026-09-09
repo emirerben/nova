@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.kria import drafts
 from app.kria.api_schemas import ApprovalDecisionBody, SubmitTurnBody
 from app.kria.contracts import KriaTurnPlan
 from app.kria.language import is_help_question, is_status_question
@@ -148,6 +149,133 @@ def test_request_digest_binds_normalized_body_and_revision() -> None:
 
     assert request_digest(first) == request_digest(same)
     assert request_digest(first) != request_digest(changed_revision)
+
+
+@pytest.mark.asyncio
+async def test_draft_target_uses_thread_selected_variant_for_multi_variant_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    creator_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4(), current_job_id=job_id)
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=creator_id,
+        revision=8,
+        active_plan_item_id=item.id,
+        active_creator_agent_session_id=uuid.uuid4(),
+        state={"selected_variant_id": " song_text "},
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        assembly_plan={
+            "variants": [
+                {"variant_id": "original_text", "render_generation_id": "original-generation"},
+                {"variant_id": "song_text", "render_generation_id": "song-generation"},
+            ]
+        },
+    )
+    session = SimpleNamespace(target_job_id=job_id, target_variant_id=None)
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[_Result(scalar=item), _Result(scalar=job)]),
+        get=AsyncMock(return_value=session),
+    )
+    monkeypatch.setattr(drafts, "_owned_thread", AsyncMock(return_value=thread))
+
+    target = await drafts._target(
+        db,
+        thread_id=thread.id,
+        creator_id=creator_id,
+        lock_item=True,
+    )
+
+    assert target.variant_key == "song_text"
+    assert target.generation_id == "song-generation"
+
+
+@pytest.mark.asyncio
+async def test_draft_target_falls_back_to_active_session_when_thread_selection_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    creator_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4(), current_job_id=job_id)
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=creator_id,
+        revision=9,
+        active_plan_item_id=item.id,
+        active_creator_agent_session_id=uuid.uuid4(),
+        state={"selected_variant_id": "removed_variant"},
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        assembly_plan={
+            "variants": [
+                {"variant_id": "original_text", "render_generation_id": "original-generation"},
+                {"variant_id": "song_text", "render_generation_id": "song-generation"},
+            ]
+        },
+    )
+    session = SimpleNamespace(target_job_id=job_id, target_variant_id="song_text")
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[_Result(scalar=item), _Result(scalar=job)]),
+        get=AsyncMock(return_value=session),
+    )
+    monkeypatch.setattr(drafts, "_owned_thread", AsyncMock(return_value=thread))
+
+    target = await drafts._target(
+        db,
+        thread_id=thread.id,
+        creator_id=creator_id,
+        lock_item=False,
+    )
+
+    assert target.variant_key == "song_text"
+    assert target.generation_id == "song-generation"
+
+
+@pytest.mark.asyncio
+async def test_draft_target_rejects_ambiguous_multi_variant_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    creator_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4(), current_job_id=job_id)
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=creator_id,
+        revision=10,
+        active_plan_item_id=item.id,
+        active_creator_agent_session_id=None,
+        state={"selected_variant_id": "removed_variant"},
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        assembly_plan={
+            "variants": [
+                {"variant_id": "original_text"},
+                {"variant_id": "song_text"},
+            ]
+        },
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[_Result(scalar=item), _Result(scalar=job)]),
+        get=AsyncMock(),
+    )
+    monkeypatch.setattr(drafts, "_owned_thread", AsyncMock(return_value=thread))
+
+    with pytest.raises(RuntimeFailure) as raised:
+        await drafts._target(
+            db,
+            thread_id=thread.id,
+            creator_id=creator_id,
+            lock_item=False,
+        )
+
+    assert raised.value.status_code == 409
+    assert raised.value.code == "draft_variant_ambiguous"
+    assert raised.value.recovery == "ask_user"
 
 
 def test_approval_fingerprint_changes_when_any_exact_pin_changes() -> None:

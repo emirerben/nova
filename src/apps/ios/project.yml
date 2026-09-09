@@ -54,6 +54,14 @@ targets:
         buildPhase: resources
       - path: ../web/public/fonts/Inter-Bold.ttf
         buildPhase: resources
+      - path: ../web/public/plan/type-posters/montage.jpg
+        buildPhase: resources
+      - path: ../web/public/plan/type-posters/montage.mp4
+        buildPhase: resources
+      - path: ../web/public/plan/type-posters/voiceover.jpg
+        buildPhase: resources
+      - path: ../web/public/plan/type-posters/talking.jpg
+        buildPhase: resources
     dependencies:
       - package: KriaMediaEngine
         product: KriaMediaEngine
@@ -90,6 +98,8 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Tests/KriaTests
+      - path: Tests/Fixtures/editor-commit-picker-contract.json
+        buildPhase: resources
     dependencies:
       - target: Kria
     settings:

@@ -97,6 +97,45 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(delta.threadRevision, 7)
     }
 
+    func testFormatSelectionUsesTheCreationActionContract() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/creation-threads/\(PreviewFixtures.projectID.uuidString)/actions")
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any])
+            XCTAssertEqual(object["action"] as? String, "select_format")
+            XCTAssertEqual(object["expected_revision"] as? Int, 7)
+            let payload = try XCTUnwrap(object["payload"] as? [String: Any])
+            XCTAssertEqual(payload["format"] as? String, "talking_to_camera")
+            return (200, Self.threadResponse(jobStatus: nil, state: ["format": "talking_to_camera", "edit_format": "subtitled"]))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let thread = try await api.applyCreationAction(
+            threadID: PreviewFixtures.projectID,
+            action: "select_format",
+            payload: ["format": .string("talking_to_camera")],
+            expectedRevision: 7
+        )
+        XCTAssertEqual(thread.state?["edit_format"]?.stringValue, "subtitled")
+    }
+
+    func testTranscriptProjectionKeepsConversationAndHidesAuditEvents() {
+        let user = ThreadEvent(
+            id: "user-1", sequence: 1, revision: 1, role: "user", eventType: "user_message",
+            content: "Keep the opening quick", payload: nil, createdAt: .now
+        )
+        let assistant = ThreadEvent(
+            id: "assistant-1", sequence: 2, revision: 2, role: "assistant", eventType: "assistant_question",
+            content: "Should it feel playful or polished?", payload: nil, createdAt: .now
+        )
+        let audit = ThreadEvent(
+            id: "audit-1", sequence: 3, revision: 3, role: "system", eventType: "turn_started",
+            content: "internal lifecycle detail", payload: nil, createdAt: .now
+        )
+
+        XCTAssertEqual(ChatTranscriptMessage.from(event: user)?.role, .user)
+        XCTAssertEqual(ChatTranscriptMessage.from(event: assistant)?.role, .assistant)
+        XCTAssertNil(ChatTranscriptMessage.from(event: audit))
+    }
+
     func testDraftWriteSendsServerETagAndRevision() async throws {
         let store = MemoryTokenStore()
         URLProtocolStub.handler = { request in
@@ -163,6 +202,136 @@ final class KriaTests: XCTestCase {
         let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
         let projects = try await api.projects()
         XCTAssertEqual(projects.map(\.status), [.ready, .ready, .failed, .failed, .failed])
+    }
+
+    func testCreationThreadMapsSelectedVariantMediaAndFullEvents() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/creation-threads/\(PreviewFixtures.projectID.uuidString)")
+            XCTAssertEqual(request.url?.query, "projection=full")
+            return (200, Data(#"""
+            {
+              "id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B",
+              "title":"Ready",
+              "status":"active",
+              "revision":9,
+              "runtime_version":2,
+              "active_job_id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE",
+              "state":{"selected_variant_id":"song_text"},
+              "job":{
+                "id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE",
+                "status":"variants_ready",
+                "current_phase":"complete",
+                "variants":[
+                  {"variant_id":"original_text","render_status":"ready","output_url":"https://cdn.example.test/original.mp4","poster_url":"https://cdn.example.test/original.jpg"},
+                  {"variant_id":"song_text","render_status":"ready","render_generation_id":"generation-2","output_url":"https://cdn.example.test/song.mp4","poster_url":"https://cdn.example.test/song.jpg"}
+                ]
+              },
+              "events":[
+                {"id":"event-1","sequence":1,"revision":9,"role":"assistant","event_type":"render_complete","content":"Your video is ready.","payload":null,"created_at":"2026-09-07T12:00:00Z"}
+              ],
+              "updated_at":"2026-09-07T12:00:00Z"
+            }
+            """#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let thread = try await api.project(threadID: PreviewFixtures.projectID)
+
+        XCTAssertEqual(thread.events.count, 1)
+        XCTAssertEqual(thread.events.first?.eventType, "render_complete")
+        XCTAssertEqual(thread.summary.outputVariantID, "song_text")
+        XCTAssertEqual(thread.summary.outputURL, URL(string: "https://cdn.example.test/song.mp4"))
+        XCTAssertEqual(thread.summary.posterURL, URL(string: "https://cdn.example.test/song.jpg"))
+    }
+
+    func testCreationCapabilitiesUseServerFormatAvailability() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/creation-threads/capabilities")
+            return (200, Data(#"{"formats":[{"id":"montage","edit_format":"montage","max_clips":20},{"id":"narrated","edit_format":"narrated_planned","max_clips":20}]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+
+        let capabilities = try await api.creationCapabilities()
+
+        XCTAssertEqual(capabilities.formats.map(\.id), ["montage", "narrated"])
+        XCTAssertEqual(capabilities.formats.map(\.maxClips), [20, 20])
+    }
+
+    func testSubmitTurnUsesCallerOwnedIdempotencyIdentity() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/creation-threads/\(PreviewFixtures.projectID.uuidString)/turns")
+            let body = Self.bodyData(request)
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(payload["client_event_id"] as? String, "stable-turn-identity")
+            XCTAssertEqual(payload["message"] as? String, "Try this")
+            return (202, Data(#"{"turn_id":"turn-1","thread_revision":4,"status":"pending"}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+
+        let accepted = try await api.submitTurn(
+            threadID: PreviewFixtures.projectID,
+            message: "Try this",
+            expectedRevision: 3,
+            clientEventID: "stable-turn-identity"
+        )
+
+        XCTAssertEqual(accepted.threadRevision, 4)
+    }
+
+    func testCreationThreadPreservesURLFreeListVariants() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let thread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {
+          "id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B",
+          "title":"Rendering",
+          "status":"active",
+          "revision":3,
+          "runtime_version":2,
+          "active_job_id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE",
+          "active_plan_item_id":"F53BB746-A61D-4F25-B49B-FC2B1D348EB1",
+          "state":{"selected_variant_id":"original_text"},
+          "job":{"id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE","status":"variants_ready","variants":[{"variant_id":"original_text","render_status":"ready"}]},
+          "updated_at":"2026-09-07T12:00:00Z"
+        }
+        """#.utf8))
+
+        XCTAssertEqual(thread.job?.variants.count, 1)
+        XCTAssertNil(thread.summary.outputURL)
+        XCTAssertNil(thread.summary.posterURL)
+        XCTAssertEqual(thread.summary.outputVariantID, "original_text")
+        XCTAssertEqual(thread.summary.activePlanItemID, "F53BB746-A61D-4F25-B49B-FC2B1D348EB1")
+        XCTAssertTrue(thread.events.isEmpty)
+    }
+
+    func testCreationThreadFallsBackFromInFlightSelectionToPlayableVariant() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let thread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {
+          "id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B",
+          "title":"Rendering revision",
+          "status":"active",
+          "revision":10,
+          "runtime_version":2,
+          "active_job_id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE",
+          "state":{"selected_variant_id":"song_text"},
+          "job":{
+            "id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE",
+            "status":"variants_ready",
+            "variants":[
+              {"variant_id":"song_text","render_status":"rendering","output_url":"https://cdn.example.test/stale-song.mp4"},
+              {"variant_id":"original_text","render_status":"ready","output_url":"https://cdn.example.test/original.mp4","poster_url":"https://cdn.example.test/original.jpg"}
+            ]
+          },
+          "updated_at":"2026-09-07T12:00:00Z"
+        }
+        """#.utf8))
+
+        XCTAssertEqual(thread.summary.outputVariantID, "original_text")
+        XCTAssertEqual(thread.summary.outputURL, URL(string: "https://cdn.example.test/original.mp4"))
+        XCTAssertEqual(thread.summary.posterURL, URL(string: "https://cdn.example.test/original.jpg"))
     }
 
     func testProjectUploadReservationAndAttachmentUseThreadContract() async throws {
@@ -288,6 +457,45 @@ final class KriaTests: XCTestCase {
         XCTAssertTrue(url.query?.contains("Expires=123") == true)
     }
 
+    func testEditorVariantLoadsAuthoritativeStatusProjection() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/generative-jobs/\(PreviewFixtures.projectID.uuidString)/status")
+            return (200, Data(#"{"job_id":"job","status":"variants_ready","variants":[{"variant_id":"other"},{"variant_id":"initial","render_generation_id":"generation-live","output_url":"https://cdn.example.test/live.mp4"}]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let variant = try await api.editorVariant(jobID: PreviewFixtures.projectID, variantID: "initial")
+        XCTAssertEqual(variant["render_generation_id"], .string("generation-live"))
+    }
+
+    func testOpenLibraryJobUsesIdempotentEditorPromotionRoute() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/me/jobs/\(PreviewFixtures.projectID.uuidString)/open-in-editor")
+            return (200, Data(#"{"plan_item_id":"item-7","variant_id":"initial"}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let receipt = try await api.openJobInEditor(jobID: PreviewFixtures.projectID)
+        XCTAssertEqual(receipt, OpenInEditorResponse(planItemID: "item-7", variantID: "initial"))
+    }
+
+    func testEditorCommitUsesAtomicRendererContract() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/plan-items/item-1/variants/initial/editor-commit")
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any])
+            XCTAssertEqual(object["base_generation"] as? String, "generation-1")
+            XCTAssertEqual((object["caption_meta"] as? [String: Any])?["style"] as? String, "sentence")
+            return (200, Data(#"{"ok":true,"generation":"generation-2","sections":{"text_elements":false,"caption_meta":true,"timeline":false,"mix":false},"expected_duration_s":12.3}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let response = try await api.editorCommit(
+            itemID: "item-1",
+            variantID: "initial",
+            request: EditorCommitRequest(captionMeta: ["enabled": .bool(true), "style": .string("sentence")], baseGeneration: "generation-1")
+        )
+        XCTAssertEqual(response.generation, "generation-2")
+        XCTAssertEqual(response.expectedDuration, 12.3)
+    }
+
     @MainActor func testProjectCacheCompareAndSetRejectsStaleRevision() throws {
         let container = try ModelContainer(for: CachedProject.self, CachedAsset.self, CachedUploadJob.self, CachedReceipt.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let repository = CacheRepository(context: ModelContext(container))
@@ -299,6 +507,26 @@ final class KriaTests: XCTestCase {
         XCTAssertThrowsError(try repository.update(stale, expectedServerRevision: 0)) { error in
             XCTAssertEqual(error as? CacheConflictError, .staleProject(expected: 0, actual: 1))
         }
+    }
+
+    @MainActor func testProjectCachePreservesEditorRoutingIdentity() throws {
+        let container = try ModelContainer(for: CachedProject.self, CachedAsset.self, CachedUploadJob.self, CachedReceipt.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let repository = CacheRepository(context: ModelContext(container))
+        let project = ProjectSummary(
+            id: PreviewFixtures.projectID,
+            title: "Cached editor",
+            status: .ready,
+            updatedAt: .now,
+            posterURL: nil,
+            outputVariantID: "variant-2",
+            activePlanItemID: "item-7"
+        )
+
+        try repository.upsert([project])
+
+        let cached = try XCTUnwrap(repository.projects().first?.summary)
+        XCTAssertEqual(cached.outputVariantID, "variant-2")
+        XCTAssertEqual(cached.activePlanItemID, "item-7")
     }
 
     func testUploadRecoveryPolicyDistinguishesRetryAndReselect() {
@@ -322,10 +550,12 @@ final class KriaTests: XCTestCase {
         """.utf8)
     }
 
-    private static func threadResponse(jobStatus: String?) -> Data {
+    private static func threadResponse(jobStatus: String?, state: [String: String] = [:]) -> Data {
         let activeJob = jobStatus == nil ? "null" : #""74A559F6-28D9-4E0D-9EB6-71CD09A958DE""#
         let job = jobStatus.map { #"{"id":"74A559F6-28D9-4E0D-9EB6-71CD09A958DE","status":"\#($0)"}"# } ?? "null"
-        return Data(#"{"id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B","title":"Project","status":"active","revision":8,"runtime_version":2,"active_job_id":\#(activeJob),"job":\#(job),"updated_at":"2026-09-07T12:00:00Z"}"#.utf8)
+        let stateData = try! JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+        let stateJSON = String(decoding: stateData, as: UTF8.self)
+        return Data(#"{"id":"B8D594F1-5D75-4C52-BF94-9EA05B9C0D9B","title":"Project","status":"active","revision":8,"runtime_version":2,"active_job_id":\#(activeJob),"job":\#(job),"state":\#(stateJSON),"updated_at":"2026-09-07T12:00:00Z"}"#.utf8)
     }
 
     private static func bodyData(_ request: URLRequest) -> Data {

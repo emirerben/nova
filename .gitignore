@@ -36,7 +36,9 @@ node_modules
 .turbo/
 out/
 *.tsbuildinfo
+.derived-data/
 src/apps/ios/.derived-data/
+src/apps/ios/.device-derived/
 src/apps/ios/.build/
 src/apps/ios/**/.build/
 src/apps/ios/Kria.xcodeproj/

@@ -1,6 +1,51 @@
 {
   "components": {
     "schemas": {
+      "ActionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "set_intent",
+              "select_format",
+              "select_edit_format",
+              "confirm_generation",
+              "generate",
+              "revise",
+              "retry",
+              "remove_media",
+              "select_variant",
+              "retry_speech_cleanup",
+              "create_without_cleanup"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "client_action_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Client Action Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "action",
+          "client_action_id",
+          "expected_revision"
+        ],
+        "title": "ActionBody",
+        "type": "object"
+      },
       "ApprovalDecisionBody": {
         "additionalProperties": false,
         "properties": {
@@ -136,6 +181,45 @@
         "title": "ApprovalSnapshotOut",
         "type": "object"
       },
+      "ArchetypeFallbackOut": {
+        "description": "Typed shape for assembly_plan[\"archetype_fallback\"] on the status response.\n\nField-level allowlist: whatever else a hand-edited JSONB row carries under that\nkey, only these two documented fields reach the public payload (Pydantic strips\nunknown keys). Mirrored by `ArchetypeFallback` in the web app's\nplan-generate-gate.ts \u2014 keep in sync.",
+        "properties": {
+          "declared": {
+            "default": null,
+            "nullable": true,
+            "title": "Declared",
+            "type": "string"
+          },
+          "reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "ArchetypeFallbackOut",
+        "type": "object"
+      },
+      "AssetBackground": {
+        "properties": {
+          "shot": {
+            "$ref": "#/components/schemas/VisualShot"
+          },
+          "type": {
+            "enum": [
+              "asset"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "shot"
+        ],
+        "title": "AssetBackground",
+        "type": "object"
+      },
       "AssetFingerprint": {
         "additionalProperties": false,
         "properties": {
@@ -244,6 +328,53 @@
         "title": "AudioMixRecipe",
         "type": "object"
       },
+      "AudioPolicy": {
+        "properties": {
+          "base": {
+            "default": "continue",
+            "enum": [
+              "continue",
+              "mute"
+            ],
+            "title": "Base",
+            "type": "string"
+          },
+          "sfx": {
+            "default": "continue",
+            "enum": [
+              "continue",
+              "mute"
+            ],
+            "title": "Sfx",
+            "type": "string"
+          }
+        },
+        "title": "AudioPolicy",
+        "type": "object"
+      },
+      "BlurPreviousBackground": {
+        "properties": {
+          "blur_px": {
+            "default": 24.0,
+            "maximum": 80.0,
+            "minimum": 1.0,
+            "title": "Blur Px",
+            "type": "number"
+          },
+          "type": {
+            "enum": [
+              "blur_previous"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "BlurPreviousBackground",
+        "type": "object"
+      },
       "Canvas": {
         "additionalProperties": false,
         "properties": {
@@ -265,6 +396,102 @@
           "height"
         ],
         "title": "Canvas",
+        "type": "object"
+      },
+      "CarouselMomentEditRequest": {
+        "additionalProperties": false,
+        "description": "Partial carousel-moment config for the carousel editor panel.\n\nAll fields optional \u2014 an omitted field keeps the variant's persisted\nvalue; the top-level `EditVariantRequest.carousel_moment` itself is what\ncarries the absent/null/dict tri-state (see `dispatch_edit_variant`):\nomitting `carousel_moment` entirely leaves the moment unchanged, an\nexplicit top-level `null` removes it, and a `CarouselMomentEditRequest`\nbody here partial-merges over whatever's persisted (present keys win,\nabsent keys keep). Enum/range validation happens in\n`dispatch_edit_variant`, matching every other loosely-typed field on\n`EditVariantRequest` (font_family, effect, text_color, ...).",
+        "properties": {
+          "duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "effect": {
+            "default": null,
+            "nullable": true,
+            "title": "Effect",
+            "type": "string"
+          },
+          "focus_clip_index": {
+            "default": null,
+            "nullable": true,
+            "title": "Focus Clip Index",
+            "type": "integer"
+          },
+          "mode": {
+            "default": null,
+            "nullable": true,
+            "title": "Mode",
+            "type": "string"
+          },
+          "move_duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Move Duration S",
+            "type": "number"
+          },
+          "position": {
+            "default": null,
+            "nullable": true,
+            "title": "Position",
+            "type": "string"
+          },
+          "sequence": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Sequence",
+            "type": "array"
+          },
+          "timing_model": {
+            "default": null,
+            "nullable": true,
+            "title": "Timing Model",
+            "type": "string"
+          },
+          "transition": {
+            "default": null,
+            "nullable": true,
+            "title": "Transition",
+            "type": "string"
+          },
+          "transition_in": {
+            "default": null,
+            "nullable": true,
+            "title": "Transition In",
+            "type": "string"
+          },
+          "transition_in_duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Transition In Duration S",
+            "type": "number"
+          },
+          "transition_out": {
+            "default": null,
+            "nullable": true,
+            "title": "Transition Out",
+            "type": "string"
+          },
+          "transition_out_duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Transition Out Duration S",
+            "type": "number"
+          },
+          "zoom_duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Zoom Duration S",
+            "type": "number"
+          }
+        },
+        "title": "CarouselMomentEditRequest",
         "type": "object"
       },
       "CreateBody": {
@@ -295,6 +522,99 @@
           }
         },
         "title": "CreateBody",
+        "type": "object"
+      },
+      "CreationCapabilitiesOut": {
+        "properties": {
+          "formats": {
+            "items": {
+              "$ref": "#/components/schemas/CreationFormatCapabilityOut"
+            },
+            "title": "Formats",
+            "type": "array"
+          },
+          "media": {
+            "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
+          }
+        },
+        "required": [
+          "formats",
+          "media"
+        ],
+        "title": "CreationCapabilitiesOut",
+        "type": "object"
+      },
+      "CreationClipCapabilitiesOut": {
+        "properties": {
+          "content_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Content Types",
+            "type": "array"
+          },
+          "max": {
+            "minimum": 1,
+            "title": "Max",
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "minimum": 1,
+            "title": "Max File Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max",
+          "max_file_bytes",
+          "content_types"
+        ],
+        "title": "CreationClipCapabilitiesOut",
+        "type": "object"
+      },
+      "CreationFormatCapabilityOut": {
+        "properties": {
+          "edit_format": {
+            "title": "Edit Format",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "max_clips": {
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Max Clips",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "edit_format",
+          "max_clips"
+        ],
+        "title": "CreationFormatCapabilityOut",
+        "type": "object"
+      },
+      "CreationMediaCapabilitiesOut": {
+        "properties": {
+          "clips": {
+            "$ref": "#/components/schemas/CreationClipCapabilitiesOut"
+          },
+          "visuals": {
+            "$ref": "#/components/schemas/CreationVisualCapabilitiesOut"
+          },
+          "voiceover": {
+            "$ref": "#/components/schemas/CreationVoiceoverCapabilitiesOut"
+          }
+        },
+        "required": [
+          "clips",
+          "visuals",
+          "voiceover"
+        ],
+        "title": "CreationMediaCapabilitiesOut",
         "type": "object"
       },
       "CreationThreadOut": {
@@ -417,6 +737,107 @@
           "updated_at"
         ],
         "title": "CreationThreadOut",
+        "type": "object"
+      },
+      "CreationVisualCapabilitiesOut": {
+        "properties": {
+          "content_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Content Types",
+            "type": "array"
+          },
+          "max": {
+            "minimum": 1,
+            "title": "Max",
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "$ref": "#/components/schemas/CreationVisualFileSizeCapabilitiesOut"
+          }
+        },
+        "required": [
+          "max",
+          "max_file_bytes",
+          "content_types"
+        ],
+        "title": "CreationVisualCapabilitiesOut",
+        "type": "object"
+      },
+      "CreationVisualFileSizeCapabilitiesOut": {
+        "properties": {
+          "image": {
+            "minimum": 1,
+            "title": "Image",
+            "type": "integer"
+          },
+          "video": {
+            "minimum": 1,
+            "title": "Video",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "image",
+          "video"
+        ],
+        "title": "CreationVisualFileSizeCapabilitiesOut",
+        "type": "object"
+      },
+      "CreationVoiceoverCapabilitiesOut": {
+        "properties": {
+          "content_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Content Types",
+            "type": "array"
+          },
+          "max": {
+            "minimum": 1,
+            "title": "Max",
+            "type": "integer"
+          },
+          "max_file_bytes": {
+            "minimum": 1,
+            "title": "Max File Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max",
+          "max_file_bytes",
+          "content_types"
+        ],
+        "title": "CreationVoiceoverCapabilitiesOut",
+        "type": "object"
+      },
+      "Crop": {
+        "properties": {
+          "scale": {
+            "default": 1.0,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Scale",
+            "type": "number"
+          },
+          "x_frac": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X Frac",
+            "type": "number"
+          },
+          "y_frac": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y Frac",
+            "type": "number"
+          }
+        },
+        "title": "Crop",
         "type": "object"
       },
       "DeltaEvent": {
@@ -654,6 +1075,508 @@
         "title": "EditRecipeV1",
         "type": "object"
       },
+      "EditorCommitBackgroundMusic": {
+        "description": "Full replacement background bed for editor commits.\n\n``track_id=None`` or ``enabled=false`` clears the bed. When a track is set,\nthe persisted renderer contract remains ``smart_music_treatment``.",
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "end_s": {
+            "default": null,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "End S",
+            "type": "number"
+          },
+          "gain_db": {
+            "default": null,
+            "maximum": 0.0,
+            "minimum": -40.0,
+            "nullable": true,
+            "title": "Gain Db",
+            "type": "number"
+          },
+          "muted": {
+            "default": false,
+            "title": "Muted",
+            "type": "boolean"
+          },
+          "start_s": {
+            "default": null,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Start S",
+            "type": "number"
+          },
+          "track_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Track Id",
+            "type": "string"
+          }
+        },
+        "title": "EditorCommitBackgroundMusic",
+        "type": "object"
+      },
+      "EditorCommitCaptionMeta": {
+        "properties": {
+          "color": {
+            "default": null,
+            "nullable": true,
+            "title": "Color",
+            "type": "string"
+          },
+          "enabled": {
+            "default": null,
+            "nullable": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "font": {
+            "default": null,
+            "nullable": true,
+            "title": "Font",
+            "type": "string"
+          },
+          "font_set": {
+            "default": false,
+            "title": "Font Set",
+            "type": "boolean"
+          },
+          "highlight_color": {
+            "default": null,
+            "nullable": true,
+            "title": "Highlight Color",
+            "type": "string"
+          },
+          "shadow_enabled": {
+            "default": null,
+            "nullable": true,
+            "title": "Shadow Enabled",
+            "type": "boolean"
+          },
+          "size_px": {
+            "default": null,
+            "maximum": 160,
+            "minimum": 36,
+            "nullable": true,
+            "title": "Size Px",
+            "type": "integer"
+          },
+          "stroke_width": {
+            "default": null,
+            "maximum": 12,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Stroke Width",
+            "type": "integer"
+          },
+          "style": {
+            "default": null,
+            "enum": [
+              "sentence",
+              "word"
+            ],
+            "nullable": true,
+            "title": "Style",
+            "type": "string"
+          },
+          "y_frac": {
+            "default": null,
+            "maximum": 0.9,
+            "minimum": 0.3,
+            "nullable": true,
+            "title": "Y Frac",
+            "type": "number"
+          }
+        },
+        "title": "EditorCommitCaptionMeta",
+        "type": "object"
+      },
+      "EditorCommitMix": {
+        "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is\npersisted for round-tripping but not yet honored by the render pipeline.",
+        "properties": {
+          "music_level": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Music Level",
+            "type": "number"
+          },
+          "original_level": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Original Level",
+            "type": "number"
+          }
+        },
+        "title": "EditorCommitMix",
+        "type": "object"
+      },
+      "EditorCommitMusicWindow": {
+        "properties": {
+          "alignment": {
+            "enum": [
+              "preserve_cuts",
+              "resync_beats"
+            ],
+            "title": "Alignment",
+            "type": "string"
+          },
+          "start_s": {
+            "minimum": 0.0,
+            "title": "Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "start_s",
+          "alignment"
+        ],
+        "title": "EditorCommitMusicWindow",
+        "type": "object"
+      },
+      "EditorCommitRequest": {
+        "description": "One atomic editor Save: every provided section validates first; nothing\npersists unless ALL sections are valid. `base_generation` is the baseline the\nclient loaded (the variant's `render_generation_id`, falling back to\n`render_finished_at` for variants never edited through the editor) \u2014 a moved\nbaseline means another tab/render won and the commit 409s (baseline_conflict).",
+        "properties": {
+          "accepted_suggestion_ids": {
+            "default": null,
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "title": "Accepted Suggestion Ids",
+            "type": "array"
+          },
+          "background_music": {
+            "$ref": "#/components/schemas/EditorCommitBackgroundMusic",
+            "default": null,
+            "nullable": true
+          },
+          "base_generation": {
+            "default": "",
+            "title": "Base Generation",
+            "type": "string"
+          },
+          "camera_effects": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Camera Effects",
+            "type": "array"
+          },
+          "caption_cues": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Caption Cues",
+            "type": "array"
+          },
+          "caption_meta": {
+            "$ref": "#/components/schemas/EditorCommitCaptionMeta",
+            "default": null,
+            "nullable": true
+          },
+          "carousel_moment": {
+            "$ref": "#/components/schemas/CarouselMomentEditRequest",
+            "default": null,
+            "nullable": true
+          },
+          "copilot_receipt_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Copilot Receipt Ids",
+            "type": "array"
+          },
+          "guided_revision": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Guided Revision",
+            "type": "object"
+          },
+          "guided_revision_number": {
+            "default": null,
+            "minimum": 1,
+            "nullable": true,
+            "title": "Guided Revision Number",
+            "type": "integer"
+          },
+          "lyrics": {
+            "$ref": "#/components/schemas/LyricsSectionRequest",
+            "default": null,
+            "nullable": true
+          },
+          "media_overlays": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 100,
+            "nullable": true,
+            "title": "Media Overlays",
+            "type": "array"
+          },
+          "mix": {
+            "$ref": "#/components/schemas/EditorCommitMix",
+            "default": null,
+            "nullable": true
+          },
+          "motion_runtime_hash": {
+            "default": null,
+            "nullable": true,
+            "title": "Motion Runtime Hash",
+            "type": "string"
+          },
+          "motion_scenes": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Motion Scenes",
+            "type": "array"
+          },
+          "music_track_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Music Track Id",
+            "type": "string"
+          },
+          "music_window": {
+            "$ref": "#/components/schemas/EditorCommitMusicWindow",
+            "default": null,
+            "nullable": true
+          },
+          "orientation": {
+            "default": null,
+            "nullable": true,
+            "title": "Orientation",
+            "type": "string"
+          },
+          "remove_music": {
+            "default": false,
+            "title": "Remove Music",
+            "type": "boolean"
+          },
+          "retry_guided_revision": {
+            "default": false,
+            "title": "Retry Guided Revision",
+            "type": "boolean"
+          },
+          "sound_effects": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 100,
+            "nullable": true,
+            "title": "Sound Effects",
+            "type": "array"
+          },
+          "text_elements": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Text Elements",
+            "type": "array"
+          },
+          "timeline_slots": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/TimelineSlotEdit"
+            },
+            "nullable": true,
+            "title": "Timeline Slots",
+            "type": "array"
+          },
+          "title": {
+            "default": null,
+            "maxLength": 300,
+            "nullable": true,
+            "title": "Title",
+            "type": "string"
+          },
+          "visual_blocks": {
+            "default": null,
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "media": "#/components/schemas/MediaBlock",
+                  "montage": "#/components/schemas/MontageBlock",
+                  "text_card": "#/components/schemas/TextCardBlock"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/MontageBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/TextCardBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/MediaBlock"
+                }
+              ]
+            },
+            "nullable": true,
+            "title": "Visual Blocks",
+            "type": "array"
+          }
+        },
+        "title": "EditorCommitRequest",
+        "type": "object"
+      },
+      "EditorCommitResponse": {
+        "properties": {
+          "expected_duration_s": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Expected Duration S",
+            "type": "number"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "revision_hash": {
+            "default": null,
+            "nullable": true,
+            "title": "Revision Hash",
+            "type": "string"
+          },
+          "revision_number": {
+            "default": null,
+            "nullable": true,
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "sections": {
+            "$ref": "#/components/schemas/EditorCommitSections"
+          }
+        },
+        "required": [
+          "ok",
+          "generation",
+          "sections"
+        ],
+        "title": "EditorCommitResponse",
+        "type": "object"
+      },
+      "EditorCommitSections": {
+        "properties": {
+          "background_music": {
+            "default": false,
+            "title": "Background Music",
+            "type": "boolean"
+          },
+          "camera_effects": {
+            "default": false,
+            "title": "Camera Effects",
+            "type": "boolean"
+          },
+          "caption_cues": {
+            "title": "Caption Cues",
+            "type": "boolean"
+          },
+          "caption_meta": {
+            "title": "Caption Meta",
+            "type": "boolean"
+          },
+          "carousel_moment": {
+            "default": false,
+            "title": "Carousel Moment",
+            "type": "boolean"
+          },
+          "lyrics": {
+            "title": "Lyrics",
+            "type": "boolean"
+          },
+          "media_overlays": {
+            "title": "Media Overlays",
+            "type": "boolean"
+          },
+          "mix": {
+            "title": "Mix",
+            "type": "boolean"
+          },
+          "motion_scenes": {
+            "default": false,
+            "title": "Motion Scenes",
+            "type": "boolean"
+          },
+          "music": {
+            "title": "Music",
+            "type": "boolean"
+          },
+          "orientation": {
+            "default": false,
+            "title": "Orientation",
+            "type": "boolean"
+          },
+          "sound_effects": {
+            "title": "Sound Effects",
+            "type": "boolean"
+          },
+          "text_elements": {
+            "title": "Text Elements",
+            "type": "boolean"
+          },
+          "timeline": {
+            "title": "Timeline",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "boolean"
+          },
+          "visual_blocks": {
+            "title": "Visual Blocks",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text_elements",
+          "caption_cues",
+          "caption_meta",
+          "timeline",
+          "mix",
+          "music",
+          "lyrics",
+          "sound_effects",
+          "media_overlays",
+          "visual_blocks",
+          "title"
+        ],
+        "title": "EditorCommitSections",
+        "type": "object"
+      },
       "EventOut": {
         "properties": {
           "content": {
@@ -704,6 +1627,127 @@
           "created_at"
         ],
         "title": "EventOut",
+        "type": "object"
+      },
+      "GenerativeJobStatusResponse": {
+        "properties": {
+          "archetype_fallback": {
+            "$ref": "#/components/schemas/ArchetypeFallbackOut",
+            "default": null,
+            "nullable": true
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_phase": {
+            "default": null,
+            "nullable": true,
+            "title": "Current Phase",
+            "type": "string"
+          },
+          "edit_format": {
+            "default": null,
+            "nullable": true,
+            "title": "Edit Format",
+            "type": "string"
+          },
+          "error_detail": {
+            "nullable": true,
+            "title": "Error Detail",
+            "type": "string"
+          },
+          "expected_phase_durations": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": null,
+            "nullable": true,
+            "title": "Expected Phase Durations",
+            "type": "object"
+          },
+          "failure_reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Failure Reason",
+            "type": "string"
+          },
+          "finished_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Finished At",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "phase_log": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "nullable": true,
+            "title": "Phase Log",
+            "type": "array"
+          },
+          "retrying": {
+            "default": false,
+            "title": "Retrying",
+            "type": "boolean"
+          },
+          "speech_cleanup_failure_reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Speech Cleanup Failure Reason",
+            "type": "string"
+          },
+          "started_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/NovaStep"
+            },
+            "nullable": true,
+            "title": "Steps",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Variants",
+            "type": "array"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "variants",
+          "error_detail",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "GenerativeJobStatusResponse",
         "type": "object"
       },
       "GenerativeUploadUrlRequest": {
@@ -803,6 +1847,39 @@
           "upload_headers"
         ],
         "title": "GenerativeUploadUrlResponse",
+        "type": "object"
+      },
+      "GradientBackground": {
+        "properties": {
+          "angle_deg": {
+            "default": 180.0,
+            "maximum": 360.0,
+            "minimum": 0.0,
+            "title": "Angle Deg",
+            "type": "number"
+          },
+          "from": {
+            "title": "From",
+            "type": "string"
+          },
+          "to": {
+            "title": "To",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "gradient"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "from",
+          "to"
+        ],
+        "title": "GradientBackground",
         "type": "object"
       },
       "KriaProblem": {
@@ -1187,6 +2264,70 @@
         "title": "LibraryTikTokPublication",
         "type": "object"
       },
+      "LookAdjustments": {
+        "additionalProperties": false,
+        "description": "User-tunable controls for the two cinematic source looks.\n\nStrength scales the authored grade. Warmth and contrast are signed trims\naround that grade; grain and vignette are absolute amounts so either can\nbe removed without weakening the color treatment.",
+        "properties": {
+          "contrast": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Contrast",
+            "type": "number"
+          },
+          "grain": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Grain",
+            "type": "number"
+          },
+          "intensity": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Intensity",
+            "type": "number"
+          },
+          "vignette": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Vignette",
+            "type": "number"
+          },
+          "warmth": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Warmth",
+            "type": "number"
+          }
+        },
+        "required": [
+          "intensity",
+          "warmth",
+          "contrast",
+          "grain",
+          "vignette"
+        ],
+        "title": "LookAdjustments",
+        "type": "object"
+      },
+      "LyricsSectionRequest": {
+        "properties": {
+          "enabled": {
+            "default": null,
+            "nullable": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "line_overrides": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Line Overrides",
+            "type": "object"
+          }
+        },
+        "title": "LyricsSectionRequest",
+        "type": "object"
+      },
       "MediaAsset": {
         "additionalProperties": false,
         "properties": {
@@ -1248,6 +2389,200 @@
           "relative_path"
         ],
         "title": "MediaAsset",
+        "type": "object"
+      },
+      "MediaBlock": {
+        "description": "User-authored image/video layer composed below text and captions.",
+        "properties": {
+          "asset_id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "audio_policy": {
+            "$ref": "#/components/schemas/AudioPolicy"
+          },
+          "display_mode": {
+            "default": "fullscreen",
+            "enum": [
+              "fullscreen",
+              "overlay"
+            ],
+            "title": "Display Mode",
+            "type": "string"
+          },
+          "effect_group_id": {
+            "default": null,
+            "maxLength": 80,
+            "nullable": true,
+            "title": "Effect Group Id",
+            "type": "string"
+          },
+          "end_s": {
+            "exclusiveMinimum": true,
+            "minimum": 0.0,
+            "title": "End S",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "media"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_kind": {
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "origin": {
+            "default": "user",
+            "enum": [
+              "ai",
+              "user"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "preview_gcs_path": {
+            "default": null,
+            "maxLength": 1024,
+            "nullable": true,
+            "title": "Preview Gcs Path",
+            "type": "string"
+          },
+          "rationale": {
+            "default": null,
+            "maxLength": 300,
+            "nullable": true,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "scale": {
+            "default": 0.35,
+            "maximum": 1.0,
+            "minimum": 0.05,
+            "title": "Scale",
+            "type": "number"
+          },
+          "source": {
+            "default": null,
+            "maxLength": 80,
+            "nullable": true,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_duration_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Source Duration S",
+            "type": "number"
+          },
+          "src_gcs_path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Src Gcs Path",
+            "type": "string"
+          },
+          "start_s": {
+            "minimum": 0.0,
+            "title": "Start S",
+            "type": "number"
+          },
+          "timing_mode": {
+            "default": "manual",
+            "enum": [
+              "auto",
+              "manual"
+            ],
+            "title": "Timing Mode",
+            "type": "string"
+          },
+          "transform": {
+            "$ref": "#/components/schemas/MediaTransform"
+          },
+          "transition_in": {
+            "default": "cut",
+            "enum": [
+              "cut",
+              "fade"
+            ],
+            "title": "Transition In",
+            "type": "string"
+          },
+          "transition_out": {
+            "default": "cut",
+            "enum": [
+              "cut",
+              "fade"
+            ],
+            "title": "Transition Out",
+            "type": "string"
+          },
+          "trim_end_s": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Trim End S",
+            "type": "number"
+          },
+          "trim_start_s": {
+            "default": null,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Trim Start S",
+            "type": "number"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Version",
+            "type": "integer"
+          },
+          "x_frac": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "X Frac",
+            "type": "number"
+          },
+          "y_frac": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Y Frac",
+            "type": "number"
+          },
+          "z": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Z",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_s",
+          "end_s",
+          "kind",
+          "asset_id",
+          "src_gcs_path",
+          "media_kind"
+        ],
+        "title": "MediaBlock",
         "type": "object"
       },
       "MediaInput": {
@@ -1321,35 +2656,36 @@
         "type": "object"
       },
       "MediaTransform": {
-        "additionalProperties": false,
+        "description": "Shared fullscreen transform mirrored by the editor preview.",
         "properties": {
-          "position_x": {
-            "default": 0,
-            "maximum": 100000,
-            "minimum": -100000,
-            "title": "Position X",
+          "fit_mode": {
+            "default": "contain",
+            "enum": [
+              "contain",
+              "cover"
+            ],
+            "title": "Fit Mode",
+            "type": "string"
+          },
+          "focal_x": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Focal X",
             "type": "number"
           },
-          "position_y": {
-            "default": 0,
-            "maximum": 100000,
-            "minimum": -100000,
-            "title": "Position Y",
+          "focal_y": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Focal Y",
             "type": "number"
           },
-          "rotation_degrees": {
-            "default": 0,
-            "maximum": 3600,
-            "minimum": -3600,
-            "title": "Rotation Degrees",
-            "type": "number"
-          },
-          "scale": {
-            "default": 1,
-            "exclusiveMinimum": true,
-            "maximum": 20,
-            "minimum": 0,
-            "title": "Scale",
+          "zoom": {
+            "default": 1.0,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Zoom",
             "type": "number"
           }
         },
@@ -1507,6 +2843,189 @@
         "title": "MobileUserOut",
         "type": "object"
       },
+      "MontageBlock": {
+        "properties": {
+          "audio_policy": {
+            "$ref": "#/components/schemas/AudioPolicy"
+          },
+          "end_s": {
+            "exclusiveMinimum": true,
+            "minimum": 0.0,
+            "title": "End S",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "montage"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "origin": {
+            "default": "user",
+            "enum": [
+              "ai",
+              "user"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "rationale": {
+            "default": null,
+            "maxLength": 300,
+            "nullable": true,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "shots": {
+            "items": {
+              "$ref": "#/components/schemas/VisualShot"
+            },
+            "maxItems": 12,
+            "minItems": 3,
+            "title": "Shots",
+            "type": "array"
+          },
+          "start_s": {
+            "minimum": 0.0,
+            "title": "Start S",
+            "type": "number"
+          },
+          "timing_mode": {
+            "default": "manual",
+            "enum": [
+              "auto",
+              "manual"
+            ],
+            "title": "Timing Mode",
+            "type": "string"
+          },
+          "transition_in": {
+            "default": "cut",
+            "enum": [
+              "cut",
+              "fade"
+            ],
+            "title": "Transition In",
+            "type": "string"
+          },
+          "transition_out": {
+            "default": "cut",
+            "enum": [
+              "cut",
+              "fade"
+            ],
+            "title": "Transition Out",
+            "type": "string"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_s",
+          "end_s",
+          "kind",
+          "shots"
+        ],
+        "title": "MontageBlock",
+        "type": "object"
+      },
+      "NovaStep": {
+        "description": "One user-facing row in the Nova activity feed.\n\n``id`` is derived from ``stage:event:index`` (or ``agent:<name>:<run\nid>`` for agent milestones) -- NEVER random -- so it stays stable across\npolls of the same, append-only ``pipeline_trace``/``phase_log``/\n``AgentRun`` sources.",
+        "properties": {
+          "detail": {
+            "default": null,
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "title": "Detail",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "render",
+              "decision",
+              "agent",
+              "phase"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "done",
+              "active",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ts",
+          "kind",
+          "label",
+          "status"
+        ],
+        "title": "NovaStep",
+        "type": "object"
+      },
+      "OpenInEditorBody": {
+        "properties": {
+          "title": {
+            "default": null,
+            "maxLength": 500,
+            "nullable": true,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "title": "OpenInEditorBody",
+        "type": "object"
+      },
+      "OpenInEditorResponse": {
+        "properties": {
+          "plan_item_id": {
+            "title": "Plan Item Id",
+            "type": "string"
+          },
+          "variant_id": {
+            "title": "Variant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan_item_id",
+          "variant_id"
+        ],
+        "title": "OpenInEditorResponse",
+        "type": "object"
+      },
       "PersonaResponse": {
         "properties": {
           "error_detail": {
@@ -1650,6 +3169,27 @@
         "title": "QuestionnaireBody",
         "type": "object"
       },
+      "SolidBackground": {
+        "properties": {
+          "color": {
+            "default": "#111111",
+            "title": "Color",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "solid"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "SolidBackground",
+        "type": "object"
+      },
       "SubmitTurnBody": {
         "additionalProperties": false,
         "properties": {
@@ -1679,6 +3219,38 @@
         "title": "SubmitTurnBody",
         "type": "object"
       },
+      "SyncAnchor": {
+        "properties": {
+          "label": {
+            "default": null,
+            "maxLength": 120,
+            "nullable": true,
+            "title": "Label",
+            "type": "string"
+          },
+          "time_s": {
+            "minimum": 0.0,
+            "title": "Time S",
+            "type": "number"
+          },
+          "type": {
+            "enum": [
+              "sentence",
+              "keyword",
+              "beat",
+              "manual"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "time_s"
+        ],
+        "title": "SyncAnchor",
+        "type": "object"
+      },
       "TemporaryUploadCancellationResponse": {
         "properties": {
           "reservation_id": {
@@ -1699,6 +3271,127 @@
           "status"
         ],
         "title": "TemporaryUploadCancellationResponse",
+        "type": "object"
+      },
+      "TextCardBlock": {
+        "properties": {
+          "audio_policy": {
+            "$ref": "#/components/schemas/AudioPolicy"
+          },
+          "background": {
+            "discriminator": {
+              "mapping": {
+                "asset": "#/components/schemas/AssetBackground",
+                "blur_previous": "#/components/schemas/BlurPreviousBackground",
+                "gradient": "#/components/schemas/GradientBackground",
+                "solid": "#/components/schemas/SolidBackground"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SolidBackground"
+              },
+              {
+                "$ref": "#/components/schemas/GradientBackground"
+              },
+              {
+                "$ref": "#/components/schemas/BlurPreviousBackground"
+              },
+              {
+                "$ref": "#/components/schemas/AssetBackground"
+              }
+            ],
+            "title": "Background"
+          },
+          "end_s": {
+            "exclusiveMinimum": true,
+            "minimum": 0.0,
+            "title": "End S",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "text_card"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "origin": {
+            "default": "user",
+            "enum": [
+              "ai",
+              "user"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "rationale": {
+            "default": null,
+            "maxLength": 300,
+            "nullable": true,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "start_s": {
+            "minimum": 0.0,
+            "title": "Start S",
+            "type": "number"
+          },
+          "style_preset_id": {
+            "default": null,
+            "maxLength": 80,
+            "nullable": true,
+            "title": "Style Preset Id",
+            "type": "string"
+          },
+          "timing_mode": {
+            "default": "manual",
+            "enum": [
+              "auto",
+              "manual"
+            ],
+            "title": "Timing Mode",
+            "type": "string"
+          },
+          "transition_in": {
+            "default": "cut",
+            "enum": [
+              "cut",
+              "fade"
+            ],
+            "title": "Transition In",
+            "type": "string"
+          },
+          "transition_out": {
+            "default": "cut",
+            "enum": [
+              "cut",
+              "fade"
+            ],
+            "title": "Transition Out",
+            "type": "string"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_s",
+          "end_s",
+          "kind",
+          "background"
+        ],
+        "title": "TextCardBlock",
         "type": "object"
       },
       "TextTreatment": {
@@ -1901,6 +3594,102 @@
           "rate"
         ],
         "title": "TimelineClip",
+        "type": "object"
+      },
+      "TimelineSlotEdit": {
+        "description": "One slot as posted by the timeline editor.\n\n`slot_id=None` marks a NEW slot (the server assigns a uuid4). `clip_index`\nindexes into `job.all_candidates[\"clip_paths\"]` \u2014 clients never send paths.\nBeat slots size in `duration_beats` (walked against the real grid); slots\nwith `duration_beats=None` (no-grid variants, footage-trimmed slots, or the\nexact terminal tail after a grid's final usable beat) send their exact\nwindow in `duration_s`.",
+        "properties": {
+          "clip_index": {
+            "title": "Clip Index",
+            "type": "integer"
+          },
+          "duration_beats": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration Beats",
+            "type": "integer"
+          },
+          "duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "in_s": {
+            "title": "In S",
+            "type": "number"
+          },
+          "layout": {
+            "default": null,
+            "enum": [
+              "fullscreen",
+              "supporting_card"
+            ],
+            "nullable": true,
+            "title": "Layout",
+            "type": "string"
+          },
+          "look_adjustments": {
+            "$ref": "#/components/schemas/LookAdjustments",
+            "default": null,
+            "nullable": true
+          },
+          "look_preset": {
+            "default": null,
+            "enum": [
+              "none",
+              "stadium_diffusion",
+              "olive_film",
+              "smoky_split_tone",
+              "golden_hour",
+              "faded_analog"
+            ],
+            "nullable": true,
+            "title": "Look Preset",
+            "type": "string"
+          },
+          "parent_segment_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Parent Segment Id",
+            "type": "string"
+          },
+          "removed": {
+            "default": false,
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "slot_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Slot Id",
+            "type": "string"
+          },
+          "transition_after": {
+            "default": "cut",
+            "enum": [
+              "cut",
+              "crossfade",
+              "dip_to_black",
+              "flash"
+            ],
+            "title": "Transition After",
+            "type": "string"
+          },
+          "transition_duration_s": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Transition Duration S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "clip_index",
+          "in_s"
+        ],
+        "title": "TimelineSlotEdit",
         "type": "object"
       },
       "TimelineTrack": {
@@ -2139,6 +3928,82 @@
           "upload_headers"
         ],
         "title": "UploadTarget",
+        "type": "object"
+      },
+      "VisualShot": {
+        "properties": {
+          "asset_id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "crop": {
+            "$ref": "#/components/schemas/Crop"
+          },
+          "duration_s": {
+            "exclusiveMinimum": true,
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "motion": {
+            "default": "none",
+            "enum": [
+              "none",
+              "zoom_in",
+              "zoom_out",
+              "pan_left",
+              "pan_right"
+            ],
+            "title": "Motion",
+            "type": "string"
+          },
+          "src_gcs_path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Src Gcs Path",
+            "type": "string"
+          },
+          "start_offset_s": {
+            "minimum": 0.0,
+            "title": "Start Offset S",
+            "type": "number"
+          },
+          "sync_anchor": {
+            "$ref": "#/components/schemas/SyncAnchor",
+            "default": null,
+            "nullable": true
+          },
+          "trim_start_s": {
+            "default": null,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Trim Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "asset_id",
+          "src_gcs_path",
+          "kind",
+          "start_offset_s",
+          "duration_s"
+        ],
+        "title": "VisualShot",
         "type": "object"
       }
     },
@@ -2401,6 +4266,37 @@
         ]
       }
     },
+    "/creation-threads/capabilities": {
+      "get": {
+        "operationId": "getCreationCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationCapabilitiesOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
     "/creation-threads/{thread_id}": {
       "get": {
         "operationId": "getCreationThread",
@@ -2455,6 +4351,58 @@
           }
         }
       ]
+    },
+    "/creation-threads/{thread_id}/actions": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "applyCreationAction",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationThreadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
     },
     "/creation-threads/{thread_id}/approvals/{approval_id}": {
       "get": {
@@ -3018,6 +4966,48 @@
         }
       ]
     },
+    "/generative-jobs/{job_id}/status": {
+      "get": {
+        "operationId": "getGenerativeJobStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerativeJobStatusResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
     "/me/jobs": {
       "get": {
         "operationId": "listLibraryJobs",
@@ -3101,6 +5091,58 @@
           }
         }
       ]
+    },
+    "/me/jobs/{job_id}/open-in-editor": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "openLibraryJobInEditor",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenInEditorBody"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenInEditorResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
     },
     "/me/jobs/{job_id}/playback-url": {
       "get": {
@@ -3192,6 +5234,67 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PersonaResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/variants/{variant_id}/editor-commit": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "variant_id",
+          "required": true,
+          "schema": {
+            "maxLength": 160,
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "commitPlanItemEditor",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditorCommitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditorCommitResponse"
                 }
               }
             },

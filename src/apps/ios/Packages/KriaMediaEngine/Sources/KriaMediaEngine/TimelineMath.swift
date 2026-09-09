@@ -2,6 +2,39 @@ import Foundation
 
 public enum TimelineMath {
     public static func clamp(_ value: TimeInterval, to range: ClosedRange<TimeInterval>) -> TimeInterval { min(max(value, range.lowerBound), range.upperBound) }
+
+    /// Converts a horizontal timeline coordinate into the corresponding time.
+    /// Invalid/empty geometry is deliberately treated as the start of the
+    /// timeline so gesture code cannot manufacture NaN values.
+    public static func time(forPixelX x: Double, contentWidth: Double, duration: TimeInterval) -> TimeInterval {
+        guard x.isFinite, contentWidth.isFinite, contentWidth > 0, duration.isFinite, duration > 0 else { return 0 }
+        return clamp((x / contentWidth) * duration, to: 0...duration)
+    }
+
+    /// Converts a time into a horizontal coordinate in a timeline lane.
+    public static func pixelX(forTime time: TimeInterval, contentWidth: Double, duration: TimeInterval) -> Double {
+        guard time.isFinite, contentWidth.isFinite, contentWidth > 0, duration.isFinite, duration > 0 else { return 0 }
+        return (clamp(time, to: 0...duration) / duration) * contentWidth
+    }
+
+    /// Returns the clip containing a time. At an exact shared boundary the
+    /// later clip wins, which matches the hit target visible to the user.
+    public static func clip(atTimelineTime time: TimeInterval, in clips: [TimelineClip]) -> TimelineClip? {
+        guard time.isFinite else { return nil }
+        return clips.reversed().first { time >= $0.timelineStart && time <= $0.timelineStart + $0.duration }
+    }
+
+    /// Keeps a trim edge inside its clip while preserving a usable minimum.
+    public static func clampedTrimTime(_ time: TimeInterval, edge: TrimEdge,
+                                       clipStart: TimeInterval, clipEnd: TimeInterval,
+                                       minimumDuration: TimeInterval = 0.1) -> TimeInterval {
+        let minimum = min(max(0, minimumDuration.isFinite ? minimumDuration : 0), max(0, clipEnd - clipStart))
+        guard clipEnd >= clipStart else { return edge == .leading ? clipStart : clipEnd }
+        if edge == .leading { return clamp(time, to: clipStart...(clipEnd - minimum)) }
+        return clamp(time, to: (clipStart + minimum)...clipEnd)
+    }
+
+    public enum TrimEdge: Sendable { case leading, trailing }
     public static func trim(_ clip: TimelineClip, sourceStart: TimeInterval? = nil, sourceDuration: TimeInterval? = nil) -> TimelineClip {
         var result = clip
         let start = max(0, sourceStart ?? clip.sourceStart)
