@@ -85,15 +85,61 @@ isolated pnpm 9 installation, the direct invocation reproduced the failure and
 the wrapper passed; the corrected remaining suite passed all 3436 tests locally.
 
 
-Target: median web feedback below eight minutes across at least three successful
-hosted runs. This is a target, not a measured result. Results will be recorded
-here before KRI-16 is considered complete.
+### Successful measurements (2026-09-09)
 
-Measure from the earliest matrix job start through aggregation completion.
-Record both that elapsed time and queue gaps; also record every group duration,
-setup overhead, test counts and summed runner minutes (including aggregation).
-Use Actions job/step timestamps plus the uploaded Jest reports. Report individual
-runs and the median; preserve failures rather than selecting only fast results.
+All three samples below passed **303 unique suites / 3734 tests**, with zero
+skipped tests. Downloaded Jest reports were checked for duplicate/missing suites,
+pass status and counts. The workflow and runner implementation are identical
+across these commits; only an invocation regression guard and documentation
+were added between samples.
+
+| Run | Observed web feedback | Execution path excluding queues | Initial queue | Group start spread | Gate queue | Summed runner time |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| [34360334606](https://github.com/emirerben/nova/actions/runs/34360334606) | 7m54s | 7m51s | 3s | 12s | 3s | 29m40s |
+| [34360526158](https://github.com/emirerben/nova/actions/runs/34360526158) | 8m17s | 7m56s | 2s | 32s | 3s | 33m24s |
+| [34360586094](https://github.com/emirerben/nova/actions/runs/34360586094) | 7m45s | 7m16s | 42s | 104s | 2s | 28m53s |
+
+Observed feedback is earliest matrix start through aggregate completion; initial
+queue time is reported separately. The execution-only critical path is the
+longest matrix job duration plus the aggregation job duration, excluding delayed
+job starts. Group start spread is a scheduling diagnostic, not a value to subtract
+wholesale from feedback (groups run concurrently).
+
+**Median observed feedback: 7m54s; median execution-only path: 7m51s.** Both
+meet the eight-minute median target, so further rebalancing is unnecessary.
+Compared with the two-run baseline median of 23m46.5s, observed feedback fell
+66.8%. Median summed runner time increased from 23m46.5s to 29m40s (+24.8%).
+These are elapsed runner durations, not billing-rounded minutes. All web jobs,
+including the aggregate job, are included; lint/API jobs are excluded from this
+web-only measurement and can still determine overall PR readiness.
+
+Per-group step timings from GitHub (seconds; setup includes checkout, runtimes,
+dependency install, offline cache where applicable, and runner guards):
+
+| Run | Group | Setup | Tests | Cleanup | Total |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 34360334606 | interaction-1 | 25s | 429s | 3s | 7m37s |
+| 34360334606 | interaction-2 | 33s | 398s | 5s | 7m16s |
+| 34360334606 | interaction-3 | 27s | 207s | 4s | 3m58s |
+| 34360334606 | interaction-4 | 29s | 362s | 6s | 6m37s |
+| 34360334606 | remaining | 31s | 203s | 4s | 3m58s |
+| 34360526158 | interaction-1 | 35s | 419s | 5s | 7m39s |
+| 34360526158 | interaction-2 | 27s | 389s | 5s | 7m01s |
+| 34360526158 | interaction-3 | 29s | 362s | 5s | 6m36s |
+| 34360526158 | interaction-4 | 27s | 339s | 5s | 6m11s |
+| 34360526158 | remaining | 34s | 300s | 6s | 5m40s |
+| 34360586094 | interaction-1 | 26s | 256s | 4s | 4m46s |
+| 34360586094 | interaction-2 | 31s | 387s | 6s | 7m04s |
+| 34360586094 | interaction-3 | 27s | 343s | 5s | 6m15s |
+| 34360586094 | interaction-4 | 27s | 347s | 4s | 6m18s |
+| 34360586094 | remaining | 25s | 229s | 4s | 4m18s |
+
+Aggregation took 14s, 17s and 12s respectively. Detailed individual-suite timing
+and assertion counts are in each run's `web-tests-<group>-1` artifacts. To inspect
+or reproduce the record, use `gh api repos/emirerben/nova/actions/runs/RUN_ID/jobs`
+for job/step timestamps and `gh run download RUN_ID --pattern 'web-tests-*'` for
+Jest JSON and incremental timing reports. This is a three-run sample, not a
+latency guarantee; repeat the measurements if the suite or runner changes.
 
 ## Tradeoffs and rollback
 
