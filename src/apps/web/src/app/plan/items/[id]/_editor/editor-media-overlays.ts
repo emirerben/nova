@@ -4,6 +4,11 @@ export const MEDIA_OVERLAY_MIN_SCALE = 0.05;
 export const MEDIA_OVERLAY_MAX_SCALE = 1.0;
 export const MEDIA_OVERLAY_MIN_DURATION_S = 0.1;
 
+// Canvas-local (KRI-8): EditorCanvas's root (`data-region="canvas"`) carries
+// `isolate`, so this 0-90 scale only ever orders layers against each other —
+// it can never leak above EditorShell's own chrome (drawer, panels, floating
+// controls). Fix an overlap by reordering *within* this scale, not by raising
+// a shell z-index to compete with it.
 export const EDITOR_STAGE_Z = {
   video: 0,
   textOverlay: 20,
