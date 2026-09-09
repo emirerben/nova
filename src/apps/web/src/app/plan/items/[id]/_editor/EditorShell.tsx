@@ -3341,7 +3341,14 @@ export default function EditorShell({
       const patches = state.bars
         .filter(isCaptionBar)
         .map((bar) => ({ id: bar.id, patch: barPatch }));
-      if (patches.length > 0) dispatch({ type: "PATCH_BARS", patches });
+      if (patches.length > 0) {
+        dispatch({ type: "PATCH_BARS", patches });
+        // Global appearance also clears per-cue overrides; persist that clear
+        // only when cue editing is available (meta-only drafts keep their cues).
+        if (variant?.base_video_path && (patch.stroke_width !== undefined || patch.shadow_enabled !== undefined)) {
+          setCaptionDirty(true);
+        }
+      }
     },
     [history, readOnly, state.bars, variant],
   );
@@ -5699,7 +5706,7 @@ export default function EditorShell({
       const beforeSfxIds = new Set(localSfx.map((sfx) => sfx.id));
       const beforeOverlayById = new Map(localOverlays.map((overlay) => [overlay.id, overlay]));
       result.textActions.forEach((action) => dispatch(action));
-      if (result.textActions.some((action) => {
+      if (variant?.base_video_path && result.textActions.some((action) => {
         if ("id" in action) return isCaptionBar(state.bars.find((bar) => bar.id === action.id));
         if (action.type === "PATCH_BARS") {
           return action.patches.some((patch) =>

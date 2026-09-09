@@ -390,8 +390,39 @@ describe("shared motion runtime", () => {
       surface!.delete();
     }
     expect(MOTION_RUNTIME_HASH).toBe(
-      "motion-v5:ck0.40.0:b2556106:2abfa191:creator-blocks-v4-capacity",
+      "motion-v6:ck0.40.0:b2556106:2abfa191:creator-blocks-v5-text-appearance",
     );
+  }, 30_000);
+
+  it("applies text appearance to glyphs while suppressing depth duplicates", async () => {
+    const CanvasKit = await CanvasKitInit({
+      locateFile: () => resolve(process.cwd(), "node_modules/canvaskit-wasm/bin/canvaskit.wasm"),
+    });
+    const font = new Uint8Array(readFileSync(resolve(process.cwd(), "public/fonts/Inter-Bold.ttf")));
+    const resources = createMotionResources(CanvasKit, { font });
+    const base = createCreatorBlockInstance({
+      id: "appearance-test",
+      presetId: "kinetic_word",
+      startFrame: 0,
+      endFrameExclusive: 75,
+    });
+    const render = (text_appearance?: { stroke_width?: number; shadow_enabled?: boolean }) => {
+      const surface = CanvasKit.MakeSurface(320, 568)!;
+      const instance = { ...base, text_appearance } as typeof base;
+      drawMotionFrame(CanvasKit, surface.getCanvas(), [instance], 40, 320, 568, resources);
+      surface.flush();
+      const image = surface.makeImageSnapshot();
+      const png = image.encodeToBytes(CanvasKit.ImageFormat.PNG, 100)!;
+      image.delete();
+      surface.delete();
+      return createHash("sha256").update(png).digest("hex");
+    };
+    try {
+      expect(render({ shadow_enabled: false })).not.toBe(render({ shadow_enabled: true }));
+      expect(render({ shadow_enabled: false, stroke_width: 4 })).not.toBe(render({ shadow_enabled: false }));
+    } finally {
+      resources.delete();
+    }
   }, 30_000);
 
   it("keeps settled Creator Blocks inside an aspect-relative safe frame at maximum content", async () => {

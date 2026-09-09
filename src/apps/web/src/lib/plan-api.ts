@@ -1985,6 +1985,8 @@ export interface CaptionCue {
   font_family?: string | null;
   text_color?: string | null;
   size_px?: number | null;
+  stroke_width?: number | null;
+  shadow_enabled?: boolean | null;
 }
 
 /**
@@ -2185,6 +2187,8 @@ export type EditorOperationCapability =
  * per-section false gates that tool with its honest `*_reason`.
  */
 export interface EditorCapabilities {
+  /** Negotiated complete text-appearance operation contract. */
+  text_appearance_version?: 1;
   /** Total editable text-lane limit, including generated narration captions. */
   text_elements_max?: number;
   /** Upload protocol selected by the server for this editor session. */

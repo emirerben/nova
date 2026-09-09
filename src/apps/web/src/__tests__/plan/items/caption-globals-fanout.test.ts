@@ -51,8 +51,16 @@ describe("captionBarPatchFromMetaPatch", () => {
       highlight_color: "#00FF00",
       stroke_width: 8,
       shadow_enabled: false,
+      cue_stroke_width: null,
+      cue_shadow_enabled: null,
       y_frac: 0.66,
     });
+  });
+
+  it("maps per-cue stroke and shadow overrides without changing the global metadata", () => {
+    const patch = captionBarPatchFromMetaPatch({ stroke_width: 0, shadow_enabled: false });
+    expect(patch).toEqual({ stroke_width: 0, shadow_enabled: false, cue_stroke_width: null, cue_shadow_enabled: null });
+    expect(captionMetaPatchFromCaptionBarPatch({ cue_stroke_width: 0, cue_shadow_enabled: false })).toEqual({});
   });
 
   it("carries `font: null` through as a real edit — resetting to the default face is not a no-op", () => {
