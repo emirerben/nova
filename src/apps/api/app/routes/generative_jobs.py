@@ -912,6 +912,9 @@ class TimelineSlotEdit(BaseModel):
     # Omission preserves legacy state. Explicit null clears controls; for a
     # customizable preset the renderer then resolves its authored defaults.
     look_adjustments: LookAdjustments | None = None
+    # Guided Story media fit is per timeline occurrence. Legacy clients omit
+    # this field and the write path falls back to the current/canonical value.
+    layout: Literal["fullscreen", "supporting_card"] | None = None
 
     @field_validator("look_preset", mode="before")
     @classmethod
@@ -976,6 +979,7 @@ class TimelineSlotOut(BaseModel):
     removed: bool = False
     look_preset: LookPreset = "none"
     look_adjustments: LookAdjustments | None = None
+    layout: Literal["fullscreen", "supporting_card"] | None = None
 
     model_config = {"extra": "allow"}
 
@@ -990,6 +994,7 @@ class TimelineClipOut(BaseModel):
     media_id: str | None = None
     generation: str | None = None
     kind: Literal["image", "video"] | None = None
+    layout: Literal["fullscreen", "supporting_card"] | None = None
     context: dict[str, str] | None = None
 
 
@@ -6618,6 +6623,58 @@ def _guided_v2_timeline_projection(
         }
     sources = list(revision.get("sources") or [])
     source_index = {str(source.get("media_id")): index for index, source in enumerate(sources)}
+    execution_plan = (
+        job.assembly_plan.get("guided_story_execution_plan")
+        if isinstance(job.assembly_plan, dict)
+        else None
+    )
+    story_timeline = (
+        execution_plan.get("story_timeline") if isinstance(execution_plan, dict) else None
+    )
+    if not story_timeline:
+        story_timeline = variant.get("story_timeline")
+
+    def valid_layout(value: object) -> Literal["fullscreen", "supporting_card"] | None:
+        if isinstance(value, str) and value in {"fullscreen", "supporting_card"}:
+            return value
+        return None
+
+    layout_by_media_id: dict[str, Literal["fullscreen", "supporting_card"]] = {}
+    layout_by_moment_id: dict[str, Literal["fullscreen", "supporting_card"]] = {}
+    for moment in story_timeline or []:
+        if not isinstance(moment, dict):
+            continue
+        media_id = moment.get("media_id")
+        if media_id is None:
+            continue
+        media_key = str(media_id)
+        layout = valid_layout(moment.get("layout")) or "fullscreen"
+        if media_key not in layout_by_media_id:
+            layout_by_media_id[media_key] = layout
+        moment_id = moment.get("moment_id")
+        if moment_id is not None:
+            layout_by_moment_id[str(moment_id)] = layout
+
+    def segment_layout(segment: dict[str, Any]) -> Literal["fullscreen", "supporting_card"]:
+        explicit = valid_layout(segment.get("layout"))
+        if explicit is not None:
+            return explicit
+        for identity in (segment.get("segment_id"), segment.get("parent_segment_id")):
+            if identity is not None:
+                canonical = layout_by_moment_id.get(str(identity))
+                if canonical is not None:
+                    return canonical
+        return layout_by_media_id.get(str(segment.get("media_id")), "fullscreen")
+
+    # A source row has no occurrence identity. Use its first timeline
+    # occurrence for add-source defaults while slots below retain their own
+    # per-segment layout.
+    layout_by_revision_media_id: dict[str, Literal["fullscreen", "supporting_card"]] = {}
+    for segment in revision.get("segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        media_key = str(segment.get("media_id"))
+        layout_by_revision_media_id.setdefault(media_key, segment_layout(segment))
     used_media = {str(segment.get("media_id")) for segment in revision.get("segments") or []}
     clips: list[dict] = []
     for index, source in enumerate(sources):
@@ -6637,6 +6694,10 @@ def _guided_v2_timeline_projection(
                 "media_id": source.get("media_id"),
                 "generation": source.get("generation"),
                 "kind": source.get("kind"),
+                "layout": layout_by_revision_media_id.get(
+                    str(source.get("media_id")),
+                    layout_by_media_id.get(str(source.get("media_id")), "fullscreen"),
+                ),
                 "context": _guided_source_context(job.assembly_plan or {}, source),
             }
         )
@@ -6663,6 +6724,7 @@ def _guided_v2_timeline_projection(
                 "transition_duration_s": segment.get("transition_duration_s"),
                 "look_preset": normalize_look_preset(segment.get("look_preset")),
                 "look_adjustments": segment.get("look_adjustments"),
+                "layout": segment_layout(segment),
             }
         )
     total = max((float(row.get("output_end_s") or 0.0) for row in slots), default=0.0)
@@ -7296,23 +7358,39 @@ def _guided_v2_revision_for_write(
         if order:
             cursor = max(0.0, cursor - effective_transitions[order - 1][1])
         transition, transition_duration = effective_transitions[order]
-        segments.append(
-            {
-                "segment_id": slot.slot_id or uuid.uuid4().hex,
-                "parent_segment_id": slot.parent_segment_id,
-                "media_id": source["media_id"],
-                "source_start_s": float(slot.in_s),
-                "source_end_s": float(slot.in_s) + duration,
-                "duration_s": round(duration, 3),
-                "transition_after": transition,
-                "transition_duration_s": transition_duration,
-                "look_preset": slot.look_preset or "none",
-                "look_adjustments": slot.look_adjustments.model_dump()
-                if slot.look_adjustments
-                else None,
-                "output_start_s": round(cursor, 3),
-            }
-        )
+        segment_id = slot.slot_id or uuid.uuid4().hex
+        segment = {
+            "segment_id": segment_id,
+            "parent_segment_id": slot.parent_segment_id,
+            "media_id": source["media_id"],
+            "source_start_s": float(slot.in_s),
+            "source_end_s": float(slot.in_s) + duration,
+            "duration_s": round(duration, 3),
+            "transition_after": transition,
+            "transition_duration_s": transition_duration,
+            "look_preset": slot.look_preset or "none",
+            "look_adjustments": slot.look_adjustments.model_dump()
+            if slot.look_adjustments
+            else None,
+            "output_start_s": round(cursor, 3),
+        }
+        # New clients send the occurrence's canonical fit. Older clients omit
+        # it; preserve a layout already stored on this segment (including its
+        # parent when a split child is being written) and otherwise retain the
+        # compiler's legacy first-by-media fallback.
+        if slot.layout is not None:
+            segment["layout"] = slot.layout
+        else:
+            inherited = current_segment_by_id.get(segment_id)
+            if inherited is None and slot.parent_segment_id:
+                inherited = current_segment_by_id.get(str(slot.parent_segment_id))
+            inherited_layout = inherited.get("layout") if isinstance(inherited, dict) else None
+            if isinstance(inherited_layout, str) and inherited_layout in {
+                "fullscreen",
+                "supporting_card",
+            }:
+                segment["layout"] = inherited_layout
+        segments.append(segment)
         cursor += duration
     if cursor > 60.0 + 1e-6:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_LONG")
