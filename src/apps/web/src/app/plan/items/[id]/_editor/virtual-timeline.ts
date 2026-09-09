@@ -3,6 +3,7 @@ import type {
   LookAdjustments,
   LookPreset,
   TimelineClip,
+  TimelineMediaLayout,
 } from "@/lib/generative-api";
 import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
 import { lookAdjustmentsEqual } from "@/lib/look-presets";
@@ -16,6 +17,8 @@ export interface VirtualTimelineEntry {
   /** Guided timelines may contain still images. They share the clip-window
    * shape, but must never be handed to an HTMLVideoElement. */
   mediaKind?: "image" | "video";
+  /** Guided-story media fit for this slot. Omitted on legacy timelines. */
+  layout?: TimelineMediaLayout | null;
   slotIndex: number;
   slotKey: string;
   clipIndex: number;
@@ -252,6 +255,7 @@ export function buildVirtualTimeline(
     clipEntries.push({
       kind: "clip",
       mediaKind: clipKindByIndex.get(slot.clipIndex) === "image" ? "image" : "video",
+      layout: slot.layout,
       slotIndex,
       slotKey: slot.key,
       clipIndex: slot.clipIndex,

@@ -7,6 +7,14 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Preview text no longer covers the editor's own controls.** Text added to a video preview could paint over the Text panel and its "Add text" button, including making the button unclickable while a layer was selected. The preview now stays behind editor chrome in every layout.
 
+## [0.73.4.0] — 2026-09-09
+
+### Fixed
+- **Editing a video no longer changes how its footage fits inside the preview.** Fullscreen shots stay edge-to-edge, while intentionally contained photos and videos keep their blurred supporting-card treatment. The unsaved editor preview now follows the same per-shot layout contract as the exported video, including repeated sources, transitions, and newly added media.
+
+### Internal
+- Guided Story timeline responses and editor revisions now carry a backward-compatible per-segment media layout. Existing revision hashes remain valid, and real landscape-media browser coverage locks preview/export framing parity across clean, edited, portrait, landscape, and zoomed states.
+
 ## [0.73.3.0] — 2026-09-09
 
 ### Added

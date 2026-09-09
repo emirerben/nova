@@ -1524,6 +1524,103 @@ def test_runtime_compiles_approved_unused_image_and_video_sources() -> None:
     assert by_id["added-video"]["image_motion"] is None
 
 
+def test_runtime_preserves_layout_for_repeated_media_occurrences() -> None:
+    raw = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"]).model_copy(
+        update={
+            "story_beats": [
+                StoryBeat(
+                    beat_id="first-food",
+                    topic="Food",
+                    media_ids=["food-photo"],
+                    layout="supporting_card",
+                    duration_s=4,
+                ),
+                StoryBeat(
+                    beat_id="second-food",
+                    topic="Food detail",
+                    media_ids=["food-photo"],
+                    layout="fullscreen",
+                    duration_s=4,
+                ),
+                StoryBeat(
+                    beat_id="coast",
+                    topic="Coast",
+                    media_ids=["coast-video"],
+                    duration_s=4,
+                ),
+            ]
+        }
+    )
+    raw["approved_proposal"] = snapshot.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    canonical = compile_execution_plan(raw, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=raw["proposal_version"],
+        media_digest=raw["media_digest"],
+        snapshot=raw["approved_proposal"],
+        execution_plan=canonical,
+    )
+
+    assert [row["layout"] for row in revision["segments"][:2]] == [
+        "supporting_card",
+        "fullscreen",
+    ]
+    runtime = compile_guided_runtime_plan(canonical, raw, revision)
+    assert [row["layout"] for row in runtime["story_timeline"][:2]] == [
+        "supporting_card",
+        "fullscreen",
+    ]
+
+
+def test_runtime_legacy_revision_resolves_layout_by_segment_identity_before_media() -> None:
+    raw = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"]).model_copy(
+        update={
+            "story_beats": [
+                StoryBeat(
+                    beat_id="first-food",
+                    topic="Food",
+                    media_ids=["food-photo"],
+                    layout="supporting_card",
+                    duration_s=4,
+                ),
+                StoryBeat(
+                    beat_id="second-food",
+                    topic="Food detail",
+                    media_ids=["food-photo"],
+                    layout="fullscreen",
+                    duration_s=4,
+                ),
+                StoryBeat(
+                    beat_id="coast",
+                    topic="Coast",
+                    media_ids=["coast-video"],
+                    duration_s=4,
+                ),
+            ]
+        }
+    )
+    raw["approved_proposal"] = snapshot.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    canonical = compile_execution_plan(raw, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=raw["proposal_version"],
+        media_digest=raw["media_digest"],
+        snapshot=raw["approved_proposal"],
+        execution_plan=canonical,
+    )
+    for segment in revision["segments"]:
+        segment.pop("layout", None)
+    revision["state_hash"] = ""
+
+    runtime = compile_guided_runtime_plan(canonical, raw, revision)
+    assert [row["layout"] for row in runtime["story_timeline"][:2]] == [
+        "supporting_card",
+        "fullscreen",
+    ]
+
+
 def test_runtime_revision_preserves_narration_caption_text_and_style_but_pins_timing() -> None:
     guided = _guided_snapshot()
     snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"]).model_copy(

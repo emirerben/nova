@@ -36,7 +36,11 @@ import type {
   TimelineClip,
 } from "@/lib/generative-api";
 import CarouselBlockPreview from "./CarouselBlockPreview";
-import { mapVirtualTime, transitionPreviewAtTime } from "./virtual-timeline";
+import {
+  mapVirtualTime,
+  transitionPreviewAtTime,
+  type VirtualTimelineEntry,
+} from "./virtual-timeline";
 import { lookPreviewStyles } from "@/lib/look-presets";
 import { cameraScaleAt } from "@/lib/camera-effects";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -113,6 +117,121 @@ const DEFAULT_CAPTION_SIZE_PX = 78;
 const DEFAULT_CAPTION_COLOR = "#FFFFFF";
 const DEFAULT_CAPTION_HIGHLIGHT_COLOR = "#A3E635";
 const DEFAULT_CAPTION_STROKE_WIDTH = 2;
+
+type VirtualDeck = "a" | "b";
+const SUPPORTING_BACKDROP_BLUR_PX = 20;
+const SUPPORTING_BACKDROP_SCALE = 1.12;
+const SUPPORTING_IMAGE_CARD_CLASS =
+  "pointer-events-none absolute left-[9%] top-[14%] h-[72%] w-[82%] overflow-hidden bg-black";
+
+function supportingBackdropStyle(style: React.CSSProperties): React.CSSProperties {
+  const gradeFilter = typeof style.filter === "string" ? style.filter : "";
+  const authoredTransform =
+    typeof style.transform === "string" && style.transform.trim()
+      ? `${style.transform.trim()} `
+      : "";
+  return {
+    ...style,
+    filter: `${gradeFilter} blur(${SUPPORTING_BACKDROP_BLUR_PX}px)`.trim(),
+    // The renderer applies camera pulses after composing the supporting card,
+    // so both its foreground and blurred canvas zoom together. Preserve the
+    // authored camera transform, then add blur-edge overscan.
+    transform: `${authoredTransform}scale(${SUPPORTING_BACKDROP_SCALE})`,
+    transformOrigin: "50% 50%",
+  };
+}
+
+/**
+ * The renderer's supporting-card video path composites a contained foreground
+ * over a blurred, cover-cropped copy of the same source. Virtual preview decks
+ * are driven imperatively by useVirtualPreview, so this lightweight duplicate
+ * follows the managed foreground element's source time and playback state.
+ */
+function SyncedVirtualVideoBackdrop({
+  deck,
+  sourceUrl,
+  foregroundRef,
+  playing,
+  style,
+}: {
+  deck: VirtualDeck;
+  sourceUrl: string;
+  foregroundRef: React.RefObject<HTMLVideoElement>;
+  playing: boolean;
+  style: React.CSSProperties;
+}) {
+  const backdropRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const backdrop = backdropRef.current;
+    const foreground = foregroundRef.current;
+    if (!backdrop || !foreground) return;
+
+    const sync = () => {
+      if (backdrop.readyState >= 1 && foreground.readyState >= 1) {
+        const maxTime = Number.isFinite(backdrop.duration)
+          ? Math.max(0, backdrop.duration - 0.01)
+          : foreground.currentTime;
+        const target = Math.max(0, Math.min(foreground.currentTime, maxTime));
+        if (Math.abs(backdrop.currentTime - target) > 0.08) {
+          try {
+            backdrop.currentTime = target;
+          } catch {
+            // Metadata can disappear during an in-flight deck source swap.
+          }
+        }
+      }
+      backdrop.playbackRate = foreground.playbackRate;
+      // Foreground camera effects are updated imperatively between React
+      // renders. Mirror that live transform so the composed backdrop follows
+      // the same pulse as the exported video.
+      backdrop.style.transform = `${foreground.style.transform || "scale(1)"} scale(${SUPPORTING_BACKDROP_SCALE})`;
+      if (playing && !foreground.paused) {
+        void backdrop.play().catch(() => {
+          // Muted backdrop playback is decorative; the managed deck remains
+          // the authoritative preview transport if the duplicate cannot play.
+        });
+      } else {
+        backdrop.pause();
+      }
+    };
+
+    const events = [
+      "loadedmetadata",
+      "play",
+      "pause",
+      "ratechange",
+      "seeking",
+      "seeked",
+      "timeupdate",
+    ] as const;
+    events.forEach((event) => foreground.addEventListener(event, sync));
+    backdrop.addEventListener("loadedmetadata", sync);
+    sync();
+    const timer = playing ? window.setInterval(sync, 250) : null;
+
+    return () => {
+      events.forEach((event) => foreground.removeEventListener(event, sync));
+      backdrop.removeEventListener("loadedmetadata", sync);
+      if (timer != null) window.clearInterval(timer);
+      backdrop.pause();
+    };
+  }, [foregroundRef, playing, sourceUrl]);
+
+  return (
+    <video
+      ref={backdropRef}
+      src={sourceUrl}
+      aria-hidden="true"
+      muted
+      playsInline
+      preload="metadata"
+      data-virtual-preview-video-backdrop={deck}
+      className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+      style={supportingBackdropStyle(style)}
+    />
+  );
+}
 
 export function editorCanvasStageStyle(
   canvas: { w: number; h: number },
@@ -1218,36 +1337,30 @@ export default function EditorCanvas({
     return dissolveOutDisplacementScaleAt(progress, cssPixelsPerCanvasPixel, true);
   };
   const committedVirtualFrame = virtualFrameStateAt(currentTime);
-  const virtualImageDecks = useMemo(() => {
+  const virtualDeckEntries = useMemo(() => {
     if (!virtualPreview) return null;
     const mapping = mapVirtualTime(virtualPreview.timeline, currentTime);
     const transition = transitionPreviewAtTime(virtualPreview.timeline, currentTime);
     const otherDeck = virtualPreview.activeDeck === "a" ? "b" : "a";
-    const result: Partial<Record<"a" | "b", string>> = {};
+    const result: Partial<Record<VirtualDeck, VirtualTimelineEntry>> = {};
     if (transition) {
-      if (
-        transition.outgoingEntry.kind === "clip" &&
-        transition.outgoingEntry.mediaKind === "image" &&
-        transition.outgoingEntry.sourceUrl
-      ) {
-        result[virtualPreview.activeDeck] = transition.outgoingEntry.sourceUrl;
+      if (transition.outgoingEntry.kind === "clip") {
+        result[virtualPreview.activeDeck] = transition.outgoingEntry;
       }
-      if (
-        transition.incomingEntry.kind === "clip" &&
-        transition.incomingEntry.mediaKind === "image" &&
-        transition.incomingEntry.sourceUrl
-      ) {
-        result[otherDeck] = transition.incomingEntry.sourceUrl;
+      if (transition.incomingEntry.kind === "clip") {
+        result[otherDeck] = transition.incomingEntry;
       }
-    } else if (
-      mapping?.entry.kind === "clip" &&
-      mapping.entry.mediaKind === "image" &&
-      mapping.entry.sourceUrl
-    ) {
-      result[virtualPreview.activeDeck] = mapping.entry.sourceUrl;
+    } else if (mapping?.entry.kind === "clip") {
+      result[virtualPreview.activeDeck] = mapping.entry;
     }
     return result;
   }, [currentTime, virtualPreview]);
+  const virtualFitClass = (deck: VirtualDeck) => {
+    const layout = virtualDeckEntries?.[deck]?.layout;
+    if (layout === "fullscreen") return "object-cover";
+    if (layout === "supporting_card") return "object-contain";
+    return videoFitClass;
+  };
 
   // Keep stable media DOM out of React's decoded-frame render path. Only the
   // compositor styles that actually change with time are written here; the
@@ -1404,39 +1517,68 @@ export default function EditorCanvas({
             {virtualPreview ? (
               <>
                 {(["a", "b"] as const).map((deck) => {
-                  const imageUrl = virtualImageDecks?.[deck];
-                  if (!imageUrl) return null;
+                  const entry = virtualDeckEntries?.[deck];
+                  const imageUrl = entry?.mediaKind === "image" ? entry.sourceUrl : null;
+                  if (!imageUrl || !entry) return null;
                   const styles = lookPreviewStyles(
                     virtualDeckLookPresets[deck],
                     virtualDeckLookAdjustments[deck],
                   );
+                  const supportingCard = entry.layout === "supporting_card";
                   return (
                     <div
                       key={`virtual-image-${deck}`}
                       className="pointer-events-none absolute inset-0 overflow-hidden"
-                      style={virtualDeckStyleAt(
-                        deck,
-                        committedVirtualFrame.virtualTransition,
-                        committedVirtualFrame.transitionProgress,
-                      )}
+                      style={{
+                        ...virtualDeckStyleAt(
+                          deck,
+                          committedVirtualFrame.virtualTransition,
+                          committedVirtualFrame.transitionProgress,
+                        ),
+                        ...(supportingCard ? { backgroundColor: "#000000" } : {}),
+                      }}
                       data-virtual-preview-image-deck={deck}
+                      data-virtual-preview-layout={entry.layout ?? "legacy"}
                     >
                       {/* Signed source URLs must remain byte-identical to the timeline
                           response; Next Image would proxy/transform them separately. */}
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={imageUrl}
-                        alt=""
-                        data-virtual-preview-image="true"
-                        className="pointer-events-none absolute inset-0 h-full w-full object-cover"
-                        style={{
-                          objectPosition: "center",
-                          zIndex: EDITOR_STAGE_Z.video,
-                          ...styles.video,
-                        }}
-                        draggable={false}
-                        onError={virtualPreview.onSourceError}
-                      />
+                      {supportingCard && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={imageUrl}
+                          alt=""
+                          aria-hidden="true"
+                          data-virtual-preview-image-backdrop={deck}
+                          className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+                          style={{
+                            ...supportingBackdropStyle(styles.video),
+                            zIndex: EDITOR_STAGE_Z.video,
+                          }}
+                          draggable={false}
+                          onError={virtualPreview.onSourceError}
+                        />
+                      )}
+                      <div
+                        className={
+                          supportingCard
+                            ? SUPPORTING_IMAGE_CARD_CLASS
+                            : "pointer-events-none absolute inset-0"
+                        }
+                        style={{ zIndex: EDITOR_STAGE_Z.video + (supportingCard ? 1 : 0) }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={imageUrl}
+                          alt=""
+                          data-virtual-preview-image="true"
+                          className={`pointer-events-none absolute inset-0 h-full w-full ${
+                            supportingCard ? "object-contain" : "object-cover"
+                          }`}
+                          style={{ objectPosition: "center", ...styles.video }}
+                          draggable={false}
+                          onError={virtualPreview.onSourceError}
+                        />
+                      </div>
                       {lookPreviewLayers(
                         virtualDeckLookPresets[deck],
                         virtualDeckLookAdjustments[deck],
@@ -1448,7 +1590,9 @@ export default function EditorCanvas({
                   ref={virtualDeckAContainerRef}
                   className="pointer-events-none absolute inset-0 overflow-hidden"
                   data-look-preview-deck="a"
-                  data-virtual-preview-video-hidden={virtualImageDecks?.a ? "true" : undefined}
+                  data-virtual-preview-video-hidden={
+                    virtualDeckEntries?.a?.mediaKind === "image" ? "true" : undefined
+                  }
                   data-look-preset={virtualDeckLookPresets.a}
                   style={{
                     ...virtualDeckStyleAt(
@@ -1456,13 +1600,29 @@ export default function EditorCanvas({
                       committedVirtualFrame.virtualTransition,
                       committedVirtualFrame.transitionProgress,
                     ),
-                    ...(virtualImageDecks?.a ? { display: "none" } : {}),
+                    ...(virtualDeckEntries?.a?.layout === "supporting_card"
+                      ? { backgroundColor: "#000000" }
+                      : {}),
+                    ...(virtualDeckEntries?.a?.mediaKind === "image" ? { display: "none" } : {}),
                   }}
                 >
+                  {virtualDeckEntries?.a?.layout === "supporting_card" &&
+                    virtualDeckEntries.a.mediaKind !== "image" &&
+                    virtualDeckEntries.a.sourceUrl &&
+                    virtualVideoARef && (
+                      <SyncedVirtualVideoBackdrop
+                        deck="a"
+                        sourceUrl={virtualDeckEntries.a.sourceUrl}
+                        foregroundRef={virtualVideoARef}
+                        playing={playing}
+                        style={virtualVideoStyleAt("a", currentTime)}
+                      />
+                    )}
                   <video
                     {...virtualVideoAProps}
                     ref={virtualVideoARef}
-                    className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
+                    data-virtual-preview-layout={virtualDeckEntries?.a?.layout ?? "legacy"}
+                    className={`pointer-events-none absolute inset-0 h-full w-full ${virtualFitClass("a")}`}
                     style={virtualVideoStyleAt("a", currentTime)}
                   />
                   {lookPreviewLayers(
@@ -1474,7 +1634,9 @@ export default function EditorCanvas({
                   ref={virtualDeckBContainerRef}
                   className="pointer-events-none absolute inset-0 overflow-hidden"
                   data-look-preview-deck="b"
-                  data-virtual-preview-video-hidden={virtualImageDecks?.b ? "true" : undefined}
+                  data-virtual-preview-video-hidden={
+                    virtualDeckEntries?.b?.mediaKind === "image" ? "true" : undefined
+                  }
                   data-look-preset={virtualDeckLookPresets.b}
                   style={{
                     ...virtualDeckStyleAt(
@@ -1482,13 +1644,29 @@ export default function EditorCanvas({
                       committedVirtualFrame.virtualTransition,
                       committedVirtualFrame.transitionProgress,
                     ),
-                    ...(virtualImageDecks?.b ? { display: "none" } : {}),
+                    ...(virtualDeckEntries?.b?.layout === "supporting_card"
+                      ? { backgroundColor: "#000000" }
+                      : {}),
+                    ...(virtualDeckEntries?.b?.mediaKind === "image" ? { display: "none" } : {}),
                   }}
                 >
+                  {virtualDeckEntries?.b?.layout === "supporting_card" &&
+                    virtualDeckEntries.b.mediaKind !== "image" &&
+                    virtualDeckEntries.b.sourceUrl &&
+                    virtualVideoBRef && (
+                      <SyncedVirtualVideoBackdrop
+                        deck="b"
+                        sourceUrl={virtualDeckEntries.b.sourceUrl}
+                        foregroundRef={virtualVideoBRef}
+                        playing={playing}
+                        style={virtualVideoStyleAt("b", currentTime)}
+                      />
+                    )}
                   <video
                     {...virtualVideoBProps}
                     ref={virtualVideoBRef}
-                    className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
+                    data-virtual-preview-layout={virtualDeckEntries?.b?.layout ?? "legacy"}
+                    className={`pointer-events-none absolute inset-0 h-full w-full ${virtualFitClass("b")}`}
                     style={virtualVideoStyleAt("b", currentTime)}
                   />
                   {lookPreviewLayers(

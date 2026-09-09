@@ -45,6 +45,18 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: jest.fn(),
   })),
 });
+Object.defineProperty(window.HTMLMediaElement.prototype, "load", {
+  configurable: true,
+  value: jest.fn(),
+});
+Object.defineProperty(window.HTMLMediaElement.prototype, "play", {
+  configurable: true,
+  value: jest.fn().mockResolvedValue(undefined),
+});
+Object.defineProperty(window.HTMLMediaElement.prototype, "pause", {
+  configurable: true,
+  value: jest.fn(),
+});
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
@@ -65,6 +77,8 @@ const mockCommitEditorSession = jest.fn();
 let mockTimelineLookPreset: "none" | "stadium_diffusion" = "none";
 let mockSecondSlotRemoved = false;
 let mockFirstSlotDurationS = 3;
+let mockGuidedStorySources = false;
+let mockUnusedSourceLayout: "fullscreen" | "supporting_card" | null = null;
 jest.mock("@/lib/editor-commit", () => ({
   ...jest.requireActual("@/lib/editor-commit"),
   commitEditorSession: (...args: unknown[]) => mockCommitEditorSession(...args),
@@ -87,6 +101,7 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
           durationBeats: null,
           durationS: 3,
           removed: false,
+          layout: mockGuidedStorySources ? "fullscreen" : undefined,
           momentDescription: null,
           lookPreset: mockTimelineLookPreset,
         },
@@ -98,6 +113,7 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
           durationBeats: null,
           durationS: 3,
           removed: mockSecondSlotRemoved,
+          layout: mockGuidedStorySources ? "fullscreen" : undefined,
           momentDescription: null,
         },
       ],
@@ -110,6 +126,7 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
           durationBeats: null,
           durationS: mockFirstSlotDurationS,
           removed: false,
+          layout: mockGuidedStorySources ? "fullscreen" : undefined,
           momentDescription: null,
           lookPreset: mockTimelineLookPreset,
         },
@@ -121,6 +138,7 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
           durationBeats: null,
           durationS: 3,
           removed: mockSecondSlotRemoved,
+          layout: mockGuidedStorySources ? "fullscreen" : undefined,
           momentDescription: null,
         },
       ],
@@ -131,9 +149,9 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
     },
     dispatch: jest.fn(),
     clips: [
-      { clip_index: 0, signed_url: null, duration_s: 5, used: true },
-      { clip_index: 1, signed_url: null, duration_s: 5, used: true },
-      { clip_index: 2, signed_url: null, duration_s: null, used: false },
+      { clip_index: 0, media_id: "media-0", kind: "video", signed_url: mockGuidedStorySources ? "https://example.com/source-0.mp4" : null, duration_s: 5, used: true },
+      { clip_index: 1, media_id: "media-1", kind: "video", signed_url: mockGuidedStorySources ? "https://example.com/source-1.mp4" : null, duration_s: 5, used: true },
+      { clip_index: 2, media_id: "media-2", kind: "video", layout: mockUnusedSourceLayout, signed_url: mockGuidedStorySources ? "https://example.com/source-2.mp4" : null, duration_s: 5, used: false },
     ],
     windows: [],
     totalS: 6,
@@ -146,8 +164,8 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
       "golden_hour",
       "faded_analog",
     ],
-    revisionNumber: null,
-    baseGeneration: null,
+    revisionNumber: mockGuidedStorySources ? 3 : null,
+    baseGeneration: mockGuidedStorySources ? "gen-current" : null,
     tombstones: [],
     reload: jest.fn(),
   }),
@@ -246,6 +264,8 @@ afterEach(() => {
   mockTimelineLookPreset = "none";
   mockSecondSlotRemoved = false;
   mockFirstSlotDurationS = 3;
+  mockGuidedStorySources = false;
+  mockUnusedSourceLayout = null;
   window.sessionStorage.clear();
 });
 
@@ -330,6 +350,49 @@ describe("EditorShell — clip lane locks for ANY server timeline ineligibility"
       clip_index: 2,
       in_s: 0,
       removed: false,
+    });
+  });
+
+  it("previews a newly added Guided Story source with the renderer's fullscreen fit", async () => {
+    mockGuidedStorySources = true;
+    await renderShell(makeVariant({
+      ...EDITABLE_CAPABILITIES,
+      clips: { add: true, remove: true, reorder: true, split: true, trim: true },
+    }));
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Add source clip 3 to timeline",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: /^Clip 3, timeline/ }));
+
+    await waitFor(() => {
+      const activeDeck = document.querySelector(
+        'video[data-virtual-preview-deck][src="https://example.com/source-2.mp4"]',
+      );
+      expect(activeDeck).toHaveAttribute("data-virtual-preview-layout", "fullscreen");
+      expect(activeDeck).toHaveClass("object-cover");
+    });
+  });
+
+  it("restores a canonical supporting-card fit when that source is re-added", async () => {
+    mockGuidedStorySources = true;
+    mockUnusedSourceLayout = "supporting_card";
+    await renderShell(makeVariant({
+      ...EDITABLE_CAPABILITIES,
+      clips: { add: true, remove: true, reorder: true, split: true, trim: true },
+    }));
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Add source clip 3 to timeline",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: /^Clip 3, timeline/ }));
+
+    await waitFor(() => {
+      const activeDeck = document.querySelector(
+        'video[data-virtual-preview-deck][src="https://example.com/source-2.mp4"]',
+      );
+      expect(activeDeck).toHaveAttribute("data-virtual-preview-layout", "supporting_card");
+      expect(activeDeck).toHaveClass("object-contain");
     });
   });
 

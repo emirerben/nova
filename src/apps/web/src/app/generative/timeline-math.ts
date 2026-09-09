@@ -16,6 +16,7 @@ import type {
   LookPreset,
   TimelineResponse,
   TimelineSlot,
+  TimelineMediaLayout,
 } from "@/lib/generative-api";
 import { lookAdjustmentsEqual } from "@/lib/look-presets";
 
@@ -36,6 +37,8 @@ export interface DraftSlot {
   durationBeats: number | null;
   durationS: number | null;
   removed: boolean;
+  /** Guided-story media fit for this slot. Omitted on legacy timelines. */
+  layout?: TimelineMediaLayout | null;
   /** Why the AI picked this moment (null for user-added slots). */
   momentDescription: string | null;
   /** Visual treatment after this slot. Omitted is the legacy hard cut. */
@@ -65,6 +68,7 @@ export function draftFromTimeline(timeline: TimelineResponse): DraftSlot[] {
       durationBeats: s.duration_beats,
       durationS: s.duration_s,
       removed: s.removed ?? false,
+      layout: s.layout,
       momentDescription: s.moment_description,
       transitionAfter: s.transition_after ?? "cut",
       transitionDurationS: s.transition_duration_s ?? null,

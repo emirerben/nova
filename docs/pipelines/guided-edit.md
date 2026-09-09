@@ -460,6 +460,13 @@ sources), normalized timeline and music state, lane hashes, renderer/effect sche
 canonical state hash. Direct timeline and orientation writes use the same CAS tokens; raw revision
 JSON is not a public write surface.
 
+Layout is part of each timeline segment occurrence, not a property of the underlying media ID. The
+same source may therefore appear more than once with different `fullscreen` or `supporting_card`
+fits, and the browser preview and strict renderer must use that occurrence's layout consistently.
+New timeline clients send the optional per-segment `layout`; older revisions remain valid because
+the runtime resolves a missing value from the canonical approved segment identity before using the
+legacy first-by-media fallback.
+
 The story compiler owns trim, split, add/remove/reorder, transitions, Looks, orientation, and music
 swap/remove/window/level. It never adds guided stories to the montage allowlist. Video windows do
 not stretch or loop; images are timed stills; all segments normalize to 30 fps; and transition

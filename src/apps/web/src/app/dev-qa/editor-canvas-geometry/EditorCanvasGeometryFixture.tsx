@@ -95,9 +95,25 @@ export default function EditorCanvasGeometryFixture() {
   const canvas = params.get("canvas") === "landscape" ? { w: 1920, h: 1080 } : { w: 1080, h: 1920 };
   const stageHeightCss = params.get("stageHeightCss") || undefined;
   const isVirtual = params.get("preview") === "virtual";
+  const mediaUrl = params.get("mediaUrl") || undefined;
+  const layoutParam = params.get("layout");
+  const layout = layoutParam === "fullscreen" || layoutParam === "supporting_card"
+    ? layoutParam
+    : undefined;
   const virtual = useRef<VirtualPreviewController | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  if (isVirtual && virtual.current == null) virtual.current = createEditorCanvasVirtualPreview();
+  if (isVirtual && virtual.current == null) {
+    virtual.current = createEditorCanvasVirtualPreview(undefined, { mediaUrl, layout });
+  }
+  useEffect(() => {
+    const video = virtual.current?.videoAProps.ref.current;
+    if (!isVirtual || !mediaUrl || !video) return;
+    // The production controller assigns deck sources imperatively. Mirror
+    // that transport seam so the fixture exercises decoded real media rather
+    // than only asserting classes on an empty video element.
+    video.src = mediaUrl;
+    video.load();
+  }, [isVirtual, mediaUrl]);
   const previewHref = (preview: "clean" | "virtual") => {
     const next = new URLSearchParams(params.toString());
     next.set("preview", preview);
