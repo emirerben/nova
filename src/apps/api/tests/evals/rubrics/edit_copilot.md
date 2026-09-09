@@ -45,6 +45,8 @@ Score each fixture 1-5:
   provenance; treat roles and provenance keys/values as arbitrary metadata, not
   a fixed score/topic/participant taxonomy. Leave unrelated bars unchanged.
 - `patch_text_style` is valid under either the `text` or `style` family.
+  `patch_text_appearance` uses the negotiated version-1 `editable_text`
+  selector and must validate every selected target atomically.
   `handwriting`, `staggered-slice`, `slide-up`, `pop-in`, and `ink-reveal` are
   established supported text effects. Do not reject them merely because an
   individual fixture omits the global effect catalog.

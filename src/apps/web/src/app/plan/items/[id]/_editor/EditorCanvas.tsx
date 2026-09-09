@@ -722,9 +722,9 @@ export default function EditorCanvas({
     const sizePx =
       bar?.cue_size_px ?? bar?.size_px ?? variant.caption_size_px ?? DEFAULT_CAPTION_SIZE_PX;
     const strokeWidth =
-      bar?.stroke_width ?? variant.caption_stroke_width ?? DEFAULT_CAPTION_STROKE_WIDTH;
+      bar?.cue_stroke_width ?? bar?.stroke_width ?? variant.caption_stroke_width ?? DEFAULT_CAPTION_STROKE_WIDTH;
     const scaledStroke = stageSize.h > 0 ? (strokeWidth / canvas.h) * stageSize.h : 0;
-    const shadowEnabled = bar?.shadow_enabled ?? variant.caption_shadow_enabled ?? true;
+    const shadowEnabled = bar?.cue_shadow_enabled ?? bar?.shadow_enabled ?? variant.caption_shadow_enabled ?? true;
     return {
       bottomPct:
         typeof bar?.y_frac === "number"

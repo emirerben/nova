@@ -51,6 +51,7 @@ _TEXT_STYLE_FIELDS = {
     "text_case",
     "x_frac",
     "y_frac",
+    "shadow_enabled",
 }
 
 
@@ -145,6 +146,8 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
                 "size_px",
                 "start_s",
                 "text",
+                "stroke_width",
+                "shadow_enabled",
             }
         }
         for row in variant.get("text_elements") or []

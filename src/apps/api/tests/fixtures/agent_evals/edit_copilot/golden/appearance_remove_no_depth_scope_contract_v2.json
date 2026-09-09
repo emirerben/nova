@@ -1,0 +1,85 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-09-v41",
+  "input": {
+    "utterance": "remove all shadow and stroke",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "text",
+        "motion"
+      ],
+      "text_appearance_version": 1,
+      "text_appearance": {
+        "version": 1,
+        "targets": [
+          {
+            "id": "t1",
+            "kind": "text",
+            "supported_fields": [
+              "stroke_width",
+              "shadow_enabled"
+            ],
+            "values": {
+              "stroke_width": 2,
+              "shadow_enabled": true
+            },
+            "identity": "t1"
+          },
+          {
+            "id": "tag_stack",
+            "kind": "motion",
+            "supported_fields": [
+              "stroke_width"
+            ],
+            "values": {
+              "stroke_width": 0,
+              "shadow_enabled": false
+            },
+            "identity": "tag-stack"
+          }
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_appearance\",\"selector\":{\"scope\":\"editable_text\",\"quantifier\":\"all\"},\"patch\":{\"shadow_enabled\":false,\"stroke_width\":0},\"text_appearance_version\":1}],\"confidence\":0.94,\"reply\":\"Removed appearance effects where a change was needed.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all"
+        },
+        "patch": {
+          "shadow_enabled": false,
+          "stroke_width": 0
+        },
+        "text_appearance_version": 1
+      }
+    ],
+    "confidence": 0.94,
+    "reply": "Removed appearance effects where a change was needed.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "unsupported already compliant target",
+    "exact_edit_ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {
+          "scope": "editable_text",
+          "quantifier": "all"
+        },
+        "patch": {
+          "shadow_enabled": false,
+          "stroke_width": 0
+        },
+        "text_appearance_version": 1
+      }
+    ]
+  }
+}

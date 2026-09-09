@@ -1,3 +1,4 @@
+import { buildTextAppearanceInventory, selectTextAppearanceTargets, CAPTION_META_TARGET_ID } from "./text-appearance";
 import { isParityVerified } from "@/lib/parity-verified-fields";
 import type { TextEditorAction, TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
@@ -30,6 +31,7 @@ import {
 import { nextAddedKey } from "@/app/generative/timeline-math";
 import {
   buildCaptionTextReplacement,
+  captionBarPatchFromMetaPatch,
   isCaptionBar,
   isLyricBar,
   smartStyleForRole,
@@ -369,6 +371,7 @@ function textValue(bar: TextElementBar, snap: CopilotTextSnapshotBar, key: TextS
   if (key === "line_spacing") return bar.line_spacing ?? snap.line_spacing;
   if (key === "max_width_frac") return bar.max_width_frac ?? snap.max_width_frac;
   if (key === "stroke_width") return bar.stroke_width ?? 0;
+  if (key === "shadow_enabled") return bar.shadow_enabled ?? null;
   if (key === "position") return bar.position ?? "middle";
   if (key === "x_frac") return bar.x_frac ?? null;
   if (key === "y_frac") return bar.y_frac ?? null;
@@ -450,7 +453,7 @@ function textFingerprintMatches(
   snap: CopilotTextSnapshotBar,
   fields: Array<TextStylePatchKey | "text" | "start_s" | "end_s">,
 ): boolean {
-  return fields.every((field) => sameValue(textValue(bar, snap, field), snap[field]));
+  return fields.every((field) => sameValue(textValue(bar, snap, field), field === "shadow_enabled" ? snap[field] ?? null : snap[field]));
 }
 
 const COMPLETE_TEXT_FINGERPRINT_FIELDS: Array<
@@ -470,6 +473,7 @@ const COMPLETE_TEXT_FINGERPRINT_FIELDS: Array<
   "line_spacing",
   "max_width_frac",
   "stroke_width",
+  "shadow_enabled",
   "position",
   "x_frac",
   "y_frac",
@@ -694,6 +698,7 @@ function reject(op: string, label: string, reason: RejectedOpReason, detail: str
 function labelForOp(op: CopilotOp): string {
   if (op.op === "edit_text") return `Text ${op.bar_index + 1}`;
   if (op.op === "patch_text_style") return `Text ${op.bar_index + 1} style`;
+  if (op.op === "patch_text_appearance") return op.selector.target_ids ? "Selected text appearance" : op.selector.category ? `${op.selector.category} appearance` : "All text appearance";
   if (op.op === "set_text_timing") return `Text ${op.bar_index + 1} timing`;
   if (op.op === "add_text") return "Add text";
   if (op.op === "remove_text") return `Remove text ${op.bar_index + 1}`;
@@ -954,11 +959,11 @@ const LYRIC_STYLE_PATCH_KEYS = new Set<TextStylePatchKey>([
 function clampLyricStylePatch(input: {
   patch: TextStylePatch;
   stripped: string[];
-}): { patch: TextStylePatch; stripped: string[] } {
+}, appearanceEditable = false): { patch: TextStylePatch; stripped: string[] } {
   const patch: TextStylePatch = {};
   const stripped = [...input.stripped];
   for (const [key, value] of Object.entries(input.patch)) {
-    if (LYRIC_STYLE_PATCH_KEYS.has(key as TextStylePatchKey)) {
+    if (LYRIC_STYLE_PATCH_KEYS.has(key as TextStylePatchKey) || (appearanceEditable && ["stroke_width", "shadow_enabled"].includes(key))) {
       (patch as Record<string, unknown>)[key] = value;
     } else if (key !== "size_class") {
       stripped.push(key);
@@ -979,6 +984,8 @@ export function applyCopilotOps(
     EDITOR_MAX_TIMELINE_SLOTS,
     ctx.snapshot.editor_limits?.max_timeline_slots ?? LEGACY_BULK_MAX_SLOTS,
   );
+  const hasAppearanceOps = rawOps.some((raw) => raw != null && typeof raw === "object" &&
+    (raw as { op?: unknown }).op === "patch_text_appearance");
   const hasDirectionReplacement = rawOps.some(
     (raw) => raw != null && typeof raw === "object" &&
       String((raw as Record<string, unknown>).op ?? "") === "set_edit_direction",
@@ -1334,7 +1341,7 @@ export function applyCopilotOps(
       }
       const stylePatch = applyStylePatch(op.patch);
       const { patch, stripped } =
-        bar.role === "lyric_line" ? clampLyricStylePatch(stylePatch) : stylePatch;
+        bar.role === "lyric_line" ? clampLyricStylePatch(stylePatch, ctx.capabilities?.lyrics?.lyrics_model === "elements") : stylePatch;
       const motionPatch =
         textMotionV2Enabled && typeof patch.effect === "string" && bar.role !== "lyric_line"
           ? motionPatchForEffect(bar, patch.effect, videoDurationS)
@@ -1375,6 +1382,105 @@ export function applyCopilotOps(
           from: fmt(textValue(bar, snap, key)),
           to: fmt(patch[key]),
         });
+      }
+    } else if (op.op === "patch_text_appearance") {
+      const snapshotInventory = ctx.snapshot.text_appearance!;
+      const currentInventory = buildTextAppearanceInventory({
+        bars: ctx.bars, motionScenes: ctx.motionScenes,
+        captionMeta: ctx.captionMeta === undefined ? ctx.snapshot.captions?.meta : ctx.captionMeta,
+        captionsPresent: snapshotInventory.targets.some((target) => target.kind === "caption"),
+        captionCuesEditable: snapshotInventory.caption_cues_editable,
+        allowedFamilies: ctx.snapshot.allowed_op_families, capabilities: ctx.capabilities,
+      });
+      const before = selectTextAppearanceTargets(snapshotInventory, op.selector);
+      const current = selectTextAppearanceTargets(currentInventory, op.selector);
+      if (!before?.length || !current?.length) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "The requested text is no longer available."));
+        continue;
+      }
+      const byId = new Map(current.map((target) => [target.id, target]));
+      // Membership is part of an "all" request: newly-added text must not
+      // silently escape the edit or be changed without the reviewed snapshot.
+      if (before.length !== current.length || before.some((target) =>
+        byId.get(target.id)?.kind !== target.kind || byId.get(target.id)?.identity !== target.identity)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "The selected text changed after Kria read the draft. Try again."));
+        continue;
+      }
+      if ((op.target_ids && (op.target_ids.length !== before.length || op.target_ids.some((id) => !byId.has(id)))) ||
+          (op.target_identities && (op.target_identities.length !== before.length ||
+            new Set(op.target_identities.map((target) => target.id)).size !== before.length ||
+            op.target_identities.some((target) => byId.get(target.id)?.kind !== target.kind ||
+              byId.get(target.id)?.identity !== target.identity)))) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "The proposed text targets do not match this draft."));
+        continue;
+      }
+      const fields = Object.keys(op.patch) as Array<keyof typeof op.patch>;
+      const unsupported = current.find((target) => fields.some((field) =>
+        target.values[field] !== op.patch[field] && (!target.supported_fields.includes(field) ||
+          !before.find((item) => item.id === target.id)!.supported_fields.includes(field))));
+      if (unsupported) {
+        rejected.push(reject(op.op, labelForOp(op), "unsupported_field", `The requested appearance is unavailable for ${unsupported.kind} ${unsupported.id}; no changes were staged.`));
+        continue;
+      }
+      const changed = current.filter((target) => fields.some((field) => target.values[field] !== op.patch[field]));
+      if (!changed.length) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "All selected text already has that appearance."));
+        continue;
+      }
+      const metaTarget = changed.find((target) => target.id === CAPTION_META_TARGET_ID);
+      const metaPatch: CaptionMetaPatch = {};
+      if (metaTarget) {
+        for (const field of fields) if (metaTarget.values[field] !== op.patch[field]) {
+          (metaPatch as Record<string, unknown>)[field] = op.patch[field];
+        }
+      }
+      // Resolve every lane before mutating any result; render validation can
+      // still fail, and that must leave even the caption defaults untouched.
+      const motionIds = new Set(changed.filter((target) => target.kind === "motion").map((target) => target.id));
+      const motionCandidate = workingMotionScenes.map((scene) => {
+        if (!motionIds.has(scene.id)) return scene;
+        const appearance = { ...scene.text_appearance };
+        const target = byId.get(scene.id)!;
+        for (const field of fields) if (target.values[field] !== op.patch[field]) {
+          (appearance as Record<string, unknown>)[field] = op.patch[field];
+        }
+        return { ...scene, text_appearance: appearance };
+      });
+      if (motionIds.size) {
+        const validation = validateMotionInstances(motionCandidate, Math.ceil(videoDurationS * 30));
+        if (!validation.ok) {
+          rejected.push(reject(op.op, labelForOp(op), "invalid_op", validation.errors.join("; ")));
+          continue;
+        }
+      }
+      const patches: Array<{ id: string; patch: Partial<Omit<TextElementBar, "id" | "role">> }> = [];
+      if (metaTarget) {
+        const globals = captionBarPatchFromMetaPatch(metaPatch);
+        for (const bar of ctx.bars.filter(isCaptionBar)) patches.push({ id: bar.id, patch: globals });
+        captionMetaPatch = { ...captionMetaPatch, ...metaPatch };
+      }
+      for (const target of changed) {
+        if (target.kind === "motion" || target.id === CAPTION_META_TARGET_ID) continue;
+        const patch: Partial<Omit<TextElementBar, "id" | "role">> = {};
+        for (const field of fields) if (target.values[field] !== op.patch[field]) {
+          const key = target.kind === "caption" ? `cue_${field}` : field;
+          (patch as Record<string, unknown>)[key] = op.patch[field];
+        }
+        patches.push({ id: target.id, patch });
+      }
+      if (patches.length) {
+        const byBar = new Map<string, Partial<Omit<TextElementBar, "id" | "role">>>();
+        for (const item of patches) byBar.set(item.id, { ...byBar.get(item.id), ...item.patch });
+        textActions.push({ type: "PATCH_BARS", patches: Array.from(byBar, ([id, patch]) => ({ id, patch })) });
+      }
+      if (motionIds.size) {
+        workingMotionScenes = motionCandidate;
+        nextMotionScenes = motionCandidate;
+      }
+      for (const field of fields) {
+        const count = changed.filter((target) => target.values[field] !== op.patch[field] && target.id !== CAPTION_META_TARGET_ID).length;
+        applied.push({ label: field === "stroke_width" ? "Text outline" : "Text shadow",
+          from: "previous appearance", to: fmt(op.patch[field]), count: count || 1 });
       }
     } else if (op.op === "set_text_timing") {
       const snap = textSnapAt(ctx.snapshot, op.bar_index);
@@ -2188,6 +2294,10 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption settings changed after Kria read them"));
         continue;
       }
+      const barPatch = captionBarPatchFromMetaPatch(op.patch);
+      if (Object.keys(barPatch).length) {
+        textActions.push({ type: "PATCH_BARS", patches: ctx.bars.filter(isCaptionBar).map((bar) => ({ id: bar.id, patch: barPatch })) });
+      }
       captionMetaPatch = { ...(captionMetaPatch ?? {}), ...op.patch };
       for (const key of patchKeys) {
         applied.push({
@@ -2980,7 +3090,7 @@ export function applyCopilotOps(
     }
   }
 
-  if (hasBulkOps && rejected.length > 0) {
+  if ((hasBulkOps && rejected.length > 0) || (hasAppearanceOps && rejected.some((item) => item.reason !== "no_effect"))) {
     return {
       textActions: [],
       nextSlots: null,
@@ -3008,7 +3118,7 @@ export function applyCopilotOps(
     captionMetaPatch,
     openTool,
     applied: consolidateChips(applied),
-    rejected,
+    rejected: hasAppearanceOps && applied.length ? rejected.filter((item) => item.reason !== "no_effect") : rejected,
     appliedOps,
     historyAction,
   };

@@ -1,3 +1,5 @@
+import { mutationFingerprint } from "./mutation-fingerprint";
+import { buildTextAppearanceInventory, type TextAppearanceTarget, type TextAppearanceInventory } from "./text-appearance";
 import { beatMarks, type DraftSlot } from "@/app/generative/timeline-math";
 import { isBoundedCreatorImageAsset, type CameraEffect, type EditorCapabilities, type MediaOverlay, type OverlaySuggestion, type PendingSfxSuggestion, type PoolAsset, type SoundEffectPlacement, type VariantSpeechMap, type VisualBlock } from "@/lib/plan-api";
 import {
@@ -61,34 +63,6 @@ const COMPONENT_PROVENANCE_KEY_MAX = 60;
 const COMPONENT_PROVENANCE_STRING_MAX = 160;
 const COMPONENT_PROVENANCE_UNSAFE_KEY_RE = /(?:url|uri|path|token|secret|password|credential|filename|gcs)/i;
 const COMPONENT_PROVENANCE_URL_RE = /(?:https?|gs|s3):\/\/|www\./i;
-
-function stableMutationValue(value: unknown): unknown {
-  if (value === undefined) return { __nova_undefined__: true };
-  if (Array.isArray(value)) return value.map(stableMutationValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, item]) => [key, stableMutationValue(item)]),
-    );
-  }
-  return value;
-}
-
-/** Compact opaque fingerprint for stale-target protection. It deliberately
- * covers editor persistence fields that are too noisy or sensitive to put in
- * the model-facing prose, while remaining deterministic across object-key order. */
-function mutationFingerprint(parts: readonly unknown[]): string {
-  const value = JSON.stringify(stableMutationValue(parts));
-  let left = 2166136261;
-  let right = 3339675911;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    left = Math.imul(left ^ code, 16777619);
-    right = Math.imul(right ^ code, 2246822519);
-  }
-  return `m1-${(left >>> 0).toString(16).padStart(8, "0")}${(right >>> 0).toString(16).padStart(8, "0")}`;
-}
 
 function attachMutationFingerprint(
   target: { mutation_fingerprint?: string },
@@ -276,6 +250,7 @@ export interface CopilotTextSnapshotBar {
   line_spacing: number;
   max_width_frac: number;
   stroke_width: number;
+  shadow_enabled?: boolean | null;
   position: string;
   x_frac: number | null;
   y_frac: number | null;
@@ -479,7 +454,11 @@ export interface CopilotCaptionCueSnapshot {
   smart_role?: "hook" | "context_shift" | "list_item" | "example" | "payoff" | "cta" | null;
   /** Toggled by set_caption_emphasis. Mirrors CaptionCue.smart_emphasis. */
   smart_emphasis?: boolean | null;
+  stroke_width?: number | null;
+  shadow_enabled?: boolean | null;
 }
+
+export type CopilotTextAppearanceTarget = TextAppearanceTarget;
 
 export interface CopilotCaptionMetaSnapshot {
   enabled: boolean;
@@ -566,6 +545,8 @@ export interface CopilotEditorFocus {
 }
 
 export interface CopilotSnapshot {
+  text_appearance_version?: 1;
+  text_appearance?: TextAppearanceInventory;
   /** All supplied component rows are inspectable, including read-only lanes. */
   component_context_version?: 1;
   editor_focus?: CopilotEditorFocus;
@@ -728,6 +709,8 @@ export interface AllowedOpFamilyOptions {
 }
 
 export interface CaptionCueLike {
+  stroke_width?: number | null;
+  shadow_enabled?: boolean | null;
   id?: string | null;
   text: string;
   start_s: number;
@@ -1238,6 +1221,7 @@ export function buildCopilotSnapshot(
       line_spacing: resolveLineSpacing(bar.line_spacing),
       max_width_frac: resolveMaxWidthFrac(bar.max_width_frac),
       stroke_width: bar.stroke_width ?? 0,
+      ...(typeof bar.shadow_enabled === "boolean" ? { shadow_enabled: bar.shadow_enabled } : {}),
       position: bar.position ?? "middle",
       x_frac: bar.x_frac ?? null,
       y_frac: bar.y_frac ?? null,
@@ -1302,6 +1286,8 @@ export function buildCopilotSnapshot(
     end_s: bar.end_s,
     smart_role: bar.smart_role ?? null,
     smart_emphasis: bar.smart_emphasis ?? null,
+    ...(typeof bar.cue_stroke_width === "number" ? { stroke_width: bar.cue_stroke_width } : {}),
+    ...(typeof bar.cue_shadow_enabled === "boolean" ? { shadow_enabled: bar.cue_shadow_enabled } : {}),
   }));
   const allowedOptions: AllowedOpFamilyOptions = {
     ...options,
@@ -1725,11 +1711,22 @@ export function buildCopilotSnapshot(
     snapshot.editor_focus = { selected, playhead_s: typeof playhead === "number" && Number.isFinite(playhead)
       ? roundCopilotNumber(Math.min(total, Math.max(0, playhead))) : null };
   }
+  // Appearance selectors require a complete inventory, even when ordinary
+  // context would fit a legacy-sized envelope. Never enable on an older API.
+  if (capabilities?.text_appearance_version === 1) {
+    snapshot.text_appearance_version = 1;
+    snapshot.text_appearance = buildTextAppearanceInventory({
+      bars, motionScenes: options.motionScenes, captionMeta: options.captionMeta,
+      captionsPresent: allowedOptions.captionsPresent,
+      captionCuesEditable: options.captionCuesEditable,
+      allowedFamilies, capabilities,
+    });
+  }
   const trimmed = trimSnapshotToBudget(
     snapshot,
     capabilities?.copilot_snapshot_wire_version === 1,
     budget.maxBytes,
-    budget.negotiated,
+    budget.negotiated || capabilities?.text_appearance_version === 1,
   );
   const textById = new Map(visibleBars.map((bar) => [bar.id, bar]));
   for (const item of trimmed.text_bars) {
