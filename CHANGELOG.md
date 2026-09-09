@@ -2,13 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.73.9.0] — 2026-09-09
+## [0.75.4.0] — 2026-09-09
 
 ### Fixed
-- **Talking-to-camera edits no longer add background music you didn't ask for.** A fresh render now keeps your own audio, silently, by default — Kria no longer auto-matches a licensed track underneath your speech. Music still plays when you explicitly pick a track from the item's editor, and it now survives re-renders instead of being replaced or dropped. The result label reflects it too, reading "Original audio + music" whenever a background track is live.
+- **Talking-to-camera edits no longer add background music you didn't ask for.** A fresh render now keeps your own audio, silently, by default — Kria no longer auto-matches a licensed track underneath your speech. Music still plays when you explicitly pick a track from the item's editor, and it now survives re-renders instead of being replaced or dropped. The result label reflects it too, reading "Original audio + music" (or "Narration + music") whenever a background track is live.
 
 ### Internal
 - New kill switch `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` (default on) gates the v2 licensed-music-bed resolver to only ever return a creator-selected treatment, never invent one.
+
+## [0.75.2.0] - 2026-09-09
+
+### Changed
+- **Chat and Gallery share a simpler sidebar.** Start a new chat, reopen recent projects, rename projects inline, and reach account actions from one place. Gallery keeps project navigation visible and shows titles beneath video cards.
+- **Kria's wordmark and browser icons use the same rounded lettering.** Chat messages and editor tools carry the wordmark, while text controls and hover states use quiet Sky and warm-ink colors.
+- **The editor keeps its main controls focused on editing.** Remove the title field, select/pan switch, canvas zoom selector, and re-render badge from the toolbar; retain undo, redo, orientation, playback, and Save.
+
+### Fixed
+- **Project actions remain usable in Gallery and on smaller screens.** Delete confirmations open from the Gallery sidebar, long recent-project lists scroll without hiding account actions, and mobile Gallery keeps a project-navigation button.
+- **Inline project renaming preserves keyboard control.** Enter and blur save once, Escape cancels, failed saves remain editable, and the focused name has a visible outline.
+- **Browser icons retain Kria's lettering without a webfont.** Both favicon variants now use outlined letter shapes.
+
+## [0.75.0.0] - 2026-09-09
+
+### Added
+- **Kria's native app now opens into the same chat-first creation flow as the web app.** Creators can choose a format, add footage within that format's limits, follow the live conversation, move between projects and Gallery, and recognize the app by its own Kria icon.
+- **The native iOS editor now exposes the complete rendered composition.** Clips, text, captions, music, sound effects, media overlays, visual blocks, motion, camera effects, and Carousel moments share one selectable timeline and honest preview. Supported properties are editable with undo/redo and durable save/reload behavior; renderer-locked motion remains explicitly read-only.
+- **Canvas and timeline editing now work directly on iPhone.** Creators can move and resize supported preview objects, move and trim timed lanes, trim clip source windows, reorder layers, and remove components with one undo step per gesture. Stable accessibility identities, large hit targets, Dynamic Type, Reduce Motion, and a 71-slot stress fixture cover the mobile interaction surface.
+
+### Fixed
+- **Native creation and editing recover cleanly from overlapping work and interrupted requests.** Background uploads attach in order, message retries stay idempotent, format changes cannot silently drop extra clips, edits made during Save remain dirty, and a saved edit whose render did not start offers a safe Retry render action.
+- **Inserted Carousel moments no longer desynchronize editor timing.** Native and web editing now use the rendered timeline duration and the same right-biased ripple projection for clips, playhead, ruler, scrub mapping, preview visibility, and every persisted lane; continuous music spans the full output without being shifted.
+- **Mobile saves preserve every server-owned editor field.** The native document and commit contract round-trip unknown data and advanced lane payloads losslessly, use schema-valid motion frames and visual transforms, and keep local edits recoverable across render failures and revision conflicts.
 
 ## [0.73.8.1] — 2026-09-09
 

@@ -48,13 +48,21 @@ replace only the default **Untitled video** title; an explicit rename must never
 change the creative prompt. Retrying a deletion by the same owner succeeds when
 the deletion tombstone exists, while foreign and unknown IDs remain `404`.
 
+Choose **Rename project** from a project’s overflow menu to edit its name in
+place in the sidebar. Enter or blur saves; Escape cancels. Validation
+and save errors remain beside the field so the creator can correct or retry.
+The same project controls are available from chat and Gallery.
+
 ## Layout contract
 
-On desktop, `/plan` owns `h-dvh` and `min-h-0`: the 260px project rail is fixed,
-the conversation is full-width before the first render, and after a ready cut the
+On desktop, `/plan` owns `h-dvh` and `min-h-0`: chat and Gallery share the
+260px project rail, which collapses to a 64px restore rail. In chat, the conversation is full-width before the first render, and after a ready cut the
 conversation is a 420px rail beside the embedded editor. Only transcript and
 editor panes scroll. The embedded editor URL includes `embedded=1`; it is still
 the existing `EditorShell`, with overlay mode forced for the narrow iframe.
+The workspace adds no second editor heading or Ready badge. Gallery retains
+Back to chat, New video, project actions, and the mobile Projects sheet; its
+video list scrolls independently of the navigation.
 
 On mobile, the workspace has a compact project header, horizontally scrollable
 format cards, a bottom-safe composer, a Projects sheet, Gallery view, and Chat /
@@ -144,7 +152,8 @@ cd src/apps/web && npm run e2e -- --project=chat-first-creation --workers=1
 
 Before production approval, share the Preview URL and verify the ready
 deep-link, post-clip order, each thinking tier, render and partial progress,
-collapsed sidebar, rename dialog, delete confirmation, and deleted state from
+collapsed sidebar, inline project rename (Enter/blur save and Escape cancel),
+delete confirmation, and deleted state from
 that URL. The delete confirmation must say that the chat, uploads, edit data,
 and completed Kria videos are permanently removed and cannot be recovered, and
 that already-published TikTok posts remain on TikTok. Confirm the API/web build

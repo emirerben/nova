@@ -1,0 +1,16 @@
+{
+  "look_presets": [
+    "none",
+    "stadium_diffusion",
+    "olive_film",
+    "smoky_split_tone",
+    "golden_hour",
+    "faded_analog"
+  ],
+  "transitions": ["cut", "crossfade", "dip_to_black", "flash"],
+  "text_animations": ["none", "fade-in", "pop-in", "slide-in"],
+  "music_alignments": ["preserve_cuts", "resync_beats"],
+  "caption_fonts": ["Inter", "Fraunces", "Space Grotesk"],
+  "caption_size_px": {"min": 36, "max": 160},
+  "caption_y_frac": {"min": 0.3, "max": 0.9}
+}

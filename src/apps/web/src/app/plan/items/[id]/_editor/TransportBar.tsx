@@ -106,6 +106,7 @@ export default function TransportBar({
           aria-label={playing ? "Pause" : "Play"}
           aria-pressed={playing}
           onClick={onPlayPause}
+          className="bg-[#30352c] text-white hover:bg-[#30352c]/90 disabled:!bg-[#e4e4e7] disabled:!text-[#a1a1aa] disabled:!opacity-100"
         >
           {playing ? "❚❚" : "▶"}
         </Button>

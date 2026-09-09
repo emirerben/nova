@@ -9,7 +9,7 @@ describe("ChatMessage", () => {
     const message = screen.getByText("Make the opening faster");
     expect(message).toHaveClass(
       "ml-auto",
-      "bg-primary",
+      "bg-[#EBF3FF]",
       "opacity-60",
       "motion-safe:animate-chat-message-in",
       "motion-reduce:animate-chat-fade-in",

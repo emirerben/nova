@@ -407,7 +407,7 @@ export function TestTab({ trackId, track, sectionBoundsDirty = false }: TestTabP
                       href={outputUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-violet-400 hover:text-violet-300"
+                      className="text-xs text-violet-400 hover:text-zinc-100"
                     >
                       Open in new tab
                     </a>
@@ -471,7 +471,7 @@ export function TestTab({ trackId, track, sectionBoundsDirty = false }: TestTabP
                     href={j.output_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-violet-400 hover:text-violet-300"
+                    className="text-violet-400 hover:text-zinc-100"
                   >
                     View
                   </a>

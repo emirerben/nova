@@ -219,6 +219,46 @@ class StrictBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CreationFormatCapabilityOut(BaseModel):
+    id: str
+    edit_format: str
+    max_clips: int = Field(ge=1, le=_MAX_CLIPS_PER_ITEM)
+
+
+class CreationClipCapabilitiesOut(BaseModel):
+    max: int = Field(ge=1)
+    max_file_bytes: int = Field(ge=1)
+    content_types: list[str]
+
+
+class CreationVisualFileSizeCapabilitiesOut(BaseModel):
+    image: int = Field(ge=1)
+    video: int = Field(ge=1)
+
+
+class CreationVisualCapabilitiesOut(BaseModel):
+    max: int = Field(ge=1)
+    max_file_bytes: CreationVisualFileSizeCapabilitiesOut
+    content_types: list[str]
+
+
+class CreationVoiceoverCapabilitiesOut(BaseModel):
+    max: int = Field(ge=1)
+    max_file_bytes: int = Field(ge=1)
+    content_types: list[str]
+
+
+class CreationMediaCapabilitiesOut(BaseModel):
+    clips: CreationClipCapabilitiesOut
+    visuals: CreationVisualCapabilitiesOut
+    voiceover: CreationVoiceoverCapabilitiesOut
+
+
+class CreationCapabilitiesOut(BaseModel):
+    formats: list[CreationFormatCapabilityOut]
+    media: CreationMediaCapabilitiesOut
+
+
 class CreateBody(StrictBody):
     message: str | None = Field(default=None, max_length=4000)
     client_event_id: str | None = Field(default=None, max_length=160)
@@ -2253,7 +2293,7 @@ async def _agent_message(
     return thread
 
 
-@router.get("/capabilities")
+@router.get("/capabilities", response_model=CreationCapabilitiesOut)
 async def capabilities(user: CurrentUser) -> dict[str, Any]:
     _ = user
     return {

@@ -354,7 +354,7 @@ export function AudioPlayer({
         </button>
         <button
           onClick={playSection}
-          className="bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
+          className="bg-violet-700 hover:bg-zinc-700 text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
         >
           ▶ Play section ({start.toFixed(1)}s – {end.toFixed(1)}s)
         </button>
@@ -632,7 +632,7 @@ export function AudioPlayer({
               type="button"
               onClick={saveLyricsOffset}
               disabled={!onLyricsSyncOffsetSave || !lyricsOffsetDirty || !lyricsOffsetValid || lyricsOffsetSaving}
-              className="h-8 rounded bg-violet-700 px-3 text-xs font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-8 rounded bg-violet-700 px-3 text-xs font-semibold text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {lyricsOffsetSaving ? "Saving..." : "Save"}
             </button>
