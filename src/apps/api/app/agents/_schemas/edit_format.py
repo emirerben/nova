@@ -33,6 +33,7 @@ EditFormat = Literal[
     "narrated",
     "narrated_planned",
     "narrated_ready",
+    "slides",
 ]
 
 DEFAULT_EDIT_FORMAT: EditFormat = "montage"
@@ -45,6 +46,12 @@ DAY_VLOG_RENDERER_VERSION = 1
 # independent from day-vlog so either format can roll out or roll back without
 # accepting a queued job authored by a different renderer contract.
 SINGLE_HERO_RENDERER_VERSION = 1
+# Worker boundary fence for the slide-post (mixed-media carousel) renderer.
+# Not a guided format (see GUIDED_EDIT_FORMATS below) but the same class of
+# hazard applies: a mixed API/worker deploy must never let an old worker
+# silently coerce a "slides" job to montage. Bump on any change to the
+# stamped variant contract (variant_id, slide_post shape, bundle layout).
+SLIDES_RENDERER_VERSION = 1
 
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 

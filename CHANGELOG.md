@@ -11,6 +11,13 @@ All notable changes to this project will be documented in this file.
 ### Internal
 - Added `CAPTION_CUE_SOURCE`, a shared constant replacing a hand-typed string that classified a caption across five call sites, plus a producer-side contract test pinning it.
 
+## [0.74.0.0] — 2026-09-09
+
+### Added
+- **Creators can now build a mixed-media post — an ordered sequence of photos and videos, like a TikTok photo post or an Instagram carousel — instead of only a single video.** Pick "Photo & video post," let Kria propose the order, cover, and caption from your footage, then reorder, add, remove, or edit anything before exporting a ready-to-post bundle. TikTok photo mode (images only) and Instagram carousels (photos + videos) each get their own platform-fit rules. Export-only in this release — no direct publish yet.
+
+### Internal
+- The new "slides" render archetype reuses the existing plan-item pipeline end to end: one variant carries a stitched preview alongside the ordered slide list and export bundle, so every existing reader (player, library, TikTok-publish exclusion) keeps working unbranched. Every other editor lane (captions, sound effects, overlays, timeline) is explicitly closed for this archetype at the same choke point every one of those routes already shares. Ships default on, gated by `SLIDE_POSTS_ENABLED` / `NEXT_PUBLIC_SLIDE_POSTS_ENABLED`.
 ## [0.75.3.0] - 2026-09-09
 
 ### Changed
