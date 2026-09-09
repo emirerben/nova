@@ -76,3 +76,6 @@ supabase/.temp/
 # Developer-specific iOS API/OAuth overrides.
 src/apps/ios/Config/Local.xcconfig
 src/apps/ios/Packages/*/.swiftpm/
+
+# CI test timing artifacts
+/test-results/

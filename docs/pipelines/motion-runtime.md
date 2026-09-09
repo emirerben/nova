@@ -45,7 +45,7 @@ base and reapply motion before their text layer.
   The legacy v1 hash is accepted only for persisted `route_trace` scenes. The
   known persisted Creator runtimes v2, v3, v4, and v5 are accepted so a visual
   fix does not strand saved edits; they render with the current runtime and the
-  next successful dirty motion save normalizes the global hash to v5. Preset version,
+  next successful dirty motion save normalizes the global hash to v6. Preset version,
   not the global hash, owns visual compatibility. Older or unknown hashes fail
   closed.
 - Browser and worker parity covers the RGBA motion layer for an identical
@@ -146,6 +146,15 @@ direction, travel, and hold; fade/scale, ink-reveal, and handwriting expose
 easing and hold; pop/bounce expose overshoot and hold; typewriter/stream-in
 expose cursor style, blink rate, and hold; staggered-slice exposes hold only.
 Unsupported controls stay hidden and are not preview-only or render-only UI.
+
+Text appearance is part of the v6 Creator Block contract. A scene may carry the
+optional `text_appearance` object with `stroke_width` (`0–20`) and
+`shadow_enabled` (boolean). The worker and browser apply these values to the
+same glyph pass: stroke changes the outline width, while shadow controls the
+offset depth duplicate. Route Trace remains on its legacy path and does not
+accept appearance overrides. Appearance edits preserve the block's preset,
+timing, palette, shapes, and choreography; changing appearance therefore
+requires the v6 runtime hash but does not migrate a v1 block to v2.
 
 ## Runtime paths
 

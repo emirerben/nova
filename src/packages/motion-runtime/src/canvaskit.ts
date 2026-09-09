@@ -9,6 +9,7 @@ import {
   type FlowFieldInstanceV1,
   type KineticWordInstanceV1,
   type MotionPresetInstance,
+  type MotionTextAppearance,
   type OfferSwapInstanceV1,
   type RouteTraceInstanceV1,
   type TagStackInstanceV1,
@@ -183,7 +184,23 @@ function drawCenteredText(
   size: number,
   color: string,
   alpha: number,
+  appearance?: MotionTextAppearance,
 ): void {
+  const strokeWidth = appearance?.stroke_width ?? 0;
+  if (strokeWidth > 0) {
+    paint.setStyle(CanvasKit.PaintStyle.Stroke);
+    paint.setAntiAlias(true);
+    paint.setStrokeJoin(CanvasKit.StrokeJoin.Round);
+    paint.setStrokeWidth(strokeWidth);
+    paint.setColor(colorWithAlpha(CanvasKit, color, alpha));
+    canvas.drawText(
+      text,
+      x - textWidth(resources, text, size) / 2,
+      baseline,
+      paint,
+      resources.font(size),
+    );
+  }
   withFill(CanvasKit, paint, color, alpha);
   canvas.drawText(
     text,
@@ -192,6 +209,10 @@ function drawCenteredText(
     paint,
     resources.font(size),
   );
+}
+
+function textAppearance(instance: MotionPresetInstance): MotionTextAppearance | undefined {
+  return instance.preset_id === "route_trace" ? undefined : instance.text_appearance;
 }
 
 function drawRouteTrace(
@@ -246,8 +267,8 @@ function drawKineticWord(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resou
   canvas.rotate(state.rotation * 1.7, 0, 0);
   canvas.skew((1 - state.enter) * 0.22 + collapseSkew, 0);
   canvas.scale(overshoot, overshoot);
-  drawCenteredText(CanvasKit, canvas, resources, paint, text, size * 0.055, size * 0.395, size, instance.palette.primary, state.opacity * 0.92);
-  drawCenteredText(CanvasKit, canvas, resources, paint, text, 0, size * 0.34, size, instance.palette.accent, state.opacity);
+  if (instance.text_appearance?.shadow_enabled !== false) drawCenteredText(CanvasKit, canvas, resources, paint, text, size * 0.055, size * 0.395, size, instance.palette.primary, state.opacity * 0.92, textAppearance(instance));
+  drawCenteredText(CanvasKit, canvas, resources, paint, text, 0, size * 0.34, size, instance.palette.accent, state.opacity, textAppearance(instance));
   canvas.restore();
 }
 
@@ -279,7 +300,7 @@ function drawTagStack(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resource
     const active = 0.86 + 0.14 * Math.cos(state.cycle * Math.PI * 2 - index * 0.72);
     withFill(CanvasKit, paint, index % 2 ? instance.palette.primary : instance.palette.accent, state.opacity * active);
     canvas.drawRRect(CanvasKit.RRectXY(CanvasKit.XYWHRect(cx - w / 2, top, w, rowHeight), rowHeight / 2, rowHeight / 2), paint);
-    drawCenteredText(CanvasKit, canvas, resources, paint, label.toUpperCase(), cx, centerY + size * 0.34, size, index % 2 ? instance.palette.accent : instance.palette.primary, state.opacity);
+    drawCenteredText(CanvasKit, canvas, resources, paint, label.toUpperCase(), cx, centerY + size * 0.34, size, index % 2 ? instance.palette.accent : instance.palette.primary, state.opacity, textAppearance(instance));
   });
 }
 
@@ -292,19 +313,19 @@ function drawFlowField(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resourc
   const glyphTop = baseline - size * 0.82;
   const glyphHeight = size * 1.08;
   const sliceCount = 8;
-  drawCenteredText(CanvasKit, canvas, resources, paint, headline, cx, baseline, size, instance.palette.primary, state.opacity * 0.36);
+  if (instance.text_appearance?.shadow_enabled !== false) drawCenteredText(CanvasKit, canvas, resources, paint, headline, cx, baseline, size, instance.palette.primary, state.opacity * 0.36, textAppearance(instance));
   for (let slice = 0; slice < sliceCount; slice += 1) {
     const offset = Math.sin(state.local * Math.PI * 4 + slice * 0.8) * unit * 0.018 * instance.intensity;
     canvas.save();
     const top = glyphTop + slice * glyphHeight / sliceCount;
     canvas.clipRect(CanvasKit.XYWHRect(0, top, width, glyphHeight / sliceCount + 1), CanvasKit.ClipOp?.Intersect, true);
-    drawCenteredText(CanvasKit, canvas, resources, paint, headline, cx + offset, baseline, size, instance.palette.accent, state.opacity);
+    drawCenteredText(CanvasKit, canvas, resources, paint, headline, cx + offset, baseline, size, instance.palette.accent, state.opacity, textAppearance(instance));
     canvas.restore();
   }
   if (instance.params.kicker) {
     const kicker = instance.params.kicker.toUpperCase();
     const kickerSize = fittedTextSize(resources, kicker, size * 0.28, width - unit * 0.2);
-    drawCenteredText(CanvasKit, canvas, resources, paint, kicker, cx, baseline + size * 0.92, kickerSize, instance.palette.primary, state.opacity * 0.9);
+    drawCenteredText(CanvasKit, canvas, resources, paint, kicker, cx, baseline + size * 0.92, kickerSize, instance.palette.primary, state.opacity * 0.9, textAppearance(instance));
   }
 }
 
@@ -332,8 +353,8 @@ function drawCloudBreak(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resour
   instance.params.lines.forEach((line, index) => {
     const y = cy + (index - (instance.params.lines.length - 1) / 2) * lineSize * 1.2;
     const text = line.toUpperCase();
-    drawCenteredText(CanvasKit, canvas, resources, paint, text, cx + lineSize * 0.055, y + lineSize * 0.395, lineSize, instance.palette.primary, state.opacity * 0.94);
-    drawCenteredText(CanvasKit, canvas, resources, paint, text, cx, y + lineSize * 0.34, lineSize, instance.palette.accent, state.opacity);
+    if (instance.text_appearance?.shadow_enabled !== false) drawCenteredText(CanvasKit, canvas, resources, paint, text, cx + lineSize * 0.055, y + lineSize * 0.395, lineSize, instance.palette.primary, state.opacity * 0.94, textAppearance(instance));
+    drawCenteredText(CanvasKit, canvas, resources, paint, text, cx, y + lineSize * 0.34, lineSize, instance.palette.accent, state.opacity, textAppearance(instance));
   });
 }
 
@@ -357,7 +378,7 @@ function drawOfferSwap(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resourc
   canvas.scale(swapScale, swapScale);
   withFill(CanvasKit, paint, alternate ? instance.palette.primary : instance.palette.accent, state.opacity);
   canvas.drawRRect(CanvasKit.RRectXY(CanvasKit.XYWHRect(-boxWidth / 2, -unit * 0.1, boxWidth, unit * 0.2), unit * 0.035, unit * 0.035), paint);
-  drawCenteredText(CanvasKit, canvas, resources, paint, text, 0, textSize * 0.36, textSize, alternate ? instance.palette.accent : instance.palette.primary, state.opacity);
+  drawCenteredText(CanvasKit, canvas, resources, paint, text, 0, textSize * 0.36, textSize, alternate ? instance.palette.accent : instance.palette.primary, state.opacity, textAppearance(instance));
   canvas.restore();
 }
 
@@ -436,7 +457,7 @@ function drawFilmStrip(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resourc
   canvas.drawRect(CanvasKit.XYWHRect(cx - stripW / 2 - unit * 0.012, stripTop + stripH - unit * 0.008, stripW + unit * 0.024, unit * 0.008), paint);
 }
 
-function drawArcText(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, text: string, cx: number, cy: number, radius: number, startDegrees: number, size: number, color: string, alpha: number): void {
+function drawArcText(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, text: string, cx: number, cy: number, radius: number, startDegrees: number, size: number, color: string, alpha: number, appearance?: MotionTextAppearance): void {
   const chars = Array.from(text.toUpperCase());
   const step = Math.min(15, 150 / Math.max(1, chars.length - 1));
   const font = resources.font(size);
@@ -447,6 +468,12 @@ function drawArcText(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources
     canvas.translate(cx, cy);
     canvas.rotate(angle, 0, 0);
     canvas.translate(0, -radius);
+    if ((appearance?.stroke_width ?? 0) > 0) {
+      paint.setStyle(CanvasKit.PaintStyle.Stroke);
+      paint.setStrokeWidth(appearance?.stroke_width ?? 0);
+      canvas.drawText(char, -size * 0.29, size * 0.32, paint, font);
+      withFill(CanvasKit, paint, color, alpha);
+    }
     canvas.drawText(char, -size * 0.29, size * 0.32, paint, font);
     canvas.restore();
   });
@@ -472,8 +499,8 @@ function drawDonutText(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resourc
     unit * 0.045,
     Math.PI * radius * 1.4,
   );
-  drawArcText(CanvasKit, canvas, resources, paint, instance.params.left_text, cx, cy, radius * 1.23, leftPhase - 90, arcSize, instance.palette.primary, state.opacity);
-  drawArcText(CanvasKit, canvas, resources, paint, instance.params.right_text, cx, cy, radius * 1.23, rightPhase + 90, arcSize, instance.palette.accent, state.opacity);
+  drawArcText(CanvasKit, canvas, resources, paint, instance.params.left_text, cx, cy, radius * 1.23, leftPhase - 90, arcSize, instance.palette.primary, state.opacity, textAppearance(instance));
+  drawArcText(CanvasKit, canvas, resources, paint, instance.params.right_text, cx, cy, radius * 1.23, rightPhase + 90, arcSize, instance.palette.accent, state.opacity, textAppearance(instance));
 }
 
 type V2Preset<TPreset extends CreatorBlockInstanceV2["preset_id"]> = Extract<
@@ -501,8 +528,8 @@ function drawKineticWordV2(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, res
   canvas.rotate(state.rotation * 1.4, 0, 0);
   canvas.skew((1 - state.enter) * 0.12 - state.exit * 0.12 * instance.intensity, 0);
   canvas.scale(entranceScale * state.scale, entranceScale * state.scale);
-  drawCenteredText(CanvasKit, canvas, resources, paint, text, size * 0.045, size * 0.39, size, instance.palette.primary, state.opacity * 0.9);
-  drawCenteredText(CanvasKit, canvas, resources, paint, text, 0, size * 0.34, size, instance.palette.accent, state.opacity);
+  if (instance.text_appearance?.shadow_enabled !== false) drawCenteredText(CanvasKit, canvas, resources, paint, text, size * 0.045, size * 0.39, size, instance.palette.primary, state.opacity * 0.9, textAppearance(instance));
+  drawCenteredText(CanvasKit, canvas, resources, paint, text, 0, size * 0.34, size, instance.palette.accent, state.opacity, textAppearance(instance));
   canvas.restore();
 }
 
@@ -526,7 +553,7 @@ function drawTagStackV2(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resour
     const alpha = state.opacity * rowEnter;
     withFill(CanvasKit, paint, index % 2 ? instance.palette.primary : instance.palette.accent, alpha);
     canvas.drawRRect(CanvasKit.RRectXY(CanvasKit.XYWHRect(cx - w / 2, top, w, rowHeight), rowHeight / 2, rowHeight / 2), paint);
-    drawCenteredText(CanvasKit, canvas, resources, paint, label.toUpperCase(), cx, top + rowHeight / 2 + size * 0.34, size, index % 2 ? instance.palette.accent : instance.palette.primary, alpha);
+    drawCenteredText(CanvasKit, canvas, resources, paint, label.toUpperCase(), cx, top + rowHeight / 2 + size * 0.34, size, index % 2 ? instance.palette.accent : instance.palette.primary, alpha, textAppearance(instance));
   });
 }
 
@@ -538,20 +565,20 @@ function drawFlowFieldV2(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resou
   const baseline = cy + size * 0.28;
   const glyphTop = baseline - size * 0.82;
   const glyphHeight = size * 1.08;
-  drawCenteredText(CanvasKit, canvas, resources, paint, headline, cx, baseline, size, instance.palette.primary, state.opacity * 0.32);
+  if (instance.text_appearance?.shadow_enabled !== false) drawCenteredText(CanvasKit, canvas, resources, paint, headline, cx, baseline, size, instance.palette.primary, state.opacity * 0.32, textAppearance(instance));
   for (let slice = 0; slice < 8; slice += 1) {
     const offset = Math.sin(state.choreography * Math.PI * 2 + slice * 0.8)
       * unit * 0.018 * instance.intensity * state.enter;
     canvas.save();
     const top = glyphTop + slice * glyphHeight / 8;
     canvas.clipRect(CanvasKit.XYWHRect(0, top, width, glyphHeight / 8 + 1), CanvasKit.ClipOp?.Intersect, true);
-    drawCenteredText(CanvasKit, canvas, resources, paint, headline, cx + offset, baseline, size, instance.palette.accent, state.opacity);
+    drawCenteredText(CanvasKit, canvas, resources, paint, headline, cx + offset, baseline, size, instance.palette.accent, state.opacity, textAppearance(instance));
     canvas.restore();
   }
   if (instance.params.kicker) {
     const kicker = instance.params.kicker.toUpperCase();
     const kickerSize = fittedTextSize(resources, kicker, size * 0.28, width - unit * 0.2);
-    drawCenteredText(CanvasKit, canvas, resources, paint, kicker, cx, baseline + size * 0.92, kickerSize, instance.palette.primary, state.opacity * 0.9);
+    drawCenteredText(CanvasKit, canvas, resources, paint, kicker, cx, baseline + size * 0.92, kickerSize, instance.palette.primary, state.opacity * 0.9, textAppearance(instance));
   }
 }
 
@@ -570,8 +597,8 @@ function drawCloudBreakV2(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, reso
   const lineSize = fittedTextSize(resources, longest, unit * Math.min(0.08, 0.27 / instance.params.lines.length), width - unit * 0.16);
   instance.params.lines.forEach((line, index) => {
     const y = cy + (index - (instance.params.lines.length - 1) / 2) * lineSize * 1.2;
-    drawCenteredText(CanvasKit, canvas, resources, paint, line.toUpperCase(), cx + lineSize * 0.045, y + lineSize * 0.39, lineSize, instance.palette.primary, state.opacity * 0.92);
-    drawCenteredText(CanvasKit, canvas, resources, paint, line.toUpperCase(), cx, y + lineSize * 0.34, lineSize, instance.palette.accent, state.opacity);
+    if (instance.text_appearance?.shadow_enabled !== false) drawCenteredText(CanvasKit, canvas, resources, paint, line.toUpperCase(), cx + lineSize * 0.045, y + lineSize * 0.39, lineSize, instance.palette.primary, state.opacity * 0.92, textAppearance(instance));
+    drawCenteredText(CanvasKit, canvas, resources, paint, line.toUpperCase(), cx, y + lineSize * 0.34, lineSize, instance.palette.accent, state.opacity, textAppearance(instance));
   });
 }
 
@@ -598,7 +625,7 @@ function drawOfferSwapV2(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resou
   canvas.scale(swapScale, swapScale);
   withFill(CanvasKit, paint, alternate ? instance.palette.primary : instance.palette.accent, state.opacity);
   canvas.drawRRect(CanvasKit.RRectXY(CanvasKit.XYWHRect(-boxWidth / 2, -unit * 0.1, boxWidth, unit * 0.2), unit * 0.035, unit * 0.035), paint);
-  drawCenteredText(CanvasKit, canvas, resources, paint, text, 0, size * 0.36, size, alternate ? instance.palette.accent : instance.palette.primary, state.opacity);
+  drawCenteredText(CanvasKit, canvas, resources, paint, text, 0, size * 0.36, size, alternate ? instance.palette.accent : instance.palette.primary, state.opacity, textAppearance(instance));
   canvas.restore();
 }
 
@@ -675,11 +702,11 @@ function drawDonutTextV2(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resou
   canvas.drawCircle(cx, cy, radius, paint);
   const phase = Math.sin(state.choreography * Math.PI * 2) * (10 + instance.intensity * 16);
   const arcSize = fittedTextSize(resources, Array.from(instance.params.left_text).length >= Array.from(instance.params.right_text).length ? instance.params.left_text : instance.params.right_text, unit * 0.045, Math.PI * radius * 1.4);
-  drawArcText(CanvasKit, canvas, resources, paint, instance.params.left_text, cx, cy, radius * 1.23, phase - 90, arcSize, instance.palette.primary, state.opacity);
-  drawArcText(CanvasKit, canvas, resources, paint, instance.params.right_text, cx, cy, radius * 1.23, -phase * 0.72 + 90, arcSize, instance.palette.accent, state.opacity);
+  drawArcText(CanvasKit, canvas, resources, paint, instance.params.left_text, cx, cy, radius * 1.23, phase - 90, arcSize, instance.palette.primary, state.opacity, textAppearance(instance));
+  drawArcText(CanvasKit, canvas, resources, paint, instance.params.right_text, cx, cy, radius * 1.23, -phase * 0.72 + 90, arcSize, instance.palette.accent, state.opacity, textAppearance(instance));
 }
 
-function drawMaskedRun(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, text: string, cx: number, baseline: number, size: number, color: string, alpha: number, reveal: number, order: EvolvingOrder): void {
+function drawMaskedRun(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resources: MotionResources, paint: MotionPaint, text: string, cx: number, baseline: number, size: number, color: string, alpha: number, reveal: number, order: EvolvingOrder, appearance?: MotionTextAppearance): void {
   if (reveal <= 0 || alpha <= 0) return;
   const width = textWidth(resources, text, size);
   const left = cx - width / 2;
@@ -687,7 +714,7 @@ function drawMaskedRun(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, resourc
   const clipLeft = order === "reverse" ? left + width - shown : order === "center-out" ? cx - shown / 2 : left;
   canvas.save();
   canvas.clipRect(CanvasKit.XYWHRect(clipLeft - 1, baseline - size, shown + 2, size * 1.3), CanvasKit.ClipOp?.Intersect, true);
-  drawCenteredText(CanvasKit, canvas, resources, paint, text, cx, baseline, size, color, alpha);
+  drawCenteredText(CanvasKit, canvas, resources, paint, text, cx, baseline, size, color, alpha, appearance);
   canvas.restore();
 }
 
@@ -722,8 +749,8 @@ function drawEvolvingTypeV2(CanvasKit: MotionCanvasKit, canvas: MotionCanvas, re
   const headline = instance.params.headline.toUpperCase();
   const headlineSize = fittedTextSize(resources, headline, unit * 0.092 * instance.params.typography_scale, width - unit * 0.18);
   const subtitleSize = fittedTextSize(resources, instance.params.subtitle, headlineSize * 0.3, width - unit * 0.2);
-  drawMaskedRun(CanvasKit, canvas, resources, paint, headline, cx, cy - unit * 0.19, headlineSize, instance.palette.accent, state.timeline.opacity, state.headlineReveal, instance.params.order);
-  drawMaskedRun(CanvasKit, canvas, resources, paint, instance.params.subtitle, cx, cy - unit * 0.12, subtitleSize, instance.palette.accent, state.timeline.opacity * 0.82, state.subtitleReveal, instance.params.order);
+  drawMaskedRun(CanvasKit, canvas, resources, paint, headline, cx, cy - unit * 0.19, headlineSize, instance.palette.accent, state.timeline.opacity, state.headlineReveal, instance.params.order, textAppearance(instance));
+  drawMaskedRun(CanvasKit, canvas, resources, paint, instance.params.subtitle, cx, cy - unit * 0.12, subtitleSize, instance.palette.accent, state.timeline.opacity * 0.82, state.subtitleReveal, instance.params.order, textAppearance(instance));
   const radius = unit * (instance.params.layout === "compact" ? 0.07 : 0.06);
   state.icons.forEach((icon, index) => {
     if (icon.scale <= 0) return;

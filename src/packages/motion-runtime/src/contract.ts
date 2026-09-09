@@ -35,8 +35,10 @@ export const CREATOR_MOTION_RUNTIME_HASH_V3 =
   "motion-v3:ck0.40.0:b2556106:2abfa191:creator-blocks-v2";
 export const CREATOR_MOTION_RUNTIME_HASH_V4 =
   "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3";
-export const MOTION_RUNTIME_HASH =
+export const CREATOR_MOTION_RUNTIME_HASH_V5 =
   "motion-v5:ck0.40.0:b2556106:2abfa191:creator-blocks-v4-capacity";
+export const MOTION_RUNTIME_HASH =
+  "motion-v6:ck0.40.0:b2556106:2abfa191:creator-blocks-v5-text-appearance";
 
 /** Compatibility aliases retained for clients compiled against prior runtimes. */
 export const LEGACY_MOTION_RUNTIME_HASH = ROUTE_TRACE_RUNTIME_HASH_V1;
@@ -45,6 +47,7 @@ export const COMPATIBLE_CREATOR_MOTION_RUNTIME_HASHES = Object.freeze([
   CREATOR_MOTION_RUNTIME_HASH_V2,
   CREATOR_MOTION_RUNTIME_HASH_V3,
   CREATOR_MOTION_RUNTIME_HASH_V4,
+  CREATOR_MOTION_RUNTIME_HASH_V5,
   MOTION_RUNTIME_HASH,
 ] as const);
 
@@ -104,6 +107,13 @@ interface MotionInstanceBase<
   palette: MotionPalette;
   /** Kept at the instance root for v1 wire compatibility. */
   intensity: number;
+  /** Optional text-only appearance overrides. Omitted preserves legacy output. */
+  text_appearance?: MotionTextAppearance;
+}
+
+export interface MotionTextAppearance {
+  stroke_width?: number;
+  shadow_enabled?: boolean;
 }
 
 export type RouteTraceInstanceV1 = MotionInstanceBase<"route_trace", 1>;
@@ -543,7 +553,7 @@ export function validateMotionInstances(value: unknown, durationFrames?: number)
       ? ["id", "preset_id", "preset_version", "start_frame", "end_frame_exclusive", "palette", "intensity"]
       : [
           "id", "preset_id", "preset_version", "start_frame", "end_frame_exclusive",
-          "palette", "intensity", "params", ...(version === 2 ? ["motion"] : []),
+          "palette", "intensity", "text_appearance", "params", ...(version === 2 ? ["motion"] : []),
         ];
     rejectUnknown(raw, allowed, at, errors);
     if (typeof raw.id !== "string" || !ID_RE.test(raw.id)) {
@@ -594,6 +604,20 @@ export function validateMotionInstances(value: unknown, durationFrames?: number)
       }
       if (typeof raw.palette.accent !== "string" || !COLOR_RE.test(raw.palette.accent)) {
         errors.push(`${at}.palette.accent must be #RRGGBB`);
+      }
+    }
+    if (raw.text_appearance !== undefined) {
+      const appearance = raw.text_appearance;
+      if (!isRecord(appearance)) errors.push(`${at}.text_appearance must be an object`);
+      else {
+        rejectUnknown(appearance, ["stroke_width", "shadow_enabled"], `${at}.text_appearance`, errors);
+        if (appearance.stroke_width !== undefined &&
+          (typeof appearance.stroke_width !== "number" || !Number.isFinite(appearance.stroke_width) || appearance.stroke_width < 0 || appearance.stroke_width > 20)) {
+          errors.push(`${at}.text_appearance.stroke_width must be a finite number between 0 and 20`);
+        }
+        if (appearance.shadow_enabled !== undefined && typeof appearance.shadow_enabled !== "boolean") {
+          errors.push(`${at}.text_appearance.shadow_enabled must be a boolean`);
+        }
       }
     }
     if (entry && creatorVersion) {

@@ -722,9 +722,9 @@ export default function EditorCanvas({
     const sizePx =
       bar?.cue_size_px ?? bar?.size_px ?? variant.caption_size_px ?? DEFAULT_CAPTION_SIZE_PX;
     const strokeWidth =
-      bar?.stroke_width ?? variant.caption_stroke_width ?? DEFAULT_CAPTION_STROKE_WIDTH;
+      bar?.cue_stroke_width ?? bar?.stroke_width ?? variant.caption_stroke_width ?? DEFAULT_CAPTION_STROKE_WIDTH;
     const scaledStroke = stageSize.h > 0 ? (strokeWidth / canvas.h) * stageSize.h : 0;
-    const shadowEnabled = bar?.shadow_enabled ?? variant.caption_shadow_enabled ?? true;
+    const shadowEnabled = bar?.cue_shadow_enabled ?? bar?.shadow_enabled ?? variant.caption_shadow_enabled ?? true;
     return {
       bottomPct:
         typeof bar?.y_frac === "number"
@@ -1413,7 +1413,13 @@ export default function EditorCanvas({
       role="region"
       aria-label={`Video canvas, ${outputFormatLabel}`}
       data-look-preview={lookPreset}
-      className={`relative h-full w-full min-h-0 min-w-0 overflow-auto bg-[#ffffff] ${
+      // isolate (KRI-8): EDITOR_STAGE_Z (editor-media-overlays.ts) is a
+      // canvas-local z-scale that runs 0-90. Without a stacking context here,
+      // those values compete directly with EditorShell's chrome z-indexes
+      // (drawer, floating "Add text" CTA, etc.) in the shell's own stacking
+      // context, so preview text can paint — and hit-test — above editor
+      // controls instead of only ever inside this clipped canvas.
+      className={`relative isolate h-full w-full min-h-0 min-w-0 overflow-auto bg-[#ffffff] ${
         tool === "pan" && zoom > 1 ? "cursor-grab active:cursor-grabbing" : ""
       }`}
       onPointerDown={onViewportPointerDown}

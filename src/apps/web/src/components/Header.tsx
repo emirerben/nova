@@ -6,7 +6,7 @@ import { signIn, signOut, useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 
 import { BRAND_NAME } from "@/lib/brand";
-import KriaMark from "@/components/KriaMark";
+import KriaWordmark from "@/components/KriaWordmark";
 import { Button } from "@/components/ui/button";
 import { CREATOR_MEMORY_ENABLED } from "@/lib/memory-api";
 import {
@@ -90,12 +90,9 @@ export default function Header() {
         <Link
           href="/"
           aria-label={`${BRAND_NAME} — home`}
-          className={`flex items-center gap-2 font-semibold tracking-tight ${isLight ? "text-[#0c0c0e]" : "text-white"}`}
+          className={`flex items-center ${isLight ? "text-[#9BCAFF]" : "text-[#FFF0A6]"}`}
         >
-          <KriaMark
-            className={`h-[22px] w-auto ${isLight ? "text-lime-600" : "text-white"}`}
-          />
-          {BRAND_NAME}
+          <KriaWordmark className="h-7 w-[76px] text-[24px]" />
         </Link>
         <nav className="flex items-center gap-2 sm:gap-4">
           <AuthControl isLight={isLight} isLanding={isLanding} />
@@ -164,11 +161,11 @@ function AuthControl({
           }`}
         >
           By signing in, you agree to Kria&apos;s{" "}
-          <Link href="/terms" className="underline underline-offset-2 hover:text-lime-700">
+          <Link href="/terms" className="underline underline-offset-2 hover:text-[#30352C]">
             Terms of Service
           </Link>{" "}
           and{" "}
-          <Link href="/privacy" className="underline underline-offset-2 hover:text-lime-700">
+          <Link href="/privacy" className="underline underline-offset-2 hover:text-[#30352C]">
             Privacy Policy
           </Link>
           .
@@ -190,7 +187,7 @@ function AuthControl({
           aria-label="Account menu"
           className={`h-8 w-8 overflow-hidden rounded-full border p-0 ${
             isLight
-              ? "border-zinc-300 bg-lime-600 text-white hover:border-zinc-400 hover:bg-lime-600"
+              ? "border-[#30352C] bg-[#FFF0A6] text-[#30352C] hover:border-[#30352C] hover:bg-[#FFF0A6]"
               : "border-zinc-700 bg-zinc-800 text-zinc-200 hover:border-zinc-400 hover:bg-zinc-800"
           }`}
         >

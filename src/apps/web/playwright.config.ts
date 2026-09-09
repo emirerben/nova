@@ -53,7 +53,7 @@ export default defineConfig({
     },
     {
       name: "desktop-editor",
-      testMatch: /(editor-timeline|guided-story-editor|text-motion|motion-preview|editor-canvas-geometry)\.spec\.ts/,
+      testMatch: /(editor-timeline|guided-story-editor|text-motion|motion-preview|editor-canvas-geometry|editor-canvas-stacking)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1440, height: 900 },

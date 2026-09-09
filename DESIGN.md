@@ -11,8 +11,8 @@ Product language is governed by [`docs/UX_COPY.md`](docs/UX_COPY.md); this file 
 
 | Surface | Canvas | Accent | Type | Mood |
 |---|---|---|---|---|
-| Landing (`/`, `/auto-story`) | white `#ffffff` | Paper lime `#d7ff90` | Inter edit-story statements | light editorial |
-| Light product (`/plan` chat workspace, `/plan/items/`) | white `#ffffff` / ink / lime | lime-700 | Fraunces headings | chat-first editorial |
+| Landing (`/`, `/auto-story`) | white `#ffffff` | Butter `#fff0a6` + Sky `#9bcaff` | Inter edit-story statements | sunlit editorial |
+| Light product (`/plan` chat workspace, `/plan/items/`) | white `#ffffff` / warm ink | Sky, Butter, Sage; Lilac/Plum for text tools | Fraunces headings + Inter UI | chat-first editorial |
 | Dark render system (`/template-jobs`) | `bg-black` | amber-400/300 | Fraunces headings | dark theater |
 | Admin (`/admin/*`) | `bg-black` | none (white CTAs) | default sans | plain utility |
 
@@ -22,26 +22,27 @@ Product language is governed by [`docs/UX_COPY.md`](docs/UX_COPY.md); this file 
 
 ## §2 Light editorial system (landing + /plan flow)
 
-Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/components/KriaEditStory.module.css`.
+Token source: `src/apps/web/src/app/globals.css`, `src/apps/web/tailwind.config.ts`, and `src/apps/web/src/components/KriaEditStory.module.css`. The linked Paper brand file is the visual source for the palette and wordmark; `src/apps/web/src/components/KriaWordmark.tsx` is the web implementation.
 
-- **Canvas:** `bg-[#ffffff]` (`--cream`, now pure white — 2026-08-21 founder call); cards separate via zinc borders + shadows.
-- **Ink scale:** `#0c0c0e` primary (`--ink`), `#3f3f46` secondary, `#71717a` muted, `#a1a1aa` faint.
-- **Landing story accent:** `#d7ff90` (`--story-lime`) is the light Paper-derived lime used only for explanatory feature chips.
-- **Lime accent roles (D16 contrast rule):**
-  - `text-lime-700` — eyebrows, small text labels, emphasis under ~18px
-  - `text-lime-600` — large display ems (h1/h2/h3 level), non-text fills, bars, dots
-  - `bg-lime-600 text-white` — solid cells
-  - `border-lime-200 bg-lime-50 text-lime-800` — pills / soft cells
-  - `border-lime-600` — answer left-border on editorial interview surfaces
-  - `outline-lime-500` — selection
+- **Canvas:** `bg-[#ffffff]` (`--cream`, pure white); cards separate via zinc borders + shadows.
+- **Warm ink scale:** `#30352c` primary (`--ink`), `#526071` secondary, `#677587` control/muted, `#a1a1aa` faint.
+- **Sunlit palette:** Sky `#9bcaff` is the brand/selection accent; Butter `#fff0a6` is the primary-action fill; Sage `#dde6cb` carries audio/direction; Lilac `#e7ddf5` and Plum `#332847` are reserved for text-editing tools; White `#ffffff` is the canvas.
+- **Landing story accent:** `--story-lime` is retained as a compatibility name for Butter `#fff0a6`; new code should use the semantic brand names above.
+- **Legacy `lime-*` compatibility roles:** existing call sites retain their
+  class names while `tailwind.config.ts` maps them to Sunlit values: `lime-700`
+  is warm ink for small text, `lime-600` is warm ink for readable text and
+  solid cells, `lime-500` is Sky for selection and display accents,
+  `lime-400`/`lime-300` are Butter actions,
+  `lime-200`/`lime-50` are Lilac/soft surfaces, and `lime-800`/`lime-900` are
+  Plum text/companion surfaces. New code should use semantic names directly.
 - **Cards:** `rounded-2xl border border-zinc-200 shadow-sm`, fill `bg-white` or `bg-[#ffffff]`.
-- **Notice line (light surfaces):** `border-zinc-200 bg-white text-[#3f3f46]` quiet informational line — transient warnings/conflicts (e.g. "another variant is rendering") stay zinc; NO amber on light surfaces (amber is the dark-render-system accent, §9).
+- **Notice line (light surfaces):** `border-zinc-200 bg-white text-[#526071]` quiet informational line — transient warnings/conflicts stay zinc; semantic warning/error colors are reserved for state labels.
 - **Landing story screen:** centered 16:9 frame with a 1px ink border, 44px desktop / 30px mobile radius, and transparent fill until the first shot arrives. The screen contains only the active video; captions, visual effects, and placed media must be reflected inside the rendered footage, never as separate DOM cards layered above it. Surrounding source media has no border.
 - **Type scale:**
   - Landing story line: Inter medium, `clamp(54px,6.53vw,94px)` desktop; the long middle line uses `clamp(26px,7.6vw,38px)` on mobile.
   - Feature chips: Inter 15/18 desktop and 11/16 mobile, weight 700.
   - Ordinary product headings remain Fraunces; see the landing exception in §5.
-- **CTA (InkButton):** ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
+- **CTA (InkButton):** the shared primary action uses the Sunlit Butter fill with warm-ink text; the landing story keeps its single CTA visually anchored in the warm-ink family for contrast against footage.
   **Single-primary-CTA rule on landing:** one CTA to `/plan` in its original centered position near the bottom of the edit story — never duplicate it in the header or below the story.
 - **Primary-action viewport budget:** on any flow step whose purpose is a single next action, keep that action visible in the first viewport at 1280×720 and 375×667, using realistic maximum AI-generated content length.
 - **Light-surface pinned action bar:** when adaptive pinning is needed on `#ffffff`, use `sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#ffffff] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0` (bleeds to the pane edge on mobile, aligns to the text column on desktop). The bar's `border-t` is its only divider — never pair it with a `border-t` on the section that follows.
@@ -87,7 +88,7 @@ Token source: `src/apps/web/src/app/template-jobs/` on origin/main (the `/templa
   - Serif accent moments: `text-lg` / `text-xl` (incl. italic `text-amber-300` in `PersonaEditor`); editorial-interview pull-quotes use `text-sm text-zinc-400 line-clamp-3` (zinc, not amber)
   - Body: default sans; secondary: `text-sm text-zinc-400`
 - **Radius roles:** `rounded-full` = buttons/pills; `rounded-lg` = inputs/surfaces.
-- **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); landing routes (`/`, `/auto-story`) get a static, borderless white header with no anonymous auth action. Their single “Create my first edit” CTA stays centered near the bottom of the story, with Terms and Privacy beneath it rather than in the header. The light product header (all `isLight` routes) has no border and no nav link — logo left, 32px lime avatar right; the account menu (shadcn `DropdownMenu`) is name · My videos · Sign out. `/admin` hides Header entirely.
+- **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); landing routes (`/`, `/auto-story`) get a static, borderless white header with no anonymous auth action. Their single “Create my first edit” CTA stays centered near the bottom of the story, with Terms and Privacy beneath it rather than in the header. The light product header (all `isLight` routes) has no border and no nav link — Sky DynaPuff wordmark left, 32px Butter avatar right; the account menu (shadcn `DropdownMenu`) is name · My videos · Sign out. `/admin` hides Header entirely.
 - **Chat / interview surfaces:** editorial interview, not chat app — left-aligned Fraunces questions, one prior-answer pull-quote (amber left-border on dark surfaces; lime left-border on light surfaces), NO message bubbles, NO bot avatar.
 
 ---
@@ -102,8 +103,9 @@ Dark + zinc like product but: no amber (CTAs `bg-white text-black`), errors `tex
 
 - `font-display` → `"Fraunces", Georgia, serif` (defined in `tailwind.config.ts`). Headings, display moments, and serif accents only. Fraunces is an optical-size variable font — load with `opsz,wght@9..144` to get smooth weight/size interpolation.
 - Body / labels: `"Inter", ui-sans-serif, system-ui` (explicit `font-sans` override in `tailwind.config.ts`). Body text is utility; Inter's neutrality pairs cleanly with Fraunces's personality.
+- **Wordmark:** the approved DynaPuff `kria` treatment is implemented as `KriaWordmark`; keep its individual letter rhythm and use Sky on white as the primary signature. Warm ink is the small-size fallback and Butter is the reversed-on-ink option.
 - **Landing edit-story exception:** the three over-video statements use oversized Inter at medium weight. They are moving image-composition elements, not section headings: each occupies the same centered slot and uses `mix-blend-mode: difference` as footage passes behind it. All ordinary landing and product headings remain Fraunces.
-- Fonts load via Google Fonts `@import` in `globals.css` (not `next/font`). Current import: `family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600`.
+- Fonts load via Google Fonts `@import` in `globals.css` (not `next/font`). Current import: `DynaPuff:wght@700`, Fraunces optical-size weights 400/500/600, Inter weights 400/500/600/700, and Geist Mono for code.
 - **Taste rule:** editorial serifs at restrained sizes. Oversized sans display type reads as slop; `system-ui` headlines are the "gave up" signal.
 
 ---
@@ -238,7 +240,7 @@ Celebrate then recede.
 
 ## §9 Anti-slop rules (Kria-specific)
 
-- **One accent per surface:** lime = entire user-facing product (landing + all light editorial surfaces). Amber = dark render system (`/template-jobs/*`) only. Never mixed on the same surface; never a third accent.
+- **Color has a job:** Sky = brand/selection, Butter = primary actions, Sage = audio/direction, Lilac + Plum = text-editing tools, and semantic green/amber/red/blue = status. Amber remains the dark render-system accent (`/template-jobs/*`) where it is already part of the theater language; never introduce an unrelated accent.
 - No candy gradients, no rainbow palettes, no purple/violet defaults.
 - No 3-column icon-in-circle feature grids; no centered-everything; no decorative blobs/wavy dividers; no emoji as design elements.
 - **Serif display (Fraunces) is the brand voice;** system-ui display type is the "gave up" signal.
@@ -378,16 +380,13 @@ Quick right/wrong pairs for common review questions.
 
 ## §15 Component library (shadcn/ui)
 
-Shipped v0.47.0.0 (Lane 0). **Re-skinned to stock shadcn/ui `new-york`
+Shipped v0.47.0.0 (Lane 0). **Re-skinned to Kria's Sunlit tokens on the
+existing shadcn/ui `new-york` structure** (2026-09-09):
 (2026-08-22, owner decision):** the component-chrome primitives now render
-exactly as `ui.shadcn.com` ships them — Geist type (§5's Fraunces exception
-no longer applies to primitives), zinc neutral tokens, `rounded-md` controls,
-`ring`-based focus. This **supersedes**, for component chrome only, §2's
-lime-accent rules, §5's Fraunces-headings rule, and §9/D10's "no red walls"
-rule (`--destructive` is stock red again). Those sections still describe the
-landing page and the editorial/interview surfaces around the primitives —
-only the primitives themselves went stock. `/admin` is deferred (keeps its
-dark variant; adopts the primitives later).
+with Inter utility copy, Fraunces editorial display, Butter/Sky actions, and
+warm-ink text. This keeps the component library consistent with the linked
+Paper brand file while the dark render/admin variant remains a separate
+neutral theater layer.
 
 ### Where primitives live
 

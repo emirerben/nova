@@ -10,6 +10,30 @@ All notable changes to this project will be documented in this file.
 ### Internal
 - The new "slides" render archetype reuses the existing plan-item pipeline end to end: one variant carries a stitched preview alongside the ordered slide list and export bundle, so every existing reader (player, library, TikTok-publish exclusion) keeps working unbranched. Every other editor lane (captions, sound effects, overlays, timeline) is explicitly closed for this archetype at the same choke point every one of those routes already shares. Ships default on, gated by `SLIDE_POSTS_ENABLED` / `NEXT_PUBLIC_SLIDE_POSTS_ENABLED`.
 
+## [0.73.8.0] — 2026-09-09
+
+### Fixed
+- **Kria can remove outlines and shadows from all editable text in one request.** Titles, captions, editable lyrics, and Creator Blocks share complete scope checks, including drafts with more than twelve targets. Explicit subsets stay scoped, stale or unsupported targets reject the whole request, and one Undo restores every affected lane. Caption preview, Save, and rendered output preserve zero outlines and disabled shadows.
+
+### Internal
+- Browser Creator Block performance checks now use the same machine-relative calibration as the renderer test, with a doubled-workload control that confirms slowdown detection.
+
+
+## [0.73.7.0] — 2026-09-09
+
+### Changed
+- **Kria's web surfaces now use the Paper Sunlit brand system.** Landing and light-product routes share the approved Sky, Butter, Sage, Lilac, Plum, warm-ink, DynaPuff wordmark, Fraunces, and Inter treatment, with refreshed browser chrome and component tokens while dark render and admin surfaces remain contained in their neutral theater style.
+
+## [0.73.6.1] — 2026-09-09
+
+### Internal
+- Parallelize the complete web CI suite across five balanced groups, preserving fresh interaction-test processes and a stable aggregate check. Add coverage partition guards and per-suite timing artifacts.
+
+## [0.73.6.0] — 2026-09-09
+
+### Fixed
+- **Preview text no longer covers the editor's own controls.** Text added to a video preview could paint over the Text panel and its "Add text" button, including making the button unclickable while a layer was selected. The preview now stays behind editor chrome in every layout.
+
 ## [0.73.4.0] — 2026-09-09
 
 ### Fixed
