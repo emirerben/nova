@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.1.0] - 2026-09-09
+
+### Changed
+- **Creators can give the editor copilot longer, multi-part editing instructions.** Requests now support up to 2,000 characters and can return up to 48 coordinated edits, making it practical to update a full set of text and timeline changes in one turn.
+
 ## [0.75.0.0] - 2026-09-09
 
 ### Added
