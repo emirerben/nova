@@ -60,6 +60,16 @@ web job time; dependency installation and caching are not the bottleneck.
 ChatCreationWorkspace alone took 302 seconds. The planned interaction groups
 sum to roughly 316, 287, 270 and 260 seconds before setup overhead.
 
+## Local validation
+
+All five groups passed on macOS: 303 suites and 3734 tests, matching the baseline.
+Interaction groups selected 2/3/4/4 suites (100/103/68/27 tests); the remaining
+job selected 290 suites (3436 tests). These local runtimes are not used as hosted
+performance evidence. Five runner guard tests cover exact partition membership,
+new/colocated test inclusion, missing/duplicate discovery, and actual CLI exit
+codes for successful, failed, cancelled and skipped dependencies. Workflow YAML
+parsing and the repository pre-PR checks also passed.
+
 ## Hosted validation
 
 Target: median web feedback below eight minutes across at least three successful
