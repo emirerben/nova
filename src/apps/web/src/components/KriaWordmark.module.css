@@ -1,0 +1,36 @@
+.wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  color: currentColor;
+  font-family: "DynaPuff", system-ui, sans-serif;
+  font-size: 1em;
+  font-weight: 700;
+  letter-spacing: -0.06em;
+  line-height: 0.9;
+  white-space: nowrap;
+}
+
+.wordmark > span {
+  display: inline-block;
+  transform-origin: 50% 75%;
+}
+
+.k {
+  transform: rotate(-8deg);
+}
+
+.r {
+  margin-left: -0.03em;
+  transform: rotate(4deg);
+}
+
+.i {
+  margin-left: -0.01em;
+  transform: rotate(-5deg);
+}
+
+.a {
+  margin-left: 0.01em;
+  transform: rotate(7deg);
+}

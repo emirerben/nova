@@ -18,9 +18,9 @@ export const metadata: Metadata = {
     siteName: BRAND_NAME,
   },
   icons: {
-    // Lime tile for light browser chrome, white tile + lime fan for dark.
+    // Sky tile for light browser chrome, white tile + Sky fan for dark.
     // Browsers without media support on <link rel="icon"> fall back to the last
-    // matching entry; the plain lime tile is listed first as the default.
+    // matching entry; the plain Sky tile is listed first as the default.
     icon: [
       { url: "/favicon.svg", type: "image/svg+xml" },
       {
@@ -40,7 +40,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#ffffff",
+  themeColor: "#9BCAFF",
 };
 
 export default function RootLayout({
@@ -50,7 +50,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-black text-white">
+      <body className="bg-white text-[#30352C]">
         <Providers>
           <Header />
           {children}
