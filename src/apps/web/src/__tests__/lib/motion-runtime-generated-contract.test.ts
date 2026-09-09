@@ -8,6 +8,7 @@ import {
   CREATOR_MOTION_RUNTIME_HASH_V2,
   CREATOR_MOTION_RUNTIME_HASH_V3,
   CREATOR_MOTION_RUNTIME_HASH_V4,
+  CREATOR_MOTION_RUNTIME_HASH_V5,
   MOTION_MAX_WEIGHTED_ACTIVE_FRAMES,
   MOTION_MAX_CONCURRENT_COMPLEXITY,
   MOTION_RUNTIME_HASH,
@@ -277,13 +278,14 @@ describe("generated Creator Block v2 contract", () => {
     expect(validateMotionInstances(legacy).ok).toBe(true);
   });
 
-  it("publishes the v2/v3/v4/v5 persisted compatibility set with v5 current", () => {
+  it("publishes the v2/v3/v4/v5 persisted compatibility set with v6 current", () => {
     expect(COMPATIBLE_CREATOR_MOTION_RUNTIME_HASHES).toEqual([
       CREATOR_MOTION_RUNTIME_HASH_V2,
       CREATOR_MOTION_RUNTIME_HASH_V3,
       CREATOR_MOTION_RUNTIME_HASH_V4,
+      CREATOR_MOTION_RUNTIME_HASH_V5,
       MOTION_RUNTIME_HASH,
     ]);
-    expect(MOTION_RUNTIME_HASH).toContain("motion-v5:");
+    expect(MOTION_RUNTIME_HASH).toContain("motion-v6:");
   });
 });
