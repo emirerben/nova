@@ -20,3 +20,25 @@ test('gate accepts only an explicitly successful matrix', () => {
   }
   assert.throws(() => assertSuccess({}));
 });
+
+test('similar names and colocated tests stay in the remaining suite', () => {
+  const others = [
+    'src/__tests__/components/Header.test.ts',
+    'src/__tests__/plan/ChatCreationWorkspace-extra.test.tsx',
+    'src/lib/timeline/__tests__/new.test.ts',
+  ];
+  assert.deepEqual(partition([...interactionPaths, ...others]).remaining, others);
+});
+
+test('gate CLI returns nonzero for each unsuccessful Actions result', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const script = new URL('./web-tests.mjs', import.meta.url);
+  const { fileURLToPath } = await import('node:url');
+  for (const result of ['success', 'failure', 'cancelled', 'skipped']) {
+    const child = spawnSync(process.execPath, [fileURLToPath(script), 'gate'], {
+      env: { ...process.env, WEB_TEST_NEEDS: JSON.stringify({ 'test-web-suites': { result } }) },
+      encoding: 'utf8',
+    });
+    assert.equal(child.status, result === 'success' ? 0 : 1, result);
+  }
+});
