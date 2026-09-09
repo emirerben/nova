@@ -62,6 +62,43 @@ export interface EditorTimelineScale {
   pxPerSecond: number;
 }
 
+export interface EditorTimelineDurationInput {
+  /** The clock currently driving preview playback. */
+  mode: "virtual" | "rendered";
+  /** Duration of the projected edit-space/output timeline. */
+  projectedDurationS: number;
+  /** Metadata duration of the rendered player, when it is available. */
+  renderedOutputDurationS?: number | null;
+  /** Last-resort duration (usually the source/player metadata duration). */
+  fallbackDurationS: number;
+}
+
+/**
+ * Resolve the duration shared by the ruler, playhead, and scrub bounds.
+ *
+ * Virtual preview owns an assembled output clock, so its projected timeline is
+ * authoritative. Rendered preview owns a real media clock; its metadata must
+ * win even when stale edit-space slots project to a longer timeline. Keeping
+ * this distinction explicit prevents a rendered 30s player from growing a
+ * 59s ruler while preserving the longer edit-space geometry for annotation.
+ */
+export function resolveEditorTimelineDuration({
+  mode,
+  projectedDurationS,
+  renderedOutputDurationS,
+  fallbackDurationS,
+}: EditorTimelineDurationInput): number {
+  if (mode === "rendered" && isPositiveFinite(renderedOutputDurationS)) {
+    return renderedOutputDurationS;
+  }
+  if (isPositiveFinite(projectedDurationS)) return projectedDurationS;
+  return isPositiveFinite(fallbackDurationS) ? fallbackDurationS : 0;
+}
+
+function isPositiveFinite(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 /**
  * Editor timelines freeze the fit baseline after initial load. Duration edits
  * then shorten/lengthen the track instead of reactively rescaling every bar.
