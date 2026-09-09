@@ -25,4 +25,3 @@ export function mutationFingerprint(parts: readonly unknown[]): string {
   }
   return `m1-${(left >>> 0).toString(16).padStart(8, "0")}${(right >>> 0).toString(16).padStart(8, "0")}`;
 }
-
