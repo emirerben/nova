@@ -4428,12 +4428,22 @@ def _stamp_slide_post_rendered_version(content_plan_item_id: uuid.UUID, draft_ve
     Only advances `rendered_version` when the draft is still at the version
     this render started from — a concurrent edit that bumped the version
     mid-render must NOT be marked "rendered" (its own rebuild will do that).
+
+    Deliberately UNLOCKED (no `with_for_update`): this call always runs
+    AFTER the Job row lock in `_upsert_variant_entry`/`_update_variant_entry`
+    has already been taken and released in its own prior, already-committed
+    transaction, so a PlanItem lock here would invert the canonical
+    PlanItem-before-Job row-lock order (`tests/routes/test_lock_order.py`).
+    No lock is needed for correctness either way: the write is idempotent
+    under the version-match check below — two concurrent stamps for the
+    same version both write the same value, and a version mismatch is
+    simply skipped, so a benign read-then-write race can never corrupt state.
     """
     from app.models import PlanItem  # noqa: PLC0415
     from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
 
     with _sync_session() as db:
-        item = db.get(PlanItem, content_plan_item_id, with_for_update=True)
+        item = db.get(PlanItem, content_plan_item_id)
         if item is None:
             return
         current = parse_slide_post(item.slide_post)
