@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 ### Internal
 - New kill switch `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` (default on) gates the v2 licensed-music-bed resolver to only ever return a creator-selected treatment, never invent one.
 
+## [0.75.3.0] - 2026-09-09
+
+### Changed
+- **Creators can give the editor copilot longer, multi-part editing instructions.** Requests now support up to 2,000 characters and can return up to 48 coordinated edits, making it practical to update a full set of text and timeline changes in one turn.
+
 ## [0.75.2.0] - 2026-09-09
 
 ### Changed
