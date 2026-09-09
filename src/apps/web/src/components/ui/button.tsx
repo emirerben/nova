@@ -4,11 +4,11 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/cn"
 
-// Stock shadcn/ui `new-york` button (DESIGN.md §15, owner decision
-// 2026-08-22 — replaces the hand-edited Kria pill variant). `ink`/`lime`/
-// `pill`/`icon-sm` are aliases kept byte-identical to their stock base so
-// the 8 downstream lanes consuming those variant/size names keep working
-// unchanged. Sizes are pinned by src/__tests__/ui/button.test.tsx.
+// Kria's shadcn/ui `new-york` button surface (DESIGN.md §15).
+// Legacy `ink`/`lime`/`pill`/`icon-sm` aliases remain stable for downstream
+// call sites so the downstream lanes keep working unchanged while globals.css
+// carries the Sunlit semantic palette. Sizes are pinned by
+// src/__tests__/ui/button.test.tsx.
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {

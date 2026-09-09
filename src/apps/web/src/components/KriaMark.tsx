@@ -2,10 +2,9 @@ import { useId } from "react";
 
 /**
  * Kria logo mark: three 9:16 frames fanned from a bottom pivot.
- * Gaps between frames are true negative space (SVG masks), so the mark works
- * on any background. Fill follows `currentColor` — set text color on the
- * className (e.g. text-lime-600 on light surfaces, text-white on dark).
- * Canonical asset: ~/.gstack/projects/emirerben-nova/designs/kria-logo-20260721/final/
+ * Gaps between frames are true negative space (SVG masks), so the compact mark
+ * works on any background. Fill follows `currentColor` for legacy icon-only
+ * surfaces; the full brand signature is the DynaPuff `KriaWordmark`.
  */
 export default function KriaMark({ className }: { className?: string }) {
   const id = useId();

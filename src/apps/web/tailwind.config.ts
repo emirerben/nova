@@ -10,12 +10,11 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        // Geist is the stock shadcn/ui new-york typeface — body, labels, and
-        // headings alike. Loaded via Google Fonts @import in globals.css.
-        // `display` is kept as an alias so every existing `font-display`
-        // heading renders Geist too, rather than falling back to Fraunces.
-        sans: ["Geist", "ui-sans-serif", "system-ui", "sans-serif"],
-        display: ["Geist", "ui-sans-serif", "system-ui", "sans-serif"],
+        // Kria's Paper brand system: Inter for utility copy and Fraunces for
+        // editorial display. Both are loaded via globals.css.
+        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["Fraunces", "Georgia", "serif"],
+        brand: ["DynaPuff", "system-ui", "sans-serif"],
         mono: ["Geist Mono", "ui-monospace", "monospace"],
       },
       colors: {
@@ -55,10 +54,38 @@ const config: Config = {
         // Kria editorial ink scale — used directly as `text-ink`/`bg-ink-2`
         // alongside the semantic shadcn set above.
         ink: {
-          DEFAULT: "#0c0c0e",
-          2: "#3f3f46",
-          3: "#71717a",
+          DEFAULT: "#30352C",
+          2: "#526071",
+          3: "#677587",
           4: "#a1a1aa",
+        },
+        sky: {
+          DEFAULT: "#9BCAFF",
+          soft: "#EBF3FF",
+        },
+        butter: "#FFF0A6",
+        sage: "#DDE6CB",
+        lilac: {
+          DEFAULT: "#E7DDF5",
+          ink: "#332847",
+        },
+        plum: "#332847",
+        "warm-ink": "#30352C",
+        // Compatibility aliases for the pre-Sunlit `lime-*` call sites. The
+        // class names remain stable while their rendered roles now follow
+        // Paper's Sky/Butter/Lilac brand vocabulary.
+        lime: {
+          50: "#F5F9FF",
+          100: "#EBF3FF",
+          200: "#E7DDF5",
+          300: "#FFE98A",
+          400: "#FFF0A6",
+          500: "#9BCAFF",
+          600: "#30352C",
+          700: "#30352C",
+          800: "#332847",
+          900: "#332847",
+          950: "#211A30",
         },
       },
       borderRadius: {
