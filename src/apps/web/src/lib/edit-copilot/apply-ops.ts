@@ -189,6 +189,10 @@ export interface ApplyCopilotOpsContext {
   capabilities?: EditorCapabilities | null;
   grid?: number[];
   videoDurationS?: number;
+  /** Canonical fit for slots created from unused sources. Guided Story V2
+   * renders new media fullscreen when no authored layout exists; legacy
+   * callers omit this so their historical orientation fallback is preserved. */
+  defaultAddedSlotLayout?: DraftSlot["layout"];
   /** Explicit for deterministic tests; defaults to the build-time rollout flag. */
   textMotionV2Enabled?: boolean;
   /** Explicit for deterministic tests; defaults to the build-time rollout flag. */
@@ -501,6 +505,7 @@ type BulkSourceRow = {
   duration_s: number | null;
   used: boolean;
   ready: boolean;
+  layout: DraftSlot["layout"];
   gcs_path?: string | null;
 };
 
@@ -517,21 +522,30 @@ function bulkSourceRows(ctx: ApplyCopilotOpsContext): BulkSourceRow[] {
   const raw = (ctx.sourcePool?.length
     ? ctx.sourcePool
     : (ctx.clips ?? []).map((clip, index) => ({ ...clip, clip_index: clip.clip_index ?? index }))) as Array<Record<string, unknown>>;
-  const rows = raw.map((row, index) => {
+  const clipLayoutByIndex = new Map(
+    (ctx.clips ?? []).map((clip) => [clip.clip_index, clip.layout] as const),
+  );
+  const rows: BulkSourceRow[] = raw.map((row, index) => {
     const kind: BulkSourceRow["kind"] =
       row.kind === "image" || row.kind === "video" ? row.kind : null;
     const status = typeof row.status === "string" ? row.status : undefined;
     const mediaStatus = typeof row.media_status === "string" ? row.media_status : undefined;
     const ready = row.ready !== false && (row.ready === true || ((!status || status === "ready") && (!mediaStatus || mediaStatus === "ready")));
     const duration = row.source_duration_s ?? row.duration_s;
+    const clipIndex = typeof row.clip_index === "number" ? row.clip_index : index;
+    const rawLayout = row.layout ?? clipLayoutByIndex.get(clipIndex);
     return {
-      clip_index: typeof row.clip_index === "number" ? row.clip_index : index,
+      clip_index: clipIndex,
       media_id: String(row.media_id ?? row.id ?? row.clip_index ?? index),
       kind,
       generation: typeof row.generation === "string" ? row.generation : null,
       duration_s: typeof duration === "number" && Number.isFinite(duration) ? duration : null,
       used: row.used === true,
       ready,
+      layout:
+        rawLayout === "fullscreen" || rawLayout === "supporting_card"
+          ? rawLayout
+          : undefined,
       gcs_path: typeof row.gcs_path === "string" ? row.gcs_path : (typeof row.source_gcs_path === "string" ? row.source_gcs_path : null),
     };
   });
@@ -1218,6 +1232,9 @@ export function applyCopilotOps(
             clipIndex: source.clip_index,
             durationBeats: null,
             removed: false,
+            ...(source.layout !== undefined || ctx.defaultAddedSlotLayout !== undefined
+              ? { layout: source.layout ?? ctx.defaultAddedSlotLayout }
+              : {}),
             momentDescription: null,
             lookPreset: "none" as const,
             lookAdjustments: null,
@@ -1490,20 +1507,24 @@ export function applyCopilotOps(
         ));
         continue;
       }
-      const added = eligible.map((row) => ({
-        key: ctx.makeSlotKey?.({ key: row.media_id, slotId: null, clipIndex: row.clip_index, inS: 0, durationBeats: null, durationS: row.kind === "image" ? 3 : Math.max(0.1, Math.min(3, row.duration_s ?? 3)), removed: false, momentDescription: null }) ?? nextAddedKey(),
-        slotId: null,
-        clipIndex: row.clip_index,
-        inS: 0,
-        durationBeats: null,
-        durationS: row.kind === "image" ? 3 : Math.max(0.1, Math.min(3, row.duration_s ?? 3)),
-        removed: false,
-        momentDescription: null,
-        transitionAfter: "cut" as const,
-        transitionDurationS: null,
-        lookPreset: "none" as const,
-        lookAdjustments: null,
-      }));
+      const added = eligible.map((row) => {
+        const layout = row.layout ?? ctx.defaultAddedSlotLayout;
+        return {
+          key: ctx.makeSlotKey?.({ key: row.media_id, slotId: null, clipIndex: row.clip_index, inS: 0, durationBeats: null, durationS: row.kind === "image" ? 3 : Math.max(0.1, Math.min(3, row.duration_s ?? 3)), removed: false, momentDescription: null }) ?? nextAddedKey(),
+          slotId: null,
+          clipIndex: row.clip_index,
+          inS: 0,
+          durationBeats: null,
+          durationS: row.kind === "image" ? 3 : Math.max(0.1, Math.min(3, row.duration_s ?? 3)),
+          removed: false,
+          ...(layout !== undefined ? { layout } : {}),
+          momentDescription: null,
+          transitionAfter: "cut" as const,
+          transitionDurationS: null,
+          lookPreset: "none" as const,
+          lookAdjustments: null,
+        };
+      });
       for (const [index, slot] of added.entries()) {
         if (eligible[index]?.kind === "video") addedBulkVideoKeys.add(slot.key);
       }
@@ -2515,6 +2536,9 @@ export function applyCopilotOps(
         durationBeats: null,
         durationS: op.duration_s,
         removed: false,
+        ...(ctx.defaultAddedSlotLayout !== undefined
+          ? { layout: ctx.defaultAddedSlotLayout }
+          : {}),
         momentDescription: "Generated by Kria",
         transitionAfter: "cut",
         transitionDurationS: null,
@@ -2564,6 +2588,9 @@ export function applyCopilotOps(
         durationBeats: null,
         durationS: op.duration_s,
         removed: false,
+        ...(source.layout !== undefined || ctx.defaultAddedSlotLayout !== undefined
+          ? { layout: source.layout ?? ctx.defaultAddedSlotLayout }
+          : {}),
         momentDescription: "Restyled by Kria",
         transitionAfter: source.transitionAfter ?? "cut",
         transitionDurationS: source.transitionDurationS ?? null,

@@ -32,6 +32,7 @@ import type {
   EditorTransition,
   LookAdjustments,
   LookPreset,
+  TimelineMediaLayout,
 } from "@/lib/generative-api";
 import type { MotionPresetInstance } from "@nova/motion-runtime";
 import { canEditMusic } from "@/app/plan/items/[id]/_editor/editor-operation-capabilities";
@@ -50,6 +51,7 @@ export interface EditorTimelineSlot {
   duration_s: number | null;
   duration_beats: number | null;
   removed: boolean;
+  layout?: TimelineMediaLayout | null;
   transition_after?: EditorTransition;
   transition_duration_s?: number | null;
   look_preset: LookPreset;
@@ -222,6 +224,7 @@ export interface EditorCommitDraftSlot {
   durationS: number | null;
   durationBeats: number | null;
   removed: boolean;
+  layout?: TimelineMediaLayout | null;
   transitionAfter?: EditorTransition;
   transitionDurationS?: number | null;
   lookPreset?: LookPreset;
@@ -401,6 +404,9 @@ export function buildEditorCommitRequest({
           duration_s: s.durationS,
           duration_beats: s.durationBeats,
           removed: s.removed,
+          ...(s.layout === "fullscreen" || s.layout === "supporting_card"
+            ? { layout: s.layout }
+            : {}),
           transition_after: s.transitionAfter ?? "cut",
           // Guided revisions canonically represent a hard cut with a zero
           // duration. The legacy editor-commit wire contract represents the
