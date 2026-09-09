@@ -153,6 +153,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      - name: Disable unused Chrome apt source
+        run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
       - name: Install FFmpeg and Skia runtime libs
         # libegl1 + libgl1 are needed by skia-python (used by
         # app/pipeline/text_overlay_skia.py). On macOS these ship with the OS;

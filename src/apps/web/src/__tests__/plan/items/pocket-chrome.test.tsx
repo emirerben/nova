@@ -1012,10 +1012,10 @@ describe("MiniStrip", () => {
   it("marks the selected segment and renders presence dots + playhead", () => {
     const { strip } = renderStrip({ selectedClipId: "clip-b" });
     const selected = screen.getByTestId("pocket-timeline-clip-clip-b");
-    expect(selected.querySelector('[class*="border-lime-600"]')).not.toBeNull();
-    expect(selected.querySelector('[class*="bg-lime-600"]')).not.toBeNull(); // dot
+    expect(selected.querySelector('[class*="border-[#30352c]"]')).not.toBeNull();
+    expect(selected.querySelector('[class*="bg-[#30352c]"]')).not.toBeNull(); // dot
     const unmarked = screen.getByRole("button", { name: "Clip 1, 0.0–4.0 seconds" });
-    expect(unmarked.querySelector('[class*="bg-lime-600"]')).toBeNull();
+    expect(unmarked.querySelector('[class*="bg-[#30352c]"]')).toBeNull();
     expect(
       strip!.querySelector('[data-testid="pocket-ministrip-playhead"]'),
     ).not.toBeNull();

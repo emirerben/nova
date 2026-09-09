@@ -18,9 +18,7 @@ export const metadata: Metadata = {
     siteName: BRAND_NAME,
   },
   icons: {
-    // Sky tile for light browser chrome, white tile + Sky fan for dark.
-    // Browsers without media support on <link rel="icon"> fall back to the last
-    // matching entry; the plain Sky tile is listed first as the default.
+    // The approved standalone DynaPuff wordmark, with a light/dark ink variant.
     icon: [
       { url: "/favicon.svg", type: "image/svg+xml" },
       {

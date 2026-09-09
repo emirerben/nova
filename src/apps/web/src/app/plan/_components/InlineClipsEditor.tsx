@@ -1095,7 +1095,7 @@ export function InlineClipsEditor({
                     className={`absolute inset-y-0 left-0 right-0 flex h-auto min-w-0 items-center justify-center gap-1 truncate rounded border text-[11px] font-medium transition-colors [touch-action:pan-y] ${
                       sel
                         ? "border-lime-600 bg-lime-600 text-white hover:bg-lime-600 hover:text-white"
-                        : "border-zinc-200 bg-white text-[#3f3f46] hover:border-lime-200 hover:bg-white hover:text-[#3f3f46]"
+                        : "border-zinc-200 bg-white text-[#3f3f46] hover:border-sky hover:bg-white hover:text-[#3f3f46]"
                     }`}
                     onClick={() =>
                       setSelectedKey(sel ? null : slot.key)
@@ -1236,7 +1236,7 @@ export function InlineClipsEditor({
             <div
               key={slot.key}
               className={`flex items-center gap-2 rounded border px-2 py-1.5 text-xs transition-colors ${
-                sel ? "border-lime-200 bg-lime-50" : "border-zinc-200 bg-white hover:border-lime-200"
+                sel ? "border-lime-200 bg-lime-50" : "border-zinc-200 bg-white hover:border-sky"
               }`}
             >
               <Button

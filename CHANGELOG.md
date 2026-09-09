@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.2.0] - 2026-09-09
+
+### Changed
+- **Chat and Gallery share a simpler sidebar.** Start a new chat, reopen recent projects, rename projects inline, and reach account actions from one place. Gallery keeps project navigation visible and shows titles beneath video cards.
+- **Kria's wordmark and browser icons use the same rounded lettering.** Chat messages and editor tools carry the wordmark, while text controls and hover states use quiet Sky and warm-ink colors.
+- **The editor keeps its main controls focused on editing.** Remove the title field, select/pan switch, canvas zoom selector, and re-render badge from the toolbar; retain undo, redo, orientation, playback, and Save.
+
+### Fixed
+- **Project actions remain usable in Gallery and on smaller screens.** Delete confirmations open from the Gallery sidebar, long recent-project lists scroll without hiding account actions, and mobile Gallery keeps a project-navigation button.
+- **Inline project renaming preserves keyboard control.** Enter and blur save once, Escape cancels, failed saves remain editable, and the focused name has a visible outline.
+- **Browser icons retain Kria's lettering without a webfont.** Both favicon variants now use outlined letter shapes.
+
 ## [0.75.0.0] - 2026-09-09
 
 ### Added
