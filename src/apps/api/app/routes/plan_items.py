@@ -4309,7 +4309,16 @@ async def generate_item(
             and any(beat.media_ids for beat in proposal.last_approved.snapshot.story_beats)
         )
 
-    if not (item.clip_gcs_paths or []) and not approved_guided_media:
+    # A slide post has no "clip" concept at all — its media lives entirely in
+    # `slide_post.slides` (pool-asset references), never `clip_gcs_paths`.
+    # Same class of allowance as `approved_guided_media` above, just for a
+    # different non-clip media source (plans/024).
+    has_usable_slide_post = bool(
+        item.edit_format == "slides"
+        and (parsed_slide_post := parse_slide_post(item.slide_post)) is not None
+        and parsed_slide_post.slides
+    )
+    if not (item.clip_gcs_paths or []) and not approved_guided_media and not has_usable_slide_post:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",
