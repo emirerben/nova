@@ -10,10 +10,16 @@ All notable changes to this project will be documented in this file.
 ### Internal
 - Browser Creator Block performance checks now use the same machine-relative calibration as the renderer test, with a doubled-workload control that confirms slowdown detection.
 
+
 ## [0.73.7.0] — 2026-09-09
 
 ### Changed
 - **Kria's web surfaces now use the Paper Sunlit brand system.** Landing and light-product routes share the approved Sky, Butter, Sage, Lilac, Plum, warm-ink, DynaPuff wordmark, Fraunces, and Inter treatment, with refreshed browser chrome and component tokens while dark render and admin surfaces remain contained in their neutral theater style.
+
+## [0.73.6.1] — 2026-09-09
+
+### Internal
+- Parallelize the complete web CI suite across five balanced groups, preserving fresh interaction-test processes and a stable aggregate check. Add coverage partition guards and per-suite timing artifacts.
 
 ## [0.73.6.0] — 2026-09-09
 
