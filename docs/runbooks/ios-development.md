@@ -133,3 +133,70 @@ The iOS workflow always reports `build-and-test`. The shared
 [CI selector](change-based-ci.md) schedules the macOS build only for affected PRs;
 every push to main runs the full iOS gate. Unrelated PRs report an explicit
 not-applicable result through a small Ubuntu gate without allocating a Mac.
+
+The selected Mac job has separate **Build and unit tests** and **Native UI tests**
+steps, sharing one compiled build and simulator. PR changes confined to unit
+fixtures/tests or the generated OpenAPI client run the fast phase only; backend
+contract changes also compile/test the native client without rerunning the
+fixture-driven UI suite. Native app, design-system, media-engine, resource,
+UI-test and unknown/shared changes retain UI coverage. Fonts and type-poster
+assets under the web public directory are also native build inputs.
+
+`make ios-verify` still runs the full local gate. When local sessions share a
+Mac, set `KRIA_SIMULATOR_ID` to a dedicated available iPhone simulator to avoid
+one session reinstalling the app during another session’s tests. Invalid IDs
+fail before building; CI retains its automatic device selection. For targeted verification:
+
+```sh
+KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh
+# CI splits full coverage without compiling twice:
+KRIA_IOS_TEST_MODE=prepare-ui bash scripts/ios/verify.sh
+KRIA_IOS_TEST_MODE=ui bash scripts/ios/verify.sh
+```
+
+`prepare-ui` builds both test bundles and runs unit tests. The unit phase
+excludes `KriaUITests` rather than whitelisting a single unit target, so future
+non-UI targets remain covered. Xcode still controls the build dependency graph. `ui` runs only the UI
+bundle and requires a one-use receipt from the successful preparation, matching
+all current native/shared input contents and generated project files. Changed
+inputs or a failed preparation require a fresh build. Receipts are not cached.
+
+### Xcode cache reuse
+
+GitHub caches from PR runs belong to `refs/pull/<number>/merge`; other PRs cannot
+restore them. PRs can restore the default/base branch cache. The first main cache
+from PR #1004 was saved at 10:42 UTC on 2026-09-10, after PR #1005 started at
+10:25, explaining its cold build despite a prior PR cache. See GitHub's
+[cache access restrictions](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache).
+
+Both API-URL build-setting queries use the same cached DerivedData directory as
+compilation. Previously these queries resolved packages through Xcode's default,
+uncached directory before the actual cached build began.
+
+The main push gate seeds the shared cache. CI now saves the compiled build as
+soon as unit tests pass, before UI execution, so this seed is available earlier.
+Cache hit/miss and the restored key are shown in the job summary. The key still
+isolates Xcode, runner architecture and project/package configuration; a cache
+hit never bypasses compilation or selected tests.
+
+Fresh checkouts reset source modification times. `cache-inputs.py` stores hashes
+and nanosecond timestamps inside the existing cached `Build/` directory. After
+project generation, `KRIA_RESTORE_INPUT_TIMES=1` restores timestamps only for
+byte-identical current files, including shared resources and generated project
+files. Changed, added or deleted inputs retain normal Xcode invalidation. Missing
+or corrupt manifests act as cache misses; paths come from the current checkout,
+not the cached manifest. Standalone developer runs do not restore times by default.
+
+Run cache/phase regression tests with `python3 -m unittest discover -s
+scripts/ios/tests -v`. To disable timestamp restoration, remove
+`KRIA_RESTORE_INPUT_TIMES` from the CI build step; to restore full PR UI coverage,
+select `ios_ui=true` whenever `ios=true`. Neither rollback should skip compilation
+or relax `build-and-test`.
+
+Local verification of the timestamp restore on 2026-09-10 reset all 126 native
+and shared input mtimes to simulate a fresh checkout, then ran the `unit` mode
+against the existing build. It passed in 37.8 seconds; repeating with the cached build-setting queries passed
+in 32.1 seconds. Both runs had zero `SwiftCompile`,
+`CompileC` or `SwiftEmitModule` actions. This is local incremental-build evidence,
+not a promised GitHub-hosted duration; the first cache without a timestamp
+manifest still needs to establish one.

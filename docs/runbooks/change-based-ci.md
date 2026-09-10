@@ -10,12 +10,18 @@ Other specialized workflows and deployment triggers retain their existing rules.
 | Changed files | PR coverage |
 | --- | --- |
 | `src/apps/web/**`, web test runner scripts | Web tests and web lint |
-| `src/apps/ios/**`, `scripts/ios/**`, iOS workflow | iOS build, unit/UI tests, shell tests and mobile contracts |
+| Native app, media engine, resources, UI tests, `scripts/ios/**`, iOS workflow | iOS build, unit/UI tests, shell tests and mobile contracts |
+| Native unit tests/fixture or `Kria/Generated/**` only | iOS build, unit tests and mobile contracts; no UI execution |
+| Web public fonts and type-posters bundled in Xcode | Web and full iOS coverage |
 | API internal implementation, prompts, tests | API tests and API lint |
-| API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | All suites: public contracts and startup can affect both clients |
+| API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | Web, API and native build/unit contracts; fixture-driven UI tests are not selected |
 | Shared packages, assets, root dependencies/build config, selector, general CI workflows or unknown paths | All suites |
 | `docs/**`, `plans/**`, `agents/**`, listed root documentation, `VERSION` | No heavyweight suites |
 | Root `package.json` / `package-lock.json` changing only release versions | No heavyweight suites |
+
+The `ios_ui` output selects the slower UI phase within the iOS job; it always
+implies `ios=true`. Every main push still selects both phases. See the
+[iOS runbook](ios-development.md#change-based-ci) for phase commands and cache reuse.
 
 Mixed changes select the union. Runtime-tree Markdown (including prompts) is
 classified as code before documentation rules. New/unrecognized paths select
