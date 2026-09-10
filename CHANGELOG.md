@@ -14,6 +14,30 @@ All notable changes to this project will be documented in this file.
 ### Internal
 - Per-slide edits are deliberately NOT built on the main editor (`EditorShell.tsx`, ~9,300 lines, entirely coupled to a rendered video Job/variant/timeline) — a small, purpose-built single-asset editor was built instead, reusing only the underlying FFmpeg filter primitives. Fixes a real cache-correctness gap found during this work: the slide-render cache key now includes a hash of each slide's edits, so editing a slide's text or look and re-rendering can no longer silently reuse the pre-edit normalized file.
 
+## [0.75.9.0] - 2026-09-10
+
+### Changed
+- iOS CI separates build/unit verification from UI tests, reusing the compiled build and omitting UI execution for unit-test-only and generated-client changes.
+- Xcode caches are saved after unit tests pass and preserve timestamps for unchanged inputs, improving reuse across fresh checkouts. Shared web resources bundled by iOS now select native coverage.
+
+## [0.75.8.0] - 2026-09-10
+
+### Changed
+- Pull requests select affected web, API and iOS CI suites, with explicit not-applicable results for unrelated checks. Shared or unknown changes and every push to main retain full regression coverage.
+- Superseded PR CI runs are cancelled; release-version-only changes avoid unrelated test suites.
+
+## [0.75.7.0] - 2026-09-10
+
+### Changed
+- iOS verification builds the app and tests together for one simulator, starts that simulator during compilation, and reuses Xcode build and package caches in CI. All unit, UI, and contract checks remain required.
+
+## [0.75.6.0] - 2026-09-10
+
+### Changed
+- Creation and editing share one Kria conversation. Editor reviews, suggestions, confirmations, progress, and undo now appear in the main chat, including the mobile Chat tab.
+- Previewable AI edits remain unsaved until Save/export. Server-only effects and speech processing require confirmation, and stale responses cannot overwrite a changed draft.
+- Direct editor links reopen the owning conversation and selected variant. Editor history retries survive a reload without replaying edits.
+
 ## [0.75.5.0] - 2026-09-10
 
 ### Changed

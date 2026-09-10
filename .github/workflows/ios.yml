@@ -1,55 +1,23 @@
 name: iOS
 
+# Always report the stable build-and-test check; select work at job level.
 on:
   pull_request:
     branches: [main, dev]
-    paths:
-      - "src/apps/ios/**"
-      - "src/apps/api/app/cli/kria_contracts.py"
-      - "src/apps/api/app/config.py"
-      - "src/apps/api/app/kria/**"
-      - "src/apps/api/app/models.py"
-      - "src/apps/api/app/routes/auth.py"
-      - "src/apps/api/app/routes/creation_threads.py"
-      - "src/apps/api/app/routes/generative_jobs.py"
-      - "src/apps/api/app/routes/me.py"
-      - "src/apps/api/app/routes/personas.py"
-      - "src/apps/api/app/services/mobile_auth.py"
-      - "src/apps/api/app/tasks/mobile_upload_cleanup.py"
-      - "src/apps/api/app/migrations/versions/0100_mobile_identity_sessions.py"
-      - "src/apps/api/app/worker.py"
-      - "src/apps/api/tests/fixtures/kria_mobile.json"
-      - "src/apps/api/tests/fixtures/kria_edit_recipe_v1.json"
-      - "scripts/ios/**"
-      - ".github/workflows/ios.yml"
   push:
     branches: [main]
-    paths:
-      - "src/apps/ios/**"
-      - "src/apps/api/app/cli/kria_contracts.py"
-      - "src/apps/api/app/config.py"
-      - "src/apps/api/app/kria/**"
-      - "src/apps/api/app/models.py"
-      - "src/apps/api/app/routes/auth.py"
-      - "src/apps/api/app/routes/creation_threads.py"
-      - "src/apps/api/app/routes/generative_jobs.py"
-      - "src/apps/api/app/routes/me.py"
-      - "src/apps/api/app/routes/personas.py"
-      - "src/apps/api/app/services/mobile_auth.py"
-      - "src/apps/api/app/tasks/mobile_upload_cleanup.py"
-      - "src/apps/api/app/migrations/versions/0100_mobile_identity_sessions.py"
-      - "src/apps/api/app/worker.py"
-      - "src/apps/api/tests/fixtures/kria_mobile.json"
-      - "src/apps/api/tests/fixtures/kria_edit_recipe_v1.json"
-      - "scripts/ios/**"
-      - ".github/workflows/ios.yml"
 
 concurrency:
   group: ios-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build-and-test:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
+  ios-tests:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -62,6 +30,8 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: src/apps/api/pyproject.toml
+      - name: Test iOS verification orchestration
+        run: python3 -m unittest discover -s scripts/ios/tests -v
       - name: Install contract generator dependencies
         working-directory: src/apps/api
         run: pip install -e .
@@ -75,13 +45,71 @@ jobs:
         run: python -m app.cli.kria_contracts --check
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Cache Swift packages
-        uses: actions/cache@v4
+      - name: Identify Xcode cache
+        id: xcode-cache
+        run: |
+          echo "toolchain=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Restore Xcode build data
+        id: build-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/Library/Caches/org.swift.swiftpm
-            ~/Library/Developer/Xcode/DerivedData/SourcePackages
-          key: ios-spm-${{ runner.os }}-${{ hashFiles('src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}
-          restore-keys: ios-spm-${{ runner.os }}-
-      - name: Generate, build, and test Kria
+            src/apps/ios/.derived-data/Build
+            src/apps/ios/.derived-data/SourcePackages
+            src/apps/ios/.derived-data/ModuleCache.noindex
+            src/apps/ios/.derived-data/SDKStatCaches.noindex
+            src/apps/ios/.derived-data/CompilationCache.noindex
+          key: ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
+          restore-keys: |
+            ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
+      - name: Report Xcode cache reuse
+        env:
+          MATCHED_KEY: ${{ steps.build-cache.outputs.cache-matched-key }}
+        run: |
+          if [[ -n "$MATCHED_KEY" ]]; then
+            echo "Xcode cache restored: $MATCHED_KEY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Xcode cache miss: cold build required" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Build and unit tests
+        id: build-unit
+        env:
+          KRIA_IOS_TEST_MODE: ${{ needs.changes.outputs.ios_ui == 'true' && 'prepare-ui' || 'unit' }}
+          KRIA_RESTORE_INPUT_TIMES: "1"
         run: bash scripts/ios/verify.sh
+      # Save a usable build as soon as compilation/unit tests pass. In particular,
+      # main's shared cache need not wait for the slower UI suite to finish.
+      - name: Record compiled input timestamps
+        run: python3 scripts/ios/cache-inputs.py save
+      - name: Save Xcode build data
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            src/apps/ios/.derived-data/Build
+            src/apps/ios/.derived-data/SourcePackages
+            src/apps/ios/.derived-data/ModuleCache.noindex
+            src/apps/ios/.derived-data/SDKStatCaches.noindex
+            src/apps/ios/.derived-data/CompilationCache.noindex
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      - name: Native UI tests (reuse compiled build)
+        if: needs.changes.outputs.ios_ui == 'true'
+        env:
+          KRIA_IOS_TEST_MODE: ui
+        run: bash scripts/ios/verify.sh
+      - name: Explain omitted UI tests
+        if: needs.changes.outputs.ios_ui == 'false'
+        run: echo "Native UI tests not applicable; build and unit tests passed." >> "$GITHUB_STEP_SUMMARY"
+
+  build-and-test:
+    if: always()
+    needs: [changes, ios-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require selected iOS tests to pass
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-tests.py gate ios ios-tests

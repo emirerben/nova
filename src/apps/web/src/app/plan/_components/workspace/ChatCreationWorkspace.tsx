@@ -32,6 +32,11 @@ import { AgentComposer } from "@/components/chat/AgentComposer";
 import { ChatMessage } from "@/components/chat/ChatMessage";
 import { ChatThinking } from "@/components/chat/ChatThinking";
 import { ChatArtifactCard } from "@/components/chat/ChatArtifactCard";
+import WorkspaceEditorActivity from "./WorkspaceEditorActivity";
+import { useWorkspaceEditorChat } from "@/lib/editor-chat/useWorkspaceEditorChat";
+import { useEditorConversation } from "@/lib/editor-chat/useEditorConversation";
+import type { EditorChatAction } from "@/lib/editor-chat/protocol";
+import { openEditorCreationThread, recordEditorConversation, type EditorConversationBatch, type CreationThreadMessage } from "@/lib/creation-thread-api";
 import { BeamLoader } from "@/components/progress";
 import { VoiceRecorder } from "@/app/generative/VoiceRecorder";
 import {
@@ -172,6 +177,17 @@ function readyVariant(thread: CreationThread | null) {
   const variants = readyVariants(thread);
   const selectedId = typeof thread?.state.selected_variant_id === "string" ? thread.state.selected_variant_id : null;
   return variants.find((variant) => variant.variant_id === selectedId) ?? variants[0] ?? null;
+}
+
+/** Existing cuts and manual drafts both open in the shared editor workspace. */
+export function workspaceEditorVariant(thread: CreationThread | null) {
+  const variants = thread?.job?.variants ?? [];
+  // A selected variant remains the target while rendering or recovering. Never
+  // silently send its next request to a different ready variant or creation.
+  const selected = variants.find((row) => row.variant_id === thread?.state.selected_variant_id);
+  if (selected) return selected;
+  return variants.find((row) => row.output_url || row.base_video_url || row.render_status === "ready"
+    || (row.render_status === "draft" && row.manual_draft === true)) ?? null;
 }
 
 function failedVariant(thread: CreationThread | null) {
@@ -440,7 +456,7 @@ function ReadyStatusCard({
   onRetryVariant: (id: string) => void;
 }) {
   return (
-    <ChatArtifactCard badge={<Badge variant="secondary"><Check /> {isPartial ? "Partially ready" : "Ready"}</Badge>} title={isPartial ? "Your cut is ready; one variant needs another pass" : "Your cut is ready"} description={isPartial ? "The playable cut is available now. Retry the failed variant whenever you’re ready." : "Play it here, download it, open the editor, or keep chatting for a confirmed revision."}>
+    <ChatArtifactCard badge={<Badge variant="secondary"><Check /> {isPartial ? "Partially ready" : "Ready"}</Badge>} title={isPartial ? "Your cut is ready; one variant needs another pass" : "Your cut is ready"} description={isPartial ? "The playable cut is available now. Retry the failed variant whenever you’re ready." : "Preview or download your cut. Keep chatting to edit the draft, then Save when you’re ready."}>
       <SpeechCleanupReceipt outcome={thread.speech_cleanup?.outcome} />
       {readyVariants(thread).length > 1 ? <div className="mb-3 mt-3 flex flex-wrap gap-2" role="group" aria-label="Available cuts">{readyVariants(thread).map((variant) => <Button key={variant.variant_id} type="button" variant={selectedReadyVariant?.variant_id === variant.variant_id ? "secondary" : "outline"} aria-pressed={selectedReadyVariant?.variant_id === variant.variant_id} disabled={busy || readOnly} onClick={() => onSelectVariant(variant.variant_id ?? "")}>{variantLabel(variant.variant_id)}</Button>)}</div> : null}
       <div className="mt-3 flex flex-wrap gap-2">{selectedReadyVariant?.output_url ? <><Button type="button" onClick={() => window.open(selectedReadyVariant.output_url ?? "", "_blank", "noopener,noreferrer")}><Play /> Play</Button><Button type="button" variant="outline" asChild><a href={selectedReadyVariant.output_url ?? ""} download><Download /> Download</a></Button></> : null}<Button type="button" variant="outline" onClick={onOpenEditor} disabled={!thread.active_plan_item_id && !readOnly}><Pencil /> {readOnly ? "View video" : "Open editor"}</Button>{isPartial && selectedFailedVariant?.variant_id ? <Button type="button" variant="ghost" onClick={() => onRetryVariant(selectedFailedVariant.variant_id ?? "")} disabled={busy || readOnly}><RefreshCw /> Retry failed variant</Button> : null}</div>
@@ -463,6 +479,8 @@ export default function ChatCreationWorkspace({
   const { data: session } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const requestedEditorItem = searchParams.get("editor_item");
+  const requestedEditorVariant = searchParams.get("variant");
   const [thread, setThread] = useState<CreationThread | null>(null);
   const [projects, setProjects] = useState<CreationThread[]>([]);
   const [input, setInput] = useState("");
@@ -512,6 +530,12 @@ export default function ChatCreationWorkspace({
   const visualsEnabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true"
     || process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
   const editorFrameRef = useRef<HTMLIFrameElement>(null);
+  const editorVariant = workspaceEditorVariant(thread);
+  const { state: editorChatState, command: sendEditorCommand, waitForReady: waitForEditorReady } = useWorkspaceEditorChat({
+    frameRef: editorFrameRef, threadId: thread?.id ?? null,
+    itemId: thread?.active_plan_item_id ?? null, variantId: editorVariant?.variant_id ?? null,
+    enabled: !productionPreview && thread?.status === "active" && Boolean(editorVariant) && editorOpen && !galleryOpen,
+  });
   const desktopSidebarRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
@@ -670,6 +694,26 @@ export default function ChatCreationWorkspace({
     }
   }
 
+  const persistEditorConversation = useCallback((threadId: string, batch: EditorConversationBatch) =>
+    requestThreadResponse(threadId, () => recordEditorConversation(threadId, batch)), [requestThreadResponse]);
+  const editorConversation = useEditorConversation(thread, editorChatState, persistEditorConversation);
+  const runEditorAction = useCallback((action: EditorChatAction) => {
+    setError(null);
+    if (action.kind === "visuals-reveal" || action.kind === "reveal") setMobileTab("editor");
+    void sendEditorCommand(action).catch((cause) => setError(
+      cause instanceof Error ? cause.message : "Kria couldn’t complete the editor action.",
+    ));
+  }, [sendEditorCommand]);
+  const editorRenderWasActive = useRef(false);
+  useEffect(() => {
+    const active = Boolean(editorChatState?.renderActive || editorChatState?.director?.serverRendering);
+    if (editorRenderWasActive.current !== active && thread?.id) {
+      editorRenderWasActive.current = active;
+      const id = thread.id;
+      void refreshThreadProjection(id).then(({ next, requestSequence }) => acceptThreadResponse(id, next, requestSequence)).catch(() => setError("The render status could not refresh. Your editor is still open."));
+    }
+  }, [acceptThreadResponse, editorChatState?.renderActive, editorChatState?.director?.serverRendering, refreshThreadProjection, thread?.id]);
+
   const load = useCallback(async () => {
     if (loadInFlightRef.current) return loadInFlightRef.current;
     const loadSequence = ++loadSequenceRef.current;
@@ -749,8 +793,9 @@ export default function ChatCreationWorkspace({
           ? listed.find((item) => item.id === requestedId)
           : current ?? listed.find((item) => item.status === "active");
         const requestSequence = ++threadRequestSequenceRef.current;
-        const next = requestedId
-          ? await refreshCreationThread(requestedId)
+        const next = requestedEditorItem
+          ? await openEditorCreationThread(requestedEditorItem, requestedEditorVariant)
+          : requestedId ? await refreshCreationThread(requestedId)
           : summary ? await refreshCreationThread(summary.id) : await createCreationThread();
         if (!isCurrentLoad()) return;
         latestAcceptedThreadSequenceRef.current = requestSequence;
@@ -778,7 +823,7 @@ export default function ChatCreationWorkspace({
     });
     loadInFlightRef.current = loadPromise;
     return loadPromise;
-  }, [activateThread, galleryOpen, initialThreadId, productionPreview, router]);
+  }, [activateThread, galleryOpen, initialThreadId, productionPreview, requestedEditorItem, requestedEditorVariant, router]);
 
   useEffect(() => {
     // React Strict Mode replays effects in local development. Keep the initial
@@ -1025,8 +1070,16 @@ export default function ChatCreationWorkspace({
   const speechCleanup = thread?.speech_cleanup ?? null;
   const speechCleanupOutcomeFailed = speechCleanup?.outcome?.status === "failed";
   const hasReady = Boolean(thread && creationJobReady(thread) && !speechCleanupOutcomeFailed);
+  const hasEditor = Boolean(editorVariant) && !speechCleanupOutcomeFailed;
   const isPartial = Boolean(thread && creationJobPartial(thread));
-  const eventMessages = useMemo(() => thread ? threadMessages(thread) : [], [thread]);
+  const eventMessages = useMemo<CreationThreadMessage[]>(() => [
+    ...(thread ? threadMessages(thread) : []),
+    ...editorConversation.unsaved.map((message) => ({
+      id: `editor:${message.id}`, role: message.role, content: message.text,
+      eventType: `editor_${message.role}_message`,
+      payload: { editor_message_id: message.id, changes: message.applied ?? [] },
+    })),
+  ], [thread, editorConversation.unsaved]);
   const pendingRuntimeApprovalIds = useMemo(() => {
     const pending = new Set<string>();
     for (const event of [...(thread?.events ?? [])].sort((left, right) => left.sequence - right.sequence)) {
@@ -1302,7 +1355,26 @@ export default function ChatCreationWorkspace({
   const submitMessage = useCallback(async (sourceThread: CreationThread, message: string) => {
     setInput(""); setThinking(true); setError(null);
     try {
-      if (sourceThread.runtime_version === 2) {
+      if (workspaceEditorVariant(sourceThread)) {
+        if (sourceThread.status !== "active") throw new Error("This project is archived.");
+        setEditorOpen(true);
+        const targetVariant = workspaceEditorVariant(sourceThread)!;
+        const live = await waitForEditorReady(sourceThread.id, sourceThread.active_plan_item_id!, targetVariant.variant_id!);
+        const persistedIds = new Set(sourceThread.events.map((event) => event.payload?.editor_message_id));
+        const conversation = [
+          ...threadMessages(sourceThread),
+          ...live.messages.filter((row) => !persistedIds.has(row.id)).map((row) => ({
+            role: row.role, content: row.text,
+            payload: { clarification_context: row.clarification_context, pending_actions: row.pending_actions },
+          })),
+        ];
+        const history = conversation.filter((row) => row.content).slice(-12).map((row) => ({
+          role: row.role, content: row.content.slice(0, 2000),
+          ...(row.payload?.clarification_context ? { clarification_context: row.payload.clarification_context as Record<string, unknown> } : {}),
+          ...(Array.isArray(row.payload?.pending_actions) ? { pending_actions: row.payload.pending_actions as Array<Record<string, unknown>> } : {}),
+        }));
+        await sendEditorCommand({ kind: "send", text: message, turns: history });
+      } else if (sourceThread.runtime_version === 2) {
         const accepted = await sendKriaTurn(sourceThread, message);
         if (accepted.status === "queued") {
           const { next, requestSequence } = await refreshThreadProjection(sourceThread.id);
@@ -1332,13 +1404,15 @@ export default function ChatCreationWorkspace({
           setError("This chat changed in another window. Refresh the project, then send again.");
         }
       } else {
-        setError(cause instanceof CreationThreadError && cause.status === 409
-          ? `${cause.message}. Your draft is still here.`
-          : "I couldn’t send that message. Your draft is still here; try again.");
+        setError(workspaceEditorVariant(sourceThread) && cause instanceof Error
+          ? cause.message
+          : cause instanceof CreationThreadError && cause.status === 409
+            ? `${cause.message}. Your draft is still here.`
+            : "I couldn’t send that message. Your draft is still here; try again.");
       }
     }
     finally { setThinking(false); }
-  }, [acceptThreadResponse, refreshThreadProjection, requestThreadResponse, waitForKriaTurn]);
+  }, [acceptThreadResponse, sendEditorCommand, waitForEditorReady, refreshThreadProjection, requestThreadResponse, waitForKriaTurn]);
 
   async function send() {
     const message = input.trim();
@@ -1371,6 +1445,10 @@ export default function ChatCreationWorkspace({
 
   async function confirm(action: "generate" | "retry" | "revise", payload: Record<string, unknown> = {}) {
     if (productionPreview || !thread || busy) return;
+    if (editorChatState?.dirty || editorChatState?.sending || editorChatState?.saving) {
+      setError("Save or undo your editor draft before starting another render.");
+      return;
+    }
     const sourceThread = thread;
     setBusy(true); setError(null);
     try { await requestThreadResponse(sourceThread.id, () => applyCreationAction(sourceThread, action, payload)); }
@@ -1383,6 +1461,10 @@ export default function ChatCreationWorkspace({
     decision: "approve" | "deny",
   ) {
     if (productionPreview || !thread || thread.runtime_version !== 2 || busy) return;
+    if (decision === "approve" && (editorChatState?.dirty || editorChatState?.sending || editorChatState?.saving)) {
+      setError("Save or undo your editor draft before approving a different render.");
+      return;
+    }
     const sourceThread = thread;
     setBusy(true); setError(null);
     try {
@@ -1694,7 +1776,7 @@ export default function ChatCreationWorkspace({
   const selectedReadyVariant = readyVariant(thread);
   const selectedFailedVariant = failedVariant(thread);
   const editorUrl = !productionPreview && thread?.active_plan_item_id
-    ? `/plan/items/${thread.active_plan_item_id}/edit?embedded=1${selectedReadyVariant?.variant_id ? `&variant=${selectedReadyVariant.variant_id}` : ""}`
+    ? `/plan/items/${thread.active_plan_item_id}/edit?embedded=1${editorVariant?.variant_id ? `&variant=${encodeURIComponent(editorVariant.variant_id)}` : ""}`
     : null;
   const directionDescription = "Kria will use the proposed direction to make a new cut. Rendering starts only after you approve.";
   const cleanupCard = speechCleanup?.applicable ? (
@@ -1849,7 +1931,7 @@ export default function ChatCreationWorkspace({
     <ChatArtifactCard title="What are you making?" description="Pick a starting point. You can shape the creative direction together in chat.">
       <div className={cn(
         "gap-3",
-        hasReady && editorOpen
+        hasEditor && editorOpen
           ? "grid grid-cols-1"
           : "grid grid-flow-col auto-cols-[minmax(220px,85%)] snap-x overflow-x-auto scrollbar-none sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-3 sm:overflow-visible",
       )}>
@@ -1946,10 +2028,12 @@ export default function ChatCreationWorkspace({
             })()}
           </div>;
         })}
+        {hasEditor && !productionPreview ? <WorkspaceEditorActivity state={editorChatState} onCommand={runEditorAction} /> : null}
+        {editorConversation.error ? <div role="alert" className="space-y-2 text-sm text-destructive">{editorConversation.error}<Button type="button" variant="outline" onClick={() => void editorConversation.retry()}>Retry saving conversation</Button></div> : null}
         {thinking ? <ChatThinking /> : null}
       </div></div>
       {hasNewUpdate ? <div className="flex shrink-0 justify-center border-t bg-background/95 px-3 py-2"><Button type="button" variant="secondary" className="min-h-11" onClick={scrollToLiveEdge}>New update</Button></div> : null}
-      <div className={cn("shrink-0 bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4", !hasNewUpdate && "border-t")}><AgentComposer ref={composerRef} className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview} submitDisabled={thinking || !thread} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
+      <div className={cn("shrink-0 bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4", !hasNewUpdate && "border-t")}><AgentComposer ref={composerRef} className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview || thread?.status === "archived"} submitDisabled={thinking || !thread || Boolean(editorChatState?.sending)} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
     </section>
     {projectDialogs}
     </>
@@ -2069,7 +2153,7 @@ export default function ChatCreationWorkspace({
       {collapsedProjectRail}
       {projectSheet}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {hasReady && editorOpen ? (
+        {hasEditor && editorOpen ? (
           <div className="shrink-0 border-b p-2 lg:hidden">
             <Tabs value={mobileTab} onValueChange={(value) => setMobileTab(value as "chat" | "editor")}>
               <TabsList className="grid h-11 w-full grid-cols-2">
@@ -2083,13 +2167,13 @@ export default function ChatCreationWorkspace({
           <div
             className={cn(
               "min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-              hasReady && editorOpen && "lg:flex-none lg:w-[420px]",
-              hasReady && mobileTab === "editor" ? "hidden lg:flex" : "flex",
+              hasEditor && editorOpen && "lg:flex-none lg:w-[420px]",
+              hasEditor && mobileTab === "editor" ? "hidden lg:flex" : "flex",
             )}
           >
             {chat}
           </div>
-          {hasReady && editorOpen ? (
+          {hasEditor && editorOpen ? (
             <div className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", mobileTab === "chat" ? "hidden lg:flex" : "flex")}>
               {editor}
             </div>

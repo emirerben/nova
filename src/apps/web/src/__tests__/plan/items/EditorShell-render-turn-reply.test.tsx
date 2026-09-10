@@ -210,11 +210,11 @@ describe("EditorShell render-turn assistant reply (chat steps feed)", () => {
     process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = originalFlag;
   });
 
-  it("preserves the agent's real reply on a set_intro_layout render turn", async () => {
+  it("reports confirmed dispatch on a set_intro_layout render turn", async () => {
     const onApplied = await renderLoaded();
     let presentation;
     await act(async () => {
-      presentation = onApplied(
+      presentation = await onApplied(
         result({ renderRequest: { kind: "set_intro_layout", layout: "cluster" } }),
         turnResponse({
           reply:
@@ -226,17 +226,16 @@ describe("EditorShell render-turn assistant reply (chat steps feed)", () => {
     expect(presentation).toEqual(
       expect.objectContaining({
         isRenderTurn: true,
-        assistantText:
-          "Feeling: confident. Starting the re-render now — this can't be undone from chat, and your current version stays in history.",
+        assistantText: "The new video version is rendering. Your previous version remains available.",
       }),
     );
   });
 
-  it("preserves the agent's real reply on an apply_custom_effect render turn", async () => {
+  it("reports confirmed dispatch on an apply_custom_effect render turn", async () => {
     const onApplied = await renderLoaded();
     let presentation;
     await act(async () => {
-      presentation = onApplied(
+      presentation = await onApplied(
         result({
           renderRequest: {
             kind: "apply_custom_effect",
@@ -253,17 +252,16 @@ describe("EditorShell render-turn assistant reply (chat steps feed)", () => {
     expect(presentation).toEqual(
       expect.objectContaining({
         isRenderTurn: true,
-        assistantText:
-          "Feeling: excited. Applying a vintage look now — this can't be undone from chat, and your current version stays in history.",
+        assistantText: "The new video version is rendering. Your previous version remains available.",
       }),
     );
   });
 
-  it("falls back to the hardcoded copy only when the agent's reply is empty", async () => {
+  it("reports confirmed dispatch when the agent reply is empty", async () => {
     const onApplied = await renderLoaded();
     let presentation;
     await act(async () => {
-      presentation = onApplied(
+      presentation = await onApplied(
         result({ renderRequest: { kind: "set_intro_layout", layout: "linear" } }),
         turnResponse({ reply: "   " }),
       );
@@ -272,16 +270,16 @@ describe("EditorShell render-turn assistant reply (chat steps feed)", () => {
     expect(presentation).toEqual(
       expect.objectContaining({
         isRenderTurn: true,
-        assistantText: "That's a re-render, not an instant edit — starting it now.",
+        assistantText: "The new video version is rendering. Your previous version remains available.",
       }),
     );
   });
 
-  it("falls back to the hardcoded copy when no response is supplied at all", async () => {
+  it("reports confirmed dispatch without a model reply", async () => {
     const onApplied = await renderLoaded();
     let presentation;
     await act(async () => {
-      presentation = onApplied(
+      presentation = await onApplied(
         result({ renderRequest: { kind: "set_intro_layout", layout: "linear" } }),
       );
     });
@@ -289,7 +287,7 @@ describe("EditorShell render-turn assistant reply (chat steps feed)", () => {
     expect(presentation).toEqual(
       expect.objectContaining({
         isRenderTurn: true,
-        assistantText: "That's a re-render, not an instant edit — starting it now.",
+        assistantText: "The new video version is rendering. Your previous version remains available.",
       }),
     );
   });

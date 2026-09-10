@@ -15,7 +15,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "E2E_FIXTURES=true NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED=true npm run dev -- -p 4310",
+      "E2E_FIXTURES=true NEXT_PUBLIC_EDIT_COPILOT_ENABLED=true NEXT_PUBLIC_TEXT_MOTION_V2_ENABLED=true npm run dev -- -p 4310",
     url: "http://localhost:4310/dev-qa/clips",
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
@@ -53,7 +53,7 @@ export default defineConfig({
     },
     {
       name: "desktop-editor",
-      testMatch: /(editor-timeline|guided-story-editor|text-motion|motion-preview|editor-canvas-geometry|editor-canvas-stacking)\.spec\.ts/,
+      testMatch: /(editor-chat|editor-timeline|guided-story-editor|text-motion|motion-preview|editor-canvas-geometry|editor-canvas-stacking)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1440, height: 900 },

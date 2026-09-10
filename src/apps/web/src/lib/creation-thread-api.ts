@@ -722,6 +722,35 @@ export function undoKriaDraft(
   });
 }
 
+export interface EditorConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  applied: string[];
+  rejected: string[];
+  clarification_context?: Record<string, unknown> | null;
+  pending_actions?: Array<Record<string, unknown>>;
+}
+
+export interface EditorConversationBatch {
+  item_id: string;
+  variant_id: string;
+  generation_id: string | null;
+  messages: EditorConversationMessage[];
+}
+
+export function openEditorCreationThread(itemId: string, variantId?: string | null): Promise<CreationThread> {
+  return request<CreationThread>("/for-editor", {
+    method: "POST", body: JSON.stringify({ item_id: itemId, variant_id: variantId ?? null }),
+  });
+}
+
+export function recordEditorConversation(threadId: string, batch: EditorConversationBatch): Promise<CreationThread> {
+  return request<CreationThread>(`/${threadId}/editor-events`, {
+    method: "POST", body: JSON.stringify(batch),
+  });
+}
+
 export function sendCreationMessage(thread: CreationThread, message: string): Promise<CreationThread> {
   return request<CreationThread>(`/${thread.id}/messages`, {
     method: "POST",
@@ -873,6 +902,7 @@ export interface CreationThreadMessage {
 }
 
 const ASSISTANT_CONVERSATION_EVENTS = new Set([
+  "editor_assistant_message",
   "format_prompt",
   "media_prompt",
   "upload_prompt",
@@ -1007,7 +1037,7 @@ export function threadMessages(thread: CreationThread): CreationThreadMessage[] 
     // The transcript is an outcome ledger, not a dump of append-only audit
     // rows. In particular, thread_created contains the initial prompt and
     // agent_user_message mirrors it; rendering callbacks are status-card data.
-    const isUserMessage = event.role === "user" && event.event_type === "user_message";
+    const isUserMessage = event.role === "user" && ["user_message", "editor_user_message"].includes(event.event_type);
     const isAssistantMessage = ASSISTANT_CONVERSATION_EVENTS.has(event.event_type);
     if (!isUserMessage && !isAssistantMessage && !artifact) return [];
     if (isUserMessage && content) precedingUserMessage = content;
