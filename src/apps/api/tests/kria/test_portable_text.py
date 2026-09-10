@@ -117,3 +117,20 @@ def test_animated_text_accepts_legacy_or_complete_motion_and_rejects_reveal_effe
     layer["effect"] = "typewriter"
     with pytest.raises(ValueError):
         EditRecipeV2.model_validate(document)
+
+
+def test_ink_reveal_requires_valid_bounds_and_other_effects_reject_them():
+    document = text_document()
+    layer = document["text_layers"][0]
+    layer["effect"] = "ink-reveal"
+    with pytest.raises(ValueError, match="reveal bounds"):
+        EditRecipeV2.model_validate(document)
+    layer["reveal_bounds"] = {"left": 0, "top": 0, "right": 100, "bottom": 100}
+    assert EditRecipeV2.model_validate(document).text_layers[0].reveal_bounds.right == 100
+    layer["reveal_bounds"]["right"] = 0
+    with pytest.raises(ValueError, match="positive area"):
+        EditRecipeV2.model_validate(document)
+    layer["reveal_bounds"]["right"] = 100
+    layer["effect"] = "none"
+    with pytest.raises(ValueError, match="reveal bounds"):
+        EditRecipeV2.model_validate(document)

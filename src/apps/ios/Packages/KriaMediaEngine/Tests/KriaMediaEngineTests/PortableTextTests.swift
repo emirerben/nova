@@ -169,7 +169,10 @@ final class PortableTextTests: XCTestCase {
     @MainActor func testLegacyFadeUsesCompositionTimeInPreviewAndExport() async throws {
         try await verifyTextWindow(animated: true, legacy: true)
     }
-    @MainActor private func verifyTextWindow(animated: Bool, legacy: Bool = false) async throws {
+    @MainActor func testInkRevealClipsRotatedTextInPreviewAndExport() async throws {
+        try await verifyTextWindow(animated: false, legacy: true, inkReveal: true)
+    }
+    @MainActor private func verifyTextWindow(animated: Bool, legacy: Bool = false, inkReveal: Bool = false) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -186,8 +189,9 @@ final class PortableTextTests: XCTestCase {
                 source: asset.id == "font" ? .library(catalog: .font, catalogID: "Inter-Regular.ttf", generation: asset.fingerprint!.hex) : .original(mediaID: "photo"))
         }
         var cue = layer()
-        cue = PortableTextLayer(id: cue.id, start: 0.25, end: 0.75, anchorX: cue.anchorX, anchorY: cue.anchorY, rotationDegrees: 0, runs: cue.runs,
-            effect: animated ? .fadeIn : .static, motion: animated && !legacy ? try motionFixture() : nil)
+        cue = PortableTextLayer(id: cue.id, start: 0.25, end: 0.75, anchorX: cue.anchorX, anchorY: cue.anchorY, rotationDegrees: inkReveal ? 20 : 0, runs: cue.runs,
+            effect: inkReveal ? .inkReveal : animated ? .fadeIn : .static, motion: animated && !legacy ? try motionFixture() : nil,
+            revealBounds: inkReveal ? TextRevealBounds(left: 26, top: 50, right: 123, bottom: 110) : nil)
         let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 200, height: 200),
             assets: assets, tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "photo", sourceDuration: 1)])],
             assetManifest: RenderAssetManifest(assets: references), textLayers: [cue])
@@ -200,6 +204,7 @@ final class PortableTextTests: XCTestCase {
         let exported = AVAssetImageGenerator(asset: AVURLAsset(url: output))
         for generator in [reference, exported] {
             generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+            var partialPixels: Int?, settledPixels: Int?
             for seconds in [0.1, 8.0 / 30, 0.3, 0.5, 0.7, 0.9] {
                 let image = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image
                 var pixels = [UInt8](repeating: 0, count: 200 * 200 * 4)
@@ -207,10 +212,13 @@ final class PortableTextTests: XCTestCase {
                     bounds: CGRect(x: 0, y: 0, width: 200, height: 200), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
                 let bright = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 180 }.count
                 if seconds >= 0.25 && seconds < 0.75 {
-                    if animated && seconds <= 0.3 { XCTAssertEqual(bright, 0) }
+                    if (animated || inkReveal) && seconds <= 0.3 { XCTAssertEqual(bright, 0) }
+                    else if inkReveal && seconds == 0.5 { XCTAssertGreaterThan(bright, 100); partialPixels = bright }
                     else { XCTAssertGreaterThan(bright, 600) }
                 } else { XCTAssertEqual(bright, 0) }
+                if inkReveal && seconds == 0.7 { settledPixels = bright }
             }
+            if inkReveal { XCTAssertLessThan(try XCTUnwrap(partialPixels), try XCTUnwrap(settledPixels)) }
         }
     }
 

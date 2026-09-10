@@ -46,6 +46,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         TextGradient,
         TextGradientStop,
         TextInk,
+        TextRevealBounds,
     )
     from app.pipeline import text_overlay_skia as cloud
     from app.pipeline.text_motion_v2 import normalize_text_motion
@@ -61,6 +62,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         "slide-down",
         "pop-in",
         "bounce",
+        "ink-reveal",
     }:
         raise UnsupportedPortableText(f"unsupported text effect: {effect}")
     # These fields invoke specialized drawing or timing outside the base line
@@ -191,6 +193,21 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         for index, line in enumerate(lines)
         if line
     ]
+    reveal_bounds = None
+    if effect == "ink-reveal":
+        shadow_left, shadow_top, shadow_right, shadow_bottom = cloud._text_shadow_bleed_px(
+            cloud._text_shadow_style(overlay)
+        )
+        glow_bleed = 62.0 if cloud._finite_float(overlay.get("glow_strength"), 0.0) > 0 else 0.0
+        stroke_bleed = float(stroke + 2)
+        left = min(cloud._anchored_left_x(anchor, cx, width) for width in block["widths"])
+        right = max(cloud._anchored_left_x(anchor, cx, width) + width for width in block["widths"])
+        reveal_bounds = TextRevealBounds(
+            left=left - max(stroke_bleed, shadow_left, glow_bleed),
+            top=top - max(stroke_bleed, shadow_top, glow_bleed),
+            right=right + max(stroke_bleed, shadow_right, glow_bleed),
+            bottom=top + block["block_h"] + max(stroke_bleed, shadow_bottom, glow_bleed),
+        )
     return PortableTextLayer(
         id=layer_id,
         start=overlay["start_s"],
@@ -201,4 +218,5 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         runs=runs,
         effect=effect,
         motion=motion,
+        reveal_bounds=reveal_bounds,
     ), font_asset

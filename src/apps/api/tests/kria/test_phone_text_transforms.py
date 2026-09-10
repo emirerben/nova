@@ -23,6 +23,7 @@ def reference_cases(*, legacy=False):
         "slide-down",
         "pop-in",
         "bounce",
+        "ink-reveal",
     ]:
         for index in range(4):
             motion = asdict(
@@ -80,7 +81,13 @@ def reference_cases(*, legacy=False):
                         "time": time,
                         "state": {
                             key: kwargs[key]
-                            for key in ["alpha", "scale", "x_translate", "y_translate"]
+                            for key in [
+                                "alpha",
+                                "scale",
+                                "x_translate",
+                                "y_translate",
+                                "reveal_progress",
+                            ]
                         },
                     }
                 )

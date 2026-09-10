@@ -105,3 +105,57 @@ def test_legacy_animation_keeps_its_duration_and_effect(effect):
     assert layer.motion is None
     assert layer.start == 0.2
     assert layer.end == 0.32
+
+
+@pytest.mark.parametrize("rotation", [0, 23])
+@pytest.mark.parametrize("glow", [0, 1])
+def test_ink_reveal_bounds_match_actual_styled_cloud_clip(rotation, glow):
+    overlay = {
+        "text": "Hello\nA second line",
+        "start_s": 0,
+        "end_s": 2,
+        "font_family": "Inter",
+        "text_size_px": 36,
+        "effect": "ink-reveal",
+        "rotation_deg": rotation,
+        "shadow_style": "high_visibility",
+        "stroke_width": 2,
+        "glow_color": "#123456",
+        "glow_strength": glow,
+    }
+    canvas = Canvas(600, 400)
+    layer, _ = compile_text_overlay(overlay, layer_id="ink", canvas=canvas)
+
+    class Capture:
+        clips = []
+
+        def save(self):
+            pass
+
+        def restore(self):
+            pass
+
+        def translate(self, *args):
+            pass
+
+        def scale(self, *args):
+            pass
+
+        def rotate(self, *args):
+            pass
+
+        def clipRect(self, rect, **kwargs):
+            self.clips.append((rect.left(), rect.top(), rect.right(), rect.bottom()))
+
+    capture = Capture()
+    with patch("app.pipeline.text_overlay_skia._draw_line_with_layers"):
+        cloud._draw_centered_text(
+            capture, overlay["text"], overlay, render_canvas=canvas, reveal_progress=0.5
+        )
+    bounds = layer.reveal_bounds
+    assert bounds is not None
+    assert capture.clips == [
+        pytest.approx(
+            (bounds.left, bounds.top, (bounds.left + bounds.right) / 2, bounds.bottom), abs=0.0001
+        )
+    ]

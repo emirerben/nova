@@ -192,3 +192,16 @@ This also supports Gallery/cross-device projects that lack a local source mappin
 Source manifest writes are serialized; neither proxy paths nor symlink escapes
 can become original bindings. Tests: `SourceAssetStoreTests` and
 `DeviceRenderSessionTests.testRelinkRequiresExactBytesAndCurrentRequest`.
+
+
+### Ink Reveal parity (staged)
+
+Ink Reveal is a native crop of the fully styled text block. Its versioned text
+contract carries the production block bounds, including stroke, shadow, and glow
+bleed. The crop rotates with the text; legacy delay/duration compression and v2
+speed, easing, intensity, and exit fade use the cloud timing equations. This adds
+no timeline duration or ripple changes. Actual cloud clip captures cover rotated
+and glowing text, the shared timing fixtures include both motion versions, and
+`PortableTextTests.testInkRevealClipsRotatedTextInPreviewAndExport` verifies the
+partial and settled phases through real preview and H.264/AAC export. This does
+not enable the separate Handwriting stroke effect or any unverified capability.

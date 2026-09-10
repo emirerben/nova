@@ -4115,7 +4115,8 @@
               "slide-up",
               "slide-down",
               "pop-in",
-              "bounce"
+              "bounce",
+              "ink-reveal"
             ],
             "title": "Effect",
             "type": "string"
@@ -4135,6 +4136,11 @@
           },
           "motion": {
             "$ref": "#/components/schemas/ResolvedTextMotion",
+            "default": null,
+            "nullable": true
+          },
+          "reveal_bounds": {
+            "$ref": "#/components/schemas/TextRevealBounds",
             "default": null,
             "nullable": true
           },
@@ -4933,6 +4939,43 @@
           "alpha"
         ],
         "title": "TextInk",
+        "type": "object"
+      },
+      "TextRevealBounds": {
+        "additionalProperties": false,
+        "properties": {
+          "bottom": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Bottom",
+            "type": "number"
+          },
+          "left": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Left",
+            "type": "number"
+          },
+          "right": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Right",
+            "type": "number"
+          },
+          "top": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Top",
+            "type": "number"
+          }
+        },
+        "required": [
+          "left",
+          "top",
+          "right",
+          "bottom"
+        ],
+        "title": "TextRevealBounds",
         "type": "object"
       },
       "TextTreatment": {

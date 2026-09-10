@@ -130,7 +130,22 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                                                               y: text.frame.minY - text.portableAnchor.y)
                                 .concatenating(CGAffineTransform(scaleX: state.scale, y: state.scale))
                                 .concatenating(CGAffineTransform(translationX: text.portableAnchor.x + dx, y: text.portableAnchor.y + dy))
-                            frame = opacity(text.image.transformed(by: transform), state.alpha).composited(over: frame)
+                            var image = text.image
+                            if let bounds = layer.revealBounds, state.revealProgress < 1 {
+                                guard state.revealProgress > 0 else { continue }
+                                let reveal = CGRect(x: bounds.left, y: instruction.canvas.height - bounds.bottom,
+                                    width: (bounds.right - bounds.left) * state.revealProgress, height: bounds.bottom - bounds.top)
+                                let rotation = CGAffineTransform(translationX: -text.portableAnchor.x, y: -text.portableAnchor.y)
+                                    .concatenating(CGAffineTransform(rotationAngle: angle))
+                                    .concatenating(CGAffineTransform(translationX: text.portableAnchor.x - text.frame.minX,
+                                                                  y: text.portableAnchor.y - text.frame.minY))
+                                let mask = CIImage(color: .white).cropped(to: reveal).transformed(by: rotation)
+                                image = image.applyingFilter("CIBlendWithAlphaMask", parameters: [
+                                    kCIInputBackgroundImageKey: CIImage(color: .clear).cropped(to: image.extent),
+                                    kCIInputMaskImageKey: mask
+                                ]).cropped(to: image.extent)
+                            }
+                            frame = opacity(image.transformed(by: transform), state.alpha).composited(over: frame)
                         } catch {
                             request.finish(with: error)
                             return

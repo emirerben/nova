@@ -112,6 +112,7 @@
           "baseline_y": 960.0,
           "letter_spacing": 0.0,
           "shaped": true,
+          "glyphs": null,
           "fill": {
             "red": 1.0,
             "green": 1.0,
@@ -126,12 +127,12 @@
           },
           "stroke_width": 0.0,
           "blur_layers": [],
-          "gradient": null,
-          "glyphs": null
+          "gradient": null
         }
       ],
       "effect": "static",
-      "motion": null
+      "motion": null,
+      "reveal_bounds": null
     }
   ]
 }

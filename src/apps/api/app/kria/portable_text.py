@@ -95,6 +95,19 @@ class ResolvedTextMotion(_TextModel):
     reveal_ramp_ms: float = Field(ge=40, le=400)
 
 
+class TextRevealBounds(_TextModel):
+    left: float = Field(ge=-20000, le=20000)
+    top: float = Field(ge=-20000, le=20000)
+    right: float = Field(ge=-20000, le=20000)
+    bottom: float = Field(ge=-20000, le=20000)
+
+    @model_validator(mode="after")
+    def positive_area(self):
+        if self.right <= self.left or self.bottom <= self.top:
+            raise ValueError("reveal bounds require a positive area")
+        return self
+
+
 class PortableTextLayer(_TextModel):
     id: str = Field(min_length=1, max_length=160)
     start: float = Field(ge=0, le=1800)
@@ -104,12 +117,23 @@ class PortableTextLayer(_TextModel):
     rotation_degrees: float = Field(ge=-3600, le=3600)
     runs: list[PositionedTextRun] = Field(min_length=1, max_length=100)
     effect: Literal[
-        "static", "none", "fade-in", "scale-up", "slide-up", "slide-down", "pop-in", "bounce"
+        "static",
+        "none",
+        "fade-in",
+        "scale-up",
+        "slide-up",
+        "slide-down",
+        "pop-in",
+        "bounce",
+        "ink-reveal",
     ] = "static"
     motion: ResolvedTextMotion | None = None
+    reveal_bounds: TextRevealBounds | None = None
 
     @model_validator(mode="after")
     def valid_window(self):
+        if (self.effect == "ink-reveal") != (self.reveal_bounds is not None):
+            raise ValueError("ink reveal requires exact reveal bounds")
         if self.end <= self.start:
             raise ValueError("text layer must have a positive time window")
         if sum(len(run.glyphs or []) for run in self.runs) > 10000:
