@@ -34,6 +34,11 @@ export interface UseEditDirectorOptions {
   ) => ApplyCopilotOpsResult;
   onApplied: (result: ApplyCopilotOpsResult) => DirectorApplyPresentation | void;
   onRevealApplied?: (focus: DirectorPreviewFocus) => void;
+  /** Transient toast for a completed LOCAL accept (KRI-19 bug 15 — accepting
+   *  a suggestion previously gave no feedback at all beyond the card
+   *  vanishing, which the mobile drawer's own scroll can carry off-screen).
+   *  Server/Omni accepts already surface their own status card. */
+  notify?: (message: string) => void;
   onGeneratedAssetReady?: () => void | Promise<void>;
   speechCutRevision?: string | null;
   speechCutLastReceipt?: SpeechCutOperation | null;
@@ -654,6 +659,7 @@ export function useEditDirector(
       );
       removeSuggestion(suggestion.id);
       setError(null);
+      optsRef.current.notify?.(`Applied — ${suggestion.title}`);
       feedback(suggestion, "accepted");
       return true;
     },

@@ -232,6 +232,17 @@ describe("EditorShell — pocket editor flag ON (light mode)", () => {
     expect(screen.queryByTestId("pocket-context-strip")).toBeNull();
   });
 
+  // KRI-19 bug 3: "the user loses their place in this flow — there's no
+  // clear sense of where they are." The top bar's center slot fell back to
+  // a generic "Edit video" label that never named the actual item, so every
+  // editor session looked identical.
+  it("shows the item's own title in the top bar instead of the generic fallback", async () => {
+    await renderShell(makeVariant());
+
+    expect(screen.getByText("My video")).toBeInTheDocument();
+    expect(screen.queryByText("Edit video")).not.toBeInTheDocument();
+  });
+
   it("trims a selected clip directly and keeps clip actions above the icon dock", async () => {
     await renderShell(makeVariant());
 

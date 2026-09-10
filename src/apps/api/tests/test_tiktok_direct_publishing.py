@@ -268,6 +268,24 @@ def test_publishable_output_rejects_missing_or_unready_variant() -> None:
         resolve_publishable_output(job, "song_text")
 
 
+def test_publishable_output_excludes_slides_variant_from_implicit_selection() -> None:
+    # A slides job has exactly one variant (the stitched preview). Without the
+    # exclusion, `ready[0]` on an implicit (no variant_id) call would select it
+    # and TikTok direct-post would submit the preview as an ordinary video —
+    # exactly the export-only v1 non-goal (plans/024 risk #3).
+    job = _job()
+    job.assembly_plan["variants"][0]["resolved_archetype"] = "slides"
+    with pytest.raises(PublishableOutputError, match="not ready to publish"):
+        resolve_publishable_output(job)
+
+
+def test_publishable_output_rejects_explicit_slides_variant_id() -> None:
+    job = _job()
+    job.assembly_plan["variants"][0]["resolved_archetype"] = "slides"
+    with pytest.raises(PublishableOutputError, match="export-only"):
+        resolve_publishable_output(job, "song_text")
+
+
 def test_publishable_output_never_snapshots_control_owned_provisional_media() -> None:
     job = _job()
     provisional_path = f"generative-jobs/{job.id}/render-generations/generation-new/provisional.mp4"
