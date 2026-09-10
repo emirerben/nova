@@ -259,3 +259,16 @@ phone preserves that distinction and does not add the common text exit fade.
 motion versions through native preview and H.264 export. Glyph and composite
 bitmaps share the bounded text-memory budget. This remains disabled for rollout
 until the complete capability matrix and physical-device gates pass.
+
+### Dissolve reference primitives (not activated)
+
+`DissolveTiming` matches the cloud's exit window and seeded particle alpha.
+`DissolveNoise` ports Skia's one-octave noise and text displacement map; its
+fixture samples 960 noise pixels and 320 merged-map pixels across a 1080×1920
+canvas. Native samples match within one 8-bit channel value. Production's
+normalized color matrix receives an offset of `-2 * 255`, so the coarse red
+and green channels clamp to zero; the frequency-1 fine field is neutral at
+integer lattice coordinates. Preserve these observed semantics for parity.
+Skia attribution is bundled in `Kria/Resources/Skia-LICENSE.txt`.
+These primitives do not activate dissolve: the native displacement painter,
+preview/export parity, and separate media-card dissolve still need completion.
