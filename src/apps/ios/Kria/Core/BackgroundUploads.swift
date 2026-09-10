@@ -65,15 +65,18 @@ struct UploadRecoveryPolicy: Sendable {
     @Published private(set) var attachedThreads: [UUID: CreationThread] = [:]
 
     private let api: KriaAPIClient
-    private let defaultsKey = "kria.background-upload-recovery.v1"
+    private let defaultsKey: String
     private var backgroundSession: URLSession!
+    private var retryingRecords: Set<UUID> = []
+    private var cancellingRecords: Set<UUID> = []
     private var attachmentTasks: [UUID: (token: UUID, task: Task<Void, Never>)] = [:]
 
-    init(api: KriaAPIClient) {
+    init(api: KriaAPIClient, defaultsKey: String = "kria.background-upload-recovery.v1", sessionConfiguration: URLSessionConfiguration? = nil) {
         self.api = api
+        self.defaultsKey = defaultsKey
         super.init()
         records = Self.restoreRecords(key: defaultsKey)
-        let configuration = URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
+        let configuration = sessionConfiguration ?? URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
         configuration.isDiscretionary = false
         configuration.sessionSendsLaunchEvents = true
         configuration.waitsForConnectivity = true
@@ -125,7 +128,8 @@ struct UploadRecoveryPolicy: Sendable {
     }
 
     func cancel(recordID: UUID) async {
-        guard let record = records.first(where: { $0.id == recordID }) else { return }
+        guard let record = records.first(where: { $0.id == recordID }), cancellingRecords.insert(recordID).inserted else { return }
+        defer { cancellingRecords.remove(recordID) }
         let tasks = await backgroundSession.allTasks
         tasks.first(where: { $0.taskIdentifier == record.taskIdentifier })?.cancel()
         if record.role == .visual, let itemID = record.itemID, let reservationID = record.visualReservationID {
@@ -164,8 +168,6 @@ struct UploadRecoveryPolicy: Sendable {
 
     func retryUpload(recordID: UUID) async {
         guard let record = records.first(where: { $0.id == recordID }) else { return }
-        let active = await backgroundSession.allTasks
-        guard !active.contains(where: { $0.taskIdentifier == record.taskIdentifier }) else { return }
         if record.uploadCompleted == true { await attach(record) } else { await retry(record) }
     }
 
@@ -218,6 +220,11 @@ struct UploadRecoveryPolicy: Sendable {
     }
 
     private func retry(_ record: UploadRecoveryRecord) async {
+        guard records.contains(where: { $0.id == record.id }), !cancellingRecords.contains(record.id), retryingRecords.insert(record.id).inserted else { return }
+        defer { retryingRecords.remove(record.id) }
+        let active = await backgroundSession.allTasks
+        guard !active.contains(where: { $0.taskIdentifier == record.taskIdentifier }),
+              !cancellingRecords.contains(record.id), records.contains(where: { $0.id == record.id }) else { return }
         lastError = nil
         let localURL = URL(fileURLWithPath: record.localFilePath)
         guard FileManager.default.fileExists(atPath: localURL.path) else {
@@ -234,9 +241,11 @@ struct UploadRecoveryPolicy: Sendable {
                 projectID: record.projectID, itemID: record.itemID, role: record.role,
                 clientUploadID: clientUploadID, filename: record.filename, contentType: contentType, size: Int64(size)
             )
+            guard !cancellingRecords.contains(record.id), records.contains(where: { $0.id == record.id }) else { return }
             if let reservationID = record.reservationID {
                 try? await api.cancelUpload(reservationID: reservationID)
             }
+            guard !cancellingRecords.contains(record.id), records.contains(where: { $0.id == record.id }) else { return }
             remove(record.id, deleteLocalFile: false)
             try startTask(
                 recordID: record.id,
