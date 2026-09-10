@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.10.0] - 2026-09-10
+
+### Fixed
+- **A creation whose video render lost its link no longer looks deleted.** Loading a project used to withhold the whole chat — title, transcript, everything — the moment any part of its render graph drifted, and the client read that as "this project may have been deleted." The chat and title now load with a quiet notice when only the video link is affected, and a transient network or service error shows a retryable state instead of implying loss. Load failures are now typed (missing record, deleted, authorization, or service failure) so the right message and action show up, and an admin can read a project's exact integrity state without guessing.
+
 ## [0.75.9.0] - 2026-09-10
 
 ### Changed

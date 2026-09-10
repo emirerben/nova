@@ -2201,7 +2201,82 @@ async def test_retry_enqueue_failure_preserves_newer_thread_projection() -> None
 
 
 @pytest.mark.asyncio
-async def test_response_fails_closed_for_cross_user_linked_job() -> None:
+async def test_response_degrades_cross_user_linked_job_instead_of_hiding_the_thread() -> None:
+    """A cross-owned Job is dropped, never projected -- but the intact thread,
+    its title/transcript and the otherwise-coherent item/session still return.
+    Regression guard for KRI-26: this used to 404 the whole project."""
+
+    user_id, other_user_id = uuid.uuid4(), uuid.uuid4()
+    item_id, plan_id, session_id, job_id = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user_id,
+        runtime_version=1,
+        title="My cross-linked project",
+        status="active",
+        revision=3,
+        state={},
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+        active_job_id=job_id,
+        creator_direction_snapshot=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    plan = SimpleNamespace(id=plan_id, user_id=user_id, ownership_epoch=0)
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user_id,
+        plan_item_id=item_id,
+        target_job_id=job_id,
+        ownership_epoch=0,
+        active_plan=None,
+        status="awaiting_confirmation",
+        revision=1,
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=other_user_id,
+        content_plan_item_id=item_id,
+    )
+    db = Mock()
+    db.get = AsyncMock(side_effect=[item, plan, session, job])
+    db.execute = AsyncMock(return_value=_delete_result(rows=[]))
+
+    output = await _response(db, thread)
+
+    assert output.id == str(thread.id)
+    assert output.title == "My cross-linked project"
+    assert output.job is None
+    assert output.creator_agent is not None
+    assert output.integrity is not None
+    assert output.integrity.status == "degraded"
+    assert output.integrity.detached == ["job"]
+    assert output.integrity.codes == ["job_incoherent"]
+    # Regression guard: the client infers "still rendering" from
+    # active_job_id being set with no matching `job`, which would poll
+    # forever against an id the fence already rejected -- the detached
+    # pointer must not reach the response even though `job` itself is None.
+    assert output.active_job_id is None
+    # The coherent tiers keep their real pointers.
+    assert output.active_plan_item_id == str(item_id)
+    assert output.active_creator_agent_session_id == str(session_id)
+
+
+@pytest.mark.asyncio
+async def test_response_kill_switch_reproduces_pre_fix_404_for_cross_user_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gate off: byte-identical to the original fail-closed behavior."""
+    monkeypatch.setattr(settings, "creation_thread_degraded_projection_enabled", False)
+
     user_id, other_user_id = uuid.uuid4(), uuid.uuid4()
     item_id, plan_id, session_id, job_id = (
         uuid.uuid4(),
@@ -2792,6 +2867,107 @@ def test_render_projection_maps_preparing_and_rejects_epoch_or_target_mismatch()
         assembly_plan={},
     )
     assert _render_projection(thread, item=item, plan=plan, session=wrong_target, job=job) is None
+
+
+def test_render_projection_never_readopts_a_detached_session_id() -> None:
+    """Regression guard: a degraded session=None must not fall back to the
+    raw thread.active_creator_agent_session_id -- that id is exactly what
+    the ownership fence just rejected. See KRI-26."""
+    owner_id, item_id, plan_id, job_id, rejected_session_id = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    thread = SimpleNamespace(
+        creator_id=owner_id,
+        content_plan_id=plan_id,
+        active_creator_agent_session_id=rejected_session_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=owner_id, ownership_epoch=0)
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=owner_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
+        status="queued",
+        assembly_plan={},
+    )
+
+    projection = _render_projection(thread, item=item, plan=plan, session=None, job=job)
+
+    assert projection is not None
+    assert projection["session_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_sync_agent_never_projects_a_cross_tenant_session() -> None:
+    """Regression guard: a stale/cross-owned session id on the thread must
+    never have its transcript content copied into this user's chat. See
+    KRI-26."""
+    import app.routes.creation_threads as routes
+
+    user_id, other_user_id = uuid.uuid4(), uuid.uuid4()
+    session_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        creator_id=user_id,
+        active_creator_agent_session_id=session_id,
+        state={},
+    )
+    foreign_session = SimpleNamespace(
+        id=session_id,
+        creator_id=other_user_id,
+        status="awaiting_confirmation",
+        revision=3,
+        active_plan={"summary": "someone else's private direction"},
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=foreign_session), execute=AsyncMock())
+
+    await routes._sync_agent(db, thread)
+
+    assert thread.state == {}
+
+
+@pytest.mark.asyncio
+async def test_status_reconciliation_degrades_instead_of_dead_ending_a_status_question() -> None:
+    """Regression guard: a status-only message ("is it ready?") must not
+    roll back the user's own just-appended message when the render graph
+    has drifted -- it should report on whatever is still coherent. See
+    KRI-26."""
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id, plan_id, job_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(
+        active_plan_item_id=item_id,
+        content_plan_id=plan_id,
+        active_creator_agent_session_id=None,
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    # Cross-owned Job: user.id does not own it.
+    job = SimpleNamespace(
+        id=job_id, user_id=uuid.uuid4(), content_plan_item_id=item_id, status="processing"
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, ownership_epoch=0)
+    db = Mock()
+    db.get = AsyncMock(side_effect=[item, plan, job])
+
+    # Strict (default): raises, which is what rolls back the user's message today.
+    db.get = AsyncMock(side_effect=[item, plan, job])
+    with pytest.raises(HTTPException) as exc_info:
+        await routes._load_status_reconciliation_rows(db, thread, user)
+    assert exc_info.value.status_code == 404
+
+    # Degraded: reports the coherent item, drops the incoherent job, never raises.
+    db.get = AsyncMock(side_effect=[item, plan, job])
+    live_item, session, live_job = await routes._load_status_reconciliation_rows(
+        db, thread, user, degrade=True
+    )
+    assert live_item is item
+    assert live_job is None
+    assert session is None
 
 
 @pytest.mark.asyncio

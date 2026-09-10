@@ -673,6 +673,11 @@
             "title": "Id",
             "type": "string"
           },
+          "integrity": {
+            "$ref": "#/components/schemas/ThreadProjectionIntegrityOut",
+            "default": null,
+            "nullable": true
+          },
           "job": {
             "additionalProperties": true,
             "default": null,
@@ -3523,6 +3528,35 @@
           "has_more"
         ],
         "title": "ThreadDeltaOut",
+        "type": "object"
+      },
+      "ThreadProjectionIntegrityOut": {
+        "description": "Reports a render-graph edge dropped by a degraded projection read.\n\nOnly ever attached when at least one edge was detached; a healthy thread\ncarries no ``integrity`` field at all. See ``_load_authorized_projection_rows``.",
+        "properties": {
+          "codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Codes",
+            "type": "array"
+          },
+          "detached": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Detached",
+            "type": "array"
+          },
+          "status": {
+            "default": "degraded",
+            "enum": [
+              "degraded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "ThreadProjectionIntegrityOut",
         "type": "object"
       },
       "TimelineClip": {
