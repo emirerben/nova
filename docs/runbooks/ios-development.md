@@ -69,3 +69,6 @@ For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
 These fixtures compose the real components; they never enter Release navigation.
 Use `-ui-testing-chat` for interactive navigation and the existing editor fixtures
 for edit/save/export verification.
+
+See the [KRI-23 native design review](../reviews/kri-23/README.md) for screenshot
+comparisons, behavior coverage, and the remaining live-device validation limits.
