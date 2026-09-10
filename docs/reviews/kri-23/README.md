@@ -12,7 +12,9 @@ not supply a percentage; the preview does not fabricate Paper's example progress
 ## Visual evidence
 
 - [Updated drawer and centered header](drawer-toggle.jpg): the menu button moves
-  with the main screen and toggles the drawer. New chat remains in the drawer.
+  with the main screen and toggles the drawer. Horizontal swipes also open and
+  close it, and the shifted workspace uses the menu button’s warm background.
+  New chat remains in the drawer.
   This follow-up supersedes the header and drawer navigation in the original captures.
 
 - [All eight mobile states](mobile-flow.jpg): format, footage, direction, rendering,

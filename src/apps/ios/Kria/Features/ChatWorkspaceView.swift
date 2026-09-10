@@ -5,21 +5,24 @@ struct ChatWorkspaceView: View {
     @AppStorage("kria.workspace.last-project-id") private var lastProjectID = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsProjects = false
+    @GestureState private var drawerDrag: CGFloat = 0
     @State private var showsGallery = false
     @State private var showsAccount = false
 
     var body: some View {
         GeometryReader { geometry in
             let drawerWidth = min(326, max(0, geometry.size.width - 76))
+            let drawerOffset = min(drawerWidth, max(0, (showsProjects ? drawerWidth : 0) + drawerDrag))
+            let drawerActive = showsProjects || drawerOffset > 0
             ZStack(alignment: .leading) {
-                if showsProjects {
+                if drawerActive {
                     ProjectsDrawer(
                         close: { showsProjects = false },
                         openGallery: { showsProjects = false; showsGallery = true },
                         openAccount: { showsProjects = false; showsAccount = true }
                     )
                     .frame(width: drawerWidth)
-                    .transition(.move(edge: .leading))
+                    .offset(x: drawerOffset - drawerWidth)
                 }
                 NavigationStack {
                     Group {
@@ -53,20 +56,22 @@ struct ChatWorkspaceView: View {
                                     KriaWordmark().accessibilityHidden(showsProjects)
                                     Spacer()
                                     Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
-                                }.padding(.horizontal, 16).frame(minHeight: 64).background(KriaColor.paper)
+                                }.padding(.horizontal, 16).frame(minHeight: 64).background(drawerActive ? KriaColor.menu : KriaColor.paper)
                             }
                         }
                     }
                     .toolbar(.hidden, for: .navigationBar)
                 }
-                .environment(\.projectsDrawerOpen, showsProjects)
+                .environment(\.projectsDrawerOpen, drawerActive)
                 .frame(width: geometry.size.width)
-                .offset(x: showsProjects ? drawerWidth : 0)
+                .background(drawerActive ? KriaColor.menu : KriaColor.paper)
+                .offset(x: drawerOffset)
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
             .clipped()
             .background(KriaColor.paper)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: showsProjects)
+            .simultaneousGesture(drawerGesture(width: drawerWidth))
             .accessibilityAction(.escape) { showsProjects = false }
         }
         .onChange(of: showsProjects) { _, isOpen in
@@ -84,9 +89,26 @@ struct ChatWorkspaceView: View {
             NavigationStack { AccountView() }
         }
     }
+
+    private func drawerGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 20)
+            .updating($drawerDrag) { value, translation, _ in
+                // Vertical chat and project-list scrolling retain their normal behavior.
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                translation = value.translation.width
+            }
+            .onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                let projectedOffset = (showsProjects ? width : 0) + value.predictedEndTranslation.width
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) {
+                    showsProjects = projectedOffset > width / 2
+                }
+            }
+    }
 }
 
 private struct WorkspaceEmptyView: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     let create: () -> Void
     @EnvironmentObject private var model: AppModel
 
@@ -103,11 +125,12 @@ private struct WorkspaceEmptyView: View {
         }
         .padding(24)
         .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
-        .background(KriaColor.paper)
+        .background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
     }
 }
 
 private struct WorkspaceLoadingView: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     var body: some View {
         VStack(spacing: 14) {
             ProgressView().tint(KriaColor.ink)
@@ -116,13 +139,14 @@ private struct WorkspaceLoadingView: View {
                 .foregroundStyle(KriaColor.zinc)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(KriaColor.paper)
+        .background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Opening your creation conversation")
     }
 }
 
 private struct WorkspaceRecoveryView: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     let retry: () -> Void
     @EnvironmentObject private var model: AppModel
 
@@ -136,7 +160,7 @@ private struct WorkspaceRecoveryView: View {
         }
         .padding(24)
         .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
-        .background(KriaColor.paper)
+        .background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
     }
 }
 
@@ -263,7 +287,7 @@ private struct CreationWorkspaceView: View {
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
         }
-        .background(KriaColor.paper)
+        .background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: $prompt,

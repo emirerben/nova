@@ -77,7 +77,7 @@ struct WorkspaceHeader: View {
                     .accessibilityHidden(projectsDrawerOpen)
                     .allowsHitTesting(!projectsDrawerOpen)
             }
-        }.foregroundStyle(KriaColor.ink).background(KriaColor.paper)
+        }.foregroundStyle(KriaColor.ink).background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
     }
 }
 
@@ -686,6 +686,7 @@ struct RecoveryCard: View {
 }
 
 struct ChatComposer: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @Binding var text: String
     let isSending: Bool
     let canAttach: Bool
@@ -712,9 +713,9 @@ struct ChatComposer: View {
             }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
                 .accessibilityLabel(isSending ? "Sending message" : "Send message")
         }
-        .padding(7).background(KriaColor.paper)
+        .padding(7).background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
         .overlay(RoundedRectangle(cornerRadius: 30).stroke(KriaColor.border, lineWidth: 1))
-        .padding(.horizontal, 14).padding(.vertical, 12).background(KriaColor.paper)
+        .padding(.horizontal, 14).padding(.vertical, 12).background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
     }
 }
 
