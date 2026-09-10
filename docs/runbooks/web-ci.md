@@ -2,9 +2,10 @@
 
 ## Coverage policy
 
-Every PR targeting main or dev runs the complete Jest suite. Every push to main
-also runs the complete suite, preserving detection of merge/main regressions.
-There are no path exclusions, scheduled-only tests, or changed-test heuristics.
+PRs targeting main or dev run the complete Jest suite when the shared
+[CI selector](change-based-ci.md) selects web coverage. Every push to main runs
+the complete suite, preserving detection of merge/main regressions. Selection
+operates at suite level; it does not guess individual affected Jest tests.
 
 | Stage | Purpose and coverage | Frequency |
 | --- | --- | --- |
@@ -13,9 +14,10 @@ There are no path exclusions, scheduled-only tests, or changed-test heuristics.
 | Deno and offline CanvasKit cache | Exercise actual offline motion rendering, generated contracts and cross-renderer parity | Remaining group on every run |
 | Four interaction groups | Chat creation, personalization, library, timeline, inspector, visuals, header, TikTok and Radix interactions | All groups on every run |
 | Remaining Jest tests | Other component, editor, reducer, client, fixture and rendering contracts | Every run |
-| test-web aggregation | Report success only when the entire matrix succeeds | Every run, including upstream failure or skip |
+| test-web aggregation | Report success only when the entire matrix succeeds | Every PR/main run, including intentional suite skips |
 
-Lint/API CI, mobile Playwright E2E and deployment triggers remain unchanged.
+Lint/API CI also uses the shared selector. Mobile Playwright E2E and deployment
+triggers remain unchanged.
 At investigation time, main's required checks are `lint` and `test-api` (strict),
 with review requirements; `test-web` is not required. This change does not modify
 branch protection or make deployment contingent on a new check.
@@ -32,8 +34,9 @@ No assertions, mocks or production code change.
 Four groups are balanced by observed timings, rather than file counts. The
 matrix uses `fail-fast: false`; a failure does not cancel sibling groups. Within
 an interaction group, subsequent suites still run after an earlier failure.
-The stable `test-web` aggregation fails on failure, cancellation, missing needs
-or unexpected skips. Each group has a 20-minute job ceiling.
+The stable `test-web` aggregation in `scripts/ci/select-tests.py` fails on
+failure, cancellation, missing needs or unexpected skips. A successful selector
+can explicitly mark the entire web suite as not applicable. Each group has a 20-minute job ceiling.
 
 Jest JSON reports include individual suite durations and test counts. Each group
 also writes incremental `test-results/web/<group>/timings.json`; artifacts are
