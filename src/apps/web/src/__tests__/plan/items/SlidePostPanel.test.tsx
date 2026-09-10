@@ -219,7 +219,7 @@ describe("SlidePostPanel", () => {
     await waitFor(() => expect(mockListPoolAssets).toHaveBeenCalled());
 
     expect(screen.getByText("no videos allowed")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
   });
 
   it("export opens the signed bundle URL when validation passes", async () => {
@@ -237,7 +237,7 @@ describe("SlidePostPanel", () => {
     render(<SlidePostPanel item={makeItem()} variant={variant} onRefetch={jest.fn()} />);
     await waitFor(() => expect(mockListPoolAssets).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
 
     await waitFor(() =>
       expect(openSpy).toHaveBeenCalledWith(
@@ -247,5 +247,92 @@ describe("SlidePostPanel", () => {
       ),
     );
     openSpy.mockRestore();
+  });
+
+  it("every slide card has an Edit control", async () => {
+    render(<SlidePostPanel item={makeItem()} variant={null} onRefetch={jest.fn()} />);
+    await waitFor(() => expect(mockListPoolAssets).toHaveBeenCalled());
+    expect(screen.getAllByRole("button", { name: /^Edit slide \d/ })).toHaveLength(2);
+  });
+
+  it("clicking Edit opens the per-slide editor for that slide", async () => {
+    render(<SlidePostPanel item={makeItem()} variant={null} onRefetch={jest.fn()} />);
+    await waitFor(() => expect(mockListPoolAssets).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit slide 1" }));
+
+    expect(screen.getByRole("dialog", { name: "Edit photo" })).toBeInTheDocument();
+  });
+
+  it("saving text and a look preset in the editor persists edits on that slide only", async () => {
+    const onRefetch = jest.fn();
+    render(<SlidePostPanel item={makeItem()} variant={null} onRefetch={onRefetch} />);
+    await waitFor(() => expect(mockListPoolAssets).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit slide 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add text" }));
+    fireEvent.change(screen.getByLabelText("Overlay text"), {
+      target: { value: "sold out" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Bottom" }));
+    fireEvent.click(screen.getByRole("button", { name: "Olive Film" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(mockPutDraft).toHaveBeenCalled());
+    const [, body] = mockPutDraft.mock.calls[0];
+    expect(body.slides).toEqual([
+      { id: "s0", asset_id: "a0", kind: "image" },
+      {
+        id: "s1",
+        asset_id: "a1",
+        kind: "image",
+        edits: { text: { content: "sold out", position: "bottom" }, look_preset: "olive_film" },
+      },
+    ]);
+    await waitFor(() => expect(onRefetch).toHaveBeenCalled());
+  });
+
+  it("saving with no text and the default look preset clears edits back to null", async () => {
+    const item = makeItem({
+      slide_post: {
+        schema_version: 1,
+        version: 2,
+        platform_profile: "tiktok_photo",
+        slides: [
+          {
+            id: "s0",
+            asset_id: "a0",
+            kind: "image",
+            edits: { text: { content: "old text", position: "top" }, look_preset: "golden_hour" },
+          },
+        ],
+        cover_index: 0,
+        caption: "hello",
+        rendered_version: 2,
+        user_edited: true,
+      },
+    });
+    render(<SlidePostPanel item={item} variant={null} onRefetch={jest.fn()} />);
+    await waitFor(() => expect(mockListPoolAssets).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit slide 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Original" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(mockPutDraft).toHaveBeenCalled());
+    const [, body] = mockPutDraft.mock.calls[0];
+    expect(body.slides).toEqual([{ id: "s0", asset_id: "a0", kind: "image", edits: null }]);
+  });
+
+  it("Cancel closes the editor without saving", async () => {
+    render(<SlidePostPanel item={makeItem()} variant={null} onRefetch={jest.fn()} />);
+    await waitFor(() => expect(mockListPoolAssets).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit slide 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(mockPutDraft).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

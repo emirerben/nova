@@ -4230,6 +4230,7 @@ def _resolve_slide_post_draft_and_assets(
                 "content_fingerprint": asset.content_fingerprint,
                 "duration_s": asset.duration_s,
                 "alt": ref.alt,
+                "edits": ref.edits,
             }
         )
     if not ordered_assets:
@@ -4294,9 +4295,21 @@ def _build_slide_post_result(
                 asset["content_fingerprint"]
                 or hashlib.sha256(asset["gcs_path"].encode("utf-8")).hexdigest()
             )
+            edits = asset.get("edits")
+            # A slide's edits (text overlay, look preset) must be part of the
+            # cache key. Without this, editing a slide and re-rendering would
+            # silently reuse the OLD normalized derivative from before the
+            # edit — the edit would never appear in the export. "noedits" is
+            # a plain literal (not a hash) so the unedited path's key is
+            # unchanged from before this feature existed.
+            edits_digest = (
+                hashlib.sha256(edits.model_dump_json().encode("utf-8")).hexdigest()[:16]
+                if edits is not None
+                else "noedits"
+            )
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
-                f"{fingerprint}_{canvas[0]}x{canvas[1]}.{ext}"
+                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}.{ext}"
             )
             normalized_local = os.path.join(tmpdir, f"norm_{index:02d}.{ext}")
             if storage.object_exists(normalized_key):
@@ -4313,9 +4326,13 @@ def _build_slide_post_result(
                 else:
                     storage.download_to_file(asset["gcs_path"], source_local)
                 if kind == "image":
-                    slide_build.normalize_image_slide(source_local, normalized_local, canvas=canvas)
+                    slide_build.normalize_image_slide(
+                        source_local, normalized_local, canvas=canvas, edits=edits
+                    )
                 else:
-                    slide_build.normalize_video_slide(source_local, normalized_local, canvas=canvas)
+                    slide_build.normalize_video_slide(
+                        source_local, normalized_local, canvas=canvas, edits=edits
+                    )
                 storage.upload_local_file(
                     normalized_local,
                     normalized_key,

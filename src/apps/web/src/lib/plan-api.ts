@@ -13,7 +13,7 @@ import type { MotionPresetInstance } from "@nova/motion-runtime";
  * /api/auth/signin (NextAuth's default Google sign-in page).
  */
 
-import type { CarouselMoment, EditVariantPayload } from "@/lib/generative-api";
+import type { CarouselMoment, EditVariantPayload, LookPreset } from "@/lib/generative-api";
 import type { NovaStep } from "@/lib/job-phases";
 // Re-exported so editor components can import the carousel-moment shape
 // alongside PlanItemVariant/editPlanItemVariant without a second import line.
@@ -806,6 +806,20 @@ export interface PlanItem {
   slide_post?: SlidePostDraft | null;
 }
 
+/** v1 per-slide editing (plans/024 follow-up eng-review): one optional text
+ *  overlay in a fixed position, plus a look preset. Mirrors `TextOverlay`
+ *  in app/schemas/slide_post.py. */
+export interface SlideTextOverlay {
+  content: string;
+  position: "top" | "center" | "bottom";
+}
+
+/** Mirrors `SlideEdits` in app/schemas/slide_post.py. */
+export interface SlideEdits {
+  text?: SlideTextOverlay | null;
+  look_preset: LookPreset;
+}
+
 /** One item in a slide post's ordered sequence. References a pool asset by
  *  id — never a raw GCS path. Mirrors `SlideRef` in app/schemas/slide_post.py. */
 export interface SlideRef {
@@ -813,6 +827,7 @@ export interface SlideRef {
   asset_id: string;
   kind: "image" | "video";
   alt?: string | null;
+  edits?: SlideEdits | null;
 }
 
 export type PlatformProfile = "tiktok_photo" | "instagram_carousel";

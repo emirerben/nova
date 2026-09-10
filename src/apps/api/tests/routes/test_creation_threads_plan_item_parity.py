@@ -115,6 +115,45 @@ def test_visual_media_is_exposed_as_a_separate_plan_item_pool() -> None:
     assert capabilities["visuals"]["max"] == 100
 
 
+def test_selecting_slides_format_on_a_fresh_item_is_a_safe_no_op_mutation() -> None:
+    """The chat select_format handler routes "slides" through the exact same
+    mutate_plan_item_media facade as every video archetype (see
+    routes/creation_threads.py's select_format branch). At the moment of
+    selection the item has no clips/voiceover yet regardless of format, so no
+    narration source resolves before or after -- this pins that selecting
+    slides is a genuine no-op for the speech-cleanup/audio-mode machinery
+    that format doesn't use, matching montage's own no-op behavior rather
+    than needing a bespoke branch.
+    """
+    item = SimpleNamespace(
+        clip_gcs_paths=[],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+        voiceover_generation=None,
+        voiceover_duration_s=None,
+        edit_format="montage",
+        audio_mode="kria",
+        speech_cleanup_enabled=False,
+        speech_cleanup_notice=None,
+        edit_proposal=None,
+    )
+
+    result = mutate_plan_item_media(
+        item,
+        detector_policy="detector-policy-v1",
+        edit_format="slides",
+        audio_mode="kria",
+        current_analysis=None,
+    )
+
+    assert item.edit_format == "slides"
+    assert item.audio_mode == "kria"
+    assert result.source_changed is False
+    assert result.schedule is False
+    assert item.speech_cleanup_enabled is False
+    assert item.speech_cleanup_notice is None
+
+
 def _attribute_targets(node: ast.AST) -> list[ast.Attribute]:
     if isinstance(node, ast.Attribute):
         return [node]
