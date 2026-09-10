@@ -30,7 +30,7 @@ Native setup, build commands, and architecture boundaries are in the [Kria iOS d
 
 ## Features
 
-- **Chat-first creation** — start at `/plan`, choose Montage, Narrated, or Talking to camera, add your footage, direct Kria in the conversation, approve a render, and open the ready cut in the existing editor ([runbook](docs/runbooks/chat-first-creation.md); [implementation plan](plans/021-chat-first-creation.md)). Legacy `/create` and `/create/manual` links redirect here.
+- **Chat-first creation** — start at `/plan`, choose Montage, Narrated, or Talking to camera, add your footage, direct Kria in the conversation, approve a render, then keep editing in the same conversation beside the ready cut. Previewable AI edits stay undoable until Save/export; direct editor links reopen this workspace ([creation runbook](docs/runbooks/chat-first-creation.md); [editor chat runbook](docs/runbooks/unified-editor-chat.md); [implementation plan](plans/021-chat-first-creation.md)). Legacy `/create` and `/create/manual` links redirect here.
 - **Template mode** — drop your clips into a viral template; Gemini analyzes each clip and matches it to the right slot
 - **Music beat-sync** — browse a music gallery, pick a song, upload clips; every cut lands on a detected beat (`/music`)
 - **Guided Plan edit** — describe the story you want in ordinary language, review how Kria uses all uploaded photos and videos, approve before rendering, then edit the approved story's timeline, Looks, music, and supported layers on desktop or mobile ([pipeline and rollout guide](docs/pipelines/guided-edit.md); [mobile timeline plan](plans/020-mobile-video-editor-timeline.md); [native editor parity plan](plans/024-native-editor-component-parity.md))

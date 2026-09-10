@@ -265,6 +265,46 @@ def _summary(op: dict[str, Any]) -> str:
     return name[:1].upper() + name[1:]
 
 
+def project_editor_draft(variant: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Overlay a same-generation draft without mutating the rendered Job."""
+    projected = copy.deepcopy(variant)
+    for key in ("text_elements", "caption_cues", "music_track_id"):
+        if payload.get(key) is not None:
+            projected[key] = copy.deepcopy(payload[key])
+    if payload.get("timeline_slots") is not None:
+        originals = {
+            row.get("slot_id"): row for row in _variant_slots(variant) if row.get("slot_id")
+        }
+        projected["user_timeline"] = {
+            "slots": [
+                {**originals.get(row.get("slot_id"), {}), **copy.deepcopy(row)}
+                for row in payload["timeline_slots"]
+            ]
+        }
+    if payload.get("mix") is not None:
+        projected["mix"] = payload["mix"].get("music_level")
+    if payload.get("remove_music"):
+        projected["music_track_id"] = None
+    for key, value in (payload.get("caption_meta") or {}).items():
+        if key != "font_set":
+            projected["captions_enabled" if key == "enabled" else f"caption_{key}"] = value
+    return projected
+
+
+def merge_editor_draft(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    merged = {**previous, **current}
+    for key in ("caption_meta", "mix"):
+        if previous.get(key) and current.get(key):
+            merged[key] = {**previous[key], **current[key]}
+    if current.get("remove_music"):
+        merged.pop("music_track_id", None)
+    elif current.get("music_track_id"):
+        merged["remove_music"] = False
+    elif previous.get("remove_music"):
+        merged["remove_music"] = True
+    return merged
+
+
 def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> CompiledEditorDraft:
     """Compile one all-or-nothing portable operation bundle.
 

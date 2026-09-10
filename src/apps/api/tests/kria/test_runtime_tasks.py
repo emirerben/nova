@@ -754,3 +754,11 @@ def test_worker_republishes_a_turn_requeued_after_snapshot_drift() -> None:
 
     assert result == {"turn_id": turn_id, "status": "requeued"}
     publish.assert_called_once_with(args=[turn_id], task_id=turn_id, queue="agent-control")
+
+
+def test_draft_only_tool_group_is_valid_without_render_authority() -> None:
+    from app.kria.planner import adapt_editor_action
+
+    plan = adapt_editor_action(reply="Smaller text.", ops=[{"op": "set_title", "title": "Morning"}])
+    _validate_draft_plan(plan)
+    assert all(intent.tool_name != "render.request" for intent in plan.intents)

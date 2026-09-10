@@ -32,7 +32,7 @@ export interface UseEditDirectorOptions {
     ops: CopilotOp[],
     snapshot: CopilotSnapshot,
   ) => ApplyCopilotOpsResult;
-  onApplied: (result: ApplyCopilotOpsResult) => DirectorApplyPresentation | void;
+  onApplied: (result: ApplyCopilotOpsResult) => DirectorApplyPresentation | void | Promise<DirectorApplyPresentation | void>;
   onRevealApplied?: (focus: DirectorPreviewFocus) => void;
   /** Transient toast for a completed LOCAL accept (KRI-19 bug 15 — accepting
    *  a suggestion previously gave no feedback at all beyond the card
@@ -78,6 +78,7 @@ export interface DirectorApplyPresentation {
 }
 
 export interface DirectorAppliedReceipt {
+  status?: "staged" | "rendering" | "applied";
   id: string;
   suggestionId: string;
   title: string;
@@ -89,6 +90,7 @@ export interface DirectorAppliedReceipt {
 }
 
 export interface UseEditDirectorResult {
+  reviewVersion?: number;
   suggestions: EditorSuggestion[];
   appliedReceipts: DirectorAppliedReceipt[];
   /** True after the user has explicitly requested and received a review. */
@@ -390,6 +392,7 @@ export function useEditDirector(
     const restored = Number(receipt.restored_s || 0);
     const serverReceipt: DirectorAppliedReceipt = {
       id: `speech-cut-${receiptId}`,
+      status: "applied",
       suggestionId: pendingServerSuggestionRef.current?.id || receipt.operation,
       title:
         receipt.operation === "restore_original_timing"
@@ -634,34 +637,37 @@ export function useEditDirector(
   );
 
   const completeAcceptance = useCallback(
-    (suggestion: EditorSuggestion, result: ApplyCopilotOpsResult): boolean => {
-      let presentation: DirectorApplyPresentation | void;
-      try {
-        presentation = optsRef.current.onApplied(result);
-      } catch {
+    (suggestion: EditorSuggestion, result: ApplyCopilotOpsResult): boolean | Promise<boolean> => {
+      const failed = () => {
         setError("Kria couldn’t confirm that change. Check the preview or undo it before retrying.");
         return false;
-      }
-
-      receiptSequenceRef.current += 1;
-      const receipt: DirectorAppliedReceipt = {
-        id: `${suggestion.id}-${receiptSequenceRef.current}`,
-        suggestionId: suggestion.id,
-        title: suggestion.title,
-        startS: suggestion.start_s,
-        endS: suggestion.end_s,
-        changes: result.applied,
-        undoVersion: presentation?.undoVersion,
-        previewFocus: presentation?.previewFocus,
       };
-      setAppliedReceipts((current) =>
-        [...current, receipt].slice(-MAX_APPLIED_RECEIPTS),
-      );
-      removeSuggestion(suggestion.id);
-      setError(null);
-      optsRef.current.notify?.(`Applied — ${suggestion.title}`);
-      feedback(suggestion, "accepted");
-      return true;
+      const complete = (presentation: DirectorApplyPresentation | void) => {
+        receiptSequenceRef.current += 1;
+        const receipt: DirectorAppliedReceipt = {
+          id: `${suggestion.id}-${receiptSequenceRef.current}`,
+          status: presentation?.isRenderTurn ? "rendering" : "staged",
+          suggestionId: suggestion.id,
+          title: suggestion.title,
+          startS: suggestion.start_s,
+          endS: suggestion.end_s,
+          changes: result.applied,
+          undoVersion: presentation?.undoVersion,
+          previewFocus: presentation?.previewFocus,
+        };
+        setAppliedReceipts((current) => [...current, receipt].slice(-MAX_APPLIED_RECEIPTS));
+        removeSuggestion(suggestion.id);
+        setError(null);
+        optsRef.current.notify?.(`Applied — ${suggestion.title}`);
+        feedback(suggestion, "accepted");
+        return true;
+      };
+      try {
+        const presentation = optsRef.current.onApplied(result);
+        return presentation instanceof Promise ? presentation.then(complete).catch(failed) : complete(presentation);
+      } catch {
+        return failed();
+      }
     },
     [feedback, removeSuggestion],
   );
@@ -872,7 +878,7 @@ export function useEditDirector(
             // cancellation affordance before mutating the draft so a slow
             // candidate refresh cannot release the asset underneath it.
             setGeneration(null);
-            if (!completeAcceptance(suggestion, result)) {
+            if (!await completeAcceptance(suggestion, result)) {
               return;
             }
             try {
@@ -908,7 +914,7 @@ export function useEditDirector(
         refreshReview();
         return;
       }
-      completeAcceptance(suggestion, result);
+      void completeAcceptance(suggestion, result);
     },
     [
       completeAcceptance,
@@ -1014,6 +1020,7 @@ export function useEditDirector(
       appliedReceipts,
       reviewed,
       loading: loading || reviewQueued,
+      reviewVersion: reviewRequestKey,
       error,
       unavailable,
       reviewBlocked: Boolean(
@@ -1040,6 +1047,7 @@ export function useEditDirector(
       reviewed,
       loading,
       reviewQueued,
+      reviewRequestKey,
       error,
       unavailable,
       reviewBlockedUntil,
