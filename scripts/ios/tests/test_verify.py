@@ -21,7 +21,12 @@ with (root / 'calls').open('a') as log:
     log.write(json.dumps([name, *args]) + '\n')
 mode = os.environ.get('HARNESS_MODE', '')
 if name == 'git':
-    print(root)
+    if args[0] == 'ls-files':
+        if mode == 'fingerprint_failure':
+            sys.exit(28)
+        sys.stdout.write('src/apps/ios/source.swift\0')
+    else:
+        print(root)
 elif name == 'xcodegen':
     sys.exit(12 if mode == 'generation_failure' else 0)
 elif name == 'xcodebuild':
@@ -79,8 +84,9 @@ class VerifyShellTests(unittest.TestCase):
         scripts.mkdir(parents=True)
         (self.root / "src/apps/ios").mkdir(parents=True)
         original = Path(__file__).resolve().parents[1]
-        for name in ("verify.sh", "generate-project.sh"):
+        for name in ("verify.sh", "generate-project.sh", "cache-inputs.py"):
             shutil.copy2(original / name, scripts / name)
+        (self.root / "src/apps/ios/source.swift").write_text("let value = 1")
         self.bin = self.root / "bin"
         self.bin.mkdir()
         for name in ("git", "xcodebuild", "xcrun", "xcodegen"):
@@ -88,12 +94,22 @@ class VerifyShellTests(unittest.TestCase):
             path.write_text(STUB)
             path.chmod(0o755)
 
-    def run_verify(self, mode="", build_only=False):
+    def run_verify(
+        self,
+        mode="",
+        build_only=False,
+        suite="full",
+        restore_times=False,
+        simulator_id="",
+    ):
         env = {
             **os.environ,
             "PATH": f"{self.bin}:{os.environ['PATH']}",
             "HARNESS_ROOT": str(self.root),
             "HARNESS_MODE": mode,
+            "KRIA_IOS_TEST_MODE": suite,
+            "KRIA_SIMULATOR_ID": simulator_id,
+            "KRIA_RESTORE_INPUT_TIMES": "1" if restore_times else "0",
             "KRIA_SKIP_SIMULATOR_TESTS": "1" if build_only else "0",
         }
         result = subprocess.run(
@@ -106,6 +122,7 @@ class VerifyShellTests(unittest.TestCase):
         self.calls = [
             json.loads(line) for line in (self.root / "calls").read_text().splitlines()
         ]
+        (self.root / "calls").unlink()
         self.actions = [
             call[-1]
             for call in self.calls
@@ -129,6 +146,77 @@ class VerifyShellTests(unittest.TestCase):
                 )
         test = next(call for call in self.calls if call[-1] == "test-without-building")
         self.assertEqual(test[test.index("-parallel-testing-enabled") + 1], "NO")
+
+    def test_unit_mode_filters_ui_tests_for_both_xcode_actions(self):
+        result = self.run_verify(suite="unit")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.actions, ["build-for-testing", "test-without-building"])
+        for call in self.calls:
+            if call[0] == "xcodebuild" and call[-1] in self.actions:
+                self.assertIn("-skip-testing:KriaUITests", call)
+        self.assertFalse(
+            (self.root / "src/apps/ios/.derived-data/.ci-ui-build").exists()
+        )
+
+    def test_prepare_then_ui_reuses_same_build_and_destination(self):
+        prepared = self.run_verify(suite="prepare-ui", restore_times=True)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        build = next(call for call in self.calls if call[-1] == "build-for-testing")
+        unit = next(call for call in self.calls if call[-1] == "test-without-building")
+        self.assertFalse(
+            any(arg.startswith(("-only-testing:", "-skip-testing:")) for arg in build)
+        )
+        self.assertIn("-skip-testing:KriaUITests", unit)
+        ui = self.run_verify(suite="ui")
+        self.assertEqual(ui.returncode, 0, ui.stderr)
+        self.assertEqual(self.actions, ["test-without-building"])
+        call = next(call for call in self.calls if call[-1] == "test-without-building")
+        self.assertIn("-only-testing:KriaUITests", call)
+        self.assertEqual(
+            call[call.index("-destination") + 1], "platform=iOS Simulator,id=selected"
+        )
+        self.assertFalse(any(call[0] in ("xcodegen", "xcrun") for call in self.calls))
+        self.assertNotEqual(self.run_verify(suite="ui").returncode, 0)
+
+    def test_ui_requires_successful_current_build(self):
+        self.assertNotEqual(self.run_verify(suite="ui").returncode, 0)
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        (self.root / "src/apps/ios/source.swift").write_text("let value = 2")
+        self.assertNotEqual(self.run_verify(suite="ui").returncode, 0)
+        self.assertEqual(self.actions, [])
+
+    def test_failed_unit_phase_does_not_authorize_ui(self):
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        self.assertEqual(
+            self.run_verify("test_failure", suite="prepare-ui").returncode, 25
+        )
+        self.assertNotEqual(self.run_verify(suite="ui").returncode, 0)
+
+    def test_fingerprint_failure_does_not_authorize_ui(self):
+        self.assertNotEqual(
+            self.run_verify("fingerprint_failure", suite="prepare-ui").returncode, 0
+        )
+        self.assertNotEqual(self.run_verify(suite="ui").returncode, 0)
+
+    def test_ui_failure_propagates(self):
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        self.assertEqual(self.run_verify("test_failure", suite="ui").returncode, 25)
+
+    def test_explicit_simulator_is_used_and_invalid_override_fails(self):
+        result = self.run_verify(suite="unit", simulator_id="old")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for call in self.calls:
+            if call[0] == "xcodebuild" and call[-1] in self.actions:
+                self.assertEqual(
+                    call[call.index("-destination") + 1],
+                    "platform=iOS Simulator,id=old",
+                )
+        self.assertNotEqual(self.run_verify(simulator_id="missing").returncode, 0)
+        self.assertEqual(self.actions, [])
+
+    def test_invalid_mode_stops_before_build(self):
+        self.assertEqual(self.run_verify(suite="typo").returncode, 2)
+        self.assertEqual(self.actions, [])
 
     def test_build_failure_stops_background_boot_and_never_tests(self):
         result = self.run_verify("build_failure")
@@ -154,6 +242,17 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(
             build[build.index("-destination") + 1], "generic/platform=iOS Simulator"
         )
+
+    def test_configuration_queries_use_the_cached_package_directory(self):
+        self.assertEqual(self.run_verify(build_only=True).returncode, 0)
+        queries = [call for call in self.calls if "-showBuildSettings" in call]
+        self.assertEqual(len(queries), 2)
+        for query in queries:
+            self.assertEqual(
+                query[query.index("-derivedDataPath") + 1],
+                str(self.root / "src/apps/ios/.derived-data"),
+            )
+            self.assertIn("-skipPackagePluginValidation", query)
 
     def test_build_only_failure_propagates(self):
         self.assertEqual(

@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - Added `CAPTION_CUE_SOURCE`, a shared constant replacing a hand-typed string that classified a caption across five call sites, plus a producer-side contract test pinning it.
+## [0.75.9.0] - 2026-09-10
+
+### Changed
+- iOS CI separates build/unit verification from UI tests, reusing the compiled build and omitting UI execution for unit-test-only and generated-client changes.
+- Xcode caches are saved after unit tests pass and preserve timestamps for unchanged inputs, improving reuse across fresh checkouts. Shared web resources bundled by iOS now select native coverage.
 
 ## [0.75.8.0] - 2026-09-10
 
