@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.8.0] - 2026-09-10
+
+### Changed
+- Pull requests select affected web, API and iOS CI suites, with explicit not-applicable results for unrelated checks. Shared or unknown changes and every push to main retain full regression coverage.
+- Superseded PR CI runs are cancelled; release-version-only changes avoid unrelated test suites.
+
 ## [0.75.7.0] - 2026-09-10
 
 ### Changed
