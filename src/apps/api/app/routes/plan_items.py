@@ -4787,6 +4787,22 @@ async def set_item_caption_language(
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
+def _check_confirmed_editor_target(
+    job: Job, variant_id: str, *, expected_job_id: uuid.UUID | None, expected_generation: str | None
+) -> None:
+    """Called while the owning Job is locked, before any confirmed server action."""
+    from app.routes.generative_jobs import variant_render_baseline  # noqa: PLC0415
+
+    if expected_job_id is not None and job.id != expected_job_id:
+        raise HTTPException(status_code=409, detail="The video changed. Confirm the edit again.")
+    if expected_generation is not None:
+        variant = require_editable_variant(job, variant_id, allow_guided_text=True)
+        if variant_render_baseline(variant) != expected_generation:
+            raise HTTPException(
+                status_code=409, detail="The video changed. Confirm the edit again."
+            )
+
+
 @router.post("/{item_id}/variants/{variant_id}/custom-effect", response_model=PlanItemResponse)
 async def apply_item_custom_effect(
     item_id: str,
@@ -4805,6 +4821,12 @@ async def apply_item_custom_effect(
     each call replaces any previously-applied one, never stacks.
     """
     job = await _locked_owned_item_render_job(item_id, user.id, db)
+    _check_confirmed_editor_target(
+        job,
+        variant_id,
+        expected_job_id=req.expected_job_id,
+        expected_generation=req.expected_generation,
+    )
     _assert_variant_generation_editable_or_409(job, variant_id)
     from app.config import settings as _settings  # noqa: PLC0415
 
@@ -5233,6 +5255,12 @@ async def edit_item_variant(
     from app.routes.generative_jobs import _UNSET  # noqa: PLC0415
 
     job = await _locked_owned_item_render_job(item_id, user.id, db)
+    _check_confirmed_editor_target(
+        job,
+        variant_id,
+        expected_job_id=req.expected_job_id,
+        expected_generation=req.expected_generation,
+    )
     # Tri-state (mirrors generative_jobs.edit_variant): absent from the request
     # -> _UNSET (leave unchanged); explicit top-level `null` -> None (remove);
     # an object -> only the fields the client actually set (exclude_unset), so

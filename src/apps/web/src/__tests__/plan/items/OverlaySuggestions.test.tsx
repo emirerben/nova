@@ -507,3 +507,10 @@ describe("OverlaySuggestions — zero and failed states", () => {
     expect(screen.getByText("Matching visuals to your script…")).toBeInTheDocument();
   });
 });
+
+// The editor retains manual pool management; matching belongs to the workspace chat.
+test("pool-only presentation has no AI suggestion controls", () => {
+  render(<OverlaySuggestions poolOnly onAccept={jest.fn()} onSeek={jest.fn()} />);
+  expect(screen.getByRole("button", { name: "Add visuals" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Place visuals automatically/ })).not.toBeInTheDocument();
+});

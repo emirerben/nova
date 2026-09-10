@@ -2997,10 +2997,11 @@ export function applyPlanItemCustomEffect(
   itemId: string,
   variantId: string,
   effect: CustomEffectSpec | Record<string, unknown>,
+  target?: { expected_generation: string; expected_job_id?: string },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/custom-effect`, {
     method: "POST",
-    body: JSON.stringify({ effect }),
+    body: JSON.stringify({ effect, ...target }),
   });
 }
 

@@ -2,13 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.75.6.0] — 2026-09-10
+## [0.75.7.0] — 2026-09-10
 
 ### Fixed
 - **Talking-to-camera edits no longer add background music you didn't ask for.** A fresh render now keeps your own audio, silently, by default — Kria no longer auto-matches a licensed track underneath your speech. Music still plays when you explicitly pick a track from the item's editor, and it now survives re-renders instead of being replaced or dropped. The result label reflects it too, reading "Original audio + music" (or "Narration + music") whenever a background track is live.
 
 ### Internal
 - New kill switch `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` (default on) gates the v2 licensed-music-bed resolver to only ever return a creator-selected treatment, never invent one.
+
+## [0.75.6.0] - 2026-09-10
+
+### Changed
+- Creation and editing share one Kria conversation. Editor reviews, suggestions, confirmations, progress, and undo now appear in the main chat, including the mobile Chat tab.
+- Previewable AI edits remain unsaved until Save/export. Server-only effects and speech processing require confirmation, and stale responses cannot overwrite a changed draft.
+- Direct editor links reopen the owning conversation and selected variant. Editor history retries survive a reload without replaying edits.
 
 ## [0.75.5.0] - 2026-09-10
 

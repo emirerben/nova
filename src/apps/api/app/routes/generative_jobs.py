@@ -785,6 +785,9 @@ class EditVariantRequest(BaseModel):
     be set; `text` and `remove_text` are mutually exclusive.
     """
 
+    # Optional for older clients; the unified editor pins confirmed server actions.
+    expected_generation: str | None = Field(default=None, max_length=128)
+    expected_job_id: uuid.UUID | None = None
     text: str | None = None
     remove_text: bool = False
     style_set_id: str | None = None
@@ -2745,6 +2748,8 @@ class CustomEffectRequest(BaseModel):
     and the execution task validates it again independently at render time.
     """
 
+    expected_generation: str | None = Field(default=None, max_length=128)
+    expected_job_id: uuid.UUID | None = None
     effect: dict[str, Any]
 
 
