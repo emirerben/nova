@@ -5,11 +5,23 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var media: [String: CreationMediaLimit]? = nil
     var runtimeVersions: [Int]? = nil
     var visualsEnabled: Bool? = nil
+    var phoneRendering: PhoneRenderingCapabilities? = nil
     var preferredRuntimeVersion: Int { runtimeVersions?.contains(2) == true ? 2 : 1 }
     enum CodingKeys: String, CodingKey {
         case formats, media
         case runtimeVersions = "runtime_versions", visualsEnabled = "visuals_enabled"
+        case phoneRendering = "phone_rendering"
     }
+}
+
+struct PhoneRenderingCapabilities: Codable, Equatable, Sendable {
+    let enabled: Bool
+    let recipeVersions: [Int]
+    let verifiedFeatures: [String]
+    enum CodingKeys: String, CodingKey {
+        case enabled, recipeVersions = "recipe_versions", verifiedFeatures = "verified_features"
+    }
+    static let disabled = Self(enabled: false, recipeVersions: [], verifiedFeatures: [])
 }
 
 struct CreationMediaLimit: Codable, Equatable, Sendable {

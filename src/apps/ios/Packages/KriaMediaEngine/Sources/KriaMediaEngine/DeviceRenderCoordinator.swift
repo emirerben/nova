@@ -78,6 +78,7 @@ public actor DeviceRenderCoordinator {
         }
     }
     public func snapshot() -> DeviceRenderReceipt? { receipt }
+    public func isBusy() -> Bool { running != nil }
     public func waitUntilIdle() async { await running?.value }
 
     public func start(_ request: DeviceRenderRequest, decision: CapabilityDecision) throws {

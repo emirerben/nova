@@ -65,6 +65,9 @@ struct RootView: View {
         }
         .kriaPage()
         .background(KriaColor.paper.ignoresSafeArea())
+        .onChange(of: auth.isSignedIn) { _, signedIn in
+            if !signedIn { Task { await model.deviceRenders.stopAll() } }
+        }
     }
 }
 

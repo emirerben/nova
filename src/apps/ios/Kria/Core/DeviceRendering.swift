@@ -6,6 +6,9 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
     let request: DeviceRenderRequest
     let reason: String?
     private enum CodingKeys: String, CodingKey { case phase, request, reason }
+    init(phase: String, request: DeviceRenderRequest, reason: String? = nil) {
+        self.phase = phase; self.request = request; self.reason = reason
+    }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         phase = try container.decode(String.self, forKey: .phase)

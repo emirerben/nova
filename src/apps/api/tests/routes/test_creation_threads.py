@@ -4000,6 +4000,21 @@ async def test_native_capabilities_reflect_runtime_and_visual_feature_gates(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_phone_capabilities_are_explicit_and_rollback_removes_advertising(
+    monkeypatch, enabled
+):
+    monkeypatch.setattr(settings, "phone_rendering_enabled", enabled)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["basicComposition"])
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()))
+    assert manifest["phone_rendering"] == {
+        "enabled": enabled,
+        "recipe_versions": [2] if enabled else [],
+        "verified_features": ["basicComposition"] if enabled else [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_proxy_reservation_pins_original_and_rejects_changed_binding(monkeypatch):
     import app.routes.creation_threads as routes
     from app.config import settings

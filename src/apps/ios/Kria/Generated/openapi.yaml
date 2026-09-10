@@ -596,6 +596,9 @@
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
           },
+          "phone_rendering": {
+            "$ref": "#/components/schemas/DeviceRenderCapabilities"
+          },
           "runtime_versions": {
             "items": {
               "enum": [

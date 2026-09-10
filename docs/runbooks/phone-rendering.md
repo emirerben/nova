@@ -78,7 +78,13 @@ style has passed the complete parity and physical-device gates.
   locks. Outstanding reserved exports may complete after the kill switch turns
   off; new reservations are blocked.
 - `Kria/Core/DeviceRendering.swift` implements the native API adapter and isolated
-  storage-upload session. The coordinator is not yet called from chat or editor.
+  storage-upload session. `DeviceRenderSessions` owns coordinators across screen
+  navigation; chat polls the device destination and starts only schema versions
+  and capabilities explicitly advertised as verified by the server. Sign-out
+  cancels its sessions. The status card distinguishes preparation, rendering,
+  local availability, syncing, and synced output, with local playback/sharing
+  and sync retry. Editor saves and attachment destination selection still need
+  integration. Capabilities remain disabled until device verification.
 - Project proxy uploads now carry immutable original fingerprint, duration,
   geometry, orientation, and audio provenance through reservation and recovery.
   Migration 0105 stores the binding before a signed PUT is issued. Registration
@@ -97,7 +103,7 @@ style has passed the complete parity and physical-device gates.
   V2 original assets, exact contiguous video trims, audio level, and supported
   text layers. Unsupported media treatments, transitions, and editor lanes
   reject instead of disappearing. Supported plans enter `awaiting_device`
-  instead of a cloud-render state; the native UI integration remains pending.
+  instead of a cloud-render state; the chat status card consumes this state.
 
 ## Remaining implementation gates
 

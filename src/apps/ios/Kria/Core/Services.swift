@@ -288,6 +288,7 @@ struct CreationVariant: Codable, Sendable {
     let outputURL: URL?
     let posterURL: URL?
     let failureReason: String?
+    var renderDestination: String? = nil
 
     var isPlayable: Bool {
         guard outputURL != nil, let status = renderStatus?.lowercased() else { return false }
@@ -302,6 +303,7 @@ struct CreationVariant: Codable, Sendable {
         case outputURL = "output_url"
         case posterURL = "poster_url"
         case failureReason = "failure_reason"
+        case renderDestination = "render_destination"
     }
 }
 

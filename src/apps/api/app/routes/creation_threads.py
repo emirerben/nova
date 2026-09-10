@@ -31,6 +31,7 @@ from app.config import settings
 from app.database import get_db
 from app.db_locks import acquire_locked_rows
 from app.kria.api_schemas import KriaProblemOut, ThreadDeltaOut
+from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.media_sources import (
     PROXY_MEDIA_PREFIX,
@@ -269,6 +270,7 @@ class CreationCapabilitiesOut(BaseModel):
     media: CreationMediaCapabilitiesOut
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
     visuals_enabled: bool = False
+    phone_rendering: DeviceRenderCapabilities = Field(default_factory=DeviceRenderCapabilities)
 
 
 class CreateBody(StrictBody):
@@ -2496,6 +2498,13 @@ async def capabilities(user: CurrentUser) -> dict[str, Any]:
     _ = user
     return {
         "runtime_versions": [1, 2] if settings.kria_runtime_v2_enabled else [1],
+        "phone_rendering": DeviceRenderCapabilities(
+            enabled=settings.phone_rendering_enabled,
+            recipe_versions=[2] if settings.phone_rendering_enabled else [],
+            verified_features=(
+                settings.phone_render_verified_features if settings.phone_rendering_enabled else []
+            ),
+        ).model_dump(),
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
         ),

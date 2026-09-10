@@ -420,7 +420,14 @@ private struct CreationWorkspaceView: View {
                 CreationConfirmationStage(thread: thread, isBusy: isActing || isSending || pendingUploadCount > 0, action: performAction)
             }
         case .rendering:
-            RenderingStage(isPreparing: currentProject.activeJobID == nil).id("rendering")
+            if let deviceRenderKey {
+                DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders) {
+                    await refreshCapabilities()
+                    await refreshDeviceRender(retry: true)
+                }
+            } else {
+                RenderingStage(isPreparing: currentProject.activeJobID == nil).id("rendering")
+            }
         case .ready:
             ReadyStage(
                 project: currentProject,
@@ -569,6 +576,7 @@ private struct CreationWorkspaceView: View {
             capabilitiesAreAuthoritative = true
         } catch {
             capabilitiesAreAuthoritative = false
+            capabilities = nil
             availableFormats = []
             capabilitiesError = "Kria couldn’t load creation options. Check your connection and retry."
         }
@@ -576,10 +584,12 @@ private struct CreationWorkspaceView: View {
 
     private func pollUntilDismissed() async {
         await refreshNow()
+        await refreshDeviceRender()
         var delay: UInt64 = 1_000_000_000
         while !Task.isCancelled {
             do {
                 let changed = try await refreshDelta()
+                await refreshDeviceRender()
                 delay = changed || isSending || isActing || currentProject.status == .rendering
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
@@ -592,6 +602,19 @@ private struct CreationWorkspaceView: View {
             }
             try? await Task.sleep(nanoseconds: delay)
         }
+    }
+
+    private var deviceRenderKey: DeviceRenderKey? {
+        guard let job = fullThread?.job, let jobID = UUID(uuidString: job.id),
+              let variant = job.variants.first(where: {
+                  $0.renderDestination == "device" || $0.renderStatus == "awaiting_device"
+              }), let variantID = variant.variantID else { return nil }
+        return DeviceRenderKey(projectID: project.id, jobID: jobID, variantID: variantID)
+    }
+
+    private func refreshDeviceRender(retry: Bool = false) async {
+        guard let deviceRenderKey else { return }
+        await model.deviceRenders.reconcile(deviceRenderKey, capabilities: capabilities?.phoneRendering ?? .disabled, retry: retry)
     }
 
     private func refreshNow() async {
