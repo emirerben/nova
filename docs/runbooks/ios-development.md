@@ -211,8 +211,10 @@ navigation, creation through ready, editor back navigation, and playback.
 Shared workspace/app state, services/models, design-system files, media-engine
 code, resources, project configuration, test infrastructure, and unknown paths
 require the full suite. Changes touching more than one feature also run full.
-Project implementation currently lives in shared workspace/state files, so those
-changes run full; project-test-only edits can select `smoke,projects`.
+The chat-components file also owns project navigation, the chat transport serves
+project fixtures, and `EditorViews.swift` contains gallery results; those shared
+files deliberately have no focused mapping. Project implementation currently
+lives in shared workspace/state files, so those changes run full; project-test-only edits can select `smoke,projects`.
 
 All main pushes run full coverage. Existing unit-only rules for generated API
 clients, backend contracts, and unit-test-only edits are unchanged. The selector
@@ -285,3 +287,5 @@ On the same local simulator, `smoke,creation` passed all nine selected tests in
 time). Its fresh preparation used 11 seconds for settings, 5 seconds for the
 incremental build, and 6 seconds for unit execution. This is a local serial sample,
 not a controlled GitHub-runner benchmark.
+The local `smoke,editor` run also verified all 15 selected tests passed in
+229 seconds (146 seconds / 39% less UI-phase time than the full run).
