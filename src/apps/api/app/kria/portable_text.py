@@ -108,6 +108,40 @@ class TextRevealBounds(_TextModel):
         return self
 
 
+class TextStrokePoint(_TextModel):
+    x: float = Field(ge=-10000, le=10000)
+    y: float = Field(ge=-10000, le=10000)
+
+
+class TextPenStroke(_TextModel):
+    points: list[TextStrokePoint] = Field(min_length=2, max_length=2000)
+    start_progress: float = Field(ge=0, le=1)
+    end_progress: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def positive_window(self):
+        if self.end_progress <= self.start_progress:
+            raise ValueError("pen stroke must have a positive progress window")
+        return self
+
+
+class HandwritingContent(_TextModel):
+    text: str = Field(min_length=1, max_length=5000)
+    strokes: list[TextPenStroke] = Field(min_length=1, max_length=4000)
+    ink_width: float = Field(gt=0, le=1000)
+    fill: TextInk
+    outline: TextInk
+    outline_width: float = Field(ge=0, le=200)
+    blur_layers: list[TextBlurLayer] = Field(default_factory=list, max_length=8)
+    gradient: TextGradient | None = None
+
+    @model_validator(mode="after")
+    def bounded_points(self):
+        if sum(len(stroke.points) for stroke in self.strokes) > 40000:
+            raise ValueError("too many handwriting points")
+        return self
+
+
 class PortableTextLayer(_TextModel):
     id: str = Field(min_length=1, max_length=160)
     start: float = Field(ge=0, le=1800)
@@ -115,7 +149,7 @@ class PortableTextLayer(_TextModel):
     anchor_x: float = Field(ge=-10000, le=10000)
     anchor_y: float = Field(ge=-10000, le=10000)
     rotation_degrees: float = Field(ge=-3600, le=3600)
-    runs: list[PositionedTextRun] = Field(min_length=1, max_length=100)
+    runs: list[PositionedTextRun] = Field(default_factory=list, max_length=100)
     effect: Literal[
         "static",
         "none",
@@ -126,12 +160,19 @@ class PortableTextLayer(_TextModel):
         "pop-in",
         "bounce",
         "ink-reveal",
+        "handwriting",
     ] = "static"
     motion: ResolvedTextMotion | None = None
     reveal_bounds: TextRevealBounds | None = None
+    handwriting: HandwritingContent | None = None
 
     @model_validator(mode="after")
     def valid_window(self):
+        if self.effect == "handwriting":
+            if self.handwriting is None or self.runs:
+                raise ValueError("handwriting requires pen paths instead of font runs")
+        elif self.handwriting is not None or not self.runs:
+            raise ValueError("font text requires positioned runs")
         if (self.effect == "ink-reveal") != (self.reveal_bounds is not None):
             raise ValueError("ink reveal requires exact reveal bounds")
         if self.end <= self.start:

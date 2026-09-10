@@ -31,7 +31,7 @@ public enum TextTransformTiming {
         func ease(_ value: Double) -> Double { TextMotionTiming.ease(value, motion.easing) }
         switch effect {
         case .static, .none: break
-        case .inkReveal: reveal = ease(inkRevealProgress(time: time, duration: base))
+        case .inkReveal, .handwriting: reveal = ease(inkRevealProgress(time: time, duration: base))
         case .fadeIn: alpha = ease(time / max(base, 0.01))
         case .scaleUp: scale = 0.6 + 0.4 * ease(time / max(base, 0.01))
         case .slideUp, .slideDown:
@@ -76,7 +76,7 @@ public enum TextTransformTiming {
         func ease(_ progress: Double) -> Double { TextMotionTiming.ease(progress, .easeOutCubic) }
         switch effect {
         case .static, .none: break
-        case .inkReveal: reveal = inkRevealProgress(time: time, duration: duration)
+        case .inkReveal, .handwriting: reveal = inkRevealProgress(time: time, duration: duration)
         case .fadeIn: alpha = ease(time / max(min(0.4, duration), 0.01))
         case .scaleUp: scale = 0.6 + 0.4 * ease(time / max(min(0.6, duration), 0.01))
         case .slideUp, .slideDown:

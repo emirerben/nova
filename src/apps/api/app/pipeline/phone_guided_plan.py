@@ -119,14 +119,15 @@ def compile_phone_guided_plan(
             if overlay.get("role") == "generative_sequence" and lane == "text":
                 raise UnsupportedPhonePlan("text sequence composition requires a native program")
             layer, font = compile_text_overlay(overlay, layer_id=f"{lane}-{index}", canvas=canvas)
-            manifest[font.id] = font
-            assets[font.id] = MediaAsset(
-                id=font.id,
-                relative_path=font.id,
-                fingerprint=AssetFingerprint(
-                    hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
-                ),
-            )
+            if font is not None:
+                manifest[font.id] = font
+                assets[font.id] = MediaAsset(
+                    id=font.id,
+                    relative_path=font.id,
+                    fingerprint=AssetFingerprint(
+                        hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
+                    ),
+                )
             layers.append(layer)
     preserve_audio = bool((plan.montage_audio or {}).get("preserve_source_audio"))
     return EditRecipeV2(

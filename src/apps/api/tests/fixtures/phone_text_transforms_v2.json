@@ -4786,5 +4786,537 @@
         }
       }
     ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "linear",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "left",
+      "travel_px": 137.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 0.75,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.3,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "right",
+      "travel_px": 137.0,
+      "overshoot": 0.15,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.01,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7
+        }
+      },
+      {
+        "time": 0.375,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7021475662245669
+        }
+      },
+      {
+        "time": 0.7166666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7655284740633269
+        }
+      },
+      {
+        "time": 0.75,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7752225717635222
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 0.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7904838247174912
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 2,
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.8,
+      "easing": "ease-in-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "up",
+      "travel_px": 137.0,
+      "overshoot": 0.5,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.5,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.19999999999999996
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.19999999999999996
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.19999999999999996
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.19999999999999996
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.19999999999999996
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.2000072293463412
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.20272587686644195
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.631113373005199
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.8976200442897866
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 0.001185185185185178,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9999984681246559
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 0.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9999994125069585
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 4,
+    "motion": {
+      "speed": 4.0,
+      "intensity": 1.0,
+      "easing": "linear",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "down",
+      "travel_px": 137.0,
+      "overshoot": 1.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 2.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.08594464167598914
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.2751716697018034
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.4897724017120343
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.6610370491374528
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9297610437039452
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 2.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 3.966666666666667,
+        "state": {
+          "alpha": 1.8518518518528815e-05,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 4,
+        "state": {
+          "alpha": 0.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
   }
 ]

@@ -24,6 +24,7 @@ def reference_cases(*, legacy=False):
         "pop-in",
         "bounce",
         "ink-reveal",
+        "handwriting",
     ]:
         for index in range(4):
             motion = asdict(
@@ -64,7 +65,12 @@ def reference_cases(*, legacy=False):
                     ]
                 )
             ):
-                with patch("app.pipeline.text_overlay_skia._draw_centered_text") as draw:
+                target = (
+                    "_draw_handwriting_strokes"
+                    if effect == "handwriting"
+                    else "_draw_centered_text"
+                )
+                with patch(f"app.pipeline.text_overlay_skia.{target}") as draw:
                     _draw_with_animation(
                         None,
                         {
@@ -76,6 +82,13 @@ def reference_cases(*, legacy=False):
                         duration,
                     )
                 kwargs = draw.call_args.kwargs
+                if effect == "handwriting":
+                    kwargs.update(
+                        scale=1.0,
+                        x_translate=0.0,
+                        y_translate=0.0,
+                        reveal_progress=draw.call_args.args[3],
+                    )
                 samples.append(
                     {
                         "time": time,

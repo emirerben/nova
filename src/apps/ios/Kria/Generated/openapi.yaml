@@ -2329,6 +2329,68 @@
         "title": "GradientBackground",
         "type": "object"
       },
+      "HandwritingContent": {
+        "additionalProperties": false,
+        "properties": {
+          "blur_layers": {
+            "items": {
+              "$ref": "#/components/schemas/TextBlurLayer"
+            },
+            "maxItems": 8,
+            "title": "Blur Layers",
+            "type": "array"
+          },
+          "fill": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "gradient": {
+            "$ref": "#/components/schemas/TextGradient",
+            "default": null,
+            "nullable": true
+          },
+          "ink_width": {
+            "exclusiveMinimum": true,
+            "maximum": 1000,
+            "minimum": 0,
+            "title": "Ink Width",
+            "type": "number"
+          },
+          "outline": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "outline_width": {
+            "maximum": 200,
+            "minimum": 0,
+            "title": "Outline Width",
+            "type": "number"
+          },
+          "strokes": {
+            "items": {
+              "$ref": "#/components/schemas/TextPenStroke"
+            },
+            "maxItems": 4000,
+            "minItems": 1,
+            "title": "Strokes",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "strokes",
+          "ink_width",
+          "fill",
+          "outline",
+          "outline_width"
+        ],
+        "title": "HandwritingContent",
+        "type": "object"
+      },
       "KriaProblem": {
         "additionalProperties": false,
         "properties": {
@@ -4116,7 +4178,8 @@
               "slide-down",
               "pop-in",
               "bounce",
-              "ink-reveal"
+              "ink-reveal",
+              "handwriting"
             ],
             "title": "Effect",
             "type": "string"
@@ -4127,6 +4190,11 @@
             "minimum": 0,
             "title": "End",
             "type": "number"
+          },
+          "handwriting": {
+            "$ref": "#/components/schemas/HandwritingContent",
+            "default": null,
+            "nullable": true
           },
           "id": {
             "maxLength": 160,
@@ -4155,7 +4223,6 @@
               "$ref": "#/components/schemas/PositionedTextRun"
             },
             "maxItems": 100,
-            "minItems": 1,
             "title": "Runs",
             "type": "array"
           },
@@ -4172,8 +4239,7 @@
           "end",
           "anchor_x",
           "anchor_y",
-          "rotation_degrees",
-          "runs"
+          "rotation_degrees"
         ],
         "title": "PortableTextLayer",
         "type": "object"
@@ -4941,6 +5007,40 @@
         "title": "TextInk",
         "type": "object"
       },
+      "TextPenStroke": {
+        "additionalProperties": false,
+        "properties": {
+          "end_progress": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "End Progress",
+            "type": "number"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/TextStrokePoint"
+            },
+            "maxItems": 2000,
+            "minItems": 2,
+            "title": "Points",
+            "type": "array"
+          },
+          "start_progress": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Start Progress",
+            "type": "number"
+          }
+        },
+        "required": [
+          "points",
+          "start_progress",
+          "end_progress"
+        ],
+        "title": "TextPenStroke",
+        "type": "object"
+      },
       "TextRevealBounds": {
         "additionalProperties": false,
         "properties": {
@@ -4976,6 +5076,29 @@
           "bottom"
         ],
         "title": "TextRevealBounds",
+        "type": "object"
+      },
+      "TextStrokePoint": {
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "TextStrokePoint",
         "type": "object"
       },
       "TextTreatment": {

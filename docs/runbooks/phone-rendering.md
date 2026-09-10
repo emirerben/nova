@@ -116,6 +116,17 @@ style has passed the complete parity and physical-device gates.
   reject instead of disappearing. Supported plans enter `awaiting_device`
   instead of a cloud-render state; the chat status card consumes this state.
 
+## Native handwriting coverage
+
+The portable text contract carries authored handwriting centerlines and per-stroke
+progress windows. The phone paints partial paths locally, with round caps, outline,
+gradient, glow, shadow, and anchor rotation; it reuses the settled bitmap after
+the reveal. Handwriting does not substitute ordinary font glyphs.
+`phone_handwriting.json` records paths from the real cloud draw function at five
+progress values. Native tests compare those coordinates and partial-frame ink
+coverage. Both legacy and authored timing fixtures include handwriting. Physical
+device performance and full preview/export visual parity remain release gates.
+
 ## Remaining implementation gates
 
 1. Extend local bindings to creator visual-pool and narration

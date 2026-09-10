@@ -29,94 +29,12 @@ class UnsupportedPortableText(ValueError):
     """The caller must keep the recipe gated instead of dropping a treatment."""
 
 
-def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
-    """Resolve a supported cloud overlay into geometry plus its exact font asset.
-
-    Reuses the production layout helpers. No image, frame, or encoded media is
-    generated. Specialized reveal/lyric dispatch remains explicitly unsupported.
-    """
+def _resolve_paints(overlay: dict, *, width: float, height: float, left: float, top: float):
     import math
-    from dataclasses import asdict
 
-    from app.kria.portable_text import (
-        PortableTextLayer,
-        PositionedTextRun,
-        ResolvedTextMotion,
-        TextBlurLayer,
-        TextGradient,
-        TextGradientStop,
-        TextInk,
-        TextRevealBounds,
-    )
+    from app.kria.portable_text import TextBlurLayer, TextGradient, TextGradientStop, TextInk
     from app.pipeline import text_overlay_skia as cloud
-    from app.pipeline.text_motion_v2 import normalize_text_motion
-    from app.services.render_library import bundled_font_asset
 
-    effect = overlay.get("effect", "none")
-    if effect not in {
-        "none",
-        "static",
-        "fade-in",
-        "scale-up",
-        "slide-up",
-        "slide-down",
-        "pop-in",
-        "bounce",
-        "ink-reveal",
-    }:
-        raise UnsupportedPortableText(f"unsupported text effect: {effect}")
-    # These fields invoke specialized drawing or timing outside the base line
-    # painter. Accepting their base text would silently lose creator intent.
-    for key in (
-        "emoji",
-        "emoji_prefix",
-        "pop_animated_suffix",
-        "highlight_word",
-        "fade_out_ms",
-        "fade_in_ms",
-        "karaoke_words",
-        "theme_transition",
-        "behind_subject",
-        "spans",
-        "masonry_layer_origin_x_px",
-    ):
-        if overlay.get(key):
-            raise UnsupportedPortableText(f"unsupported text treatment: {key}")
-    raw_motion = overlay.get("motion")
-    motion = None
-    if (
-        effect not in {"static", "none"}
-        and isinstance(raw_motion, dict)
-        and raw_motion.get("version") == 2
-    ):
-        motion = ResolvedTextMotion(**asdict(normalize_text_motion(effect, raw_motion)))
-    text = cloud._overlay_text(overlay)
-    if not text.strip():
-        raise UnsupportedPortableText("empty text has no layer")
-    shaped = bool(overlay.get("shape_text"))
-    resolved = cloud._resolve_typeface_for_overlay(overlay)
-    font_asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
-    spacing_em = cloud.resolve_letter_spacing_em(overlay.get("letter_spacing"))
-    wrap = cloud._wrap_at_fixed_size if overlay.get("preserve_font_size") else cloud._shrink_to_fit
-    font, size, lines = wrap(
-        text,
-        resolved.typeface,
-        cloud._resolve_font_size_px(overlay),
-        cloud._overlay_max_width_px(overlay, canvas),
-        spacing_em,
-        shape_text=shaped,
-    )
-    spacing = spacing_em * size
-    block = cloud._measure_block(
-        font,
-        lines,
-        line_spacing=cloud.resolve_line_spacing(overlay.get("line_spacing")),
-        letter_spacing_px=spacing,
-        shape_text=shaped,
-    )
-    cx, cy = cloud._resolve_anchor(overlay, canvas)
-    anchor = cloud._resolve_text_anchor(overlay)
-    top = cloud._vertical_block_top(cloud._resolve_vertical_anchor(overlay), cy, block["block_h"])
     color = cloud._skia_color_from_hex(overlay.get("text_color", "#FFFFFF"), 255)
     fill = TextInk(
         red=skia.ColorGetR(color) / 255,
@@ -154,12 +72,10 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
     gradient = None
     parsed = cloud._parse_gradient_spec(overlay.get("text_gradient"))
     if parsed:
-        width = max(block["widths"])
-        left = cloud._anchored_left_x(anchor, cx, width)
         angle = math.radians(parsed["angle_deg"] % 360)
         cosine, sine = math.cos(angle), math.sin(angle)
-        half = (abs(width * cosine) + abs(block["block_h"] * sine)) / 2
-        center_x, center_y = left + width / 2, top + block["block_h"] / 2
+        half = (abs(width * cosine) + abs(height * sine)) / 2
+        center_x, center_y = left + width / 2, top + height / 2
         gradient = TextGradient(
             start_x=center_x - cosine * half,
             start_y=center_y - sine * half,
@@ -173,6 +89,105 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
                 for position, (r, g, b, _) in zip(parsed["stops"], parsed["colors"], strict=True)
             ],
         )
+    return fill, blurs, gradient
+
+
+def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
+    """Resolve a supported cloud overlay into geometry plus its exact font asset.
+
+    Reuses the production layout helpers. No image, frame, or encoded media is
+    generated. Specialized reveal/lyric dispatch remains explicitly unsupported.
+    """
+    from dataclasses import asdict
+
+    from app.kria.portable_text import (
+        PortableTextLayer,
+        PositionedTextRun,
+        ResolvedTextMotion,
+        TextInk,
+        TextRevealBounds,
+    )
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.text_motion_v2 import normalize_text_motion
+    from app.services.render_library import bundled_font_asset
+
+    effect = overlay.get("effect", "none")
+    if effect not in {
+        "none",
+        "static",
+        "fade-in",
+        "scale-up",
+        "slide-up",
+        "slide-down",
+        "pop-in",
+        "bounce",
+        "ink-reveal",
+        "handwriting",
+    }:
+        raise UnsupportedPortableText(f"unsupported text effect: {effect}")
+    # These fields invoke specialized drawing or timing outside the base line
+    # painter. Accepting their base text would silently lose creator intent.
+    for key in (
+        "emoji",
+        "emoji_prefix",
+        "pop_animated_suffix",
+        "highlight_word",
+        "fade_out_ms",
+        "fade_in_ms",
+        "karaoke_words",
+        "theme_transition",
+        "behind_subject",
+        "spans",
+        "masonry_layer_origin_x_px",
+    ):
+        if overlay.get(key):
+            raise UnsupportedPortableText(f"unsupported text treatment: {key}")
+    raw_motion = overlay.get("motion")
+    motion = None
+    if (
+        effect not in {"static", "none"}
+        and isinstance(raw_motion, dict)
+        and raw_motion.get("version") == 2
+    ):
+        motion = ResolvedTextMotion(**asdict(normalize_text_motion(effect, raw_motion)))
+    text = cloud._overlay_text(overlay)
+    if not text.strip():
+        raise UnsupportedPortableText("empty text has no layer")
+    if effect == "handwriting":
+        return _compile_handwriting_overlay(
+            overlay, layer_id=layer_id, canvas=canvas, motion=motion
+        ), None
+    shaped = bool(overlay.get("shape_text"))
+    resolved = cloud._resolve_typeface_for_overlay(overlay)
+    font_asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
+    spacing_em = cloud.resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    wrap = cloud._wrap_at_fixed_size if overlay.get("preserve_font_size") else cloud._shrink_to_fit
+    font, size, lines = wrap(
+        text,
+        resolved.typeface,
+        cloud._resolve_font_size_px(overlay),
+        cloud._overlay_max_width_px(overlay, canvas),
+        spacing_em,
+        shape_text=shaped,
+    )
+    spacing = spacing_em * size
+    block = cloud._measure_block(
+        font,
+        lines,
+        line_spacing=cloud.resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=spacing,
+        shape_text=shaped,
+    )
+    cx, cy = cloud._resolve_anchor(overlay, canvas)
+    anchor = cloud._resolve_text_anchor(overlay)
+    top = cloud._vertical_block_top(cloud._resolve_vertical_anchor(overlay), cy, block["block_h"])
+    fill, blurs, gradient = _resolve_paints(
+        overlay,
+        width=max(block["widths"]),
+        height=block["block_h"],
+        left=cloud._anchored_left_x(anchor, cx, max(block["widths"])),
+        top=top,
+    )
     stroke = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
     runs = [
         PositionedTextRun(
@@ -220,3 +235,72 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         motion=motion,
         reveal_bounds=reveal_bounds,
     ), font_asset
+
+
+def _compile_handwriting_overlay(overlay: dict, *, layer_id: str, canvas, motion):
+    from app.kria.portable_text import (
+        HandwritingContent,
+        PortableTextLayer,
+        TextInk,
+        TextPenStroke,
+        TextStrokePoint,
+    )
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.handwriting_strokes import layout_handwriting_text
+
+    text = cloud._overlay_text(overlay)
+    size = cloud._resolve_font_size_px(overlay)
+    layout = layout_handwriting_text(
+        text,
+        max_width_em=cloud._overlay_max_width_px(overlay, canvas) / max(size, 1),
+        letter_spacing_em=cloud.resolve_letter_spacing_em(overlay.get("letter_spacing")),
+        line_spacing=cloud.resolve_line_spacing(overlay.get("line_spacing")),
+    )
+    if not layout.strokes:
+        raise UnsupportedPortableText("handwriting has no drawable pen paths")
+    cx, cy = cloud._resolve_anchor(overlay, canvas)
+    anchor = cloud._resolve_text_anchor(overlay)
+    top = cloud._vertical_block_top(
+        cloud._resolve_vertical_anchor(overlay), cy, layout.height_em * size
+    )
+    fill, blurs, gradient = _resolve_paints(
+        overlay,
+        width=max(layout.width_em * size, 1),
+        height=max(layout.height_em * size, 1),
+        left=cloud._anchored_left_x(anchor, cx, layout.width_em * size),
+        top=top,
+    )
+    strokes = []
+    for stroke in layout.strokes:
+        left = cloud._anchored_left_x(anchor, cx, layout.line_widths_em[stroke.line_index] * size)
+        strokes.append(
+            TextPenStroke(
+                points=[
+                    TextStrokePoint(x=left + x * size, y=top + y * size) for x, y in stroke.points
+                ],
+                start_progress=stroke.start_progress,
+                end_progress=stroke.end_progress,
+            )
+        )
+    return PortableTextLayer(
+        id=layer_id,
+        start=overlay["start_s"],
+        end=overlay["end_s"],
+        anchor_x=cx,
+        anchor_y=cy,
+        rotation_degrees=cloud._finite_float(overlay.get("rotation_deg"), 0),
+        effect="handwriting",
+        motion=motion,
+        handwriting=HandwritingContent(
+            text=text,
+            strokes=strokes,
+            ink_width=max(1, layout.stroke_width_em * size),
+            fill=fill,
+            outline=TextInk(red=0, green=0, blue=0, alpha=230 / 255),
+            outline_width=max(
+                0, float(overlay.get("outline_px") or overlay.get("stroke_width") or 0) * 2
+            ),
+            blur_layers=blurs,
+            gradient=gradient,
+        ),
+    )

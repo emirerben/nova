@@ -24,7 +24,7 @@ final class TextTransformTimingTests: XCTestCase {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("../../../../../api/tests/fixtures/\(filename)").standardizedFileURL
         let cases = try RecipeJSON.decoder().decode([Case].self, from: Data(contentsOf: fixture))
-        XCTAssertEqual(cases.count, 36)
+        XCTAssertEqual(cases.count, 40)
         for test in cases {
             for expected in test.samples {
                 let actual = try TextTransformTiming.sample(effect: test.effect, text: test.text, localTime: expected.time,

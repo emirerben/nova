@@ -4,7 +4,7 @@ import AVFoundation
 import CoreText
 import CoreImage
 
-private extension TextInk {
+extension TextInk {
     var cgColor: CGColor { CGColor(colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, components: [red, green, blue, alpha])! }
 }
 
@@ -12,6 +12,7 @@ extension RecipeTextLayer {
     /// Baselines and tracking are authored in output pixels. No device-specific
     /// wrap, auto-shrink, font lookup, or substitution occurs here.
     static func make(_ layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int = 64 * 1024 * 1024) throws -> Self {
+        if layer.handwriting != nil { return try makeHandwriting(layer, canvas: canvas, maxBitmapBytes: maxBitmapBytes) }
         struct Run {
             let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint
             let blurs: [TextBlurLayer]; let gradient: TextGradient?

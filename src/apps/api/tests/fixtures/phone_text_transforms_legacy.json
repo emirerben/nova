@@ -4066,5 +4066,457 @@
         }
       }
     ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704347
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.30793767621195844
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704347
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9382715539079642
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9797645793804689
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.029896603576402937
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.5876232920982463
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704345
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.8558387442624571
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9700677832181691
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9873804846754622
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.004487815157140688
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.02215658929229961
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.12791261904710977
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.5876232920982463
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704345
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9998187127895082
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
   }
 ]
