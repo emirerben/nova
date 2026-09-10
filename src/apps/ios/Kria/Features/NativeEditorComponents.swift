@@ -116,7 +116,7 @@ struct NativeEditorSaveBanner: View {
                 title: "Saved — preview updating",
                 detail: "Your edit is safe. The cloud preview is rendering now.",
                 systemImage: "checkmark.circle",
-                tint: KriaColor.limeText
+                tint: KriaColor.ink
             )
         default:
             EmptyView()
@@ -175,7 +175,7 @@ struct NativeEditorTransport: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(KriaColor.line).frame(height: 4)
                     Capsule()
-                        .fill(KriaColor.lime)
+                        .fill(KriaColor.sky)
                         .frame(width: width * progress, height: 4)
                 }
                 .frame(height: 44)
@@ -246,7 +246,7 @@ struct NativeEditorTimeline: View {
                     Task { await session.save() }
                 } label: {
                     Image(systemName: session.hasUnsavedChanges ? "square.and.arrow.down" : "checkmark")
-                        .foregroundStyle(session.hasUnsavedChanges ? KriaColor.limeText : KriaColor.zinc)
+                        .foregroundStyle(session.hasUnsavedChanges ? KriaColor.ink : KriaColor.zinc)
                         .frame(width: 44, height: 44)
                 }
                 .disabled(session.isSaving || !session.hasUnsavedChanges)
@@ -305,8 +305,8 @@ private struct NativeEditorContextButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(KriaFont.body(12).weight(.semibold))
-            .foregroundStyle(isAccent ? KriaColor.limeText : KriaColor.ink)
-            .background(isAccent ? KriaColor.limeSoft : KriaColor.softZinc)
+            .foregroundStyle(KriaColor.ink)
+            .background(isAccent ? KriaColor.sage : KriaColor.softZinc)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .opacity(configuration.isPressed ? 0.65 : 1)
     }
@@ -361,9 +361,9 @@ struct NativeEditorUnavailableView: View {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
                     .font(.title2)
-                    .foregroundStyle(KriaColor.limeText)
+                    .foregroundStyle(KriaColor.ink)
                     .frame(width: 42, height: 42)
-                    .background(KriaColor.limeSoft)
+                    .background(KriaColor.sage)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 Text(title).font(KriaFont.display(25))
             }
@@ -373,7 +373,7 @@ struct NativeEditorUnavailableView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Label("You can keep editing the rest of the cut here.", systemImage: "checkmark.circle")
                 .font(KriaFont.body(13).weight(.medium))
-                .foregroundStyle(KriaColor.limeText)
+                .foregroundStyle(KriaColor.ink)
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)

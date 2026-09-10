@@ -3,10 +3,20 @@ import SwiftData
 
 @main struct KriaApp: App {
     @UIApplicationDelegateAdaptor(KriaAppDelegate.self) private var appDelegate
-    @StateObject private var auth = AuthStore()
+    @StateObject private var auth: AuthStore
     @StateObject private var model: AppModel
     private let container: ModelContainer
     init() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
+            let container = Self.fallbackContainer()
+            self.container = container
+            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
+            _model = StateObject(wrappedValue: AppModel(api: ChatUITestTransport.api(), cache: CacheRepository(context: container.mainContext)))
+            return
+        }
+        #endif
+        _auth = StateObject(wrappedValue: AuthStore())
         let container = (try? ModelContainer(for: CachedProject.self, CachedAsset.self, CachedUploadJob.self, CachedReceipt.self)) ?? Self.fallbackContainer()
         self.container = container
         _model = StateObject(
@@ -38,7 +48,8 @@ struct RootView: View {
     var body: some View {
         Group {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }
+            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 NativeEditorUITestHost()
             }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat-bubbles") {

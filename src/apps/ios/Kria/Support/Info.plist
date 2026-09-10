@@ -16,6 +16,7 @@
 	<array><dict><key>CFBundleURLSchemes</key><array><string>$(KRIA_GOOGLE_REDIRECT_SCHEME)</string></array></dict></array>
 	<key>UIAppFonts</key>
 	<array>
+		<string>DynaPuff.ttf</string>
 		<string>Fraunces-Bold.ttf</string>
 		<string>Inter-Regular.ttf</string>
 		<string>Inter-Medium.ttf</string>

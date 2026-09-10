@@ -2,13 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.75.4.0] — 2026-09-09
+## [0.75.6.0] — 2026-09-10
 
 ### Fixed
 - **Talking-to-camera edits no longer add background music you didn't ask for.** A fresh render now keeps your own audio, silently, by default — Kria no longer auto-matches a licensed track underneath your speech. Music still plays when you explicitly pick a track from the item's editor, and it now survives re-renders instead of being replaced or dropped. The result label reflects it too, reading "Original audio + music" (or "Narration + music") whenever a background track is live.
 
 ### Internal
 - New kill switch `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` (default on) gates the v2 licensed-music-bed resolver to only ever return a creator-selected treatment, never invent one.
+
+## [0.75.5.0] - 2026-09-10
+
+### Changed
+- The iOS app now shares Kria’s Sunlit branding, wordmark, chat composer, and left navigation with the web experience. Gallery, account, consent, and editor surfaces use the same visual system.
+- Creators can start chats and rename or delete projects from native project menus, with confirmation, revision conflict recovery, and protection for active renders/uploads.
+- The projects drawer follows the swipe continuously, with a gradual paper-color transition, rounded full-screen corners, and a light haptic when it opens or closes.
 
 ## [0.75.1.0] - 2026-09-09
 
@@ -19,6 +26,7 @@ All notable changes to this project will be documented in this file.
 - **Closing a tool sheet on mobile is a single tap.** Tapping outside the sheet now closes it (it used to only collapse to half-height), the close button is a proper touch target, and a keyboard-open sheet no longer snaps to full height from ordinary scroll/browser-chrome noise.
 - **Switching music tracks on mobile now plays a preview.** Picking a different track used to request no audio at all for most videos, and even when it did, played nothing unless the video happened to already be playing. Now it previews audibly right away.
 - **The mobile editor's header shows which video you're editing** instead of a generic "Edit video" label.
+
 ## [0.74.0.0] — 2026-09-09
 
 ### Added

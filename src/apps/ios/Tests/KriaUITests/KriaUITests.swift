@@ -28,19 +28,9 @@ final class KriaUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launch()
-        // The chat workspace performs its initial project read before showing
-        // the first format stage. Keep the product assertion, but allow the
-        // offline/slow API fixture to settle instead of racing that task. A
-        // persisted ready project is also a valid prior-run state; create a
-        // fresh draft through the real Projects drawer so this launch remains
-        // deterministic without weakening the assertion below.
+        // Exercise creation on every run, even when a prior project restores.
+        createFreshChat(in: app)
         let prompt = app.staticTexts["What kind of video are we making?"]
-        if !prompt.waitForExistence(timeout: 12) {
-            XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
-            app.buttons["Open projects"].tap()
-            XCTAssertTrue(app.buttons["New video"].waitForExistence(timeout: 3))
-            app.buttons["New video"].tap()
-        }
         XCTAssertTrue(prompt.waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 3))
@@ -51,16 +41,125 @@ final class KriaUITests: XCTestCase {
         // workspace must stay on its conservative Montage-only fallback.
         XCTAssertFalse(app.staticTexts["Narrated"].exists)
 
-        app.buttons["Open projects"].tap()
-        XCTAssertTrue(app.staticTexts["RECENT"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.buttons["New video"].exists)
+        let toggle = app.buttons["workspace-menu-toggle"]
+        let carousel = app.scrollViews["format-carousel"]
+        XCTAssertTrue(carousel.waitForExistence(timeout: 3))
+        carousel.swipeLeft()
+        carousel.swipeRight()
+        XCTAssertEqual(toggle.label, "Open projects", "Format-card swipes must not open the drawer")
+        let closedMenuX = toggle.frame.minX
+        let viewport = app.windows.firstMatch.frame
+        XCTAssertEqual(app.staticTexts["workspace-project-title"].frame.midX, viewport.midX, accuracy: 2)
+        XCTAssertFalse(app.buttons["header-new-chat"].exists)
+        toggle.tap()
+        XCTAssertTrue(app.staticTexts["Recent chats"].waitForExistence(timeout: 2))
+        XCTAssertEqual(toggle.label, "Close projects")
+        XCTAssertTrue(toggle.isHittable)
+        XCTAssertGreaterThan(toggle.frame.minX, closedMenuX + 200)
+        XCTAssertLessThanOrEqual(toggle.frame.maxX, viewport.maxX)
+        XCTAssertEqual(app.buttons.matching(identifier: "Close projects").count, 1)
+        toggle.tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Open projects'"), object: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 3), .completed)
+        XCTAssertEqual(toggle.frame.minX, closedMenuX, accuracy: 2)
+        let swipeStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.55))
+        let swipeEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55))
+        swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
+        XCTAssertTrue(app.staticTexts["Recent chats"].waitForExistence(timeout: 3))
+        XCTAssertEqual(toggle.label, "Close projects")
+        let drawerScreenshot = XCTAttachment(screenshot: app.screenshot())
+        drawerScreenshot.name = "Swipe-open tinted workspace"
+        drawerScreenshot.lifetime = .keepAlways
+        add(drawerScreenshot)
+        swipeEnd.press(forDuration: 0.05, thenDragTo: swipeStart)
+        let swipeClosed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Open projects'"), object: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [swipeClosed], timeout: 3), .completed)
+        XCTAssertEqual(toggle.frame.minX, closedMenuX, accuracy: 2)
+        toggle.tap()
+        XCTAssertTrue(app.staticTexts["Recent chats"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["drawer-new-chat"].exists)
 
         let gallery = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Gallery'" )).firstMatch
         XCTAssertTrue(gallery.exists)
         gallery.tap()
-        XCTAssertTrue(app.staticTexts["Your gallery"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Your finished videos"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["All"].exists)
         XCTAssertTrue(app.buttons["Ready"].exists)
+    }
+
+    func testProjectActionsCanBeCancelledWithoutChangingProject() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launch()
+        createFreshChat(in: app)
+        let menu = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Project actions for'")).firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 20))
+        let originalTitle = app.staticTexts["workspace-project-title"].label
+        menu.tap()
+        app.buttons["Rename project"].tap()
+        XCTAssertTrue(app.textFields["rename-project-title"].waitForExistence(timeout: 3))
+        app.buttons["Cancel"].tap()
+        XCTAssertEqual(app.staticTexts["workspace-project-title"].label, originalTitle)
+        menu.tap()
+        let delete = app.buttons["Delete project"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        XCTAssertTrue(delete.isEnabled)
+        delete.tap()
+        let confirmation = app.alerts["Delete this project?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 3))
+        confirmation.buttons["Cancel"].tap()
+        XCTAssertTrue(app.staticTexts["workspace-project-title"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.staticTexts["workspace-project-title"].label, originalTitle)
+    }
+
+    func testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launch()
+        createFreshChat(in: app)
+        let originalTitle = app.staticTexts["workspace-project-title"].label
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Project actions for'")).firstMatch.tap()
+        app.buttons["Rename project"].tap()
+        let field = app.textFields["rename-project-title"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        let save = app.buttons["Save name"]
+        func replaceName(_ value: String) {
+            field.tap()
+            let current = field.value as? String ?? ""
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + value)
+        }
+        replaceName("   ")
+        XCTAssertFalse(save.isEnabled, "Whitespace-only names cannot be submitted")
+        replaceName(String(repeating: "x", count: 121))
+        XCTAssertFalse(save.isEnabled, "Names over 120 characters cannot be submitted")
+        replaceName(String(repeating: "x", count: 120))
+        XCTAssertTrue(save.isEnabled, "The 120-character boundary remains valid")
+        let proposed = "  warm   café  "
+        replaceName(proposed)
+        XCTAssertTrue(save.isEnabled)
+        let failure = app.staticTexts["The name couldn’t be saved. Your text is still here; try again."]
+        for _ in 0..<2 {
+            save.tap()
+            XCTAssertTrue(failure.waitForExistence(timeout: 3))
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: save)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 3), .completed)
+            XCTAssertEqual(field.value as? String, proposed, "A failed save must retain the exact user's input")
+        }
+        app.buttons["Cancel"].tap()
+        XCTAssertEqual(app.staticTexts["workspace-project-title"].label, originalTitle)
+    }
+
+    private func createFreshChat(in app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
+        app.buttons["Open projects"].tap()
+        let newChat = app.buttons["drawer-new-chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 3))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
+        newChat.tap()
+        XCTAssertTrue(app.staticTexts["What kind of video are we making?"].waitForExistence(timeout: 20))
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["drawer-new-chat"])
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
     }
 
     func testNativeEditorStagesLocalEditsAndGatesUnavailableTools() {
@@ -107,8 +206,8 @@ final class KriaUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
         app.buttons["native-editor-back"].tap()
 
-        XCTAssertTrue(app.staticTexts["RECENT"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.buttons["New video"].exists)
+        XCTAssertTrue(app.staticTexts["Recent chats"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["drawer-new-chat"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview"].firstMatch.exists)
     }
 

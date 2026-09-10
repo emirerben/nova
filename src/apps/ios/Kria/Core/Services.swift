@@ -77,6 +77,8 @@ struct KeychainTokenStore: TokenStore, @unchecked Sendable {
 struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
 
 protocol KriaAPIClient: Sendable {
+    func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread
+    func deleteProject(_ project: ProjectSummary) async throws
     func projects() async throws -> [ProjectSummary]
     func project(threadID: UUID) async throws -> CreationThread
     func creationCapabilities() async throws -> CreationCapabilities
@@ -110,6 +112,9 @@ protocol KriaAPIClient: Sendable {
 /// editor saves fail explicitly when the production commit endpoint is not
 /// implemented by a substitute.
 extension KriaAPIClient {
+    func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
+    func deleteProject(_ project: ProjectSummary) async throws { throw APIError.unsupported }
+
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
         _ = clientEventID
         return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision)
@@ -586,6 +591,13 @@ struct KriaAPI: KriaAPIClient {
         self.refreshCoordinator = MobileSessionRefreshCoordinator()
         _ = Self.checkedEditorOperationIDs
     }
+    func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread {
+        let body: [String: JSONValue] = ["title": .string(title), "expected_revision": .number(Double(project.serverRevision)), "client_event_id": .string(clientEventID)]
+        return try await request(path: "creation-threads/\(project.id.uuidString)", method: "PATCH", bodyData: JSONEncoder().encode(body), decode: CreationThread.self)
+    }
+    func deleteProject(_ project: ProjectSummary) async throws {
+        let _: EmptyProjectResponse = try await request(path: "creation-threads/\(project.id.uuidString)", method: "DELETE", query: [URLQueryItem(name: "expected_revision", value: String(project.serverRevision))], bodyData: nil, decode: EmptyProjectResponse.self)
+    }
     func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
@@ -672,6 +684,7 @@ struct KriaAPI: KriaAPIClient {
         if http.statusCode == 401 { clearExpiredSession(); throw APIError.sessionExpired }
         if http.statusCode == 409 || http.statusCode == 412 { throw APIError.conflict }
         guard (200..<300).contains(http.statusCode) else { throw APIError.requestFailed }
+        if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
     }
     private func clearExpiredSession() {
@@ -679,6 +692,7 @@ struct KriaAPI: KriaAPIClient {
         NotificationCenter.default.post(name: .kriaSessionExpired, object: nil)
     }
 }
+private struct EmptyProjectResponse: Decodable {}
 private struct LibraryResponse: Decodable { let jobs: [LibraryJob]; struct LibraryJob: Decodable { let id: String; let mode: String; let status: String; let posterURL: String?; let createdAt: Date; enum CodingKeys: String, CodingKey { case id, mode, status; case posterURL = "poster_url"; case createdAt = "created_at" }; var summary: ProjectSummary { ProjectSummary(id: UUID(uuidString: id) ?? UUID(), title: mode.capitalized, status: status == "ready" ? .ready : status == "failed" ? .failed : .rendering, updatedAt: createdAt, posterURL: posterURL.flatMap(URL.init(string:))) } } }
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
 private struct ApprovalResponse: Decodable {}

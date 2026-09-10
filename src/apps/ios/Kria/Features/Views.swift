@@ -9,7 +9,10 @@ struct SignInView: View {
     @State private var message: String?
     @State private var appleNonce = UUID().uuidString
     var body: some View {
+        GeometryReader { viewport in
+        ScrollView {
         VStack(alignment: .leading, spacing: 28) {
+            KriaWordmark()
             Spacer()
             Text("Make something\nworth sharing.").font(KriaFont.display(42)).foregroundStyle(KriaColor.ink)
             Text("Kria turns the footage in your camera roll into a considered short-form cut.").font(KriaFont.body(17)).foregroundStyle(KriaColor.zinc).fixedSize(horizontal: false, vertical: true)
@@ -26,7 +29,10 @@ struct SignInView: View {
             if let message { Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
             Text("By signing in, you agree to Kria’s Terms and Privacy Policy.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
         }
-        .padding(24).frame(maxWidth: 520).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(minHeight: max(0, viewport.size.height - 48), alignment: .leading)
+        .padding(24).frame(maxWidth: 520).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        }
     }
     private func handleAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
         appleNonce = UUID().uuidString
@@ -88,13 +94,13 @@ struct ProjectsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack(alignment: .firstTextBaseline) { Text("Projects").font(KriaFont.display(34)); Spacer(); Button(action: { Task { await model.createProject() } }) { Image(systemName: "plus").font(.headline).frame(width: 44, height: 44).background(KriaColor.lime).clipShape(Circle()) }.accessibilityLabel("New project") }
+                HStack(alignment: .firstTextBaseline) { Text("Projects").font(KriaFont.display(34)); Spacer(); Button(action: { Task { await model.createProject() } }) { Image(systemName: "plus").font(.headline).frame(width: 44, height: 44).background(KriaColor.sky).clipShape(Circle()) }.accessibilityLabel("New project") }
                 Text("A home for the stories you’re shaping.").foregroundStyle(KriaColor.zinc)
                 if model.projects.isEmpty {
                     switch model.projectsState {
                     case .idle, .loading:
                         VStack(alignment: .leading, spacing: 12) {
-                            ProgressView().tint(KriaColor.limeText)
+                            ProgressView().tint(KriaColor.ink)
                             Text("Loading your projects…").font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                         }
                         .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
@@ -151,7 +157,7 @@ struct ProjectDetailView: View {
                         .aspectRatio(9/16, contentMode: .fit)
                         .frame(maxWidth: 240)
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .overlay(Image(systemName: "play.fill").font(.largeTitle).foregroundStyle(KriaColor.lime))
+                        .overlay(Image(systemName: "play.fill").font(.largeTitle).foregroundStyle(KriaColor.sky))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Play finished cut")
@@ -180,7 +186,7 @@ struct ProjectPosterView: View {
                     if let image = phase.image {
                         image.resizable().scaledToFill()
                     } else if phase.error == nil {
-                        ZStack { KriaColor.softZinc; ProgressView().tint(KriaColor.limeText) }
+                        ZStack { KriaColor.softZinc; ProgressView().tint(KriaColor.ink) }
                     } else {
                         fallback
                     }
@@ -200,6 +206,7 @@ struct ProjectPosterView: View {
 }
 
 struct GalleryView: View {
+    var openProjects: (() -> Void)? = nil
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var auth: AuthStore
     @Environment(\.dismiss) private var dismiss
@@ -219,45 +226,36 @@ struct GalleryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                Text("Gallery")
-                    .font(KriaFont.body(14).weight(.semibold))
-
-                HStack {
-                    Button("Projects") { dismiss() }
-                        .font(KriaFont.body(14).weight(.medium))
-                        .frame(minWidth: 68, minHeight: 44, alignment: .leading)
-                    Spacer()
-                    Text(initial)
-                        .font(KriaFont.body(13).weight(.semibold))
-                        .frame(width: 32, height: 32)
-                        .background(KriaColor.softZinc)
-                        .clipShape(Circle())
-                }
-                .padding(.horizontal, 16)
-            }
-            .frame(height: 54)
-
-            Rectangle().fill(KriaColor.line).frame(height: 1)
+            HStack {
+                Button { if let openProjects { openProjects() } else { dismiss() } } label: {
+                    KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle())
+                }.accessibilityLabel("Open projects")
+                Spacer()
+            }.padding(.horizontal, 16).frame(height: 56)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("Your gallery")
-                            .font(KriaFont.display(29))
-                        Text("Finished cuts and the stories still taking shape.")
+                        Text("Gallery")
+                            .font(KriaFont.body(29))
+                        Text("Your finished videos")
                             .font(KriaFont.body(14))
                             .foregroundStyle(KriaColor.zinc)
                     }
 
+                        Spacer()
+                        NewChatButton(compact: true, icon: .plus, afterCreate: { dismiss() })
+                            .background(KriaColor.butter, in: RoundedRectangle(cornerRadius: 12))
+                    }
                     HStack(spacing: 8) {
                         ForEach(GalleryFilter.allCases) { option in
                             Button(option.title) { filter = option }
                                 .font(KriaFont.body(12).weight(.medium))
-                                .foregroundStyle(filter == option ? Color.white : KriaColor.ink)
+                                .foregroundStyle(KriaColor.ink)
                                 .padding(.horizontal, 12)
                                 .frame(minHeight: 44)
-                                .background(filter == option ? KriaColor.ink : Color.white)
+                                .background(filter == option ? KriaColor.selectionSoft : Color.white)
                                 .overlay(Capsule().stroke(KriaColor.border, lineWidth: filter == option ? 0 : 1))
                                 .clipShape(Capsule())
                         }
@@ -267,7 +265,7 @@ struct GalleryView: View {
                         switch model.libraryState {
                         case .idle, .loading:
                             VStack(alignment: .leading, spacing: 10) {
-                                ProgressView().tint(KriaColor.limeText)
+                                ProgressView().tint(KriaColor.ink)
                                 Text("Loading your cuts…")
                                     .font(KriaFont.body(14))
                                     .foregroundStyle(KriaColor.zinc)
@@ -320,7 +318,7 @@ struct GalleryView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 42)
+                .padding(.top, 20)
                 .padding(.bottom, 28)
             }
         }
@@ -347,29 +345,33 @@ private struct GalleryProjectCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Group {
-                if let posterURL = project.posterURL {
-                    AsyncImage(url: posterURL) { phase in
-                        if let image = phase.image { image.resizable().scaledToFill() }
-                        else { BundledPosterImage(name: "montage").scaledToFill() }
+            Color.clear
+                .aspectRatio(174.0 / 246.0, contentMode: .fit)
+                .overlay {
+                    GeometryReader { geometry in
+                        Group {
+                            if let posterURL = project.posterURL {
+                                AsyncImage(url: posterURL) { phase in
+                                    if let image = phase.image { image.resizable().scaledToFill() }
+                                    else { BundledPosterImage(name: "montage").scaledToFill() }
+                                }
+                            } else {
+                                BundledPosterImage(name: project.status == .ready ? "montage" : "voiceover").scaledToFill()
+                            }
+                        }
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
                     }
-                } else {
-                    BundledPosterImage(name: project.status == .ready ? "montage" : "voiceover")
-                        .scaledToFill()
                 }
-            }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(0.75, contentMode: .fit)
-            .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(alignment: .topTrailing) {
                 Text(project.workspaceStatusLabel.uppercased())
                     .font(KriaFont.body(8).weight(.bold))
                     .tracking(0.8)
-                    .foregroundStyle(project.status == .ready ? KriaColor.limeText : KriaColor.ink)
+                    .foregroundStyle(KriaColor.ink)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 5)
-                    .background(project.status == .ready ? KriaColor.limeSoft : Color.white.opacity(0.9))
+                    .background(project.status == .ready ? KriaColor.sage : Color.white.opacity(0.9))
                     .clipShape(Capsule())
                     .padding(7)
             }
@@ -386,11 +388,26 @@ private struct GalleryProjectCard: View {
 
 struct AccountView: View {
     @EnvironmentObject private var auth: AuthStore
-    var body: some View { List { Section { Label(auth.displayName ?? "Creator", systemImage: "person.crop.circle"); Label("Kria app · Development", systemImage: "gear")
-        #if DEBUG
-        NavigationLink("Media diagnostics", destination: MediaDiagnosticView())
-        #endif
-    }; Section { Button("Sign out", role: .destructive) { auth.signOut() } } }.scrollContentBackground(.hidden).background(KriaColor.paper).navigationTitle("Account") }
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                KriaWordmark()
+                Text("Account").font(KriaFont.display(30))
+                HStack(spacing: 14) {
+                    Image(systemName: "person").frame(width: 44, height: 44).background(KriaColor.butter, in: Circle())
+                    Text(auth.displayName ?? "Creator").font(KriaFont.body(17).weight(.medium))
+                }
+                Text("Kria · Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                #if DEBUG
+                NavigationLink("Media diagnostics", destination: MediaDiagnosticView()).frame(minHeight: 44)
+                #endif
+                Button("Sign out", role: .destructive) { auth.signOut() }.buttonStyle(KriaSecondaryButtonStyle())
+            }.padding(24).frame(maxWidth: 560, alignment: .leading).frame(maxWidth: .infinity)
+        }.background(KriaColor.paper).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+    }
 }
 
 struct CreationThreadView: View {
@@ -515,16 +532,19 @@ struct CloudUploadConsentView: View {
     @State private var consent = false
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 22) {
-                Text("Upload your originals.").font(KriaFont.display(30))
-                Text("Kria will upload the full-quality originals you select and keep them with this project so it can render in the cloud. Delete the project to remove its uploaded footage. You can cancel while an upload is in progress.").foregroundStyle(KriaColor.zinc)
-                Toggle("I consent to Kria using these originals for this edit", isOn: $consent).tint(KriaColor.limeText)
-                Spacer()
-                Button("Continue") { dismiss(); onConsent() }.buttonStyle(KriaPrimaryButtonStyle()).disabled(!consent)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    Text("Upload your originals.").font(KriaFont.display(30))
+                    Text("Kria will upload the full-quality originals you select and keep them with this project so it can render in the cloud. Delete the project to remove its uploaded footage. You can cancel while an upload is in progress.").foregroundStyle(KriaColor.mutedInk)
+                    Toggle("I consent to Kria using these originals for this edit", isOn: $consent)
+                }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
             }
-            .padding(24)
-            .navigationTitle("Upload consent")
-            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom) {
+                Button("Continue") { onConsent(); dismiss() }
+                    .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(!consent)
+                    .padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity).background(KriaColor.paper)
+            }
+            .navigationTitle("Upload consent").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
     }

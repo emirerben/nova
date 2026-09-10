@@ -56,6 +56,7 @@ enum ProjectCollectionState: Equatable, Sendable {
     @Published var libraryProjects: [ProjectSummary] = []
     @Published var selectedProject: ProjectSummary?
     @Published var hasCompletedOnboarding: Bool
+    @Published private(set) var isCreatingProject = false
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published private(set) var projectsState: ProjectCollectionState = .idle
@@ -64,6 +65,8 @@ enum ProjectCollectionState: Equatable, Sendable {
     let editorOperations: EditorOperations
     let uploads: BackgroundUploadCoordinator
     private let cache: CacheRepository?
+    private var deletedProjectIDs: Set<UUID> = []
+    private var collectionGeneration = 0
     init(
         api: KriaAPIClient = KriaAPI(),
         editorOperations: EditorOperations = LocalEditorOperations(),
@@ -75,20 +78,26 @@ enum ProjectCollectionState: Equatable, Sendable {
         self.cache = cache
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "kria.onboarding.complete")
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
-            projects = cached.map(\.summary)
+            projects = cached.map(\.summary).filter { !deletedProjectIDs.contains($0.id) }
             projectsState = .loaded
         }
     }
     func completeOnboarding() { hasCompletedOnboarding = true; UserDefaults.standard.set(true, forKey: "kria.onboarding.complete") }
     func loadProjects() async {
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
-            projects = cached.map(\.summary)
+            projects = cached.map(\.summary).filter { !deletedProjectIDs.contains($0.id) }
         }
+        let generation = collectionGeneration
         isLoading = true
         if projects.isEmpty { projectsState = .loading }
         defer { isLoading = false }
         do {
-            projects = try await api.projects()
+            let fetched = try await api.projects()
+            guard generation == collectionGeneration else { return }
+            projects = fetched.filter { !deletedProjectIDs.contains($0.id) }.map { incoming in
+                if let current = projects.first(where: { $0.id == incoming.id }), current.serverRevision > incoming.serverRevision { return current }
+                return incoming
+            }
             projectsState = projects.isEmpty ? .empty : .loaded
             errorMessage = nil
             if let selectedProject,
@@ -98,9 +107,10 @@ enum ProjectCollectionState: Equatable, Sendable {
             try? cache?.upsert(projects)
         }
         catch {
+            guard generation == collectionGeneration else { return }
             #if DEBUG
             if projects.isEmpty {
-                projects = PreviewFixtures.projects
+                projects = PreviewFixtures.projects.filter { !deletedProjectIDs.contains($0.id) }
                 projectsState = .loaded
             }
             #else
@@ -111,13 +121,17 @@ enum ProjectCollectionState: Equatable, Sendable {
         }
     }
     func loadLibrary() async {
+        let generation = collectionGeneration
         if libraryProjects.isEmpty { libraryState = .loading }
         do {
-            libraryProjects = try await api.library()
+            let fetched = try await api.library()
+            guard generation == collectionGeneration else { return }
+            libraryProjects = fetched
             libraryState = libraryProjects.isEmpty ? .empty : .loaded
             errorMessage = nil
         }
         catch {
+            guard generation == collectionGeneration else { return }
             #if DEBUG
             libraryProjects = PreviewFixtures.projects.filter { $0.status == .ready }
             libraryState = libraryProjects.isEmpty ? .empty : .loaded
@@ -128,18 +142,24 @@ enum ProjectCollectionState: Equatable, Sendable {
         }
     }
     func createProject() async {
+        guard !isCreatingProject else { return }
+        isCreatingProject = true
+        defer { isCreatingProject = false }
         errorMessage = nil
         do {
             let thread = try await api.createThread(message: nil)
             let project = thread.summary
+            collectionGeneration += 1
             projects.insert(project, at: 0)
             projectsState = .loaded
             try? cache?.upsert([project])
             selectedProject = project
         } catch {
             #if DEBUG
-            let project = ProjectSummary(id: UUID(), title: "Untitled project", status: .draft, updatedAt: .now, posterURL: nil)
-            projects.insert(project, at: 0); selectedProject = project; projectsState = .loaded
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
+                let project = ProjectSummary(id: UUID(), title: "Untitled project", status: .draft, updatedAt: .now, posterURL: nil)
+                projects.insert(project, at: 0); selectedProject = project; projectsState = .loaded
+            } else { errorMessage = error.localizedDescription }
             #else
             errorMessage = error.localizedDescription
             #endif
@@ -164,15 +184,54 @@ enum ProjectCollectionState: Equatable, Sendable {
         }
     }
     func selectProject(_ project: ProjectSummary) {
-        selectedProject = project
+        guard !deletedProjectIDs.contains(project.id) else { return }
+        selectedProject = projects.first(where: { $0.id == project.id }) ?? project
         errorMessage = nil
     }
+    func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws {
+        do {
+            let updated = try await api.renameProject(project, title: title, clientEventID: clientEventID).summary
+            updateProject(updated)
+        } catch {
+            if error as? APIError == .conflict, let latest = try? await api.project(threadID: project.id) {
+                updateProject(latest.summary)
+            }
+            throw error
+        }
+    }
+    func deleteProject(_ project: ProjectSummary) async throws {
+        guard project.status != .rendering, !uploads.records.contains(where: { $0.projectID == project.id }) else { throw APIError.conflict }
+        do { try await api.deleteProject(project) }
+        catch {
+            if error as? APIError == .conflict, let latest = try? await api.project(threadID: project.id) {
+                updateProject(latest.summary)
+            }
+            throw error
+        }
+        deletedProjectIDs.insert(project.id)
+        collectionGeneration += 1
+        var cacheWarning: String?
+        // The server deletion is already committed; never present it as a failed
+        // delete just because the recoverable device cache cannot save.
+        do { try cache?.removeProject(project.id) }
+        catch { cacheWarning = "Project deleted. Device storage couldn’t finish updating." }
+        projects.removeAll { $0.id == project.id }
+        libraryProjects.removeAll { $0.id == project.id || $0.id == project.activeJobID }
+        if selectedProject?.id == project.id { selectedProject = projects.first }
+        projectsState = projects.isEmpty ? .empty : .loaded
+        await loadLibrary()
+        libraryProjects.removeAll { $0.id == project.id || $0.id == project.activeJobID }
+        if let cacheWarning { errorMessage = cacheWarning }
+    }
     func updateProject(_ project: ProjectSummary) {
+        guard !deletedProjectIDs.contains(project.id) else { return }
         if let index = projects.firstIndex(where: { $0.id == project.id }) {
+            guard project.serverRevision >= projects[index].serverRevision else { return }
             projects[index] = project
         } else {
             projects.insert(project, at: 0)
         }
+        if selectedProject?.id == project.id { selectedProject = project }
         try? cache?.upsert([project])
     }
 }
