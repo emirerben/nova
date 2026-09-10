@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -14,7 +15,7 @@ SCRIPT = Path(__file__).resolve().with_name("select-tests.py")
 spec = importlib.util.spec_from_file_location("select_tests", SCRIPT)
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
-ALL = {"web", "api", "ios"}
+ALL = {"web", "api", "ios", "ios_ui"}
 
 
 class ClassificationTests(unittest.TestCase):
@@ -23,17 +24,17 @@ class ClassificationTests(unittest.TestCase):
             "src/apps/web/src/app/page.tsx": {"web"},
             "src/apps/web/package.json": {"web"},
             "scripts/ci/web-tests.mjs": {"web"},
-            "src/apps/ios/project.yml": {"ios"},
-            "scripts/ios/verify.sh": {"ios"},
-            ".github/workflows/ios.yml": {"ios"},
+            "src/apps/ios/project.yml": {"ios", "ios_ui"},
+            "scripts/ios/verify.sh": {"ios", "ios_ui"},
+            ".github/workflows/ios.yml": {"ios", "ios_ui"},
             "src/apps/api/app/pipeline/reframe.py": {"api"},
             "src/apps/api/tests/test_routes.py": {"api"},
             "src/apps/api/prompts/writer.md": {"api"},
-            "src/apps/api/app/routes/me.py": ALL,
-            "src/apps/api/app/schemas/jobs.py": ALL,
-            "src/apps/api/app/kria/contracts.py": ALL,
-            "src/apps/api/app/config.py": ALL,
-            "src/apps/api/pyproject.toml": ALL,
+            "src/apps/api/app/routes/me.py": {"web", "api", "ios"},
+            "src/apps/api/app/schemas/jobs.py": {"web", "api", "ios"},
+            "src/apps/api/app/kria/contracts.py": {"web", "api", "ios"},
+            "src/apps/api/app/config.py": {"web", "api", "ios"},
+            "src/apps/api/pyproject.toml": {"web", "api", "ios"},
             "src/packages/motion-runtime/motion-limits.json": ALL,
             ".github/workflows/ci.yml": ALL,
             ".github/workflows/ci-changes.yml": ALL,
@@ -50,6 +51,40 @@ class ClassificationTests(unittest.TestCase):
         for path, expected in examples.items():
             with self.subTest(path=path):
                 self.assertEqual(ci.affected(path), expected)
+
+    def test_ios_ui_selection(self):
+        for path in (
+            "src/apps/ios/Kria/Generated/openapi.yaml",
+            "src/apps/ios/Tests/KriaTests/EditorDocumentTests.swift",
+            "src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json",
+        ):
+            self.assertEqual(ci.affected(path), {"ios"})
+        for path in (
+            "src/apps/ios/Kria/Features/NativeEditorView.swift",
+            "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+            "src/apps/ios/Tests/KriaUITests/KriaUITests.swift",
+            "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Composition.swift",
+            "scripts/ios/cache-inputs.py",
+        ):
+            self.assertEqual(ci.affected(path), {"ios", "ios_ui"})
+        for path in (
+            "src/apps/web/public/fonts/Inter-Regular.ttf",
+            "src/apps/web/public/plan/type-posters/montage.mp4",
+        ):
+            self.assertEqual(ci.affected(path), {"web", "ios", "ios_ui"})
+
+    def test_xcode_bundled_web_resources_select_native_coverage(self):
+        project = SCRIPT.parents[2] / "src/apps/ios/project.yml"
+        bundled = []
+        for line in project.read_text().splitlines():
+            if line.strip().startswith("- path:"):
+                path = shlex.split(line.split("path:", 1)[1], comments=True)[0]
+                if path.startswith("../web/"):
+                    bundled.append("src/apps/web/" + path.removeprefix("../web/"))
+        self.assertTrue(bundled, "Expected native-bundled web resources")
+        for path in bundled:
+            with self.subTest(path=path):
+                self.assertTrue({"ios", "ios_ui"}.issubset(ci.affected(path)))
 
     def test_non_pr_always_full(self):
         for event in ("push", "workflow_dispatch", None, "merge_group"):
@@ -96,6 +131,27 @@ class GateTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 ci.gate(needs, "web", "suite")
+
+    def test_ios_gate_rejects_missing_or_inconsistent_ui_selection(self):
+        for ios, ui in (("true", None), ("true", ""), ("false", "true")):
+            needs = {
+                "changes": {"result": "success", "outputs": {"ios": ios, "ios_ui": ui}},
+                "ios-tests": {"result": "success"},
+            }
+            with self.assertRaises(ValueError):
+                ci.gate(needs, "ios", "ios-tests")
+        for ui in ("true", "false"):
+            ci.gate(
+                {
+                    "changes": {
+                        "result": "success",
+                        "outputs": {"ios": "true", "ios_ui": ui},
+                    },
+                    "ios-tests": {"result": "success"},
+                },
+                "ios",
+                "ios-tests",
+            )
 
     def test_lint_union(self):
         for web, api in (
@@ -192,7 +248,7 @@ class GitDiffTests(unittest.TestCase):
     def test_deletion_and_mixed_changes(self):
         Path("src/apps/web/old.ts").unlink()
         self.write("scripts/ios/new.sh", "true")
-        self.assertEqual(self.selected(), {"web", "ios"})
+        self.assertEqual(self.selected(), {"web", "ios", "ios_ui"})
 
     def test_names_with_newlines_are_not_split(self):
         self.write("src/apps/web/new\nfile.ts", "test")
@@ -230,7 +286,9 @@ class GitDiffTests(unittest.TestCase):
             },
             capture_output=True,
         )
-        self.assertEqual(output.read_text(), "web=false\napi=false\nios=true\n")
+        self.assertEqual(
+            output.read_text(), "web=false\napi=false\nios=true\nios_ui=true\n"
+        )
         self.assertIn("ios: run", summary.read_text())
 
 

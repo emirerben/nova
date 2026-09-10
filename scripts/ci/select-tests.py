@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 
-SUITES = ("web", "api", "ios")
+SUITES = ("web", "api", "ios", "ios_ui")
 
 
 def git(*args):
@@ -31,6 +31,20 @@ def release_only(path, base, head):
 
 
 def affected(path):
+    # These web resources are also bundled by the native Xcode project.
+    if path.startswith(
+        ("src/apps/web/public/fonts/", "src/apps/web/public/plan/type-posters/")
+    ):
+        return {"web", "ios", "ios_ui"}
+    # Unit-test edits and generated clients need compilation/unit contracts, but
+    # do not change the native screens exercised by the fixture-driven UI suite.
+    if (
+        path.startswith(
+            ("src/apps/ios/Tests/KriaTests/", "src/apps/ios/Kria/Generated/")
+        )
+        or path == "src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json"
+    ):
+        return {"ios"}
     # Check runtime trees before documentation: prompts and fixtures can be .md.
     if path.startswith(("src/apps/web/", "scripts/ci/web-tests")):
         return {"web"}
@@ -38,7 +52,7 @@ def affected(path):
         path.startswith(("src/apps/ios/", "scripts/ios/"))
         or path == ".github/workflows/ios.yml"
     ):
-        return {"ios"}
+        return {"ios", "ios_ui"}
     if path.startswith("src/apps/api/"):
         # Public contracts affect both clients; internal pipeline/tests only API.
         contracts = (
@@ -60,7 +74,7 @@ def affected(path):
             "requirements",
         )
         return (
-            set(SUITES)
+            {"web", "api", "ios"}
             if path.removeprefix("src/apps/api/").startswith(contracts)
             else {"api"}
         )
@@ -107,6 +121,10 @@ def gate(needs, suite, job):
         raise ValueError("CI selection failed or required job results are missing")
     outputs = needs["changes"].get("outputs", {})
     selected = outputs.get(suite)
+    if suite == "ios":
+        ui = outputs.get("ios_ui")
+        if ui not in ("true", "false") or (ui == "true" and selected != "true"):
+            raise ValueError("Missing or inconsistent iOS UI selection")
     if suite == "lint":
         if any(outputs.get(key) not in ("true", "false") for key in ("web", "api")):
             raise ValueError("Missing or invalid lint selection")
