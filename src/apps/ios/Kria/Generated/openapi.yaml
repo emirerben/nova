@@ -978,6 +978,51 @@
         "title": "DeltaEvent",
         "type": "object"
       },
+      "DeviceAssetDownloadBody": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "asset_id"
+        ],
+        "title": "DeviceAssetDownloadBody",
+        "type": "object"
+      },
+      "DeviceAssetDownloadOut": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "download_url": {
+            "title": "Download Url",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "download_url",
+          "expires_at"
+        ],
+        "title": "DeviceAssetDownloadOut",
+        "type": "object"
+      },
       "DeviceExportCompleteBody": {
         "additionalProperties": false,
         "properties": {
@@ -6191,6 +6236,58 @@
           }
         }
       ]
+    },
+    "/me/jobs/{job_id}/device-render/assets": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "downloadDeviceAsset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceAssetDownloadBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceAssetDownloadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
     },
     "/me/jobs/{job_id}/device-render/complete": {
       "parameters": [

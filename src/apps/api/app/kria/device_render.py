@@ -56,6 +56,17 @@ class DeviceRenderStatus(_DeviceModel):
     reason: str | None = None
 
 
+class DeviceAssetDownloadBody(_DeviceModel):
+    identity: DeviceRenderIdentity
+    asset_id: str = Field(min_length=1, max_length=160)
+
+
+class DeviceAssetDownloadOut(_DeviceModel):
+    asset_id: str
+    download_url: str
+    expires_at: datetime
+
+
 class DeviceExportReservationBody(_DeviceModel):
     identity: DeviceRenderIdentity
     attempt_id: uuid.UUID

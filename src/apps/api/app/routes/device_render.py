@@ -22,6 +22,8 @@ from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.kria.device_render import (
+    DeviceAssetDownloadBody,
+    DeviceAssetDownloadOut,
     DeviceExportCompleteBody,
     DeviceExportCompleteOut,
     DeviceExportReservationBody,
@@ -30,11 +32,13 @@ from app.kria.device_render import (
     DeviceRenderStatus,
     require_current_request,
 )
+from app.kria.render_assets import LibraryRenderAsset
 from app.limiter import limiter
 from app.models import ContentPlan, Job, PlanItem, TemporaryMediaUpload
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
 from app.services.device_render import device_record, device_status, save_device_record
 from app.services.job_storage_paths import project_media_reference_lock_key
+from app.services.render_library import catalog_path, inspect_library_asset
 
 router = APIRouter()
 
@@ -129,6 +133,56 @@ async def get_device_render(
             }
         )
     return status
+
+
+@router.post("/jobs/{job_id}/device-render/assets", response_model=DeviceAssetDownloadOut)
+@limiter.limit("30/minute")
+async def download_device_asset(
+    request: Request,
+    job_id: uuid.UUID,
+    body: DeviceAssetDownloadBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> DeviceAssetDownloadOut:
+    if not settings.phone_rendering_enabled:
+        raise HTTPException(404, "Phone rendering is unavailable")
+    user_id = user.id
+    job = await _owned_job(db, user_id, job_id)
+    _, status = _record(job, body.identity)
+    manifest = getattr(status.request.recipe, "asset_manifest", None)
+    asset = next((a for a in manifest.assets if a.id == body.asset_id), None) if manifest else None
+    if not isinstance(asset, LibraryRenderAsset):
+        raise HTTPException(404, "Library asset unavailable")
+    try:
+        path = await catalog_path(db, asset.catalog, asset.catalog_id)
+        await db.rollback()
+        actual = await asyncio.to_thread(
+            inspect_library_asset,
+            path,
+            asset_id=asset.id,
+            catalog=asset.catalog,
+            catalog_id=asset.catalog_id,
+        )
+        if actual != asset:
+            raise ValueError("library generation changed")
+        job = await _owned_job(db, user_id, job_id)
+        _record(job, body.identity)
+        if await catalog_path(db, asset.catalog, asset.catalog_id) != path:
+            raise ValueError("catalog changed")
+        url = await asyncio.to_thread(
+            storage.signed_get_url_for_generation,
+            path,
+            generation=asset.generation,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Library asset unavailable") from exc
+    except ValueError as exc:
+        raise HTTPException(409, "Library asset changed; refresh the recipe") from exc
+    return DeviceAssetDownloadOut(
+        asset_id=asset.id,
+        download_url=url,
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
+    )
 
 
 @router.post("/jobs/{job_id}/device-render/uploads", response_model=DeviceExportReservationOut)

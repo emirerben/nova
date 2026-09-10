@@ -301,3 +301,23 @@ def test_mobile_openapi_translates_nullable_bounds_and_constants() -> None:
     )
     assert "EditorCommitRequest" in document["components"]["schemas"]
     assert "EditorCommitResponse" in document["components"]["schemas"]
+
+
+def test_mobile_openapi_schema_references_resolve() -> None:
+    document = json.loads(mobile_openapi_json())
+
+    def visit(value):
+        if isinstance(value, dict):
+            if "$ref" in value:
+                reference = value["$ref"]
+                assert reference.startswith("#/"), reference
+                target = document
+                for part in reference[2:].split("/"):
+                    target = target[part.replace("~1", "/").replace("~0", "~")]
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(document)

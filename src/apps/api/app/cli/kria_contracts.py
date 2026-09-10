@@ -23,6 +23,8 @@ from app.kria.api_schemas import (
 )
 from app.kria.contracts import KRIA_SCHEMA_VERSION
 from app.kria.device_render import (
+    DeviceAssetDownloadBody,
+    DeviceAssetDownloadOut,
     DeviceExportCompleteBody,
     DeviceExportCompleteOut,
     DeviceExportReservationBody,
@@ -94,6 +96,8 @@ API_MODELS = (
 )
 
 MOBILE_API_MODELS = (
+    DeviceAssetDownloadBody,
+    DeviceAssetDownloadOut,
     DeviceRenderStatus,
     DeviceRenderCapabilities,
     DeviceExportReservationBody,
@@ -647,6 +651,15 @@ def mobile_openapi_json() -> str:
                         }
                     ],
                     "responses": _json_responses(DeviceRenderStatus),
+                },
+            },
+            "/me/jobs/{job_id}/device-render/assets": {
+                "parameters": [job_id],
+                "post": {
+                    "operationId": "downloadDeviceAsset",
+                    "security": bearer,
+                    "requestBody": _json_request(DeviceAssetDownloadBody),
+                    "responses": _json_responses(DeviceAssetDownloadOut),
                 },
             },
             "/me/jobs/{job_id}/device-render/uploads": {

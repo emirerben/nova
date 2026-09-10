@@ -78,6 +78,7 @@ struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ statu
 
 protocol KriaAPIClient: Sendable {
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse
+    func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget
     func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws
 
@@ -127,6 +128,7 @@ extension KriaAPIClient {
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
 
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse { throw APIError.unsupported }
+    func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget { throw APIError.unsupported }
     func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget { throw APIError.unsupported }
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws { throw APIError.unsupported }
 
@@ -615,6 +617,7 @@ struct KriaAPI: KriaAPIClient {
     /// server-owned mobile OpenAPI subset must break the iOS build.
     private static let checkedEditorOperationIDs = [
         Operations.getDeviceRender.id,
+        Operations.downloadDeviceAsset.id,
         Operations.reserveDeviceExport.id,
         Operations.completeDeviceExport.id,
         Operations.getCreationCapabilities.id,

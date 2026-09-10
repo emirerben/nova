@@ -17,8 +17,14 @@ style has passed the complete parity and physical-device gates.
   copied bytes before installation, detects corruption, and rejects original
   sources. Neither manifest contains download URLs or storage paths. V2 device
   requests carry this manifest in their digest; the coordinator's source resolver
-  uses it before composition. An authorized library-download endpoint is still
-  outstanding. V1 projects retain their original migration and decoding path.
+  uses it before composition. The owner/revision-fenced `device-render/assets`
+  route grants short-lived generation-pinned downloads only for published,
+  ready music/SFX named in that recipe. It verifies the bytes and rechecks the
+  owner, revision, and catalog after verification. The native authorized resolver
+  downloads through a separate ephemeral session and verifies cache installation.
+  Shared planning still needs to build these manifests; font/overlay catalog
+  downloads and chat integration remain outstanding. V1 projects retain their
+  original migration and decoding path.
 - `TextMotionTiming.swift` mirrors the cloud's normalized v2 phase grid and
   smooth-type reveal math. `phone_text_motion_v2.json` covers all 17 effect timing
   rules plus multilingual, emoji, empty-line, ordering, and speed cases. This

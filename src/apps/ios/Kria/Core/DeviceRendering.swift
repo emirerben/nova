@@ -38,7 +38,24 @@ struct DeviceExportUploadTarget: Decodable, Sendable {
 }
 private struct DeviceExportCompletion: Decodable { let status: String }
 
+struct DeviceAssetDownloadBody: Encodable, Sendable {
+    let identity: DeviceRenderIdentity
+    let assetID: String
+    private enum CodingKeys: String, CodingKey { case identity, assetID = "assetId" }
+}
+struct DeviceAssetDownloadTarget: Decodable, Sendable {
+    let assetID: String
+    let downloadURL: URL
+    let expiresAt: Date
+    private enum CodingKeys: String, CodingKey {
+        case assetID = "asset_id", downloadURL = "download_url", expiresAt = "expires_at"
+    }
+}
+
 extension KriaAPI {
+    func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget {
+        try await request(path: "me/jobs/\(body.identity.jobID.uuidString)/device-render/assets", method: "POST", bodyData: RecipeJSON.encoder().encode(body), decode: DeviceAssetDownloadTarget.self)
+    }
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse {
         try await request(path: "me/jobs/\(jobID.uuidString)/device-render", method: "GET", query: [URLQueryItem(name: "variant_id", value: variantID)], bodyData: nil, decode: DeviceRenderStatusResponse.self)
     }
@@ -88,5 +105,39 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
             if try await isCurrent(identity) { throw APIError.conflict }
             return .superseded
         }
+    }
+}
+
+
+/// Bound to one immutable request; the API rechecks authorization for every grant.
+struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
+    let api: any KriaAPIClient
+    let request: DeviceRenderRequest
+    let originals: SourceAssetStore
+    let library: RenderLibraryCache
+    // No API authorization header or persistent cookies travel to object storage.
+    var downloadSession: URLSession = URLSession(configuration: .ephemeral)
+
+    func resolve(for recipe: KriaMediaEngine.EditRecipe) async throws -> [String: URL] {
+        guard recipe == request.recipe else { throw APIError.conflict }
+        try recipe.validate()
+        guard let manifest = recipe.assetManifest else {
+            return try await OriginalSourceResolver(store: originals).resolve(for: recipe)
+        }
+        for asset in manifest.assets {
+            try Task.checkCancellation()
+            guard case .library = asset.source else { continue }
+            if (try? await library.resolve(asset)) != nil { continue }
+            let grant = try await api.downloadDeviceAsset(DeviceAssetDownloadBody(identity: request.identity, assetID: asset.id))
+            guard grant.assetID == asset.id, grant.downloadURL.scheme == "https", grant.expiresAt > Date() else {
+                throw APIError.invalidResponse
+            }
+            let (file, response) = try await downloadSession.download(from: grant.downloadURL)
+            defer { try? FileManager.default.removeItem(at: file) }
+            guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { throw APIError.requestFailed }
+            try Task.checkCancellation()
+            _ = try await library.install(downloadedFile: file, for: asset)
+        }
+        return try await PortableAssetResolver(originals: originals, library: library).resolve(manifest)
     }
 }

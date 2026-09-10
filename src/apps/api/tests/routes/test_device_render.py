@@ -247,3 +247,106 @@ def test_held_recipe_cannot_publish_reserved_output(fixture, monkeypatch, during
     assert response.status_code == 409
     assert verifier.call_count == int(during_verification)
     fixture.db.commit.assert_not_awaited()
+
+
+def library_recipe(fixture, monkeypatch):
+    from app.kria.recipes_v2 import EditRecipeV2
+    from app.kria.render_assets import LibraryRenderAsset
+
+    asset = LibraryRenderAsset(
+        id="a",
+        catalog="music",
+        catalog_id="track",
+        generation="42",
+        fingerprint={"sha256": "a" * 64, "byte_count": 12},
+    )
+    value = fixture.request.recipe.model_dump(mode="json")
+    value.update(
+        schema_version=2,
+        renderer_version="kria-ios-2",
+        asset_manifest={"assets": [asset.model_dump()]},
+    )
+    value["assets"][0]["fingerprint"] = {
+        "algorithm": "sha256",
+        "hex": "a" * 64,
+        "byte_count": 12,
+    }
+    fixture.request = make_device_request(
+        job_id=fixture.job.id,
+        variant_id="first",
+        revision=2,
+        recipe=EditRecipeV2.model_validate(value),
+    )
+    pin_device_request(fixture.job, fixture.request, base_generation="approved")
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    monkeypatch.setattr(routes, "catalog_path", AsyncMock(return_value="music/track/audio.mp3"))
+    monkeypatch.setattr(routes, "inspect_library_asset", lambda *a, **kw: asset)
+    signer = MagicMock(return_value="https://storage.example/pinned")
+    monkeypatch.setattr(routes.storage, "signed_get_url_for_generation", signer)
+    return asset, signer
+
+
+def download_asset(fixture, **changes):
+    return fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/assets",
+        json={
+            "identity": fixture.request.identity.model_dump(mode="json"),
+            "asset_id": "a",
+            **changes,
+        },
+    )
+
+
+def test_library_download_pins_generation(fixture, monkeypatch):
+    _, signer = library_recipe(fixture, monkeypatch)
+    response = download_asset(fixture)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with("music/track/audio.mp3", generation="42")
+    assert response.json()["asset_id"] == "a"
+    assert routes._owned_job.await_count == 2
+    fixture.db.rollback.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "mutation", ["generation", "fingerprint", "withdrawn", "owner", "revision"]
+)
+def test_library_download_rejects_changes(fixture, monkeypatch, mutation):
+    from fastapi import HTTPException
+
+    asset, signer = library_recipe(fixture, monkeypatch)
+    if mutation == "generation":
+        monkeypatch.setattr(
+            routes,
+            "inspect_library_asset",
+            lambda *a, **kw: asset.model_copy(update={"generation": "43"}),
+        )
+    elif mutation == "fingerprint":
+        monkeypatch.setattr(
+            routes,
+            "inspect_library_asset",
+            lambda *a, **kw: asset.model_copy(
+                update={"fingerprint": asset.fingerprint.model_copy(update={"sha256": "b" * 64})}
+            ),
+        )
+    elif mutation == "withdrawn":
+        routes.catalog_path.side_effect = ["music/track/audio.mp3", FileNotFoundError()]
+    elif mutation == "owner":
+        routes._owned_job.side_effect = [fixture.job, HTTPException(404, "Job not found")]
+    else:
+        record = device_record(fixture.job, "first")
+        record["base_generation"] = "different"
+        save_device_record(fixture.job, "first", record)
+    response = download_asset(fixture)
+    assert response.status_code in {404, 409}, response.text
+    signer.assert_not_called()
+
+
+def test_library_download_rejects_missing_asset(fixture, monkeypatch):
+    _, signer = library_recipe(fixture, monkeypatch)
+    assert download_asset(fixture, asset_id="other").status_code == 404
+    signer.assert_not_called()
+
+
+def test_library_download_rejects_legacy_recipe(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    assert download_asset(fixture).status_code == 404

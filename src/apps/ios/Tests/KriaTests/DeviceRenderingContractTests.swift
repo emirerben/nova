@@ -4,6 +4,20 @@ import KriaMediaEngine
 @testable import Kria
 
 final class DeviceRenderingContractTests: XCTestCase {
+    func testLibraryGrantUsesOpaqueAssetAndRevisionIdentity() throws {
+        let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "first", recipeRevision: 3, recipeDigest: String(repeating: "a", count: 64))
+        let body = DeviceAssetDownloadBody(identity: identity, assetID: "music-1")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(body)) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["identity", "asset_id"])
+        XCTAssertEqual(object["asset_id"] as? String, "music-1")
+        let nested = try XCTUnwrap(object["identity"] as? [String: Any])
+        XCTAssertEqual(nested["recipe_revision"] as? Int, 3)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let target = try decoder.decode(DeviceAssetDownloadTarget.self, from: Data(#"{"asset_id":"music-1","download_url":"https://storage.example/exact?generation=42","expires_at":"2026-09-10T12:00:00Z"}"#.utf8))
+        XCTAssertEqual(target.assetID, "music-1")
+        XCTAssertEqual(target.downloadURL.query, "generation=42")
+    }
     func testUploadAndCompleteUseBackendIdentityKeys() throws {
         let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: 7, recipeDigest: String(repeating: "a", count: 64))
         let attempt = UUID()
