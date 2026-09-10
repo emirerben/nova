@@ -6,7 +6,7 @@
 #   1. scoped ruff (format + lint) on changed .py files only
 #   2. tsc --noEmit when any web .ts/.tsx changed
 #   3. drift check: files in this branch that ALSO changed on origin/main
-#   4. VERSION slot check vs origin/main (bumped, and not a collision)
+#   4. release-metadata ownership check (post-merge automation owns versions)
 #   5. list the [skip-*] CI markers relevant to this diff
 #
 # Usage: bash scripts/preship-check.sh   (from the feature worktree, pre-PR)
@@ -80,18 +80,13 @@ else
   pass "no overlapping changes with origin/main"
 fi
 
-# ── 4. VERSION slot ───────────────────────────────────────────────────────────
-echo "[4/5] VERSION slot"
-LOCAL_V="$(cat VERSION 2>/dev/null | tr -d '[:space:]')"
-MAIN_V="$(git show origin/main:VERSION 2>/dev/null | tr -d '[:space:]')"
-if [ -z "$LOCAL_V" ] || [ -z "$MAIN_V" ]; then
-  warn "could not read VERSION locally or on origin/main"
-elif [ "$LOCAL_V" = "$MAIN_V" ]; then
-  fail "VERSION not bumped (still $MAIN_V) — bump past origin/main before shipping"
-elif [ "$(printf '%s\n%s\n' "$LOCAL_V" "$MAIN_V" | sort -V | tail -1)" = "$MAIN_V" ]; then
-  fail "VERSION slot collision: local $LOCAL_V <= origin/main $MAIN_V — origin moved; pick the next free slot"
+# ── 4. Release metadata ownership ─────────────────────────────────────────────
+echo "[4/5] release metadata ownership"
+if OUT="$(python3 scripts/release_metadata.py guard --base "$MB" --head HEAD 2>&1)" \
+  && OUT_WORKING="$(python3 scripts/release_metadata.py guard --base HEAD --working 2>&1)"; then
+  pass "feature PR leaves release metadata to post-merge automation"
 else
-  pass "VERSION $MAIN_V -> $LOCAL_V"
+  fail "${OUT:-$OUT_WORKING}"
 fi
 
 # ── 5. CI skip-markers relevant to this diff ──────────────────────────────────
