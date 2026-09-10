@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.75.3.1] — 2026-09-09
+## [0.75.5.1] — 2026-09-10
 
 ### Fixed
 - **Generated voiceover captions now show up as captions, not stray text.** Captions from the latest voiceover flow appear side by side on their own captions track, get the caption editing controls (font, size, color) instead of the generic text panel, and no longer break the editor layout when clicked. Caption text and styling changes save and reflect in the preview; timing stays locked to the narration, with an honest reason shown in the panel.
@@ -10,6 +10,13 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - Added `CAPTION_CUE_SOURCE`, a shared constant replacing a hand-typed string that classified a caption across five call sites, plus a producer-side contract test pinning it.
+
+## [0.75.5.0] - 2026-09-10
+
+### Changed
+- The iOS app now shares Kria’s Sunlit branding, wordmark, chat composer, and left navigation with the web experience. Gallery, account, consent, and editor surfaces use the same visual system.
+- Creators can start chats and rename or delete projects from native project menus, with confirmation, revision conflict recovery, and protection for active renders/uploads.
+- The projects drawer follows the swipe continuously, with a gradual paper-color transition, rounded full-screen corners, and a light haptic when it opens or closes.
 
 ## [0.75.1.0] - 2026-09-09
 
