@@ -14,6 +14,8 @@ not supply a percentage; the preview does not fabricate Paper's example progress
 - [Rounded drawer top edge](rounded-drawer-top.jpg): final full-height surface with
   continuous corners. Tint and corner radius follow drag progress; touch-down uses
   a 3-point threshold and direct tracking, with one ease-out settling animation.
+  Opening or closing triggers a light, low-intensity haptic. Swipes that start
+  inside the format carousel stay with its horizontal scrolling.
   This supersedes the rectangular edge in the earlier drawer capture.
 
 - [Updated drawer and centered header](drawer-toggle.jpg): the menu button moves
@@ -49,10 +51,14 @@ ProjectRestorationTests covers preferred-project restoration, authoritative titl
 and revision, full transcript history, and missing-project fallback. UI tests cover
 new chat, drawer/Gallery navigation, rename/delete cancellation, real bundled-video
 playback, editing, undo/redo, save/back protections, inspectors and accessibility
-text with Reduce Motion. Existing media/runtime tests cover consent and explicit
+text with Reduce Motion, format-carousel swipe exclusion, and chat-bubble wrapping
+at accessibility text sizes. Existing media/runtime tests cover consent and explicit
 render approval contracts.
 
 ## Verification limits
+
+The final `make ios-verify` run completed 155 unit tests (one existing skip) and
+17 UI tests with zero failures. The pre-PR gate also passed.
 
 No authenticated live footage-to-cloud-render journey was run in this session.
 Live ready playback, server save and Gallery refresh still need a staging session;
