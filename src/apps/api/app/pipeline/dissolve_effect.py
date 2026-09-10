@@ -373,7 +373,8 @@ def _numpy_rgba_to_skia_image(arr):
 
     encoded = BytesIO()
     Image.fromarray(arr, "RGBA").save(encoded, "PNG", compress_level=3)
-    return skia.Image.MakeFromEncoded(skia.Data.MakeWithoutCopy(encoded.getvalue()))
+    # Encoded images decode lazily; Skia must own bytes after BytesIO leaves scope.
+    return skia.Image.MakeFromEncoded(skia.Data.MakeWithCopy(encoded.getvalue()))
 
 
 def _apply_skia_particle_breakup(img, progress: float, *, seed: int, params: DissolveParams):
@@ -427,7 +428,8 @@ def _apply_skia_particle_breakup(img, progress: float, *, seed: int, params: Dis
     png = Image.fromarray(arr, "RGBA")
     encoded = BytesIO()
     png.save(encoded, "PNG", compress_level=3)
-    return skia.Image.MakeFromEncoded(skia.Data.MakeWithoutCopy(encoded.getvalue()))
+    # Encoded images decode lazily; Skia must own bytes after BytesIO leaves scope.
+    return skia.Image.MakeFromEncoded(skia.Data.MakeWithCopy(encoded.getvalue()))
 
 
 def _skia_displacement_filter(
