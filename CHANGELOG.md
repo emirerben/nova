@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.9.0] - 2026-09-10
+
+### Changed
+- iOS CI separates build/unit verification from UI tests, reusing the compiled build and omitting UI execution for unit-test-only and generated-client changes.
+- Xcode caches are saved after unit tests pass and preserve timestamps for unchanged inputs, improving reuse across fresh checkouts. Shared web resources bundled by iOS now select native coverage.
+
 ## [0.75.8.0] - 2026-09-10
 
 ### Changed
