@@ -8464,6 +8464,122 @@ def test_resolve_smart_music_treatment_disabled_by_flag(monkeypatch):
     assert receipt["reason"] == "disabled_by_flag"
 
 
+# ── KRI-20: talking-to-camera edits must not get unrequested music ───────────
+
+
+def test_smart_music_bed_requires_explicit_request(monkeypatch):
+    """Default-on: a fresh talking-to-camera render with no persisted treatment
+    must NOT invent one — no matcher call, no track picked."""
+    monkeypatch.setattr(gb.settings, "smart_music_bed_enabled", True, raising=False)
+    monkeypatch.setattr(
+        gb.settings, "smart_music_bed_requires_request_enabled", True, raising=False
+    )
+    job = _FakeJob(assembly_plan={"variants": [{"variant_id": "v"}]})
+    _patch_job_session(monkeypatch, job)
+    matcher_calls = []
+    monkeypatch.setattr(
+        "app.tasks.auto_music_orchestrate._run_music_matcher",
+        lambda **kw: matcher_calls.append(kw) or [],
+    )
+
+    treatment, receipt = gb._resolve_smart_music_treatment(
+        cues=[{"text": "hello"}],
+        audio_intents=[{"music_match_min_score": 7.0}],
+        job_id=str(uuid.uuid4()),
+        variant_id="v",
+        duration_s=30.0,
+    )
+
+    assert treatment is None
+    assert receipt["reason"] == "not_user_requested"
+    assert matcher_calls == []
+
+
+def test_smart_music_bed_request_kill_switch_restores_auto_match(monkeypatch):
+    """SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED=false restores the pre-fix
+    auto-match path byte-for-byte (falls through to the legacy resolver body)."""
+    monkeypatch.setattr(gb.settings, "smart_music_bed_enabled", True, raising=False)
+    monkeypatch.setattr(
+        gb.settings, "smart_music_bed_requires_request_enabled", False, raising=False
+    )
+    job = _FakeJob(assembly_plan={"variants": [{"variant_id": "v"}]})
+    _patch_job_session(monkeypatch, job)
+
+    treatment, receipt = gb._resolve_smart_music_treatment(
+        cues=[],
+        audio_intents=[{"music_match_min_score": 7.0}],
+        job_id=str(uuid.uuid4()),
+        variant_id="v",
+        duration_s=30.0,
+    )
+
+    # Falls through past the request gate into the (unmocked) Redis/library
+    # resolution — fails open on the missing Redis/DB seam, but critically NOT
+    # on the "not_user_requested" short-circuit the flag would otherwise take.
+    assert receipt.get("reason") != "not_user_requested"
+    assert treatment is None  # no reachable Redis/library in this unit test
+
+
+def test_persisted_music_treatment_survives_rerender(monkeypatch):
+    """A creator-selected bed (persisted via the editor's background-music
+    picker) is returned unchanged — never re-matched, never dropped."""
+    monkeypatch.setattr(gb.settings, "smart_music_bed_enabled", True, raising=False)
+    monkeypatch.setattr(
+        gb.settings, "smart_music_bed_requires_request_enabled", True, raising=False
+    )
+    persisted = {
+        "track_id": "t9",
+        "src_gcs_path": "music/t9/audio.m4a",
+        "section_start_s": 5.0,
+        "section_end_s": 15.0,
+        "gain_db": -18.0,
+    }
+    job = _FakeJob(
+        assembly_plan={"variants": [{"variant_id": "v", "smart_music_treatment": persisted}]}
+    )
+    _patch_job_session(monkeypatch, job)
+    matcher_calls = []
+    monkeypatch.setattr(
+        "app.tasks.auto_music_orchestrate._run_music_matcher",
+        lambda **kw: matcher_calls.append(kw) or [],
+    )
+
+    treatment, receipt = gb._resolve_smart_music_treatment(
+        cues=[{"text": "hello"}],
+        audio_intents=[{"music_match_min_score": 7.0}],
+        job_id=str(uuid.uuid4()),
+        variant_id="v",
+        duration_s=30.0,
+    )
+
+    assert treatment == persisted
+    assert receipt["status"] == "preserved"
+    assert receipt["reason"] == "user_selected"
+    assert matcher_calls == []
+
+
+def test_music_requires_request_default_is_true() -> None:
+    """The declared default is True: absent the secret, a talking-to-camera
+    render must never auto-add music. Mirrors
+    test_auto_music_orchestrate.py::test_feature_flag_default_is_false."""
+    from app.config import Settings
+
+    fresh = Settings(
+        storage_bucket="x",
+        storage_provider="gcs",
+        database_url="postgresql://u:p@h/d",
+        redis_url="redis://x",
+        openai_api_key="x",
+        token_encryption_key="x",
+        waitlist_admin_secret="x",
+        allowed_origins=["http://localhost:3000"],
+    )
+    assert fresh.smart_music_bed_requires_request_enabled is True, (
+        "SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED flipped to False by default — "
+        "this would silently restore unrequested background music."
+    )
+
+
 def test_specs_for_archetype_narrated_carries_caption_style():
     """The narrated spec threads voiceover_caption_style through to the render."""
     specs = gb._specs_for_archetype(
