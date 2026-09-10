@@ -151,7 +151,7 @@ fail before building; CI retains its automatic device selection. For targeted ve
 KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh
 # CI splits full coverage without compiling twice:
 KRIA_IOS_TEST_MODE=prepare-ui bash scripts/ios/verify.sh
-KRIA_IOS_TEST_MODE=ui bash scripts/ios/verify.sh
+KRIA_IOS_TEST_MODE=ui KRIA_IOS_UI_GROUPS=full bash scripts/ios/verify.sh
 ```
 
 `prepare-ui` builds both test bundles and runs unit tests. The unit phase
@@ -235,9 +235,9 @@ KRIA_SIMULATOR_ID=<dedicated-iphone-uuid> KRIA_IOS_TEST_MODE=prepare-ui bash scr
 KRIA_IOS_TEST_MODE=ui KRIA_IOS_UI_GROUPS=smoke,creation bash scripts/ios/verify.sh
 ```
 
-Use a fresh `prepare-ui` before each UI invocation. An unset local group defaults
-to `full`; an explicitly empty or malformed group fails. CI always supplies the
-selector output. To roll back selection without weakening required checks,
+Use a fresh `prepare-ui` before each UI invocation. UI-only mode requires an explicit group;
+missing, empty, or malformed selections fail. The full local gate supplies
+`full` automatically, and CI supplies the selector output. To roll back selection without weakening required checks,
 return `full` whenever `ios_ui=true` (and retain `none` when UI is omitted).
 
 Each invocation writes logs, phase timings, and distinct unit/UI `.xcresult`
@@ -279,3 +279,9 @@ phase took 10 seconds including runner startup; its 167 tests (one existing skip
 took 0.63 seconds. Build-setting checks took 18 seconds and compilation 38 seconds.
 This host did not reproduce the CI startup stall; these numbers do not establish
 GitHub-hosted savings.
+
+On the same local simulator, `smoke,creation` passed all nine selected tests in
+166 seconds, versus the 375-second full UI phase (209 seconds / 56% less UI-phase
+time). Its fresh preparation used 11 seconds for settings, 5 seconds for the
+incremental build, and 6 seconds for unit execution. This is a local serial sample,
+not a controlled GitHub-runner benchmark.

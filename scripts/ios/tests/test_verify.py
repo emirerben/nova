@@ -141,6 +141,8 @@ class VerifyShellTests(unittest.TestCase):
             "KRIA_RESTORE_INPUT_TIMES": "1" if restore_times else "0",
             "KRIA_SKIP_SIMULATOR_TESTS": "1" if build_only else "0",
         }
+        if groups is None:
+            env.pop("KRIA_IOS_UI_GROUPS")
         result = subprocess.run(
             ["bash", str(self.root / "scripts/ios/verify.sh")],
             env=env,
@@ -231,7 +233,14 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(call[call.index("-parallel-testing-enabled") + 1], "NO")
 
     def test_invalid_or_empty_selection_never_runs_xcode(self):
-        for groups in ("", "none", "smoke,typo", "creation", "smoke,editor,creation"):
+        for groups in (
+            None,
+            "",
+            "none",
+            "smoke,typo",
+            "creation",
+            "smoke,editor,creation",
+        ):
             with self.subTest(groups=groups):
                 self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
                 self.assertNotEqual(

@@ -63,7 +63,7 @@ if [[ "$MODE" == "ui" ]]; then
   }
   rm "$UI_RECEIPT"
   cd "$IOS_ROOT"
-  run_ui "${KRIA_IOS_UI_GROUPS-full}"
+  run_ui "${KRIA_IOS_UI_GROUPS-}"
   exit 0
 fi
 
