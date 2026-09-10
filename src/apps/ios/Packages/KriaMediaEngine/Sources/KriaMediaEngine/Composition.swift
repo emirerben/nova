@@ -36,7 +36,7 @@ public struct PreviewComposition: @unchecked Sendable {
     public init() {}
     public func makePreview(recipe: EditRecipe, assetURLs: [String: URL]) async throws -> PreviewComposition {
         try recipe.validate()
-        guard recipe.rendererVersion == "kria-ios-1", !recipe.audio.duckOriginalDuringMusic else {
+        guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)", !recipe.audio.duckOriginalDuringMusic else {
             throw MediaEngineError.unsupportedCapability
         }
         let composition = AVMutableComposition()
@@ -52,6 +52,7 @@ public struct PreviewComposition: @unchecked Sendable {
         var layers: [RecipeVideoLayer] = []
         var textLayers: [RecipeTextLayer] = []
         var audioParameters: [AVMutableAudioMixInputParameters] = []
+        var stillClock: StillTimelineClock?
         func time(_ seconds: Double) -> CMTime { CMTime(value: Int64((seconds * 60_000).rounded()), timescale: 60_000) }
         func addAudio(asset: AVURLAsset, clip: TimelineClip, gain: Double) async throws {
             guard let source = try await asset.loadTracks(withMediaType: .audio).first else { return }
@@ -80,7 +81,14 @@ public struct PreviewComposition: @unchecked Sendable {
                     guard let previousEnd, previousEnd + 0.000_001 >= clip.timelineStart + fadeIn else { throw RecipeError.invalidTimeline }
                 }
                 previousEnd = end
-                if let source = try await asset.loadTracks(withMediaType: .video).first {
+                let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil)
+                let stillImage = imageSource.flatMap { source in
+                    CGImageSourceGetCount(source) > 0 ? CGImageSourceCreateImageAtIndex(source, 0, nil) : nil
+                }
+                let videoSource: AVAssetTrack?
+                if stillImage == nil { videoSource = try await asset.loadTracks(withMediaType: .video).first }
+                else { videoSource = nil }
+                if let source = videoSource {
                     guard let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.exportUnavailable }
                     let sourceRange = CMTimeRange(start: time(clip.sourceStart), duration: time(clip.sourceDuration))
                     try track.insertTimeRange(sourceRange, of: source, at: time(clip.timelineStart))
@@ -92,16 +100,36 @@ public struct PreviewComposition: @unchecked Sendable {
                         start: clip.timelineStart, end: end, fadeIn: fadeIn))
                     try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1)
                 } else {
-                    guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-                          let image = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
-                    layers.append(RecipeVideoLayer(trackID: nil, image: CIImage(cgImage: image),
-                        transform: Self.transform(naturalSize: CGSize(width: image.width, height: image.height), preferred: .identity, canvas: canvas, clip: clip),
+                    guard let imageSource, let image = stillImage else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
+                    let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any]
+                    let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.int32Value ?? 1
+                    guard (1...8).contains(orientation) else { throw MediaEngineError.unsupportedCapability }
+                    let oriented = CIImage(cgImage: image).oriented(forExifOrientation: orientation)
+                    let normalized = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
+                    layers.append(RecipeVideoLayer(trackID: nil, image: normalized,
+                        transform: Self.transform(naturalSize: normalized.extent.size, preferred: .identity, canvas: canvas, clip: clip),
                         start: clip.timelineStart, end: end, fadeIn: fadeIn))
                 }
                 if let text = clip.text { textLayers.append(try RecipeTextLayer.make(text, start: clip.timelineStart, end: end, canvas: canvas)) }
             }
         }
-        guard layers.contains(where: { $0.trackID != nil }) else { throw MediaEngineError.unsupportedCapability }
+        if !layers.contains(where: { $0.trackID != nil }) {
+            guard !layers.isEmpty, total > 0 else { throw MediaEngineError.unsupportedCapability }
+            let clock = try await StillTimelineClock.make()
+            stillClock = clock
+            let asset = AVURLAsset(url: clock.url)
+            guard let source = try await asset.loadTracks(withMediaType: .video).first,
+                  let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                throw MediaEngineError.exportUnavailable
+            }
+            let frame = CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 30))
+            try track.insertTimeRange(frame, of: source, at: .zero)
+            track.scaleTimeRange(frame, toDuration: time(total))
+            layers.insert(RecipeVideoLayer(trackID: track.trackID, image: nil,
+                                          transform: CGAffineTransform(scaleX: canvas.width / 16, y: canvas.height / 16),
+                                          start: 0, end: total, fadeIn: 0), at: 0)
+            StillClockLifetime.retain(clock, on: composition)
+        }
         if let musicID = recipe.audio.musicAssetID {
             guard let url = assetURLs[musicID] else { throw MediaEngineError.missingAsset(musicID) }
             let asset = AVURLAsset(url: url)
@@ -128,6 +156,7 @@ public struct PreviewComposition: @unchecked Sendable {
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters
         let item = AVPlayerItem(asset: composition)
+        if let stillClock { StillClockLifetime.retain(stillClock, on: item) }
         item.videoComposition = videoComposition
         item.audioMix = audioMix
         return PreviewComposition(description: CompositionDescription(duration: total, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)

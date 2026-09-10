@@ -47,6 +47,13 @@ public struct OriginalSourceResolver: DeviceSourceResolving {
     public let store: SourceAssetStore
     public init(store: SourceAssetStore) { self.store = store }
     public func resolve(for recipe: EditRecipe) async throws -> [String: URL] {
+        try recipe.validate()
+        if let manifest = recipe.assetManifest {
+            return try await PortableAssetResolver(
+                originals: store,
+                library: RenderLibraryCache(root: store.project.root.appendingPathComponent("library", isDirectory: true))
+            ).resolve(manifest)
+        }
         let ids = Set(recipe.assets.map(\.id))
         return try await Task.detached { try store.resolve(mediaIDs: ids) }.value
     }

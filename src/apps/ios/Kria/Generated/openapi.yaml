@@ -1152,7 +1152,22 @@
             "$ref": "#/components/schemas/DeviceRenderIdentity"
           },
           "recipe": {
-            "$ref": "#/components/schemas/EditRecipeV1"
+            "discriminator": {
+              "mapping": {
+                "1": "#/components/schemas/EditRecipeV1",
+                "2": "#/components/schemas/EditRecipeV2"
+              },
+              "propertyName": "schema_version"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EditRecipeV1"
+              },
+              {
+                "$ref": "#/components/schemas/EditRecipeV2"
+              }
+            ],
+            "title": "Recipe"
           }
         },
         "required": [
@@ -1368,6 +1383,85 @@
           }
         },
         "title": "EditRecipeV1",
+        "type": "object"
+      },
+      "EditRecipeV2": {
+        "additionalProperties": false,
+        "description": "V2 assets are opaque aliases backed by an immutable source manifest.\n\nRetain the timeline metadata shape for the shared composition engine, but\nprohibit storage paths and require the fingerprint in both projections to\nagree. V1 remains decodable for saved projects; it cannot carry this field.",
+        "properties": {
+          "asset_manifest": {
+            "$ref": "#/components/schemas/RenderAssetManifest"
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/MediaAsset"
+            },
+            "maxItems": 100,
+            "title": "Assets",
+            "type": "array"
+          },
+          "audio": {
+            "$ref": "#/components/schemas/AudioMixRecipe"
+          },
+          "canvas": {
+            "$ref": "#/components/schemas/Canvas"
+          },
+          "frame_rate": {
+            "default": 30,
+            "exclusiveMinimum": true,
+            "maximum": 240,
+            "minimum": 0,
+            "title": "Frame Rate",
+            "type": "number"
+          },
+          "renderer_version": {
+            "default": "kria-ios-2",
+            "enum": [
+              "kria-ios-2"
+            ],
+            "title": "Renderer Version",
+            "type": "string"
+          },
+          "required_capabilities": {
+            "items": {
+              "enum": [
+                "basicComposition",
+                "animatedText",
+                "crossfade",
+                "audioMix",
+                "variableSpeed",
+                "alphaOverlay",
+                "hevcDecode",
+                "hdr",
+                "local1080Export"
+              ],
+              "type": "string"
+            },
+            "title": "Required Capabilities",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "schema_version": {
+            "default": 2,
+            "enum": [
+              2
+            ],
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "tracks": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineTrack"
+            },
+            "maxItems": 20,
+            "title": "Tracks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "asset_manifest"
+        ],
+        "title": "EditRecipeV2",
         "type": "object"
       },
       "EditorCommitBackgroundMusic": {
@@ -2378,6 +2472,62 @@
           "video_url"
         ],
         "title": "LibraryPlaybackResponse",
+        "type": "object"
+      },
+      "LibraryRenderAsset": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog": {
+            "enum": [
+              "music",
+              "sound_effect",
+              "font",
+              "overlay"
+            ],
+            "title": "Catalog",
+            "type": "string"
+          },
+          "catalog_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Catalog Id",
+            "type": "string"
+          },
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "library",
+            "enum": [
+              "library"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "catalog",
+          "catalog_id",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "LibraryRenderAsset",
         "type": "object"
       },
       "LibraryResponse": {
@@ -3434,6 +3584,43 @@
         "title": "OriginalMediaDescriptor",
         "type": "object"
       },
+      "OriginalRenderAsset": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "original",
+            "enum": [
+              "original"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "media_id",
+          "fingerprint"
+        ],
+        "title": "OriginalRenderAsset",
+        "type": "object"
+      },
       "PersonaResponse": {
         "properties": {
           "error_detail": {
@@ -3932,6 +4119,69 @@
           "content_type"
         ],
         "title": "RegisterAssetBody",
+        "type": "object"
+      },
+      "RenderAssetManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "assets": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "library": "#/components/schemas/LibraryRenderAsset",
+                  "original": "#/components/schemas/OriginalRenderAsset"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/OriginalRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/LibraryRenderAsset"
+                }
+              ]
+            },
+            "maxItems": 500,
+            "title": "Assets",
+            "type": "array"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assets"
+        ],
+        "title": "RenderAssetManifest",
+        "type": "object"
+      },
+      "RenderFingerprint": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_count": {
+            "exclusiveMinimum": true,
+            "maximum": 17179869184,
+            "minimum": 0,
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha256",
+          "byte_count"
+        ],
+        "title": "RenderFingerprint",
         "type": "object"
       },
       "SolidBackground": {

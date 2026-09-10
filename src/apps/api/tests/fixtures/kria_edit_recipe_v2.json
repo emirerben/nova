@@ -1,0 +1,73 @@
+{
+  "schema_version": 2,
+  "renderer_version": "kria-ios-2",
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "frame_rate": 30.0,
+  "assets": [
+    {
+      "id": "media-1",
+      "relative_path": "media-1",
+      "fingerprint": {
+        "algorithm": "sha256",
+        "hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "byte_count": 100
+      },
+      "duration": 2.0,
+      "natural_size": null,
+      "frame_rate": null,
+      "orientation_degrees": 0,
+      "is_proxy_available": false
+    }
+  ],
+  "tracks": [
+    {
+      "id": "video",
+      "kind": "video",
+      "clips": [
+        {
+          "id": "clip-1",
+          "source_asset_id": "media-1",
+          "source_start": 0.0,
+          "source_duration": 2.0,
+          "timeline_start": 0.0,
+          "rate": 1.0,
+          "transform": {
+            "scale": 1.0,
+            "rotation_degrees": 0.0,
+            "position_x": 0.0,
+            "position_y": 0.0
+          },
+          "transition": null,
+          "text": null,
+          "volume": 1.0
+        }
+      ]
+    }
+  ],
+  "audio": {
+    "music_asset_id": null,
+    "music_volume": 1.0,
+    "original_volume": 1.0,
+    "fade_in": 0.0,
+    "fade_out": 0.0,
+    "duck_original_during_music": false
+  },
+  "required_capabilities": [],
+  "asset_manifest": {
+    "version": 1,
+    "assets": [
+      {
+        "kind": "original",
+        "id": "media-1",
+        "media_id": "analysis-proxy-source-1",
+        "fingerprint": {
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "byte_count": 100
+        }
+      }
+    ]
+  }
+}

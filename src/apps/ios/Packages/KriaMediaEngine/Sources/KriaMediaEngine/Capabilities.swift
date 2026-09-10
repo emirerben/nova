@@ -21,7 +21,7 @@ public struct CapabilityNegotiator: Sendable {
         if !missing.isEmpty { return CapabilityDecision(route: .cloud, missingCapabilities: missing, reason: "Renderer does not support required capabilities") }
         if let freeStorageBytes, let estimatedTemporaryBytes, freeStorageBytes < estimatedTemporaryBytes { return CapabilityDecision(route: .cloud, reason: "Insufficient temporary storage") }
         if thermalState == .serious || thermalState == .critical { return CapabilityDecision(route: .cloud, reason: "Device thermal state is \(thermalState.rawValue)") }
-        guard recipe.rendererVersion == "kria-ios-1" else {
+        guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)" else {
             return CapabilityDecision(route: .cloud, reason: "Unsupported renderer version")
         }
         do { try recipe.validate() } catch {

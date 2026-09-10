@@ -5,7 +5,7 @@ import Foundation
 /// The portable, renderer-neutral edit description exchanged with the API and local renderer.
 /// Deliberately contains metadata and file identifiers only: pixel buffers never cross this boundary.
 public struct EditRecipe: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
     public var schemaVersion: Int
     public var rendererVersion: String
     public var canvas: Canvas
@@ -14,20 +14,50 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     public var tracks: [TimelineTrack]
     public var audio: AudioMixRecipe
     public var requiredCapabilities: Set<MediaCapability>
+    public var assetManifest: RenderAssetManifest?
 
-    public init(schemaVersion: Int = Self.currentSchemaVersion,
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest
+    }
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        rendererVersion = try c.decode(String.self, forKey: .rendererVersion)
+        canvas = try c.decode(Canvas.self, forKey: .canvas)
+        frameRate = try c.decode(Double.self, forKey: .frameRate)
+        assets = try c.decode([MediaAsset].self, forKey: .assets)
+        tracks = try c.decode([TimelineTrack].self, forKey: .tracks)
+        audio = try c.decode(AudioMixRecipe.self, forKey: .audio)
+        requiredCapabilities = try c.decode(Set<MediaCapability>.self, forKey: .requiredCapabilities)
+        assetManifest = try c.decodeIfPresent(RenderAssetManifest.self, forKey: .assetManifest)
+    }
+
+    public init(schemaVersion: Int = 1,
                 rendererVersion: String = "kria-ios-1",
                 canvas: Canvas = .vertical1080,
                 frameRate: Double = 30,
                 assets: [MediaAsset] = [], tracks: [TimelineTrack] = [],
-                audio: AudioMixRecipe = .default, requiredCapabilities: Set<MediaCapability> = []) {
+                audio: AudioMixRecipe = .default, requiredCapabilities: Set<MediaCapability> = [],
+                assetManifest: RenderAssetManifest? = nil) {
         self.schemaVersion = schemaVersion; self.rendererVersion = rendererVersion
         self.canvas = canvas; self.frameRate = frameRate; self.assets = assets
         self.tracks = tracks; self.audio = audio; self.requiredCapabilities = requiredCapabilities
+        self.assetManifest = assetManifest
     }
 
     public func validate() throws {
-        guard schemaVersion == Self.currentSchemaVersion else { throw RecipeError.unsupportedSchema(schemaVersion) }
+        guard [1, 2].contains(schemaVersion) else { throw RecipeError.unsupportedSchema(schemaVersion) }
+        if schemaVersion == 2 {
+            guard rendererVersion == "kria-ios-2", let manifest = assetManifest else { throw RecipeError.invalidTimeline }
+            try manifest.validate()
+            guard Set(manifest.assets.map(\.id)) == Set(assets.map(\.id)) else { throw RecipeError.missingAssetReference }
+            for asset in assets {
+                guard asset.relativePath == asset.id,
+                      let expected = manifest.assets.first(where: { $0.id == asset.id }),
+                      asset.fingerprint == expected.fingerprint.assetFingerprint else { throw RecipeError.invalidTimeline }
+            }
+        } else if assetManifest != nil { throw RecipeError.invalidTimeline }
         guard frameRate.isFinite && frameRate > 0 && frameRate <= 240 else { throw RecipeError.invalidFrameRate(frameRate) }
         let clips = tracks.flatMap(\.clips)
         guard (16...7680).contains(canvas.width), (16...7680).contains(canvas.height),
@@ -111,7 +141,7 @@ public enum RecipeMigration {
         let schema = object["schema_version"] as? Int ?? 0
         guard schema <= EditRecipe.currentSchemaVersion else { throw RecipeMigrationError.unsupportedSchema(schema) }
         if schema == 0 {
-            object["schema_version"] = EditRecipe.currentSchemaVersion
+            object["schema_version"] = 1
             object["renderer_version"] = object["renderer_version"] ?? "kria-ios-1"
             object["required_capabilities"] = object["required_capabilities"] ?? ["basicComposition", "local1080Export"]
             if object["frame_rate"] == nil, let fps = object["fps"] { object["frame_rate"] = fps }

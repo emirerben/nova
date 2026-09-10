@@ -10,10 +10,27 @@ style has passed the complete parity and physical-device gates.
 - `KriaMediaEngine/SourceAssetStore.swift` binds opaque server media IDs to
   fingerprint-verified originals in app-managed project storage. Proxies,
   traversal paths, and escaping symlinks cannot resolve as originals.
+- `app/kria/render_assets.py` and `KriaMediaEngine/RenderAssets.swift` define the
+  portable asset manifest: local media IDs plus exact fingerprints, or library
+  catalog IDs plus generations and fingerprints. The native resolver checks the
+  recipe identity against the local original binding. The library cache verifies
+  copied bytes before installation, detects corruption, and rejects original
+  sources. Neither manifest contains download URLs or storage paths. V2 device
+  requests carry this manifest in their digest; the coordinator's source resolver
+  uses it before composition. An authorized library-download endpoint is still
+  outstanding. V1 projects retain their original migration and decoding path.
+- `TextMotionTiming.swift` mirrors the cloud's normalized v2 phase grid and
+  smooth-type reveal math. `phone_text_motion_v2.json` covers all 17 effect timing
+  rules plus multilingual, emoji, empty-line, ordering, and speed cases. This
+  verifies timing calculations, not the unimplemented typography/effect pixels.
 - `Composition.swift`, `RecipeVideoCompositor.swift`, and `RecipeWriter.swift`
   share timeline interpretation between preview and H.264/AAC export. Current
   coverage is basic composition, transforms, variable speed, explicit overlapping
-  crossfades, basic timed text, and basic audio mixing. Unsupported effects must
+  crossfades, basic timed text, basic audio mixing, and photo-only timelines.
+  `StillTimelineClock.swift` creates a one-frame on-device clock for photo-only
+  composition and retains it with the player item/asset. Photos are decoded
+  through ImageIO before AVFoundation video probing, with EXIF orientation applied.
+  Unsupported effects must
   fail closed. This is not cloud-renderer parity.
 - `DeviceRenderCoordinator.swift` persists request identity and export/upload
   recovery state. A newer request fences a late export or upload completion.

@@ -4,8 +4,53 @@ import XCTest
 #if canImport(AVFoundation)
 @preconcurrency import AVFoundation
 import CoreImage
+import ImageIO
 
 final class NativeCompositionTests: XCTestCase {
+    @MainActor func testPhotoOnlyTimelinePreviewsAndExportsThroughSameClock() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var urls: [String: URL] = [:]
+        for (id, color) in [("red", CIColor(red: 1, green: 0, blue: 0)), ("blue", CIColor(red: 0, green: 0, blue: 1))] {
+            let image = CIImage(color: color).cropped(to: CGRect(x: 0, y: 0, width: 96, height: 160))
+            let cgImage = try XCTUnwrap(CIContext().createCGImage(image, from: image.extent))
+            let url = directory.appendingPathComponent(id + ".png")
+            let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, cgImage, nil)
+            XCTAssertTrue(CGImageDestinationFinalize(destination))
+            urls[id] = url
+        }
+        let recipe = EditRecipe(canvas: Canvas(width: 96, height: 160), assets: [MediaAsset(id: "red", relativePath: "red"), MediaAsset(id: "blue", relativePath: "blue")], tracks: [
+            TimelineTrack(id: "photos", kind: .video, clips: [
+                TimelineClip(id: "first", sourceAssetID: "red", sourceDuration: 0.6),
+                TimelineClip(id: "second", sourceAssetID: "blue", sourceDuration: 0.6, timelineStart: 0.4, transition: Transition(duration: 0.2))
+            ])
+        ])
+        let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: urls)
+        let output = directory.appendingPathComponent("photos.mp4")
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: urls, outputURL: output)
+        let exported = AVURLAsset(url: output)
+        let duration = try await exported.load(.duration)
+        XCTAssertEqual(duration.seconds, 1, accuracy: 1 / 30)
+        let reference = AVAssetImageGenerator(asset: preview.playerItem.asset)
+        reference.videoComposition = preview.playerItem.videoComposition
+        reference.requestedTimeToleranceBefore = .zero; reference.requestedTimeToleranceAfter = .zero
+        let rendered = AVAssetImageGenerator(asset: exported)
+        rendered.requestedTimeToleranceBefore = .zero; rendered.requestedTimeToleranceAfter = .zero
+        for seconds in [0.1, 0.5, 0.9] {
+            let time = CMTime(seconds: seconds, preferredTimescale: 600)
+            let expected = rgba(try await reference.image(at: time).image)
+            let actual = rgba(try await rendered.image(at: time).image)
+            let error = zip(expected, actual).map { abs(Int($0) - Int($1)) }.reduce(0, +)
+            XCTAssertLessThan(Double(error) / Double(actual.count), 8)
+            let center = (80 * 96 + 48) * 4
+            if seconds < 0.2 { XCTAssertGreaterThan(actual[center], 220); XCTAssertLessThan(actual[center + 2], 40) }
+            if seconds > 0.8 { XCTAssertGreaterThan(actual[center + 2], 220); XCTAssertLessThan(actual[center], 40) }
+            if seconds == 0.5 { XCTAssertGreaterThan(actual[center], 70); XCTAssertGreaterThan(actual[center + 2], 70) }
+        }
+    }
+
     @MainActor func testExportCannotOverwriteOriginalThroughSymlink() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

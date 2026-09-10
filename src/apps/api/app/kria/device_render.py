@@ -10,11 +10,14 @@ import hashlib
 import json
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.kria.recipes import EditRecipeV1
+from app.kria.recipes_v2 import EditRecipeV2
+
+DeviceRecipe = Annotated[EditRecipeV1 | EditRecipeV2, Field(discriminator="schema_version")]
 
 
 class _DeviceModel(BaseModel):
@@ -30,7 +33,7 @@ class DeviceRenderIdentity(_DeviceModel):
 
 class DeviceRenderRequest(_DeviceModel):
     identity: DeviceRenderIdentity
-    recipe: EditRecipeV1
+    recipe: DeviceRecipe
 
     @model_validator(mode="after")
     def check_digest(self) -> DeviceRenderRequest:
@@ -77,7 +80,7 @@ class DeviceExportCompleteOut(_DeviceModel):
     identity: DeviceRenderIdentity
 
 
-def recipe_digest(recipe: EditRecipeV1) -> str:
+def recipe_digest(recipe: DeviceRecipe) -> str:
     document = recipe.model_dump(mode="json")
     document["required_capabilities"] = sorted(document["required_capabilities"])
     payload = json.dumps(document, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -85,7 +88,7 @@ def recipe_digest(recipe: EditRecipeV1) -> str:
 
 
 def make_device_request(
-    *, job_id: uuid.UUID, variant_id: str, revision: int, recipe: EditRecipeV1
+    *, job_id: uuid.UUID, variant_id: str, revision: int, recipe: DeviceRecipe
 ) -> DeviceRenderRequest:
     return DeviceRenderRequest(
         identity=DeviceRenderIdentity(
