@@ -53,7 +53,10 @@ def effective_render_program(
             or strategy.montage_audio.preview_source_beds
         )
     )
-    montage_cadence_requires_guided = strategy.montage_cadence is not None
+    montage_cadence_requires_guided = (
+        strategy.montage_cadence is not None
+        or strategy.video_reuse_policy in {"distinct_windows", "allow_repeat"}
+    )
     guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
     guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
     guided_voiceover_requested = _requires_guided_voiceover(manifest, strategy)
@@ -150,8 +153,13 @@ def normalize_creator_strategy_media(
 ) -> CreativeStrategy:
     """Bound exact refs; optional repair is reserved for the model boundary."""
 
+    if strategy.video_reuse_policy in {"distinct_windows", "allow_repeat"}:
+        strategy = strategy.model_copy(update={"direction": "fast_montage"})
     if (
-        strategy.montage_cadence is not None
+        (
+            strategy.montage_cadence is not None
+            or strategy.video_reuse_policy in {"distinct_windows", "allow_repeat"}
+        )
         and strategy.audio_strategy == "original_audio"
         and strategy.montage_audio is None
     ):
@@ -159,7 +167,11 @@ def normalize_creator_strategy_media(
             update={
                 "montage_audio": MontageAudioPlan(
                     preserve_source_audio=True,
-                    source_media_ids=strategy.montage_cadence.source_media_ids,
+                    source_media_ids=(
+                        strategy.montage_cadence.source_media_ids
+                        if strategy.montage_cadence
+                        else []
+                    ),
                 )
             }
         )
@@ -221,8 +233,28 @@ def normalize_creator_strategy_media(
             selected_media_ids = native_ids[:MAX_MAIN_CREATOR_SELECTED_MEDIA]
         if not selected_media_ids:
             raise ValueError("native rendering requires at least one attached clip")
+    # A confirmation must not promise more source time than a once-only
+    # video montage can supply. Photos and recorded narration have separate
+    # duration contracts; unknown video durations must be resolved downstream.
+    duration_s = strategy.target_duration_s
+    selected = [
+        media
+        for media in manifest.media
+        if effective_program == "guided" or media.media_id in selected_media_ids
+    ]
+    if (
+        strategy.video_reuse_policy == "once"
+        and not manifest.has_voiceover
+        and strategy.edit_format == "montage"
+        and selected
+        and all(media.kind == "video" and media.duration_s for media in selected)
+    ):
+        source_capacity_s = int(sum(media.duration_s for media in selected))
+        if source_capacity_s >= 3:
+            duration_s = min(duration_s, source_capacity_s)
     return strategy.model_copy(
         update={
+            "target_duration_s": duration_s,
             "render_program": effective_program,
             "selected_media_ids": selected_media_ids,
         }

@@ -32,8 +32,9 @@ elif name == 'xcodegen':
 elif name == 'xcodebuild':
     if '-showBuildSettings' in args:
         config = args[args.index('-configuration') + 1]
-        value = {'Staging': 'https://staging.usekria.com', 'Release': 'https://nova-video.fly.dev'}[config]
-        print(' API_BASE_URL = ' + ('https:' if mode == 'bad_url' else value))
+        value = {'Debug': 'http://localhost:8000', 'Staging': 'https://staging.usekria.com', 'Release': 'https://nova-video.fly.dev'}[config]
+        bad = (mode == 'bad_url' and config == 'Staging') or (mode == 'bad_debug_url' and config == 'Debug')
+        print(' API_BASE_URL = ' + ('https:' if bad else value))
     elif args[-1] == 'build-for-testing':
         deadline = time.monotonic() + 5
         while not (root / 'boot_started').exists():
@@ -246,7 +247,7 @@ class VerifyShellTests(unittest.TestCase):
     def test_configuration_queries_use_the_cached_package_directory(self):
         self.assertEqual(self.run_verify(build_only=True).returncode, 0)
         queries = [call for call in self.calls if "-showBuildSettings" in call]
-        self.assertEqual(len(queries), 2)
+        self.assertEqual(len(queries), 3)
         for query in queries:
             self.assertEqual(
                 query[query.index("-derivedDataPath") + 1],
@@ -274,6 +275,12 @@ class VerifyShellTests(unittest.TestCase):
         result = self.run_verify("bad_url")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Expected Staging API_BASE_URL=", result.stderr)
+        self.assertEqual(self.actions, [])
+
+    def test_truncated_debug_api_url_stops_before_build(self):
+        result = self.run_verify("bad_debug_url")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Expected Debug to resolve a complete HTTP(S) API URL", result.stderr)
         self.assertEqual(self.actions, [])
 
     def test_generation_failure_stops_before_xcode(self):

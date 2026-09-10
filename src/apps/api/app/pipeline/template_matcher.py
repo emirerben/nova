@@ -216,6 +216,8 @@ def _score_merge_pair(
 def consolidate_slots(
     recipe: TemplateRecipe,
     clip_metas: list[ClipMeta],
+    *,
+    single_use_sources: bool = False,
 ) -> TemplateRecipe:
     """Merge adjacent slots when user has fewer clips than template slots.
 
@@ -223,13 +225,13 @@ def consolidate_slots(
     Runs between template/clip analysis and match().
     """
     n_slots = len(recipe.slots)
-    if n_slots <= CONSOLIDATION_MIN_SLOTS:
+    if n_slots <= CONSOLIDATION_MIN_SLOTS and not single_use_sources:
         return recipe
 
     # Per-recipe floor: travel templates with snappy pacing want all 24 slots
     # preserved even if the user uploads only 15 clips (matcher rotates clips
     # across slots instead of merging slots into longer chunks).
-    recipe_min_slots = int(getattr(recipe, "min_slots", 0) or 0)
+    recipe_min_slots = 0 if single_use_sources else int(getattr(recipe, "min_slots", 0) or 0)
 
     # Count unique clips
     unique_clip_ids = {m.clip_id for m in clip_metas}
@@ -240,7 +242,11 @@ def consolidate_slots(
 
     # Compute target slot count — preserve structural arc
     n_distinct_types = len({s.get("slot_type", "broll") for s in recipe.slots})
-    target = max(n_unique_clips, n_distinct_types, CONSOLIDATION_MIN_SLOTS, recipe_min_slots)
+    target = (
+        max(1, n_unique_clips)
+        if single_use_sources
+        else max(n_unique_clips, n_distinct_types, CONSOLIDATION_MIN_SLOTS, recipe_min_slots)
+    )
 
     if target >= n_slots:
         return recipe  # nothing to consolidate
@@ -263,7 +269,7 @@ def consolidate_slots(
     interstitials = list(recipe.interstitials or [])
 
     for _ in range(slots_to_remove):
-        if len(slots) <= CONSOLIDATION_MIN_SLOTS:
+        if len(slots) <= (1 if single_use_sources else CONSOLIDATION_MIN_SLOTS):
             break
 
         # Score all adjacent pairs

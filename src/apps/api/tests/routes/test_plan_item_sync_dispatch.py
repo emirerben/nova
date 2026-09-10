@@ -624,6 +624,34 @@ def test_bypass_guided_edit_gate_refuses_when_pool_asset_present() -> None:
     assert _jobs_for(item_id) == []
 
 
+def test_confirmed_native_montage_dispatches_without_a_guided_proposal(monkeypatch) -> None:
+    """A native Creator confirmation must not fail with proposal_required."""
+    _user_id, item_id = _seed_item()
+    monkeypatch.setattr(settings, "guided_edit_direction_confirmation_enabled", True)
+    strategy = {
+        "edit_format": "montage",
+        "render_program": "native",
+        "pacing": "relaxed",
+        "selected_media_ids": ["legacy-clip-1"],
+    }
+    with patch(_ENQUEUE):
+        rejected = dispatch_item_render_for(str(item_id), creator_strategy=strategy)
+        assert rejected.outcome == "proposal_required"
+        assert not _jobs_for(item_id)
+        dispatched = dispatch_item_render_for(
+            str(item_id),
+            bypass_guided_edit_gate=True,
+            creator_strategy=strategy,
+            creator_request="Slow footage with pastel yellow Summer in Madrid text",
+        )
+    assert dispatched.outcome == "dispatched"
+    jobs = _jobs_for(item_id)
+    assert len(jobs) == 1
+    assert jobs[0].all_candidates["creator_strategy"]["pacing"] == "relaxed"
+    assert "Summer in Madrid" in jobs[0].all_candidates["creator_request"]
+    assert "guided_story" not in (jobs[0].assembly_plan or {})
+
+
 def test_bypass_guided_edit_gate_dispatches_when_pool_is_genuinely_empty() -> None:
     """The bypass still works for the real clip-only fallback case (no pool
 

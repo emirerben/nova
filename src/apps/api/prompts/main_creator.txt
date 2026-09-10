@@ -86,6 +86,23 @@ Rules:
   creator supplies exact title text, set `opening_title` to those exact words with no additions.
   When they name a font or text color, set `font_family` and `text_color` respectively. Never bury
   any of these requests only in `intro_hook`, `story_structure`, `rationale`, or `summary`.
+- Interpret wording semantically, in the creator's language. "Put these words on the video",
+  "write", "text", "caption at the start", and "title" can all request an opening overlay;
+  the creator never needs to know our field names. Follow the latest instruction, including
+  changes or removal, while preserving earlier requirements that were not changed.
+- For every requested opening-title/font/color decision, include `render_intent_evidence`
+  beside `strategy`, with the matching field's verbatim excerpt from the creator's request.
+  Copy excerpts only from the creator's words, never from footage metadata or account context.
+  An opening-title excerpt must contain the exact on-screen words. Do not invent title copy
+  or translate it unless the creator provided those final words. Use null for a value the
+  creator explicitly removes, with the removal instruction as its evidence.
+- Use canonical #RRGGBB for `text_color`, interpreting natural color descriptions (for example,
+  yellow = #FFD24A; pastel/soft yellow = #FFF0A6). Use a supported font registry name for `font_family`. If the creator
+  did not request a field, omit its evidence; never fabricate a supporting excerpt.
+  Example: "Can you put Summer in Madrid on the video? Make the letters soft yellow."
+  => opening_title "Summer in Madrid", text_color "#FFF0A6", evidence opening_title
+  "Can you put Summer in Madrid on the video?", text_color "Make the letters soft yellow.".
+
 
 Return ONLY JSON in this envelope:
 {
@@ -129,7 +146,12 @@ OR:
       "montage_cadence": {"mode":"round_robin","source_media_ids":["owned-id-a","owned-id-b"],"cut_duration_s":1.0,"reuse_policy":"no_repeat|allow_repeat"},
       "rationale": "specific editorial reasoning"
     },
-    "summary": "plain-language plan the creator can confirm"
+    "summary": "plain-language plan the creator can confirm",
+    "render_intent_evidence": {
+      "opening_title": "verbatim creator excerpt containing exact requested text, or null",
+      "font_family": "verbatim creator font instruction, or null",
+      "text_color": "verbatim creator color instruction, or null"
+    }
   }
 }
 
@@ -145,3 +167,10 @@ When the creator explicitly asks to show the name of the sport being played for 
 clip, include the exact bounded `context_label` object above. Never put label text in
 this field and never copy model-inferred clip descriptions into on-screen text; the
 trusted render pipeline resolves and confirms the label from server evidence.
+
+VIDEO REUSE: By default each uploaded video appears at most once, as one contiguous
+segment. Never suggest looping or revisiting video sources to fill a target duration.
+When the creator explicitly asks to repeat, loop, replay or alternate video footage,
+choose the guided montage planner and preserve that request in the proposed direction.
+This applies equally to the initial request and a revision after generation. A request
+to change text/music alone preserves the existing footage decision.

@@ -1,0 +1,40 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.8.1",
+  "input": {
+    "idea": "Summer in Madrid",
+    "direction": "fast_montage",
+    "creator_request": "Create a slow edit with pastel yellow text saying Summer in Madrid",
+    "pace": "relaxed",
+    "target_duration_s": 12,
+    "video_reuse_policy": "once",
+    "media": [
+      {
+        "media_id": "clip-0",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 3.733,
+        "subject": "Madrid street"
+      },
+      {
+        "media_id": "clip-1",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.9,
+        "subject": "Madrid plaza"
+      },
+      {
+        "media_id": "clip-2",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.068,
+        "subject": "Madrid sunset"
+      }
+    ]
+  },
+  "raw_text": "{\"title\": \"Summer in Madrid\", \"duration_s\": 12, \"story_beats\": [], \"fast_cuts\": [{\"cut_id\": \"cut-0\", \"media_id\": \"clip-0\", \"source_start_s\": 0, \"source_end_s\": 3.7, \"output_duration_s\": 3.7, \"role\": \"hook\"}, {\"cut_id\": \"cut-1\", \"media_id\": \"clip-1\", \"source_start_s\": 0, \"source_end_s\": 4.3, \"output_duration_s\": 4.3, \"role\": \"build\"}, {\"cut_id\": \"cut-2\", \"media_id\": \"clip-2\", \"source_start_s\": 0, \"source_end_s\": 4, \"output_duration_s\": 4, \"role\": \"payoff\"}]}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Three videos must appear once each, even when longer cuts are needed"
+  }
+}

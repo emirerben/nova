@@ -1424,9 +1424,17 @@ def _run_draft_attempt(
                     )
                     db.commit()
             return
+        from app.schemas.edit_proposal import resolve_video_reuse_policy
+
+        video_reuse_policy = brief.video_reuse_policy or resolve_video_reuse_policy(
+            brief.creator_request,
+            None,
+            brief.montage_cadence,
+        )
         feasible_duration_s = feasible_guided_duration_s(media)
         allow_cadence_reuse = bool(
-            brief.montage_cadence is not None
+            video_reuse_policy == "allow_repeat"
+            or brief.montage_cadence is not None
             and brief.montage_cadence.reuse_policy == "allow_repeat"
         )
         feasibility_threshold_s = guided_feasibility_threshold_s(len(media))
@@ -1475,7 +1483,7 @@ def _run_draft_attempt(
         if brief.direction == "fast_montage":
             try:
                 target_duration_s = clamp_fast_montage_target_duration_s(
-                    media, target_duration_s, brief.mixed_media_timing
+                    media, target_duration_s, brief.mixed_media_timing, video_reuse_policy
                 )
             except ValueError as exc:
                 # A typed mixed-media request can pass the generic guided
@@ -1631,6 +1639,7 @@ def _run_draft_attempt(
                     mixed_media_timing=brief.mixed_media_timing,
                     montage_audio=brief.montage_audio,
                     montage_cadence=brief.montage_cadence,
+                    video_reuse_policy=video_reuse_policy,
                     media=agent_media,
                 ),
                 ctx=RunContext(
@@ -1687,6 +1696,7 @@ def _run_draft_attempt(
                             mixed_media_timing=brief.mixed_media_timing,
                             montage_audio=brief.montage_audio,
                             montage_cadence=brief.montage_cadence,
+                            video_reuse_policy=video_reuse_policy,
                             review_feedback=review_feedback,
                             media=agent_media,
                         ),
@@ -1718,6 +1728,7 @@ def _run_draft_attempt(
         if (
             output is not None
             and brief.montage_cadence is None
+            and video_reuse_policy != "allow_repeat"
             and output.duration_s > math.floor(feasible_duration_s)
         ):
             with sync_session() as db:
@@ -1750,6 +1761,7 @@ def _run_draft_attempt(
                 target_duration_s,
                 brief.mixed_media_timing,
                 brief.montage_cadence,
+                video_reuse_policy=video_reuse_policy,
                 narration_duration_s=narration.duration_s if narration else None,
                 required_media_ids=(
                     [ref.media_id for ref in media]
@@ -1818,6 +1830,7 @@ def _run_draft_attempt(
                 else brief.montage_audio
             ),
             montage_cadence=brief.montage_cadence,
+            video_reuse_policy=video_reuse_policy,
             output_orientation=brief.output_orientation,
         )
         if fallback_used:

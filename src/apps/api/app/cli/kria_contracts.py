@@ -38,6 +38,7 @@ from app.routes.creation_threads import (
     CreateBody,
     CreationCapabilitiesOut,
     CreationThreadOut,
+    MessageBody,
     UploadBody,
     UploadTarget,
 )
@@ -56,6 +57,13 @@ from app.routes.me import (
     OpenInEditorResponse,
 )
 from app.routes.personas import PersonaResponse, QuestionnaireBody
+from app.routes.plan_items import (
+    PoolAssetOut,
+    PoolAssetsResponse,
+    PoolUploadUrlsBody,
+    PoolUploadUrlsResponse,
+    RegisterAssetBody,
+)
 
 DEFAULT_SNAPSHOT = Path(__file__).parents[2] / "tests" / "fixtures" / "kria_turns" / "tools.json"
 DEFAULT_TYPES = Path(__file__).parents[3] / "web" / "src" / "lib" / "kria-runtime-v2.generated.ts"
@@ -92,6 +100,12 @@ MOBILE_API_MODELS = (
     UploadTarget,
     AttachBody,
     ActionBody,
+    MessageBody,
+    PoolAssetOut,
+    PoolAssetsResponse,
+    PoolUploadUrlsBody,
+    PoolUploadUrlsResponse,
+    RegisterAssetBody,
     PersonaResponse,
     QuestionnaireBody,
     LibraryResponse,
@@ -380,6 +394,70 @@ def mobile_openapi_json() -> str:
                     "security": bearer,
                     "requestBody": _json_request(SubmitTurnBody),
                     "responses": _json_responses(TurnAccepted, status_code="202"),
+                },
+            },
+            "/creation-threads/{thread_id}/messages": {
+                "parameters": [thread_id],
+                "post": {
+                    "operationId": "sendCreationMessage",
+                    "security": bearer,
+                    "requestBody": _json_request(MessageBody),
+                    "responses": _json_responses(CreationThreadOut),
+                },
+            },
+            "/plan-items/{item_id}/assets/upload-urls": {
+                "parameters": [item_id],
+                "post": {
+                    "operationId": "reserveCreationVisualUploads",
+                    "security": bearer,
+                    "requestBody": _json_request(PoolUploadUrlsBody),
+                    "responses": _json_responses(PoolUploadUrlsResponse),
+                },
+            },
+            "/plan-items/{item_id}/assets": {
+                "parameters": [item_id],
+                "get": {
+                    "operationId": "listCreationVisuals",
+                    "security": bearer,
+                    "responses": _json_responses(PoolAssetsResponse),
+                },
+                "post": {
+                    "operationId": "registerCreationVisual",
+                    "security": bearer,
+                    "requestBody": _json_request(RegisterAssetBody),
+                    "responses": _json_responses(PoolAssetOut),
+                },
+            },
+            "/plan-items/{item_id}/assets/{asset_id}": {
+                "parameters": [
+                    item_id,
+                    {
+                        "name": "asset_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "format": "uuid"},
+                    },
+                ],
+                "delete": {
+                    "operationId": "deleteCreationVisual",
+                    "security": bearer,
+                    "responses": {"200": {"description": "Visual removed"}},
+                },
+            },
+            "/plan-items/{item_id}/assets/{asset_id}/reanalyze": {
+                "parameters": [
+                    item_id,
+                    {
+                        "name": "asset_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "format": "uuid"},
+                    },
+                ],
+                "post": {
+                    "operationId": "retryCreationVisual",
+                    "security": bearer,
+                    "responses": _json_responses(PoolAssetOut),
                 },
             },
             "/creation-threads/{thread_id}/actions": {

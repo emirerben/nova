@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.10.0] - 2026-09-10
+
+### Fixed
+- Creator requests preserve user-authored on-screen text and styling across natural phrasing and languages, with source-grounded intent and planner/compiler fallback protection. Video-only, once-only montage confirmations respect available source duration.
+- New montages use each video once by default. Explicit requests can loop footage during creation or a later revision; longer targets no longer cause automatic source reuse.
+- iPhone creation shows thinking and pre-render preparation, retains failed directions for retry, and ignores late poll responses. Confirmed native Creator plans no longer fail the guided-proposal gate.
+- Native chat creation uses the server's available formats and runtime, supports direction and generation for both conversation versions, and explains unavailable options instead of showing inactive cards.
+- Development iOS builds resolve the complete API URL, fixing the truncated address that prevented requests from reaching the backend.
+- Concurrent iOS upload retries share one attempt; cancellation during reservation no longer resurrects an upload.
+
+### Changed
+- Native app icon and wordmark use the approved white and blue Kria artwork.
+
+### Added
+- iOS creation attachments include supporting visuals and uploaded or recorded voiceover, with separate media limits, removal, background upload recovery, and generation blocked while uploads are pending.
+
 ## [0.75.9.0] — 2026-09-10
 
 ### Fixed

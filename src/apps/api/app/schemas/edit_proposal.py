@@ -38,6 +38,7 @@ OutputOrientation = Literal["portrait", "landscape"]
 MediaLane = Literal["clip", "asset"]
 MediaKind = Literal["image", "video"]
 MediaScope = Literal["all", "selected"]
+VideoReusePolicy = Literal["once", "distinct_windows", "allow_repeat"]
 NARRATION_FPS = 30
 
 
@@ -226,6 +227,48 @@ def recognize_cadence_reuse_policy(text: str) -> Literal["no_repeat", "allow_rep
     """Require an explicit opt-in before source windows may repeat."""
 
     return recognize_explicit_cadence_reuse_policy(text) or "no_repeat"
+
+
+def resolve_video_reuse_policy(
+    text: str,
+    previous: VideoReusePolicy | None = None,
+    cadence: MontageCadenceConstraint | None = None,
+) -> VideoReusePolicy:
+    """Only creator wording grants reuse; silence preserves a saved decision.
+
+    Metadata and model-authored goals must never be passed as creator wording.
+    A round-robin request permits returning to a source, but not looping its
+    frames unless the creator also explicitly asks for that.
+    """
+    normalized = " ".join(str(text or "").casefold().split())
+    # Quoted overlay/caption text is content, not a footage instruction.
+    normalized = re.sub(r"[\"“].*?[\"”]", "", normalized)
+    normalized = re.sub(r"(?<!\w)'[^']*'(?!\w)", "", normalized)
+    if re.search(
+        r"\b(?:no|stop|avoid|remove|without|never|do not|don't|dont)\b.{0,32}"
+        r"\b(?:repeat\w*|reus\w*|loop\w*)\b|\b(?:each|every)\b.{0,32}\bonly once\b",
+        normalized,
+    ):
+        return "once"
+    if re.search(
+        r"\b(?:repeat|reuse|loop|replay|duplicate)\s+(?:the\s+|my\s+|these\s+|those\s+|this\s+)?"
+        r"(?:(?:first|second|third|last|opening|ending|\d+)\s+)?"
+        r"(?:videos?|clips?|footage|sources?|shots?|it|them)\b|"
+        r"\b(?:videos?|clips?|footage|shots?)\b.{0,24}\b(?:again|twice|loop|repeat)\b|"
+        r"\b(?:loop|repeat)\s+(?:it|them)\b|"
+        r"\b(?:make|put)\s+(?:it|them|the video|the clips?)\s+(?:on\s+)?(?:a\s+)?(?:loop|repeat)\b",
+        normalized,
+    ):
+        return "allow_repeat"
+    if re.search(
+        r"\b(?:alternate|alternating)\b.{0,32}\b(?:clips?|videos?|shots?)\b|"
+        r"\bback and forth\b.{0,32}\b(?:clips?|videos?|shots?)\b",
+        normalized,
+    ):
+        return "distinct_windows"
+    if cadence is not None:
+        return "allow_repeat" if cadence.reuse_policy == "allow_repeat" else "distinct_windows"
+    return previous or "once"
 
 
 class MixedMediaTimingProfile(BaseModel):
@@ -732,6 +775,10 @@ class EditProposalSnapshot(BaseModel):
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_text_bindings: list[MontageTextBinding] = Field(default_factory=list, max_length=12)
     montage_audio: MontageAudioPlan | None = None
+    video_reuse_policy: VideoReusePolicy | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     montage_cadence: MontageCadenceConstraint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -748,6 +795,16 @@ class EditProposalSnapshot(BaseModel):
             missing = set(beat.media_ids) - known
             if missing:
                 raise ValueError(f"beat {beat.beat_id} references missing media IDs")
+        if self.video_reuse_policy == "once" and not self.fast_cuts:
+            video_ids = {ref.media_id for ref in self.media if ref.kind == "video"}
+            used_videos = [
+                media_id
+                for beat in self.story_beats
+                for media_id in beat.media_ids
+                if media_id in video_ids
+            ]
+            if len(used_videos) != len(set(used_videos)):
+                raise ValueError("video source may appear only once unless reuse is requested")
         if len({b.beat_id for b in self.story_beats}) != len(self.story_beats):
             raise ValueError("story beat IDs must be unique")
         if self.selected_media_ids is not None:
@@ -771,6 +828,7 @@ class EditProposalSnapshot(BaseModel):
             quick_mixed_timing = uses_quick_photo_long_video_timing(self.mixed_media_timing)
             if (
                 self.narration is None
+                and self.video_reuse_policy is None
                 and self.montage_cadence is None
                 and not quick_mixed_timing
                 and any(cut.output_duration_s > 1.2 + 0.001 for cut in self.fast_cuts)
@@ -823,10 +881,15 @@ class EditProposalSnapshot(BaseModel):
                     (cut.source_start_s, cut.source_end_s, cut.output_duration_s)
                 )
             for media_id, windows in video_windows.items():
+                if self.video_reuse_policy == "once" and len(windows) > 1:
+                    raise ValueError("video source may appear only once unless reuse is requested")
                 ordered = sorted(windows)
                 if not (
-                    self.montage_cadence is not None
-                    and self.montage_cadence.reuse_policy == "allow_repeat"
+                    self.video_reuse_policy == "allow_repeat"
+                    or (
+                        self.montage_cadence is not None
+                        and self.montage_cadence.reuse_policy == "allow_repeat"
+                    )
                 ) and any(
                     current[0] < previous[1] - 0.001
                     for previous, current in zip(ordered, ordered[1:], strict=False)
@@ -1079,6 +1142,10 @@ class ProposalBrief(BaseModel):
 
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_audio: MontageAudioPlan | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    video_reuse_policy: VideoReusePolicy | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )

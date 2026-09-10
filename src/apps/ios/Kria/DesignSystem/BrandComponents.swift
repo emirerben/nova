@@ -1,21 +1,14 @@
 import SwiftUI
 
-/// The approved web wordmark's per-letter rotations, using its bundled font.
+/// Exact Paper artwork, cropped to its visible bounds so headers center the mark.
 struct KriaWordmark: View {
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            letter("k", size: 28.4062, x: 1.6875, y: 0, rotation: -8)
-            letter("r", size: 27.2812, x: 24.75, y: 3.65625, rotation: 4)
-            letter("i", size: 27.2812, x: 36.5625, y: 0.84375, rotation: -5)
-            letter("a", size: 28.4062, x: 51.75, y: 3.65625, rotation: 7)
-        }
-        .frame(width: 76, height: 36, alignment: .topLeading)
-        .foregroundStyle(KriaColor.sky)
-        .accessibilityElement(children: .ignore).accessibilityLabel("Kria")
-    }
-    private func letter(_ value: String, size: CGFloat, x: CGFloat, y: CGFloat, rotation: Double) -> some View {
-        Text(value).font(.custom("DynaPuff", fixedSize: size).weight(.bold)).fixedSize()
-            .rotationEffect(.degrees(rotation), anchor: .topLeading).offset(x: x, y: y)
+        Image("KriaWordmark")
+            .resizable()
+            .renderingMode(.original)
+            .scaledToFit()
+            .frame(width: 76, height: 36)
+            .accessibilityLabel("Kria")
     }
 }
 

@@ -34,6 +34,7 @@ from app.agents._schemas.creator_agent import (
     CreativeStrategy,
     CreatorCraftBundle,
     CreatorEditPlan,
+    CreatorRenderIntentEvidence,
     ProposeStrategy,
     ReviewDecision,
     SetLicensedSfxCommand,
@@ -539,22 +540,33 @@ def _apply_explicit_render_intent(
     creator_request: str,
     manifest: Any | None = None,
     latest_user_message: str = "",
+    render_intent_evidence: CreatorRenderIntentEvidence | None = None,
 ) -> CreativeStrategy:
-    """Promote explicit creator wording into the typed render contract.
+    """Preserve grounded semantic intent, with legacy literal extraction as fallback.
 
-    The Main Creator model may describe an exact title/style in prose while the
-    original v1 schema only had advisory ``intro_hook``.  This deterministic
-    extractor runs at the authenticated planning boundary, fills only missing
-    typed fields, and never creates executable operations. Unsupported styles
-    are ignored here and therefore cannot reach a renderer without schema
-    validation.
+    The model interprets the creator's wording and returns typed values with
+    verbatim supporting excerpts. Verify provenance and exact title copy here;
+    do not require English keywords to authorize a semantic interpretation.
+    The legacy recognizer remains a fallback for old or failed model responses.
     """
 
     request = " ".join(str(creator_request or "").split())
-    # These fields become pixels, so only explicit creator-authored wording may
-    # populate them. Clear any model-authored values first, then promote the
-    # bounded request matches below. This prevents a plausible-but-wrong model
-    # title/style from overriding the user's exact copy.
+    semantic_updates: dict[str, object] = {}
+    creator_sources = (request, " ".join(str(latest_user_message or "").split()))
+    if render_intent_evidence is not None:
+        for field in ("opening_title", "font_family", "text_color"):
+            quote = " ".join(str(getattr(render_intent_evidence, field) or "").split())
+            if not quote or not any(quote in source for source in creator_sources):
+                continue
+            value = getattr(strategy, field)
+            # Typography and color are semantic choices from a validated
+            # schema. Literal on-screen words must also occur in the excerpt.
+            if field == "opening_title" and value is not None:
+                if " ".join(value.split()) not in quote:
+                    continue
+            semantic_updates[field] = value
+    # Ungrounded model values cannot become pixels. Only creator excerpts or
+    # the legacy literal recognizer below can restore these fields.
     updates: dict[str, object] = {
         "opening_title": None,
         "font_family": None,
@@ -607,13 +619,13 @@ def _apply_explicit_render_intent(
     # ``'Emir Olympics' title``. Keep the quoted text bounded and require the
     # title noun next to it so unrelated quoted direction never reaches pixels.
     title_match = re.search(
-        r"[\"'“‘](.{1,280}?)[\"'”’]\s+(?:opening\s+)?(?:title|intro|hook)\b",
+        r"[\"'“‘](.{1,280}?)[\"'”’]\s+(?:opening\s+)?(?:title|intro|hook|text)\b",
         request,
         re.IGNORECASE,
     )
     if title_match is None:
         title_match = re.search(
-            r"\b(?:opening\s+)?(?:title|intro|hook)(?!\s+(?:texts|copies)\b)"
+            r"\b(?:opening\s+)?(?:title|intro|hook|text)(?!\s+(?:texts|copies)\b)"
             r"\s*(?:text|copy)?\b\s*"
             r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)?\s*"
             r"[\"'“‘](.{1,280}?)[\"'”’]",
@@ -631,6 +643,19 @@ def _apply_explicit_render_intent(
             r"\s*(?:text|copy)?\b\s*"
             r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)\s*"
             r"([A-Za-z0-9][^,\n]{0,279}?)(?=\s*(?:,|$)|\s+(?:using|with|font|colou?r)\b"
+            r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b))",
+            request,
+            re.IGNORECASE,
+        )
+    if title_match is None:
+        # The legacy title grammar permits multi-sentence literal copy. Keep
+        # that contract intact; the newer unquoted "text saying" fallback
+        # stops at punctuation before a following style sentence.
+        title_match = re.search(
+            r"\b(?:opening\s+)?(?:text)(?!\s+(?:texts|copies)\b)"
+            r"\s*(?:text|copy)?\b\s*"
+            r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)\s*"
+            r"([A-Za-z0-9][^,.;!?\n]{0,279}?)(?=\s*(?:[,.;!?]|$)|\s+(?:using|with|font|colou?r)\b"
             r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b))",
             request,
             re.IGNORECASE,
@@ -655,7 +680,7 @@ def _apply_explicit_render_intent(
         if re.search(
             rf"(?<!\w){escaped}(?!\w)\s+font\b|"
             rf"\b(?:font|typeface)\s*(?:is|to|:)?\s*{escaped}(?!\w)|"
-            rf"(?<!\w){escaped}(?!\w)(?=\s*(?:,|$))",
+            rf"(?<!\w){escaped}(?!\w)(?=\s*(?:[,.;!?]|$))",
             request,
             re.IGNORECASE,
         ):
@@ -663,10 +688,10 @@ def _apply_explicit_render_intent(
             break
 
     color_match = re.search(
-        r"\b(?:text\s+)?colou?r\s*(?:is|to|:)?\s*(#[0-9A-Fa-f]{6}|[A-Za-z]+)\b"
-        r"|\b(?:make|set)\s+(?:the\s+)?(?:text|title|intro)\s+"
-        r"(#[0-9A-Fa-f]{6}|yellow|gold|white|black)\b"
-        r"|\b(yellow|gold|white|black)\s+(?:text|title|intro)\b",
+        r"\b(?:text\s+)?colou?r\s*(?:is|to|:)?\s*(#[0-9A-Fa-f]{6}|(?:pastel\s+yellow|[A-Za-z]+))\b"
+        r"|\b(?:make|set)\s+(?:the\s+)?(?:text|title|intro|it)\s+"
+        r"(#[0-9A-Fa-f]{6}|pastel\s+yellow|yellow|gold|white|black)\b"
+        r"|\b(pastel\s+yellow|yellow|gold|white|black)\s+(?:text|title|intro)\b",
         # Also accept a comma-delimited style list such as
         # "title Emir Olympics, Rascal, yellow".
         # The bounded vocabulary keeps arbitrary adjectives out.
@@ -675,7 +700,7 @@ def _apply_explicit_render_intent(
     )
     if color_match is None:
         color_match = re.search(
-            r"\b(yellow|gold|white|black)(?=\s*(?:,|$))",
+            r"\b(pastel\s+yellow|yellow|gold|white|black)(?=\s*(?:[,.;!?]|$))",
             request,
             re.IGNORECASE,
         )
@@ -813,6 +838,7 @@ def _apply_explicit_render_intent(
         target_duration_s = _pinned_narration_target_duration_s(manifest)
     if target_duration_s is not None:
         updates["target_duration_s"] = target_duration_s
+    updates.update(semantic_updates)
     return CreativeStrategy.model_validate({**strategy.model_dump(mode="json"), **updates})
 
 
@@ -1275,8 +1301,8 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
         ),
         # A failed planner must not fabricate title, hook, or story copy.
         rationale=(
-            "Planner response incomplete. Preserve the recorded voiceover and "
-            "explicit media request for creator review."
+            "Planner response incomplete. Preserve the uploaded media and "
+            "explicit request for creator review."
         ),
     )
 
@@ -1614,6 +1640,25 @@ async def _run_planning_turn(
             creator_request=creator_request,
             user_message=user_message,
         )
+        from app.schemas.edit_proposal import parse_edit_proposal, resolve_video_reuse_policy
+
+        saved_proposal = parse_edit_proposal(getattr(item, "edit_proposal", None))
+        previous_reuse_policy = (locked.active_plan or {}).get("video_reuse_policy")
+        if previous_reuse_policy is None and saved_proposal is not None:
+            previous_reuse_policy = saved_proposal.brief.video_reuse_policy
+        reuse_policy = resolve_video_reuse_policy(
+            user_message,
+            resolve_video_reuse_policy(
+                creator_request,
+                previous_reuse_policy,
+            ),
+            cadence,
+        )
+        if reuse_policy == "once":
+            cadence = None
+        strategy = strategy.model_copy(
+            update={"video_reuse_policy": reuse_policy, "montage_cadence": cadence}
+        )
         if cadence is not None:
             media_by_id = {media.media_id: media for media in manifest.media}
             if any(
@@ -1750,6 +1795,9 @@ async def _run_planning_turn(
                 creator_request,
                 manifest=planning_manifest,
                 latest_user_message=user_message,
+                render_intent_evidence=(
+                    action.render_intent_evidence if isinstance(action, ProposeStrategy) else None
+                ),
             )
             try:
                 strategy = normalize_creator_strategy_media(
@@ -1883,7 +1931,29 @@ async def _run_planning_turn(
                     },
                 )
                 return await _response(db, locked)
-            strategy = _fallback_strategy(manifest, user_message=creator_request)
+            strategy = normalize_creator_strategy_media(
+                manifest,
+                _apply_explicit_render_intent(
+                    _fallback_strategy(manifest, user_message=creator_request).model_copy(
+                        update={
+                            "video_reuse_policy": reuse_policy,
+                            "montage_cadence": cadence,
+                            "opening_title": strategy.opening_title,
+                            "font_family": strategy.font_family,
+                            "text_color": strategy.text_color,
+                        }
+                    ),
+                    creator_request,
+                    manifest=manifest,
+                    latest_user_message=user_message,
+                    render_intent_evidence=(
+                        action.render_intent_evidence
+                        if isinstance(action, ProposeStrategy)
+                        else None
+                    ),
+                ),
+                repair_model_output=True,
+            )
             locked.active_plan = compile_active_plan(
                 locked,
                 manifest=manifest,
@@ -2288,6 +2358,7 @@ def _seed_guided_specialist_brief(
         "mixed_media_timing": plan.strategy.mixed_media_timing,
         "montage_audio": specialist_audio,
         "montage_cadence": specialist_cadence,
+        "video_reuse_policy": plan.strategy.video_reuse_policy,
         "output_orientation": (
             "portrait" if plan.strategy.mixed_media_timing is not None else None
         ),
@@ -2771,6 +2842,10 @@ async def confirm_creator_plan_controller(
                 dispatch_item_render_for,
                 item_id,
                 int(plan_row.ownership_epoch or 0),
+                # This exact native plan has passed confirmation, ownership,
+                # manifest and capability checks above. It has no guided
+                # proposal; the dispatcher rechecks the zero-pool-assets fence.
+                bypass_guided_edit_gate=edit_plan.strategy.render_program == "native",
                 creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
                 creator_clip_order=preserved_clip_order,
                 creator_request=str(active.get("creator_request") or ""),

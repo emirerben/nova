@@ -2703,6 +2703,7 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
         ),
         montage_audio=current.montage_audio if revision.direction == "fast_montage" else None,
         montage_cadence=current.montage_cadence if revision.direction == "fast_montage" else None,
+        video_reuse_policy=current.video_reuse_policy,
         output_orientation=output_orientation,
     )
 
@@ -3412,6 +3413,7 @@ async def edit_proposal_conversation_turn(
             duration_s=review_snapshot.duration_s,
             mixed_media_timing=review_mixed_media_timing,
             montage_cadence=review_snapshot.montage_cadence,
+            video_reuse_policy=review_snapshot.video_reuse_policy,
             output_orientation=current.brief.output_orientation if current else None,
         )
         if review_snapshot
@@ -3518,7 +3520,18 @@ async def edit_proposal_conversation_turn(
                 body.message,
             )
             timing_changed = requested_mixed_media_timing != review_snapshot.mixed_media_timing
-            if result.revision.direction != review_snapshot.direction or timing_changed:
+            from app.schemas.edit_proposal import resolve_video_reuse_policy
+
+            reuse_changed = resolve_video_reuse_policy(
+                body.message,
+                review_snapshot.video_reuse_policy,
+                review_snapshot.montage_cadence,
+            ) != (review_snapshot.video_reuse_policy or "once")
+            if (
+                result.revision.direction != review_snapshot.direction
+                or timing_changed
+                or reuse_changed
+            ):
                 from app.services.edit_direction_planner import (  # noqa: PLC0415
                     plan_direction_snapshot,
                 )
@@ -3528,6 +3541,7 @@ async def edit_proposal_conversation_turn(
                     review_snapshot,
                     direction=result.revision.direction,
                     goal=result.revision.goal,
+                    creator_request=body.message,
                     pace=result.revision.pace,
                     duration_s=result.revision.duration_s,
                     idea=idea,
@@ -3584,6 +3598,7 @@ async def edit_proposal_conversation_turn(
             montage_text_bindings=revised_snapshot.montage_text_bindings,
             montage_audio=revised_snapshot.montage_audio,
             montage_cadence=revised_snapshot.montage_cadence,
+            video_reuse_policy=revised_snapshot.video_reuse_policy,
             output_orientation=brief.output_orientation,
         )
 
@@ -4985,6 +5000,7 @@ async def plan_item_copilot_turn(
             approved,
             direction="fast_montage",
             goal="Show the strongest visual moments quickly.",
+            creator_request=body.message,
             pace="fast",
             duration_s=approved.duration_s,
             idea=str(item.idea or ""),

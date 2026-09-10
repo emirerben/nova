@@ -58,7 +58,7 @@ def _raw(media_ids: list[str]) -> str:
 def test_requires_seven_distinct_sources_when_available() -> None:
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     with pytest.raises(SchemaError, match="need at least 7"):
-        agent.parse(_raw(["media-0"]), _input())
+        agent.parse(_raw(["media-1"]), _input())
 
 
 def test_accepts_every_source_for_a_small_upload() -> None:
@@ -83,6 +83,7 @@ def test_fast_montage_uses_cut_sources_for_mixed_media_variety() -> None:
     agent_input = _input(3)
     agent_input.direction = "fast_montage"
     agent_input.pace = "fast"
+    agent_input.video_reuse_policy = "distinct_windows"
     agent_input.target_duration_s = 3
     for media in agent_input.media:
         if media.kind == "video":
@@ -165,6 +166,7 @@ def test_explicit_cadence_below_generic_cut_floor_is_preserved() -> None:
 
 def test_montage_parse_normalizes_aliases_without_imposing_sequence() -> None:
     agent_input = EditProposalAgentInput(
+        video_reuse_policy="distinct_windows",
         direction="fast_montage",
         pace="fast",
         target_duration_s=4,
@@ -754,7 +756,9 @@ def _fractional_fast_payload(*, declared_duration_s: float = 14.2) -> dict:
 
 
 def _fractional_fast_input(*, target_duration_s: int = 14) -> EditProposalAgentInput:
+    # Exercise the explicitly requested split-window contract.
     agent_input = _input(3)
+    agent_input.video_reuse_policy = "distinct_windows"
     agent_input.direction = "fast_montage"
     agent_input.pace = "fast"
     agent_input.target_duration_s = target_duration_s
@@ -791,6 +795,7 @@ def test_fast_montage_splits_and_interleaves_recoverable_overlong_windows() -> N
         for index in range(5)
     ]
     agent_input = EditProposalAgentInput(
+        video_reuse_policy="distinct_windows",
         direction="fast_montage",
         pace="fast",
         target_duration_s=14,
@@ -1005,6 +1010,7 @@ def test_fast_montage_rejects_expansion_beyond_cut_limit() -> None:
         for index in range(2)
     ]
     agent_input = EditProposalAgentInput(
+        video_reuse_policy="distinct_windows",
         direction="fast_montage",
         pace="fast",
         target_duration_s=60,
@@ -1118,6 +1124,7 @@ def test_fast_montage_rejects_unreconcilable_duration_drift() -> None:
 
 def test_fast_montage_duration_repair_never_reuses_source_footage() -> None:
     agent_input = EditProposalAgentInput(
+        video_reuse_policy="distinct_windows",
         direction="fast_montage",
         pace="fast",
         target_duration_s=4,
@@ -1156,6 +1163,7 @@ def test_fast_montage_duration_repair_never_reuses_source_footage() -> None:
 
 def test_fast_montage_rejects_existing_overlapping_source_footage() -> None:
     agent_input = EditProposalAgentInput(
+        video_reuse_policy="distinct_windows",
         direction="fast_montage",
         pace="fast",
         target_duration_s=4,

@@ -23,6 +23,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     MontageCadenceConstraint,
     MontageTextBinding,
+    VideoReusePolicy,
     canonical_narration_duration_s,
     media_context_group,
     mixed_media_hold_bounds,
@@ -244,8 +245,26 @@ class EditProposalAgentInput(BaseModel):
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_audio: MontageAudioPlan | None = None
     montage_cadence: MontageCadenceConstraint | None = None
+    video_reuse_policy: VideoReusePolicy = "once"
     review_feedback: str = Field(default="", max_length=5000)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_cadence_reuse(cls, value: object) -> object:
+        if (
+            isinstance(value, dict)
+            and "video_reuse_policy" not in value
+            and value.get("montage_cadence")
+        ):
+            cadence = MontageCadenceConstraint.model_validate(value["montage_cadence"])
+            return {
+                **value,
+                "video_reuse_policy": (
+                    "allow_repeat" if cadence.reuse_policy == "allow_repeat" else "distinct_windows"
+                ),
+            }
+        return value
 
     @model_validator(mode="after")
     def validate_media_scope(self) -> EditProposalAgentInput:
@@ -752,6 +771,7 @@ def _compile_fast_cuts(
     *,
     split_limit_s: float = 1.2,
     narrated: bool = False,
+    single_appearance: bool = False,
 ) -> tuple[list[FastMontageCut], set[str], float]:
     """Compile a narrow provider timing violation into the persisted cut schema.
 
@@ -767,7 +787,7 @@ def _compile_fast_cuts(
     if len({cut.cut_id for cut in relaxed}) != len(relaxed):
         raise SchemaError("edit_proposal: fast cut ids must be unique")
     raw_total_s = sum(cut.output_duration_s for cut in relaxed)
-    if narrated:
+    if narrated or single_appearance:
         return [_strict_fast_cut(cut) for cut in relaxed], set(), raw_total_s
     if any(cut.output_duration_s > 3.0 for cut in relaxed):
         raise SchemaError("edit_proposal: non-narrated fast cuts must not exceed 3 seconds")
@@ -877,7 +897,10 @@ def _normalize_fast_montage_duration(
         else 1.2
     )
     cuts, repaired_cut_ids, raw_total_s = _compile_fast_cuts(
-        raw_cuts, split_limit_s=split_limit_s, narrated=input.narration_duration_s is not None
+        raw_cuts,
+        split_limit_s=split_limit_s,
+        narrated=input.narration_duration_s is not None,
+        single_appearance=input.video_reuse_policy in {"once", "allow_repeat"},
     )
 
     # Reconcile against the actual cut total. Do not reject a fixable provider
@@ -889,7 +912,7 @@ def _normalize_fast_montage_duration(
     normalized_cuts = list(cuts)
 
     def assert_video_windows_do_not_overlap() -> None:
-        if (
+        if input.video_reuse_policy == "allow_repeat" or (
             input.montage_cadence is not None
             and input.montage_cadence.reuse_policy == "allow_repeat"
         ):
@@ -903,6 +926,8 @@ def _normalize_fast_montage_duration(
                 (candidate.source_start_s, candidate.source_end_s)
             )
         for windows in windows_by_media.values():
+            if input.video_reuse_policy == "once" and len(windows) > 1:
+                raise SchemaError("edit_proposal: video source may appear only once")
             windows.sort()
             for previous, current in zip(windows, windows[1:]):
                 if current[0] < previous[1] - _FAST_DURATION_EPSILON_S:
@@ -938,7 +963,15 @@ def _normalize_fast_montage_duration(
             adjustment_s = -min(-remaining_s, max(0.0, capacity_s))
         else:
             mixed_bounds = mixed_media_hold_bounds(media.kind, input.mixed_media_timing)
-            max_duration_s = mixed_bounds.maximum_s if quick_mixed_timing else 1.2
+            max_duration_s = (
+                float(media.duration_s or 0)
+                if input.video_reuse_policy == "once"
+                and media.kind == "video"
+                and not quick_mixed_timing
+                else mixed_bounds.maximum_s
+                if quick_mixed_timing
+                else 1.2
+            )
             capacity_s = max_duration_s - cut.output_duration_s
             if media.kind == "video":
                 source_capacity_s = float(media.duration_s or 0.0) - cut.source_end_s
@@ -998,7 +1031,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.7.2",
+        prompt_version="1.8.1",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1027,8 +1060,10 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             else "No video footage was uploaded — every beat must use only the photos provided."
         )
         fast_timing_note = ""
-        if input.direction == "fast_montage" and not uses_quick_photo_long_video_timing(
-            input.mixed_media_timing
+        if (
+            input.video_reuse_policy != "once"
+            and input.direction == "fast_montage"
+            and not uses_quick_photo_long_video_timing(input.mixed_media_timing)
         ):
             minimum_fast_cuts = math.ceil(input.target_duration_s / 1.2)
             maximum_fast_cuts = math.floor(input.target_duration_s / 0.8)
@@ -1087,7 +1122,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             )
             montage_note = (
                 "SOURCE-AWARE MONTAGE: author the complete creative timeline in fast_cuts. "
-                "You may choose any source order, reuse, cut lengths, and source windows that "
+                "You may choose source order, cut lengths, and source windows that "
                 "serve the request and fit the footage; do not follow a preset sequence unless "
                 "the creator explicitly asks for one. Preserve source audio and use "
                 "montage_audio with "
@@ -1121,6 +1156,24 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "The explicit photo duration still applies exactly. Transcript: "
                 f"{json.dumps(input.narration_words, ensure_ascii=False)}"
             )
+        montage_note += (
+            " VIDEO REUSE POLICY: "
+            + input.video_reuse_policy
+            + ". "
+            + (
+                "Each video must appear in exactly one contiguous cut at most. Never split "
+                "a video and return to it later. Use longer continuous video cuts when needed "
+                "to meet the target; the generic 1.2s ceiling does not apply. "
+                if input.video_reuse_policy == "once"
+                else "The creator explicitly permits returning to video sources. "
+                + (
+                    "Overlapping source windows and adjacent repeats are permitted. "
+                    "A short final loop may be 0.4s or longer to fit the exact target. "
+                    if input.video_reuse_policy == "allow_repeat"
+                    else "Use distinct non-overlapping windows only. "
+                )
+            )
+        )
         review_note = ""
         if input.review_feedback.strip():
             review_note = (
@@ -1242,6 +1295,12 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 raise SchemaError("edit_proposal: beat references unknown media")
             if len(beat.media_ids) != len(set(beat.media_ids)):
                 raise SchemaError("edit_proposal: beat repeats the same media")
+            if input.direction != "fast_montage" and input.video_reuse_policy == "once":
+                if any(
+                    media_id in used and media_by_id[media_id].kind == "video"
+                    for media_id in beat.media_ids
+                ):
+                    raise SchemaError("edit_proposal: video source may appear only once")
             used.update(beat.media_ids)
         cuts = output.fast_cuts or []
         if input.direction == "fast_montage" and not cuts:
@@ -1258,7 +1317,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 media = media_by_id.get(cut.media_id)
                 if media is None:
                     raise SchemaError("edit_proposal: fast cut references unknown media")
-                if previous_media_id == cut.media_id:
+                if previous_media_id == cut.media_id and input.video_reuse_policy != "allow_repeat":
                     raise SchemaError("edit_proposal: fast montage cannot repeat adjacent sources")
                 previous_media_id = cut.media_id
                 cut_sources.add(cut.media_id)
@@ -1296,6 +1355,8 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                             "edit_proposal: mixed-media timing profile was not honored"
                         )
                 else:
+                    if input.video_reuse_policy == "allow_repeat" and cut.output_duration_s >= 0.4:
+                        continue
                     if cut.output_duration_s >= 0.8 or cut.cut_id in repaired_cut_ids:
                         continue
                     if source_duration >= 0.8 or cut.output_duration_s < 0.4:
