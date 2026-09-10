@@ -8,6 +8,7 @@ struct ChatWorkspaceView: View {
     @State private var drawerDrag: CGFloat = 0
     @State private var drawerMounted = false
     @State private var horizontalDrawerDrag: Bool?
+    @State private var drawerGestureExclusions: [CGRect] = []
     @State private var showsGallery = false
     @State private var showsAccount = false
 
@@ -82,6 +83,7 @@ struct ChatWorkspaceView: View {
             .clipped()
             .offset(y: -topInset)
             .background(KriaColor.paper.ignoresSafeArea())
+            .onPreferenceChange(DrawerGestureExclusionPreference.self) { drawerGestureExclusions = $0 }
             .simultaneousGesture(drawerGesture(width: drawerWidth))
             .accessibilityAction(.escape) { setDrawerOpen(false) }
         }
@@ -119,7 +121,8 @@ struct ChatWorkspaceView: View {
             .onChanged { value in
                 // Choose an axis once, without a 20-point dead zone at touch-down.
                 if horizontalDrawerDrag == nil {
-                    horizontalDrawerDrag = abs(value.translation.width) > abs(value.translation.height)
+                    let startsInScroller = !showsProjects && drawerGestureExclusions.contains { $0.contains(value.startLocation) }
+                    horizontalDrawerDrag = !startsInScroller && abs(value.translation.width) > abs(value.translation.height)
                 }
                 guard horizontalDrawerDrag == true else { return }
                 var transaction = Transaction()

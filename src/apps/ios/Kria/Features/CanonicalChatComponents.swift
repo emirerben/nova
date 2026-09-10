@@ -230,6 +230,12 @@ private struct AssistantHeading: View {
     }
 }
 
+/// Descendant horizontal scrollers retain their own drags while the drawer is closed.
+struct DrawerGestureExclusionPreference: PreferenceKey {
+    static var defaultValue: [CGRect] { [] }
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) { value += nextValue() }
+}
+
 struct FormatStage: View {
     let formats: [CreationFormat]
     let isBusy: Bool
@@ -266,6 +272,12 @@ struct FormatStage: View {
                 }
             }
             .contentMargins(.horizontal, 0, for: .scrollContent)
+            .accessibilityIdentifier("format-carousel")
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: DrawerGestureExclusionPreference.self, value: [geometry.frame(in: .global)])
+                }
+            }
         }
     }
 }

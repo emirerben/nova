@@ -272,6 +272,48 @@ import SwiftData
         XCTAssertFalse(model.isCreatingProject)
     }
 
+    func testOutstandingListCannotEraseSuccessfullyCreatedProject() async throws {
+        let started = expectation(description: "Project list suspended")
+        var held: ProjectActionDeferredProtocol?
+        ProjectActionDeferredProtocol.handler = { transport in
+            if transport.request.httpMethod == "GET" {
+                held = transport; started.fulfill()
+            } else {
+                transport.finish(200, self.response(PreviewFixtures.projectID, title: "New chat"))
+            }
+        }
+        let model = AppModel(api: deferredAPI())
+        let loading = Task { await model.loadProjects() }
+        await fulfillment(of: [started], timeout: 3)
+        await model.createProject()
+        XCTAssertEqual(model.selectedProject?.id, PreviewFixtures.projectID)
+        try XCTUnwrap(held).finish(200, Data("[]".utf8))
+        await loading.value
+        XCTAssertEqual(model.projects.map(\.id), [PreviewFixtures.projectID])
+        XCTAssertEqual(model.selectedProject?.title, "New chat")
+        XCTAssertEqual(model.projectsState, .loaded)
+        XCTAssertFalse(model.isLoading)
+    }
+
+    func testProjectListCannotReplaceNewerRenamedRevision() async throws {
+        let project = PreviewFixtures.projects[0]
+        let renamed = response(project.id, title: "Renamed on this device", revision: 7)
+        let staleList = Data("[".utf8) + response(project.id, title: "Old title", revision: 2) + Data("]".utf8)
+        NativeEditorURLProtocol.handler = { request in
+            request.httpMethod == "PATCH" ? (200, renamed) : (200, staleList)
+        }
+        let container = try ModelContainer(for: CachedProject.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let cache = CacheRepository(context: container.mainContext)
+        let model = AppModel(api: NativeEditorTestSupport.api(), cache: cache)
+        model.projects = [project]; model.selectedProject = project
+        try await model.renameProject(project, title: "Renamed on this device", clientEventID: "rename-before-list")
+        await model.loadProjects()
+        XCTAssertEqual(model.projects.first?.title, "Renamed on this device")
+        XCTAssertEqual(model.selectedProject?.serverRevision, 7)
+        XCTAssertEqual(try cache.projects().first?.serverRevision, 7)
+        XCTAssertEqual(try cache.projects().first?.title, "Renamed on this device")
+    }
+
     private func deferredAPI() -> KriaAPI {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ProjectActionDeferredProtocol.self]
