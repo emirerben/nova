@@ -140,13 +140,43 @@ struct CreationAttachedMedia: Identifiable {
     let filename: String
     let kind: String
     let previewURL: URL?
+    var uploadPurpose: String = UploadPurpose.cloudRenderSource.rawValue
     static func parse(_ state: [String: JSONValue]) -> [Self] {
         guard case .array(let media) = state["media"] else { return [] }
         return media.compactMap { entry in
             guard case .object(let fields) = entry, let id = fields["media_id"]?.stringValue else { return nil }
             let url = fields["poster_url"]?.stringValue ?? fields["thumbnail_url"]?.stringValue
-            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)))
+            let purpose = fields["upload_contract"]?.objectValue?["purpose"]?.stringValue
+                ?? (id.hasPrefix("analysis-proxy-") ? UploadPurpose.analysisProxy.rawValue : UploadPurpose.cloudRenderSource.rawValue)
+            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), uploadPurpose: purpose)
         }
+    }
+}
+
+enum ProjectUploadDestination: Equatable {
+    case phone, cloud, paused, mixed, unsupportedRole
+    var canUpload: Bool { self == .phone || self == .cloud }
+    var message: String? {
+        switch self {
+        case .phone, .cloud: nil
+        case .paused: "Rendering on iPhone is temporarily unavailable. Your project is saved; try again later."
+        case .mixed: "This project has sources from different rendering destinations. Keep the project and reconnect its original footage before continuing."
+        case .unsupportedRole: "This attachment type is not yet available for rendering on iPhone. Your project is saved."
+        }
+    }
+    static func resolve(capabilities: PhoneRenderingCapabilities?, sourcePurposes: [String], role: CreationMediaRole) -> Self {
+        let known = Set(sourcePurposes)
+        let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
+        guard known.isSubset(of: [phone, cloud]), known.count <= 1 else { return .mixed }
+        if known.contains(cloud) { return .cloud }
+        let minimum = Set(["basicComposition", "positionedText", "audioMix", "local1080Export"])
+        let available = capabilities?.enabled == true && capabilities?.recipeVersions.contains(2) == true
+            && minimum.isSubset(of: Set(capabilities?.verifiedFeatures ?? []))
+        if known.contains(phone) {
+            guard available else { return .paused }
+            return role == .clip ? .phone : .unsupportedRole
+        }
+        return available && role == .clip ? .phone : .cloud
     }
 }
 

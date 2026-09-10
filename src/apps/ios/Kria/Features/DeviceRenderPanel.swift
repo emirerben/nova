@@ -15,7 +15,7 @@ struct DeviceRenderPanel: View {
     }
 }
 
-private struct DeviceRenderStatusCard: View {
+struct DeviceRenderStatusCard: View {
     let presentation: DeviceRenderPresentation
     let retry: () -> Void
     let stop: () -> Void

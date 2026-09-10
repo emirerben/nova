@@ -83,8 +83,8 @@ style has passed the complete parity and physical-device gates.
   and capabilities explicitly advertised as verified by the server. Sign-out
   cancels its sessions. The status card distinguishes preparation, rendering,
   local availability, syncing, and synced output, with local playback/sharing
-  and sync retry. Editor saves and attachment destination selection still need
-  integration. Capabilities remain disabled until device verification.
+  and sync retry. Editor saves still need integration. Capabilities remain
+  disabled until device verification.
 - Project proxy uploads now carry immutable original fingerprint, duration,
   geometry, orientation, and audio provenance through reservation and recovery.
   Migration 0105 stores the binding before a signed PUT is issued. Registration
@@ -93,8 +93,13 @@ style has passed the complete parity and physical-device gates.
   reservation is consumed. The job constructor accepts proxy footage only for
   gated content-plan jobs with exact private bindings; dispatch also requires
   an approved guided plan. Every other cloud path still rejects proxies.
-  The picker still uses consented cloud uploads;
-  selecting the phone destination remains part of the integration work.
+  The footage picker chooses analysis proxies only when the server advertises
+  the required verified native capabilities. Its consent explains that proxy
+  video/audio uploads for analysis and finished exports sync after rendering.
+  Existing phone sources lock the destination: rollback pauses attachment,
+  never converts it to original upload. Existing cloud projects retain their
+  original-upload consent. Mixed/unknown sources and unsupported attachment
+  roles are blocked; visual-pool/narration proxy support remains outstanding.
 - `services/phone_sources.py` resolves selected server-owned upload receipts
   into immutable original bindings, rejects mixed/missing/conflicting sources,
   and requires each approved moment's media ID, path, and generation to match.
@@ -107,8 +112,7 @@ style has passed the complete parity and physical-device gates.
 
 ## Remaining implementation gates
 
-1. Connect the completed clip-proxy provenance contract to destination
-   negotiation. Extend local bindings to creator visual-pool and narration
+1. Extend local bindings to creator visual-pool and narration
    assets, with separately consented cloud recovery and source relinking.
 2. Separate shared cloud analysis/planning from media processing for every
    creator style. Phone jobs must persist a portable recipe and stop before any

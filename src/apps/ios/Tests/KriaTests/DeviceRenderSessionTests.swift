@@ -81,4 +81,25 @@ private actor SessionPublisher: DeviceRenderPublishing {
         XCTAssertEqual(current.phoneRendering?.recipeVersions, [2])
         XCTAssertEqual(DeviceRenderSessions.decision(request(UUID()).recipe, capabilities: current.phoneRendering!).route, .cloud)
     }
+
+    func testAttachmentDestinationNeverFallsBackFromPhoneWithoutConsent() {
+        let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [], role: .clip), .phone)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: nil, sourcePurposes: [phone], role: .clip), .paused)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: .disabled, sourcePurposes: [phone], role: .clip), .paused)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .voiceover), .unsupportedRole)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .visual), .unsupportedRole)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [cloud], role: .clip), .cloud)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone, cloud], role: .clip), .mixed)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: ["future"], role: .clip), .mixed)
+    }
+
+    func testAttachedProxyIdentityKeepsDestinationWhenContractIsOmitted() {
+        let media = CreationAttachedMedia.parse(["media": .array([
+            .object(["media_id": .string("analysis-proxy-123")]),
+            .object(["media_id": .string("456"), "upload_contract": .object(["purpose": .string("analysis_proxy")])]),
+            .object(["media_id": .string("789")]),
+        ])])
+        XCTAssertEqual(media.map(\.uploadPurpose), ["analysis_proxy", "analysis_proxy", "cloud_render_source"])
+    }
 }
