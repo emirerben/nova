@@ -3323,12 +3323,14 @@ async def test_confirm_generation_syncs_the_projection_after_controller_commit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed_before_dispatch", [False, True])
 async def test_retry_reopens_terminal_render_with_existing_plan(
     monkeypatch: pytest.MonkeyPatch,
+    failed_before_dispatch: bool,
 ) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     session_id = uuid.uuid4()
-    old_job_id = uuid.uuid4()
+    old_job_id = None if failed_before_dispatch else uuid.uuid4()
     new_job_id = uuid.uuid4()
     thread = SimpleNamespace(
         id=uuid.uuid4(),
@@ -3343,6 +3345,7 @@ async def test_retry_reopens_terminal_render_with_existing_plan(
     session = SimpleNamespace(
         id=session_id,
         status="failed",
+        last_error={"code": "execution_failed"} if failed_before_dispatch else None,
         revision=4,
         render_attempts=1,
         max_render_attempts=2,
@@ -3351,7 +3354,9 @@ async def test_retry_reopens_terminal_render_with_existing_plan(
     old_job = SimpleNamespace(id=old_job_id, status="processing_failed")
     result = SimpleNamespace(id=str(session_id), current_job_id=str(new_job_id))
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, session, old_job])
+    db.get = AsyncMock(
+        side_effect=[session, session] if failed_before_dispatch else [session, session, old_job]
+    )
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     import app.routes.creation_threads as routes
@@ -3765,3 +3770,20 @@ async def test_ready_revision_preparation_clears_pending_intent(
     assert "pending_revision_intent" not in thread.state
     assert thread.state["prepared_revision_job_id"] == str(job_id)
     assert call_order[-3:] == ["commit", "refresh", "response"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_enabled", [False, True])
+@pytest.mark.parametrize("visuals_enabled", [False, True])
+async def test_native_capabilities_reflect_runtime_and_visual_feature_gates(
+    monkeypatch: pytest.MonkeyPatch, runtime_enabled: bool, visuals_enabled: bool
+) -> None:
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", runtime_enabled)
+    monkeypatch.setattr(settings, "overlay_autoplace_enabled", visuals_enabled)
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", False)
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()))
+    assert manifest["runtime_versions"] == ([1, 2] if runtime_enabled else [1])
+    assert manifest["visuals_enabled"] is visuals_enabled
+    assert manifest["media"]["voiceover"]["max"] == 1
+    assert "audio/mp4" in manifest["media"]["voiceover"]["content_types"]
+    assert "image/jpeg" in manifest["media"]["visuals"]["content_types"]

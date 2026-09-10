@@ -209,14 +209,22 @@ private struct CreationWorkspaceView: View {
     @State private var pendingMessages: [PendingChatMessage] = []
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var approval: ApprovalSnapshot?
+    @State private var approvalNotice: String?
     @State private var selectedFormat: CreationFormat?
-    @State private var availableFormats: [CreationFormat] = [.montage]
+    @State private var availableFormats: [CreationFormat] = []
+    @State private var capabilities: CreationCapabilities?
+    @State private var capabilitiesError: String?
+    @State private var fullThread: CreationThread?
+    @State private var pendingAction: CreationActionIdentity?
+    @State private var uploadRecords: [UploadRecoveryRecord] = []
+    @State private var uploadProgress: [UUID: Double] = [:]
     @State private var maximumClipsByFormat: [CreationFormat: Int] = [:]
     @State private var capabilitiesAreAuthoritative = false
     @State private var isChoosingFormat = false
     @State private var threadState: [String: JSONValue] = [:]
     @State private var afterSequence = -1
     @State private var threadRevision: Int
+    @State private var projectionOrder = ThreadProjectionOrder()
     @State private var isSending = false
     @State private var isActing = false
     @State private var isThinking = false
@@ -249,7 +257,7 @@ private struct CreationWorkspaceView: View {
     }
 
     private var pendingUploadCount: Int {
-        model.uploads.records.filter { $0.projectID == project.id }.count
+        uploadRecords.filter { $0.projectID == project.id }.count
     }
 
     private var isUITesting: Bool {
@@ -266,7 +274,7 @@ private struct CreationWorkspaceView: View {
         case .rendering: return .rendering
         case .failed: return .failed
         case .draft:
-            if approval != nil { return .direction }
+            if approval != nil || fullThread?.awaitsCreationConfirmation == true { return .direction }
             if isChoosingFormat { return .format }
             if selectedFormat != nil { return .footage }
             return .format
@@ -292,12 +300,14 @@ private struct CreationWorkspaceView: View {
 
                         stageContent
 
-                        if isThinking && workspaceStage != .rendering {
+                        if (isThinking || isSending) && workspaceStage != .rendering {
                             ThinkingRow().id("thinking")
                         }
 
+                        if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
+
                         if let errorMessage {
-                            RecoveryCard(message: errorMessage) { Task { await refreshNow() } }
+                            RecoveryCard(message: errorMessage) { Task { await refreshCapabilities(); await refreshNow() } }
                                 .id("recovery")
                         }
 
@@ -315,6 +325,7 @@ private struct CreationWorkspaceView: View {
                 .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: isThinking) { _, _ in scrollToEnd(proxy) }
+                .onChange(of: isSending) { _, _ in scrollToEnd(proxy) }
             }
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
@@ -323,8 +334,8 @@ private struct CreationWorkspaceView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: $prompt,
-                isSending: isSending,
-                canAttach: selectedFormat != nil,
+                isSending: isSending || isActing,
+                canAttach: selectedFormat != nil && currentProject.status != .rendering && currentProject.status != .ready,
                 attach: { if selectedFormat != nil { showsAttachments = true } },
                 send: { Task { await send() } }
             )
@@ -338,6 +349,8 @@ private struct CreationWorkspaceView: View {
         .onChange(of: currentProject.serverRevision) { _, revision in
             threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
         }
+        .onReceive(model.uploads.$records) { uploadRecords = $0 }
+        .onReceive(model.uploads.$progress) { uploadProgress = $0 }
         .onReceive(model.uploads.$attachedThreads) { threads in
             guard let thread = threads[project.id] else { return }
             apply(thread)
@@ -346,7 +359,10 @@ private struct CreationWorkspaceView: View {
             AttachmentSheet(
                 projectID: project.id,
                 maximumClipCount: selectedMaximumClipCount,
-                attachedClipCount: attachedClipCount
+                attachedClipCount: attachedClipCount,
+                thread: fullThread,
+                capabilities: capabilities,
+                refresh: { await refreshNow() }
             )
                 .environmentObject(model)
                 .presentationDetents([.medium, .large])
@@ -363,7 +379,12 @@ private struct CreationWorkspaceView: View {
     @ViewBuilder private var stageContent: some View {
         switch workspaceStage {
         case .format:
-            FormatStage(formats: availableFormats, isBusy: isActing, select: selectFormat).id("format-picker")
+            FormatStage(formats: availableFormats, isBusy: isActing || !capabilitiesAreAuthoritative, select: selectFormat).id("format-picker")
+            if let capabilitiesError {
+                RecoveryCard(message: capabilitiesError) { Task { await refreshCapabilities() } }
+            } else if !capabilitiesAreAuthoritative {
+                ProgressView("Loading formats…")
+            }
         case .footage:
             if transcript.last(where: { $0.role == .user }) == nil, let selectedFormat {
                 ChatMessageRow(message: .syntheticUser(selectedFormat.choiceSentence))
@@ -373,13 +394,16 @@ private struct CreationWorkspaceView: View {
                     format: selectedFormat,
                     mediaCount: attachedClipCount,
                     maximumClipCount: selectedMaximumClipCount,
-                    uploads: model.uploads.records.filter { $0.projectID == project.id },
-                    progress: model.uploads.progress,
+                    uploads: uploadRecords.filter { $0.projectID == project.id },
+                    progress: uploadProgress,
                     addFootage: { showsAttachments = true },
                     continueWithFootage: {
                         Task { await send(message: "Continue with \(attachedClipCount) clips") }
                     },
-                    changeFormat: { isChoosingFormat = true }
+                    changeFormat: { isChoosingFormat = true },
+                    attachedMedia: CreationAttachedMedia.parse(threadState),
+                    isBusy: isSending || isActing,
+                    removeMedia: { mediaID in performAction("remove_media", payload: ["media_id": .string(mediaID)]) }
                 )
                 .id("upload-prompt")
             }
@@ -388,13 +412,15 @@ private struct CreationWorkspaceView: View {
                 DirectionStage(
                     approval: approval,
                     format: selectedFormat,
-                    isBusy: isActing,
+                    isBusy: isActing || pendingUploadCount > 0,
                     decide: decide
                 )
                 .id("approval-\(approval.id)")
+            } else if let thread = fullThread {
+                CreationConfirmationStage(thread: thread, isBusy: isActing || isSending || pendingUploadCount > 0, action: performAction)
             }
         case .rendering:
-            RenderingStage().id("rendering")
+            RenderingStage(isPreparing: currentProject.activeJobID == nil).id("rendering")
         case .ready:
             ReadyStage(
                 project: currentProject,
@@ -402,8 +428,25 @@ private struct CreationWorkspaceView: View {
                 suggest: { prompt = $0 }
             )
             .id("ready")
+            if let variants = fullThread?.job?.variants, variants.count > 1 {
+                ForEach(variants.compactMap { $0.variantID }, id: \.self) { variantID in
+                    let variant = variants.first { $0.variantID == variantID }
+                    Button(variantID.replacingOccurrences(of: "_", with: " ").capitalized) {
+                        performAction("select_variant", payload: ["variant_id": .string(variantID)])
+                    }.disabled(isActing || variant?.isPlayable != true)
+                    if variant?.renderStatus == "failed", currentProject.runtimeVersion == 1 {
+                        Button("Retry \(variantID.replacingOccurrences(of: "_", with: " "))") {
+                            performAction("retry", payload: ["variant_id": .string(variantID)])
+                        }.disabled(isActing)
+                    }
+                }
+            }
         case .failed:
-            FailedStage(retry: { Task { await refreshNow() } }).id("failed")
+            if let thread = fullThread, thread.runtimeVersion == 1 {
+                CreationConfirmationStage(thread: thread, isBusy: isActing || isSending || pendingUploadCount > 0, action: performAction)
+            } else {
+                FailedStage(retry: { Task { await send(message: "Try generating this edit again") } }).id("failed")
+            }
         }
     }
 
@@ -412,7 +455,7 @@ private struct CreationWorkspaceView: View {
     }
 
     private func send(message submittedMessage: String? = nil) async {
-        guard !isSending else { return }
+        guard !isSending, !isActing else { return }
         let message = (submittedMessage ?? prompt).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
         let submission = ChatTurnSubmissionIdentity.reusing(
@@ -424,6 +467,28 @@ private struct CreationWorkspaceView: View {
         isSending = true
         errorMessage = nil
         defer { isSending = false }
+        if currentProject.runtimeVersion != 2 {
+            let optimistic = PendingChatMessage(content: message)
+            pendingMessages.append(optimistic)
+            prompt = ""
+            let requestSequence = projectionOrder.begin()
+            do {
+                let thread = try await model.api.sendCreationMessage(threadID: project.id, message: message, expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID)
+                pendingTurnSubmission = nil
+                apply(thread, requestSequence: requestSequence)
+            } catch APIError.conflict {
+                pendingMessages.removeAll { $0.id == optimistic.id }
+                prompt = message
+                pendingTurnSubmission = nil
+                await refreshNow()
+                errorMessage = "This conversation changed. Your message is still here; review the latest direction and send again."
+            } catch {
+                pendingMessages.removeAll { $0.id == optimistic.id }
+                prompt = message
+                errorMessage = "Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely."
+            }
+            return
+        }
         let accepted: TurnAccepted
         do {
             accepted = try await model.api.submitTurn(
@@ -455,45 +520,36 @@ private struct CreationWorkspaceView: View {
     }
 
     private func selectFormat(_ format: CreationFormat) {
-        guard !isActing else { return }
+        guard capabilitiesAreAuthoritative, availableFormats.contains(format) else { return }
+        let pendingClips = model.uploads.records.filter { $0.projectID == project.id && $0.role == .clip }.count
+        if let capacityError = formatClipCapacityError(format: format, clipLimit: maximumClipsByFormat[format] ?? format.fallbackMaximumClipCount, occupiedClipCount: attachedClipCount + pendingClips) {
+            errorMessage = capacityError
+            return
+        }
+        performAction("select_format", payload: ["format": .string(format.serverValue)])
+    }
+
+    private func performAction(_ action: String, payload: [String: JSONValue] = [:]) {
+        guard !isActing, !isSending else { return }
+        isActing = true
+        errorMessage = nil
+        let identity = CreationActionIdentity.reusing(pendingAction, action: action, payload: payload, revision: threadRevision)
+        pendingAction = identity
         Task {
-            isActing = true
-            errorMessage = nil
             defer { isActing = false }
-            let clipLimit = maximumClipsByFormat[format] ?? format.fallbackMaximumClipCount
-            let occupiedClipCount = attachedClipCount + pendingUploadCount
-            if let capacityError = formatClipCapacityError(
-                format: format,
-                clipLimit: clipLimit,
-                occupiedClipCount: occupiedClipCount
-            ) {
-                errorMessage = capacityError
-                return
-            }
-            let thread: CreationThread
             do {
-                thread = try await model.api.applyCreationAction(
-                    threadID: project.id,
-                    action: "select_format",
-                    payload: ["format": .string(format.serverValue)],
-                    expectedRevision: threadRevision
-                )
-            } catch let error as APIError where error == .conflict {
+                let requestSequence = projectionOrder.begin()
+                let thread = try await model.api.creationAction(threadID: project.id, action: action, payload: payload, expectedRevision: identity.revision, clientActionID: identity.id)
+                pendingAction = nil
+                apply(thread, requestSequence: requestSequence)
+                if action == "select_format" { isChoosingFormat = false }
+                errorMessage = await acceptedMutationRefreshError("Saved, but the conversation couldn’t refresh.", refresh: { try await refreshDelta() })
+            } catch APIError.conflict {
+                pendingAction = nil
                 await refreshCapabilities()
                 await refreshNow()
-                errorMessage = "That format is no longer available. Choose one of the refreshed options."
-                return
-            } catch {
-                errorMessage = "That format wasn’t saved. \(error.localizedDescription)"
-                return
-            }
-            apply(thread)
-            selectedFormat = CreationFormat(thread: thread) ?? format
-            isChoosingFormat = false
-            errorMessage = await acceptedMutationRefreshError(
-                "The format was saved, but the conversation couldn’t refresh.",
-                refresh: { try await refreshDelta() }
-            )
+                errorMessage = "This project changed. Review the latest options and try again."
+            } catch { errorMessage = "That change wasn’t saved. \(error.localizedDescription)" }
         }
     }
 
@@ -506,13 +562,15 @@ private struct CreationWorkspaceView: View {
                 limits[format] = max(1, capability.maxClips)
                 return format
             }
-            if !formats.isEmpty { availableFormats = formats }
+            availableFormats = formats
+            capabilities = response
+            capabilitiesError = formats.isEmpty ? "No creation formats are currently available. Try again in a moment." : nil
             maximumClipsByFormat = limits
             capabilitiesAreAuthoritative = true
         } catch {
             capabilitiesAreAuthoritative = false
-            let projected = CreationFormat.available(in: events)
-            if !projected.isEmpty { availableFormats = projected }
+            availableFormats = []
+            capabilitiesError = "Kria couldn’t load creation options. Check your connection and retry."
         }
     }
 
@@ -522,7 +580,8 @@ private struct CreationWorkspaceView: View {
         while !Task.isCancelled {
             do {
                 let changed = try await refreshDelta()
-                delay = changed ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
+                delay = changed || isSending || isActing || currentProject.status == .rendering
+                    ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
                 return
             } catch {
@@ -538,8 +597,9 @@ private struct CreationWorkspaceView: View {
     private func refreshNow() async {
         errorMessage = nil
         do {
+            let requestSequence = projectionOrder.begin()
             let thread = try await model.api.project(threadID: project.id)
-            apply(thread)
+            apply(thread, requestSequence: requestSequence)
             if thread.runtimeVersion == 2 {
                 _ = try await refreshDelta()
             }
@@ -550,23 +610,22 @@ private struct CreationWorkspaceView: View {
         }
     }
 
-    private func apply(_ thread: CreationThread) {
+    private func apply(_ thread: CreationThread, requestSequence: Int? = nil) {
         let acceptsProjection = ThreadRevisionOrder.acceptsProjection(
             current: threadRevision,
             incoming: thread.revision
         )
         events = ChatTranscriptHistory.merge(events, with: thread.events)
-        if !capabilitiesAreAuthoritative {
-            let projected = CreationFormat.available(in: events)
-            if !projected.isEmpty { availableFormats = projected }
-        }
+
         afterSequence = ChatTranscriptHistory.nextAfterSequence(
             current: afterSequence,
             response: afterSequence,
             events: events
         )
-        guard acceptsProjection else { return }
+        reconcilePendingMessages()
+        guard acceptsProjection, projectionOrder.accept(requestSequence) else { return }
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: thread.revision)
+        fullThread = thread
         threadState = thread.state ?? [:]
         selectedFormat = CreationFormat(thread: thread) ?? selectedFormat
         model.updateProject(thread.summary)
@@ -580,8 +639,9 @@ private struct CreationWorkspaceView: View {
         if currentProject.runtimeVersion != 2 {
             let previousRevision = threadRevision
             let previousEventIDs = events.map(\.id)
+            let requestSequence = projectionOrder.begin()
             let thread = try await model.api.project(threadID: project.id)
-            apply(thread)
+            apply(thread, requestSequence: requestSequence)
             reconcilePendingMessages()
             let changed = threadRevision != previousRevision || events.map(\.id) != previousEventIDs
             if changed { errorMessage = nil }
@@ -639,27 +699,32 @@ private struct CreationWorkspaceView: View {
               let identifier = lastRequest.payload?["approval_id"]?.stringValue.flatMap(UUID.init(uuidString:))
         else {
             approval = nil
+            approvalNotice = nil
             return
         }
-        if approval?.approvalID != identifier.uuidString {
+        if approval?.approvalID != identifier.uuidString || (approval?.expiresAt ?? .distantPast) <= .now {
             let fetched = try await model.api.approval(threadID: project.id, approvalID: identifier)
             let requestStillCurrent = events.contains(where: {
                 $0.id == lastRequest.id && $0.sequence == lastRequest.sequence
             }) && !events.contains(where: {
                 $0.sequence > lastRequest.sequence && terminalTypes.contains($0.eventType)
             })
-            if requestStillCurrent { approval = fetched }
+            if requestStillCurrent {
+                approval = fetched.status == "pending" && fetched.expiresAt > .now ? fetched : nil
+                approvalNotice = fetched.status == "expired" || fetched.expiresAt <= .now
+                    ? "This approval expired. Send a message to request an updated direction." : nil
+            }
         }
     }
 
     private func decide(_ decision: String) {
-        guard !isActing,
-              let approval,
+        guard !isActing, pendingUploadCount == 0,
+              let approval, approval.expiresAt > .now,
               let identifier = UUID(uuidString: approval.approvalID),
               let draftRevision = approval.draftRevision
         else { return }
+        isActing = true
         Task {
-            isActing = true
             errorMessage = nil
             defer { isActing = false }
             do {
@@ -672,6 +737,7 @@ private struct CreationWorkspaceView: View {
                     fingerprint: approval.approvalFingerprint
                 )
             } catch {
+                await refreshNow()
                 errorMessage = "Kria couldn’t record that decision. \(error.localizedDescription)"
                 return
             }
@@ -711,6 +777,18 @@ enum ChatTranscriptHistory {
 /// Network requests overlap by design: a poll can start before a submit or
 /// action and finish after it. Event history is append-only and may always be
 /// merged, but mutable projections must never move back to an older revision.
+struct ThreadProjectionOrder {
+    private var issued = 0
+    private var accepted = 0
+    mutating func begin() -> Int { issued += 1; return issued }
+    mutating func accept(_ sequence: Int?) -> Bool {
+        let sequence = sequence ?? begin()
+        guard sequence >= accepted else { return false }
+        accepted = sequence
+        return true
+    }
+}
+
 enum ThreadRevisionOrder {
     static func advance(current: Int, incoming: Int) -> Int { max(current, incoming) }
     static func acceptsProjection(current: Int, incoming: Int) -> Bool { incoming >= current }
@@ -733,7 +811,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
             "assistant_question", "assistant_response", "assistant_strategy",
             "assistant_review", "draft_applied", "assistant_error", "assistant_render_failed", "memory_updated",
             "creator_memory_receipt", "agent_assistant_question", "agent_assistant_strategy",
-            "agent_assistant_review", "agent_assistant_error", "agent_assistant_render_failed"
+            "agent_assistant_review", "agent_assistant_error", "agent_assistant_render_failed",
+            "agent_assistant_execution", "assistant_execution"
         ]
         let role: ChatMessageRole
         if event.role == "user" && event.eventType == "user_message" {
@@ -835,34 +914,6 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         case "narrated", "narrated_planned": self = .narrated
         case "subtitled", "talking_to_camera": self = .talkingToCamera
         default: return nil
-        }
-    }
-}
-
-private struct AttachmentSheet: View {
-    let projectID: UUID
-    let maximumClipCount: Int
-    let attachedClipCount: Int
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                FootagePickerView(
-                    projectID: projectID,
-                    uploads: model.uploads,
-                    maximumClipCount: maximumClipCount,
-                    attachedClipCount: attachedClipCount
-                )
-                .padding(20)
-            }
-                .background(KriaColor.paper)
-                .navigationTitle("Add footage")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-                }
         }
     }
 }

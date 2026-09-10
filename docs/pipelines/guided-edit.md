@@ -566,3 +566,36 @@ These guided tests require semantic judging in live mode, so this command also
 needs `ANTHROPIC_API_KEY`; the Anthropic charge is outside the Google $2
 reservation ledger. The standard protected workflow intentionally has no
 guided selector until it can account for that second provider.
+
+### Video source reuse
+
+New montage plans persist `video_reuse_policy`: `once` by default,
+`distinct_windows` for requested alternation, or `allow_repeat` for explicit loops.
+A source appearing twice counts as reuse even when the windows do not overlap.
+The proposal agent, deterministic fallback, and approval validator enforce the same
+policy. Native Creator montages also consolidate song slots to unique source count
+and drop degraded-matcher revisits; exact editor timeline edits keep their explicit
+source selections. With `once`, longer continuous cuts replace the generic 1.2-second ceiling;
+the target is clamped to unique footage capacity. Explicit mixed-media hold bounds
+still apply. The creator's latest request may enable or remove repetition on a
+revision; text-only requests preserve the saved decision. Older approved snapshots
+omit this field so their hashes and playback contracts stay unchanged.
+
+Guards: `tests/services/test_video_reuse_policy.py`,
+`tests/agents/test_main_creator_agent.py`, and the no-reuse / explicit-loop agent evals.
+
+### Creator-authored text and planner failures
+
+Creator requests such as “Add a text saying Summer in Madrid. Make it pastel yellow”
+preserve the literal title separately from the following style sentence. The main
+creator interprets natural wording and languages into typed text/font/color intent,
+with verbatim creator-request evidence for each field. The server validates that
+evidence against creator messages (including the latest message beyond capped
+history); footage metadata cannot authorize on-screen copy. Legacy deterministic
+extraction remains a fallback. Pastel yellow
+maps to `#FFF0A6`, distinct from ordinary yellow. Both normal planning and compiler
+fallbacks pass through the explicit-intent boundary. Once-only, video-only montage
+confirmations are capped to known source duration before approval (photos, explicit
+repetition, and recorded narration retain their separate duration contracts).
+Regression: `test_route_schema_failure_preserves_madrid_text_and_source_capacity`;
+live/replay fixture: `main_creator/madrid_pastel_title.json`.

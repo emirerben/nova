@@ -1529,6 +1529,7 @@ def test_fast_cut_program_persists_with_legacy_compatibility_beats(monkeypatch) 
     item.edit_proposal = _proposal(
         brief=ProposalBrief(
             direction="fast_montage",
+            video_reuse_policy="distinct_windows",
             goal="Lead with the strongest Athens moment",
             pace="fast",
             duration_s=3,

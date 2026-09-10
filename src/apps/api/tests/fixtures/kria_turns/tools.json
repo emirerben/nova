@@ -1058,6 +1058,23 @@
                 "default": null,
                 "description": "Confirmed intro color (#RRGGBB or a supported color alias).",
                 "title": "Text Color"
+              },
+              "video_reuse_policy": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "once",
+                      "distinct_windows",
+                      "allow_repeat"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Video Reuse Policy"
               }
             },
             "title": "CreativeStrategy",

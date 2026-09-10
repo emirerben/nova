@@ -9,7 +9,8 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertFalse(uploading.canContinue)
 
         let attached = FootageReadiness(attachedCount: 1, pendingCount: 1)
-        XCTAssertTrue(attached.canContinue)
+        XCTAssertFalse(attached.canContinue)
+        XCTAssertTrue(FootageReadiness(attachedCount: 1, pendingCount: 0).canContinue)
     }
 
     func testTranscriptProjectionMatchesWebAssistantEventAllowlist() throws {

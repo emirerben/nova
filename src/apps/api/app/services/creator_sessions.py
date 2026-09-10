@@ -530,6 +530,8 @@ def compile_active_plan(
         receipt["image_layout"] = strategy.image_layout
     if strategy.montage_cadence is not None:
         receipt["montage_cadence"] = strategy.montage_cadence.model_dump(mode="json")
+    if strategy.video_reuse_policy is not None:
+        receipt["video_reuse_policy"] = strategy.video_reuse_policy
     receipt["plan_hash"] = canonical_context_hash(receipt)
     return receipt
 

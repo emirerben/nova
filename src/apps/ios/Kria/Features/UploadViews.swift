@@ -7,6 +7,9 @@ struct FootagePickerView: View {
     let projectID: UUID
     let maximumClipCount: Int
     let attachedClipCount: Int
+    let role: CreationMediaRole
+    let itemID: String?
+    let limit: CreationMediaLimit?
     @ObservedObject private var uploads: BackgroundUploadCoordinator
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showingPhotosPicker = false
@@ -20,8 +23,14 @@ struct FootagePickerView: View {
         projectID: UUID,
         uploads: BackgroundUploadCoordinator,
         maximumClipCount: Int = 10,
-        attachedClipCount: Int = 0
+        attachedClipCount: Int = 0,
+        role: CreationMediaRole = .clip,
+        itemID: String? = nil,
+        limit: CreationMediaLimit? = nil
     ) {
+        self.role = role
+        self.itemID = itemID
+        self.limit = limit
         self.projectID = projectID
         self.uploads = uploads
         self.maximumClipCount = max(0, maximumClipCount)
@@ -37,12 +46,13 @@ struct FootagePickerView: View {
     }
 
     private var pendingUploadCount: Int {
-        uploads.records.filter { $0.projectID == projectID }.count
+        uploads.records.filter { $0.projectID == projectID && $0.role == role }.count
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            KriaSectionLabel(title: "Add footage")
+            KriaSectionLabel(title: "Add \(role.title.lowercased())")
+            if role != .voiceover {
             Button { consentedSource = .photos; showingCloudConsent = true } label: {
                 Label("Choose from Photos", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 48)
             }
@@ -52,9 +62,10 @@ struct FootagePickerView: View {
                 isPresented: $showingPhotosPicker,
                 selection: $photoItems,
                 maxSelectionCount: max(1, selectionCapacity.remaining),
-                matching: .videos
+                matching: role == .visual ? .any(of: [.videos, .images]) : .videos
             )
             .onChange(of: photoItems) { _, items in Task { await importPhotoItems(items) } }
+            }
             Button { consentedSource = .files; showingCloudConsent = true } label: {
                 Label("Choose from Files or iCloud", systemImage: "folder").frame(maxWidth: .infinity, minHeight: 48)
             }
@@ -62,7 +73,7 @@ struct FootagePickerView: View {
             .disabled(selectionCapacity.remaining == 0)
             .fileImporter(
                 isPresented: $showingFileImporter,
-                allowedContentTypes: [.movie],
+                allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? [.movie, .image] : [.movie],
                 allowsMultipleSelection: selectionCapacity.remaining > 1,
                 onCompletion: importFiles
             )
@@ -73,7 +84,7 @@ struct FootagePickerView: View {
                 }
             }
             if selectionCapacity.remaining == 0 {
-                Text("This format already has its maximum number of clips.")
+                Text("You’ve reached the limit for \(role.title.lowercased()).")
                     .font(KriaFont.body(12))
                     .foregroundStyle(KriaColor.zinc)
             } else if let selectionMessage {
@@ -81,7 +92,7 @@ struct FootagePickerView: View {
                     .font(KriaFont.body(12))
                     .foregroundStyle(KriaColor.zinc)
             }
-            ForEach(uploads.records.filter { $0.projectID == projectID }) { record in
+            ForEach(uploads.records.filter { $0.projectID == projectID && $0.role == role }) { record in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text(record.filename).lineLimit(1)
@@ -89,6 +100,7 @@ struct FootagePickerView: View {
                         if record.uploadCompleted == true {
                             Button("Retry attach") { Task { await uploads.retryAttachment(recordID: record.id) } }
                         } else {
+                            Button("Retry") { Task { await uploads.retryUpload(recordID: record.id) } }
                             Button("Cancel") { Task { await uploads.cancel(recordID: record.id) } }
                         }
                     }
@@ -107,10 +119,11 @@ struct FootagePickerView: View {
         reservedClipCount += acceptedCount
         for item in items.prefix(acceptedCount) {
             guard let media = try? await item.loadTransferable(type: ImportedMedia.self) else {
+                selectionMessage = "This file couldn’t be read. Try Files or choose it again."
                 reservedClipCount -= 1
                 continue
             }
-            _ = await uploads.enqueue(fileURL: media.url, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource)
+            _ = await uploads.enqueue(fileURL: media.url, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource, role: role, itemID: itemID, limit: limit)
             // enqueue publishes a live record before returning on success; on
             // failure the reservation is free for another selection.
             reservedClipCount -= 1
@@ -126,7 +139,7 @@ struct FootagePickerView: View {
         reservedClipCount += acceptedCount
         Task {
             for url in urls.prefix(acceptedCount) {
-                _ = await uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource)
+                _ = await uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: role, itemID: itemID, limit: limit)
                 reservedClipCount -= 1
             }
         }

@@ -82,6 +82,13 @@ protocol KriaAPIClient: Sendable {
     func projects() async throws -> [ProjectSummary]
     func project(threadID: UUID) async throws -> CreationThread
     func creationCapabilities() async throws -> CreationCapabilities
+    func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
+    func creationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int, clientActionID: String) async throws -> CreationThread
+    func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget
+    func registerVisual(itemID: String, reservationID: String, gcsPath: String, contentType: String, filename: String) async throws -> CreationVisual
+    func visuals(itemID: String) async throws -> CreationVisuals
+    func removeVisual(itemID: String, assetID: String) async throws
+    func retryVisual(itemID: String, assetID: String) async throws -> CreationVisual
     func library() async throws -> [ProjectSummary]
     func createThread(message: String?) async throws -> CreationThread
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession
@@ -150,7 +157,7 @@ struct CreationFormatCapability: Codable, Equatable, Sendable {
     let maxClips: Int
     enum CodingKeys: String, CodingKey { case id; case editFormat = "edit_format"; case maxClips = "max_clips" }
 }
-struct CreationCapabilities: Codable, Equatable, Sendable { let formats: [CreationFormatCapability] }
+
 struct CreationThread: Codable, Identifiable, Sendable {
     let id: String
     let title: String
@@ -166,7 +173,9 @@ struct CreationThread: Codable, Identifiable, Sendable {
     /// from older servers may omit it, so decoding treats a missing value as
     /// an empty transcript.
     let events: [ThreadEvent]
-    enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state, events; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case activePlanItemID = "active_plan_item_id"; case updatedAt = "updated_at" }
+    let creatorAgent: [String: JSONValue]?
+    let speechCleanup: [String: JSONValue]?
+    enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state, events; case creatorAgent = "creator_agent"; case speechCleanup = "speech_cleanup"; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case activePlanItemID = "active_plan_item_id"; case updatedAt = "updated_at" }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -181,6 +190,8 @@ struct CreationThread: Codable, Identifiable, Sendable {
         updatedAt = try values.decode(Date.self, forKey: .updatedAt)
         state = try values.decodeIfPresent([String: JSONValue].self, forKey: .state)
         events = try values.decodeIfPresent([ThreadEvent].self, forKey: .events) ?? []
+        creatorAgent = try values.decodeIfPresent([String: JSONValue].self, forKey: .creatorAgent)
+        speechCleanup = try values.decodeIfPresent([String: JSONValue].self, forKey: .speechCleanup)
     }
 
     var summary: ProjectSummary {
@@ -234,7 +245,22 @@ struct CreationThread: Codable, Identifiable, Sendable {
         return variants.first(where: \.isPlayable)
     }
     private var projectStatus: ProjectStatus {
-        guard activeJobID != nil else { return .draft }
+        guard activeJobID != nil else {
+            // A confirmed Creator execution prepares media before it mints a
+            // Job. Both this phase and pre-dispatch failures are real states.
+            let generation = state?["generation"]?.objectValue?["status"]?.stringValue
+            let creator = creatorAgent?["status"]?.stringValue
+            if let creator {
+                if creator == "failed" { return .failed }
+                if ["executing", "rendering", "reviewing"].contains(creator) { return .rendering }
+                // A new direction can coexist with the last attempt's
+                // generation receipt. The current Creator phase wins.
+                return .draft
+            }
+            if generation == "failed" { return .failed }
+            if ["preparing", "queued", "rendering"].contains(generation ?? "") { return .rendering }
+            return .draft
+        }
         guard let status = job?.status.lowercased() else { return .rendering }
         if status == "ready" || status == "done" || status.contains("_ready") { return .ready }
         if status == "failed" || status == "cancelled" || status == "no_labeled_tracks" || status.contains("_failed") { return .failed }
@@ -579,6 +605,12 @@ struct KriaAPI: KriaAPIClient {
     private static let checkedEditorOperationIDs = [
         Operations.getCreationCapabilities.id,
         Operations.applyCreationAction.id,
+        Operations.sendCreationMessage.id,
+        Operations.reserveCreationVisualUploads.id,
+        Operations.registerCreationVisual.id,
+        Operations.listCreationVisuals.id,
+        Operations.deleteCreationVisual.id,
+        Operations.retryCreationVisual.id,
         Operations.openLibraryJobInEditor.id,
         Operations.getGenerativeJobStatus.id,
         Operations.commitPlanItemEditor.id,
@@ -602,7 +634,11 @@ struct KriaAPI: KriaAPIClient {
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
     func library() async throws -> [ProjectSummary] { try await request(path: "me/jobs", method: "GET", bodyData: nil, decode: LibraryResponse.self).jobs.map { $0.summary } }
-    func createThread(message: String?) async throws -> CreationThread { try await request(path: "creation-threads", method: "POST", bodyData: try JSONEncoder().encode(CreateThreadRequest(message: message, clientEventID: UUID().uuidString, runtimeVersion: 2)), decode: CreationThread.self) }
+    func createThread(message: String?) async throws -> CreationThread {
+        let capabilities = try await creationCapabilities()
+        let runtime = capabilities.preferredRuntimeVersion
+        return try await request(path: "creation-threads", method: "POST", bodyData: JSONEncoder().encode(CreateThreadRequest(message: runtime == 1 ? message : nil, clientEventID: UUID().uuidString, runtimeVersion: runtime)), decode: CreationThread.self)
+    }
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession { try await request(path: "auth/mobile/exchange", method: "POST", bodyData: try JSONEncoder().encode(["id_token": credential.token, "provider": provider, "nonce": credential.nonce]), decode: MobileSession.self) }
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession { try await request(path: "auth/mobile/refresh", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: MobileSession.self) }
     func revokeMobileSession(_ refreshToken: String) async throws { _ = try await request(path: "auth/mobile/revoke", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: RevokeResponse.self) }
@@ -650,11 +686,11 @@ struct KriaAPI: KriaAPIClient {
         return reservation
     }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
-        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: "video", filename: filename, contentType: contentType)
+        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: contentType.hasPrefix("audio/") ? "audio" : "video", filename: filename, contentType: contentType)
         let body = ProjectMediaAttachmentRequest(media: [media], clientEventID: clientEventID, expectedRevision: expectedRevision)
         return try await request(path: "creation-threads/\(threadID.uuidString)/media", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
-    private func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type) async throws -> T {
+    func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type) async throws -> T {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
         guard let url = components?.url else { throw APIError.invalidResponse }

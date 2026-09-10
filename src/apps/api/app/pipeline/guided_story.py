@@ -1674,7 +1674,7 @@ def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
         previous_id: str | None = None
         windows_by_media: dict[str, list[tuple[float, float]]] = {}
         for cut in snapshot.fast_cuts:
-            if cut.media_id == previous_id:
+            if cut.media_id == previous_id and snapshot.video_reuse_policy != "allow_repeat":
                 raise GuidedStoryError(
                     "guided_story_snapshot_invalid",
                     "Fast montage cuts cannot repeat the same media adjacently.",
@@ -1686,8 +1686,11 @@ def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
                     (float(cut.source_start_s), float(cut.source_end_s))
                 )
         if not (
-            snapshot.montage_cadence is not None
-            and snapshot.montage_cadence.reuse_policy == "allow_repeat"
+            snapshot.video_reuse_policy == "allow_repeat"
+            or (
+                snapshot.montage_cadence is not None
+                and snapshot.montage_cadence.reuse_policy == "allow_repeat"
+            )
         ):
             for windows in windows_by_media.values():
                 windows.sort()
