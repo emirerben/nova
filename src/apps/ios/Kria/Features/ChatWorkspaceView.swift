@@ -7,6 +7,7 @@ struct ChatWorkspaceView: View {
     @State private var showsProjects = false
     @State private var drawerDrag: CGFloat = 0
     @State private var drawerMounted = false
+    @State private var horizontalDrawerDrag: Bool?
     @State private var showsGallery = false
     @State private var showsAccount = false
 
@@ -15,15 +16,18 @@ struct ChatWorkspaceView: View {
             let drawerWidth = min(326, max(0, geometry.size.width - 76))
             let drawerOffset = min(drawerWidth, max(0, (showsProjects ? drawerWidth : 0) + drawerDrag))
             let drawerActive = showsProjects || drawerOffset > 0
-            ZStack(alignment: .leading) {
+            let drawerProgress = drawerWidth > 0 ? drawerOffset / drawerWidth : 0
+            let topInset = geometry.safeAreaInsets.top
+            let bottomInset = geometry.safeAreaInsets.bottom
+            ZStack(alignment: .topLeading) {
                 if drawerActive || drawerMounted {
                     ProjectsDrawer(
                         close: { setDrawerOpen(false) },
                         openGallery: { setDrawerOpen(false); showsGallery = true },
                         openAccount: { setDrawerOpen(false); showsAccount = true }
                     )
-                    .frame(width: drawerWidth)
-                    .offset(x: drawerOffset - drawerWidth)
+                    .frame(width: drawerWidth, height: geometry.size.height)
+                    .offset(x: drawerOffset - drawerWidth, y: topInset)
                     .accessibilityHidden(!drawerActive)
                     .allowsHitTesting(drawerActive)
                 }
@@ -59,20 +63,25 @@ struct ChatWorkspaceView: View {
                                     KriaWordmark().accessibilityHidden(showsProjects)
                                     Spacer()
                                     Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
-                                }.padding(.horizontal, 16).frame(minHeight: 64).background(drawerActive ? KriaColor.menu : KriaColor.paper)
+                                }.padding(.horizontal, 16).frame(minHeight: 64).background(WorkspaceSurface())
                             }
                         }
                     }
                     .toolbar(.hidden, for: .navigationBar)
                 }
                 .environment(\.projectsDrawerOpen, drawerActive)
-                .frame(width: geometry.size.width)
-                .background(drawerActive ? KriaColor.menu : KriaColor.paper)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .padding(.top, topInset)
+                .padding(.bottom, bottomInset)
+                .background(WorkspaceSurface())
+                .clipShape(RoundedRectangle(cornerRadius: 44 * drawerProgress, style: .continuous))
                 .offset(x: drawerOffset)
             }
-            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
+            .environment(\.projectsDrawerProgress, drawerProgress)
+            .frame(width: geometry.size.width, height: geometry.size.height + topInset + bottomInset, alignment: .topLeading)
             .clipped()
-            .background(KriaColor.paper)
+            .offset(y: -topInset)
+            .background(KriaColor.paper.ignoresSafeArea())
             .simultaneousGesture(drawerGesture(width: drawerWidth))
             .accessibilityAction(.escape) { setDrawerOpen(false) }
         }
@@ -96,7 +105,7 @@ struct ChatWorkspaceView: View {
         // Commit the destination and release the drag in the same transaction.
         // GestureState's automatic reset previously replayed the closing offset.
         drawerMounted = true
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.24)) {
             showsProjects = isOpen
             drawerDrag = 0
         } completion: {
@@ -105,17 +114,21 @@ struct ChatWorkspaceView: View {
     }
 
     private func drawerGesture(width: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 20)
+        DragGesture(minimumDistance: 3, coordinateSpace: .global)
             .onChanged { value in
-                // Vertical chat and project-list scrolling retain their normal behavior.
-                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                drawerDrag = value.translation.width
+                // Choose an axis once, without a 20-point dead zone at touch-down.
+                if horizontalDrawerDrag == nil {
+                    horizontalDrawerDrag = abs(value.translation.width) > abs(value.translation.height)
+                }
+                guard horizontalDrawerDrag == true else { return }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { drawerDrag = value.translation.width }
             }
             .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else {
-                    setDrawerOpen(showsProjects)
-                    return
-                }
+                let wasHorizontal = horizontalDrawerDrag == true
+                horizontalDrawerDrag = nil
+                guard wasHorizontal else { return }
                 let projectedOffset = (showsProjects ? width : 0) + value.predictedEndTranslation.width
                 setDrawerOpen(projectedOffset > width / 2)
             }
@@ -140,7 +153,7 @@ private struct WorkspaceEmptyView: View {
         }
         .padding(24)
         .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
-        .background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
+        .background(WorkspaceSurface())
     }
 }
 
@@ -154,7 +167,7 @@ private struct WorkspaceLoadingView: View {
                 .foregroundStyle(KriaColor.zinc)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
+        .background(WorkspaceSurface())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Opening your creation conversation")
     }
@@ -175,7 +188,7 @@ private struct WorkspaceRecoveryView: View {
         }
         .padding(24)
         .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
-        .background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
+        .background(WorkspaceSurface())
     }
 }
 
@@ -302,7 +315,7 @@ private struct CreationWorkspaceView: View {
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
         }
-        .background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
+        .background(WorkspaceSurface())
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: $prompt,

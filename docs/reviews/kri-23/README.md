@@ -11,6 +11,11 @@ not supply a percentage; the preview does not fabricate Paper's example progress
 
 ## Visual evidence
 
+- [Rounded drawer top edge](rounded-drawer-top.jpg): final full-height surface with
+  continuous corners. Tint and corner radius follow drag progress; touch-down uses
+  a 3-point threshold and direct tracking, with one ease-out settling animation.
+  This supersedes the rectangular edge in the earlier drawer capture.
+
 - [Updated drawer and centered header](drawer-toggle.jpg): the menu button moves
   with the main screen and toggles the drawer. Horizontal swipes also open and
   close it, and the shifted workspace uses the menu button’s warm background.

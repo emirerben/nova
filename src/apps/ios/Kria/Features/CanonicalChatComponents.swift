@@ -38,6 +38,16 @@ struct CanonicalSecondaryButtonStyle: ButtonStyle {
 
 extension EnvironmentValues {
     @Entry var projectsDrawerOpen = false
+    @Entry var projectsDrawerProgress: CGFloat = 0
+}
+
+struct WorkspaceSurface: View {
+    @Environment(\.projectsDrawerProgress) private var progress
+
+    var body: some View {
+        KriaColor.paper.overlay { KriaColor.menu.opacity(Double(progress)) }
+            .ignoresSafeArea(.container)
+    }
 }
 
 struct WorkspaceHeader: View {
@@ -77,7 +87,7 @@ struct WorkspaceHeader: View {
                     .accessibilityHidden(projectsDrawerOpen)
                     .allowsHitTesting(!projectsDrawerOpen)
             }
-        }.foregroundStyle(KriaColor.ink).background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
+        }.foregroundStyle(KriaColor.ink).background(WorkspaceSurface())
     }
 }
 
@@ -713,9 +723,9 @@ struct ChatComposer: View {
             }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
                 .accessibilityLabel(isSending ? "Sending message" : "Send message")
         }
-        .padding(7).background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
+        .padding(7).background(WorkspaceSurface())
         .overlay(RoundedRectangle(cornerRadius: 30).stroke(KriaColor.border, lineWidth: 1))
-        .padding(.horizontal, 14).padding(.vertical, 12).background(projectsDrawerOpen ? KriaColor.menu : KriaColor.paper)
+        .padding(.horizontal, 14).padding(.vertical, 12).background(WorkspaceSurface())
     }
 }
 
