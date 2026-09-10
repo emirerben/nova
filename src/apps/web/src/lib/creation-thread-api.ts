@@ -195,6 +195,17 @@ export interface CreationThread {
   direction_receipt?: CreatorDirectionReceipt | null;
   /** Detail-only projection. Older APIs and list summaries omit it. */
   speech_cleanup?: CreationSpeechCleanupProjection | null;
+  /**
+   * Present only when a render-graph edge (PlanItem/CreatorAgentSession/Job
+   * ownership) has drifted incoherent and was dropped rather than hiding
+   * this whole project. `active_*` ids for a detached edge are already null
+   * in that case -- this only names which one and why, for a quiet notice.
+   */
+  integrity?: {
+    status: "degraded";
+    detached: string[];
+    codes: string[];
+  } | null;
   events: CreationThreadEvent[];
   job: CreationJob | null;
   created_at: string;
@@ -331,11 +342,28 @@ export interface CreationCapabilitiesResponse {
 export class CreationThreadError extends Error {
   readonly status: number;
   readonly problem?: KriaProblem;
-  constructor(message: string, status: number, problem?: KriaProblem) {
+  /**
+   * Failure classification, normalized across both wire shapes: the typed
+   * `{problem: {code, retryable}}` envelope from KriaFailureRoute (thread
+   * load failures), and the flat `{code, retryable}` shape the same-origin
+   * proxy (api-proxy.ts) writes for its own boundary failures (offline
+   * upstream, missing internal key, 5xx). Prefer `problem` when both are
+   * absent so existing call sites reading `.problem` see no change.
+   */
+  readonly code?: string;
+  readonly retryable?: boolean;
+  constructor(
+    message: string,
+    status: number,
+    problem?: KriaProblem,
+    flat?: { code?: string; retryable?: boolean },
+  ) {
     super(message);
     this.name = "CreationThreadError";
     this.status = status;
     this.problem = problem;
+    this.code = problem?.code ?? flat?.code;
+    this.retryable = problem?.retryable ?? flat?.retryable;
   }
 }
 
@@ -359,15 +387,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
     let problem: KriaProblem | undefined;
+    let flat: { code?: string; retryable?: boolean } | undefined;
     try {
-      const body = (await response.json()) as { detail?: string; problem?: KriaProblem };
+      const body = (await response.json()) as {
+        detail?: string;
+        problem?: KriaProblem;
+        code?: string;
+        retryable?: boolean;
+      };
       problem = body.problem;
+      if (typeof body.code === "string") flat = { code: body.code, retryable: body.retryable };
       if (problem?.message) message = problem.message;
       else if (body.detail) message = body.detail;
     } catch {
       // Keep the HTTP status when a proxy returns a non-JSON response.
     }
-    throw new CreationThreadError(message, response.status, problem);
+    throw new CreationThreadError(message, response.status, problem, flat);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

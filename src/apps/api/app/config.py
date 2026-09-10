@@ -165,6 +165,12 @@ class Settings(BaseSettings):
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
     kria_turn_lease_seconds: int = Field(default=15, ge=10, le=120)
+    # GET /creation-threads/{id} degrades a thread whose render-graph edge
+    # (PlanItem/CreatorAgentSession/Job ownership) has drifted incoherent,
+    # instead of 404ing the whole project and its intact chat transcript.
+    # False reproduces the pre-fix fail-closed 404 byte-identically. See
+    # KRI-26 / agents/DECISIONS.md.
+    creation_thread_degraded_projection_enabled: bool = True
     # Live speech-cleanup rollout state. New jobs always receive an explicit
     # required_v1/off_v1 contract; legacy_auto is historical-job compatibility
     # only and is intentionally rejected as a live setting.

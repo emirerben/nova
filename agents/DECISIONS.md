@@ -2228,3 +2228,48 @@ measurement of the runner. Retrying does not fix it, because the thing being
 measured is not transient. Normalise against something measured on the same
 machine at the same moment, and pick the threshold from the observed
 distribution instead of from a round number.
+
+---
+
+## [2026-09-10] Degrade a drifted creation-thread projection instead of 404ing it (KRI-26)
+
+**Decision:** `GET /creation-threads/{id}` used to withhold the *entire* thread — title,
+revision, full chat transcript — the moment any single render-graph edge
+(`PlanItem`/`CreatorAgentSession`/`Job` ownership) failed its coherence check, via a bare
+`HTTPException(404, "Creation thread not found")`. The web client mapped any 404 on an
+explicit thread id to a terminal "Project unavailable — may have been deleted" screen with
+no retry. `_load_authorized_projection_rows` now takes a `degrade` flag: read paths (the
+GET response, the render-projection sync, and the inert "is it ready?" status-only message
+branch) drop only the incoherent tier to `None` and report it via a new `integrity` field,
+while write paths (`record_editor_events`, `action_thread`'s confirmation flow) stay
+fail-closed. `_load` itself now raises a typed `RuntimeFailure` (`thread_not_found` /
+`thread_deleted` — the latter only when an owner-scoped `CreationThreadDeletion` tombstone
+exists — / `thread_id_invalid`) instead of an untyped 404, and the client's new
+`creationLoadFailureCopy` taxonomy reads that code (plus the proxy's own `code`/`retryable`)
+to show a retryable state for a network/service failure and reserve the terminal screen for
+a confirmed deletion. Gated by `CREATION_THREAD_DEGRADED_PROJECTION_ENABLED` (default `true`
+— off reproduces the pre-fix behavior byte-identically). A read-only
+`GET /admin/creation-threads/{id}/integrity` reuses the exact same predicate so the operator
+view can never say "coherent" for an edge the API still hides.
+
+**Why:** the fail-closed 404 was designed to stop a stale/cross-linked projection from
+re-signing another user's render URL — a real security property, but it was implemented by
+discarding the *entire* response instead of only the tainted edge, and conflated "this
+specific ownership edge doesn't check out" with "this thread doesn't exist." Two review
+passes (the design review and an adversarial follow-up) surfaced three ways the naive
+"just don't raise" version would have made things worse instead of better: (1)
+`_render_projection`'s job-branch fell back from `session=None` to the raw
+`thread.active_creator_agent_session_id` — re-adopting into a *committed, client-visible*
+projection the exact id the fence had just rejected; (2) `_sync_agent` copied a
+`CreatorAgentSession`'s transcript into the thread's own state/events with **no** ownership
+check at all — previously masked because the 404 upstream of it always discarded the
+response; degrading `_response` would have made that leak visible; (3) the client infers
+"still rendering" from `active_job_id` being set with no matching `job` projection, so
+leaving a detached `active_job_id` on the wire would have turned a stuck project into an
+infinite poll loop. All three are fixed alongside the degrade change, not left for later.
+
+**Revisit if:** a future edge is added to the render graph and its own coherence check needs
+the same drop-not-discard treatment — extend `_load_authorized_projection_rows`'s pattern,
+never bolt on a parallel ad hoc check. If `_sync_agent` or `_render_projection` grow a new
+caller, re-verify neither the ownership fence nor the never-re-adopt-a-rejected-id rule can
+be bypassed from that call site.

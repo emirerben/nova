@@ -7,6 +7,10 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Narrow native PRs run affected UI tests plus cross-app smoke coverage; shared, unknown, and multi-feature changes and main pushes retain the complete suite. All selected unit tests remain required.
 - iOS verification records phase timings and result bundles, verifies selected UI tests actually passed, and uploads diagnostics on failure.
+## [0.75.10.0] - 2026-09-10
+
+### Fixed
+- **A creation whose video render lost its link no longer looks deleted.** Loading a project used to withhold the whole chat — title, transcript, everything — the moment any part of its render graph drifted, and the client read that as "this project may have been deleted." The chat and title now load with a quiet notice when only the video link is affected, and a transient network or service error shows a retryable state instead of implying loss. Load failures are now typed (missing record, deleted, authorization, or service failure) so the right message and action show up, and an admin can read a project's exact integrity state without guessing.
 
 ## [0.76.0.0] - 2026-09-10
 

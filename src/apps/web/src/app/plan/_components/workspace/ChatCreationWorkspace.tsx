@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSession, signOut } from "next-auth/react";
+import { useSession, signIn, signOut } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Check, Download, Film, Menu, MoreHorizontal, PanelLeftClose,
@@ -37,6 +37,7 @@ import { useWorkspaceEditorChat } from "@/lib/editor-chat/useWorkspaceEditorChat
 import { useEditorConversation } from "@/lib/editor-chat/useEditorConversation";
 import type { EditorChatAction } from "@/lib/editor-chat/protocol";
 import { openEditorCreationThread, recordEditorConversation, type EditorConversationBatch, type CreationThreadMessage } from "@/lib/creation-thread-api";
+import { creationLoadFailureCopy, type CreationLoadFailure } from "@/lib/creation-load-failure-copy";
 import { BeamLoader } from "@/components/progress";
 import { VoiceRecorder } from "@/app/generative/VoiceRecorder";
 import {
@@ -490,6 +491,10 @@ export default function ChatCreationWorkspace({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
+  // `load` is a stable useCallback (mount-once, see below) so it must read
+  // offline status via ref, not the `offline` state closure, which would
+  // otherwise stay pinned to whatever it was when `load` was first created.
+  const offlineRef = useRef(false);
   const [pollReconnecting, setPollReconnecting] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
@@ -497,6 +502,7 @@ export default function ChatCreationWorkspace({
   const [editorOpen, setEditorOpen] = useState(true);
   const [galleryOpen, setGalleryOpen] = useState(() => searchParams.get("view") === "gallery");
   const [threadUnavailable, setThreadUnavailable] = useState(false);
+  const [loadFailure, setLoadFailure] = useState<CreationLoadFailure | null>(null);
   const [renameTarget, setRenameTarget] = useState<CreationThread | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -722,6 +728,7 @@ export default function ChatCreationWorkspace({
     let loadPromise: Promise<void>;
     loadPromise = (async () => {
       setError(null);
+      setLoadFailure(null);
       try {
         if (productionPreview) {
           const [threadsResult, capabilitiesResult, library] = await Promise.all([
@@ -809,13 +816,20 @@ export default function ChatCreationWorkspace({
         if (!current && !listed.some((item) => item.id === next.id)) setProjects((items) => [next, ...items]);
       } catch (cause) {
         if (!isCurrentLoad()) return;
-        if (initialThreadId && cause instanceof CreationThreadError && cause.status === 404) {
+        const failure = creationLoadFailureCopy(cause, { online: !offlineRef.current });
+        setLoadFailure(failure);
+        setError(failure.detail);
+        // Only an explicit thread id (someone navigated straight to a
+        // project) can ever show the terminal "gone" screen, and only for a
+        // failure classified as genuinely terminal -- a transient network or
+        // service error (including a 404 with no/unknown code, or a
+        // service-shaped 404 like a runtime-flag rollback) must never imply
+        // the project is deleted. See KRI-26.
+        if (initialThreadId && failure.tone === "terminal") {
           activeThreadIdRef.current = null;
           setThread(null);
           setThreadUnavailable(true);
-          return;
         }
-        setError("I couldn’t open this creation chat. Check your connection and try again.");
       }
     })().finally(() => {
       if (isCurrentLoad()) setInitialLoading(false);
@@ -834,7 +848,11 @@ export default function ChatCreationWorkspace({
   }, []);
 
   useEffect(() => {
-    const update = () => setOffline(typeof navigator !== "undefined" && !navigator.onLine);
+    const update = () => {
+      const next = typeof navigator !== "undefined" && !navigator.onLine;
+      offlineRef.current = next;
+      setOffline(next);
+    };
     update();
     window.addEventListener("online", update);
     window.addEventListener("offline", update);
@@ -1811,9 +1829,9 @@ export default function ChatCreationWorkspace({
     return (
       <div className="flex h-dvh items-center justify-center bg-background px-6 text-center text-foreground">
         <div className="max-w-md space-y-4">
-          <h1 className="font-display text-3xl font-medium">Project unavailable</h1>
-          <p className="text-sm text-muted-foreground">This project may have been deleted or you may no longer have access to it.</p>
-          <Button type="button" asChild><Link href="/plan">Back to projects</Link></Button>
+          <h1 className="font-display text-3xl font-medium">{loadFailure?.title ?? "Project unavailable"}</h1>
+          <p className="text-sm text-muted-foreground">{loadFailure?.detail ?? "This project may have been deleted or you may no longer have access to it."}</p>
+          <Button type="button" asChild><Link href="/plan">{loadFailure?.actionLabel ?? "Back to projects"}</Link></Button>
         </div>
       </div>
     );
@@ -1989,11 +2007,24 @@ export default function ChatCreationWorkspace({
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Kria creation chat">
       {productionPreview ? <div className="flex shrink-0 items-center justify-center gap-2 border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950" role="status" data-testid="production-preview-banner"><span className="size-2 rounded-full bg-lime-600" aria-hidden="true" /><strong>Live production data</strong><span>Read-only. Rename and delete are local previews that reset on reload.</span></div> : null}
       {CREATOR_MEMORY_ENABLED && thread?.direction_receipt ? <div className="px-4 sm:px-6"><CreatorDirectionReceipt receipt={thread.direction_receipt} projectId={thread.id} expectedRevision={thread.direction_receipt.memory_revision} /></div> : null}
+      {thread?.integrity?.status === "degraded" ? <div className="flex shrink-0 items-center justify-center gap-2 border-b border-zinc-200 bg-white px-4 py-2 text-center text-xs text-[#526071]" role="status">Your chat history is intact — we couldn’t link this project’s video just now. Try refreshing in a moment.</div> : null}
       <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="creation-live-announcer">{announcement}</p>
       <p className="sr-only" role="status" aria-atomic="true" data-testid="speech-cleanup-live-announcer">{liveAnnouncement}</p>
       <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="off" tabIndex={0} onScroll={onTranscriptScroll} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
         {!thread && !error ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
-        {!thread && error ? <ChatArtifactCard title="Creation chat couldn’t load" description="Your projects are safe. Check your connection, then try again."><Button type="button" variant="outline" disabled={initialLoading} onClick={() => void load()}><RefreshCw /> {initialLoading ? "Retrying…" : "Retry"}</Button></ChatArtifactCard> : null}
+        {!thread && loadFailure ? (
+          <ChatArtifactCard role="alert" title={loadFailure.title} description={loadFailure.detail}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={initialLoading}
+              onClick={() => { if (loadFailure.tone === "auth") void signIn("google"); else void load(); }}
+            >
+              {loadFailure.tone === "auth" ? <UserRound /> : <RefreshCw />}
+              {loadFailure.tone === "auth" ? "Sign in" : initialLoading ? "Retrying…" : "Retry"}
+            </Button>
+          </ChatArtifactCard>
+        ) : null}
         {messages.map((message, index) => {
           const approvalId = typeof message.payload?.approval_id === "string"
             ? message.payload.approval_id
@@ -2033,7 +2064,7 @@ export default function ChatCreationWorkspace({
         {thinking ? <ChatThinking /> : null}
       </div></div>
       {hasNewUpdate ? <div className="flex shrink-0 justify-center border-t bg-background/95 px-3 py-2"><Button type="button" variant="secondary" className="min-h-11" onClick={scrollToLiveEdge}>New update</Button></div> : null}
-      <div className={cn("shrink-0 bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4", !hasNewUpdate && "border-t")}><AgentComposer ref={composerRef} className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview || thread?.status === "archived"} submitDisabled={thinking || !thread || Boolean(editorChatState?.sending)} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
+      <div className={cn("shrink-0 bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4", !hasNewUpdate && "border-t")}><AgentComposer ref={composerRef} className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview || thread?.status === "archived"} submitDisabled={thinking || !thread || Boolean(editorChatState?.sending)} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || (error && thread) ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error && thread ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
     </section>
     {projectDialogs}
     </>
