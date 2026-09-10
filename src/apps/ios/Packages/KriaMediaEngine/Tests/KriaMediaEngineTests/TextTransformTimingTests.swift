@@ -45,8 +45,12 @@ final class TextTransformTimingTests: XCTestCase {
                 XCTAssertEqual(actual.yTranslate, expected.state.yTranslate, accuracy: 1e-9, label)
                 XCTAssertEqual(actual.revealProgress, expected.state.revealProgress, accuracy: 1e-9, label)
             }
-            XCTAssertThrowsError(try TextTransformTiming.sample(effect: .karaokeLine, text: test.text, localTime: 0,
-                                                               duration: test.duration, motion: test.motion))
+            for time in [0.0, test.duration - 0.01] {
+                let karaoke = try TextTransformTiming.sample(effect: .karaokeLine, text: test.text, localTime: time,
+                                                             duration: test.duration, motion: test.motion)
+                XCTAssertEqual(karaoke.alpha, 1); XCTAssertEqual(karaoke.scale, 1)
+                XCTAssertEqual(karaoke.xTranslate, 0); XCTAssertEqual(karaoke.yTranslate, 0)
+            }
         }
     }
 }

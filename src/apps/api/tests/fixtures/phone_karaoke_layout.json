@@ -1,0 +1,2726 @@
+[
+  {
+    "layer": {
+      "id": "karaoke",
+      "start": 1.0,
+      "end": 5.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "Hello",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 121.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 161,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 24.86625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 44.88875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 54.520625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 64.1525,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 165.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 982,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 28.163125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 48.748125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 62.739375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 597,
+              "x": 72.37125,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "later",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 252.04125,
+          "baseline_y": 165.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 736,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 9.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 888,
+              "x": 29.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 41.84875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 61.87125,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "now",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 209.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 773,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 20.881875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 982,
+              "x": 41.466875,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "last",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 228.168125,
+          "baseline_y": 209.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 736,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 9.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 871,
+              "x": 29.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 888,
+              "x": 48.051875,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "karaoke-line",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": {
+        "starts": [
+          0.5,
+          0.2,
+          0.7,
+          0.0,
+          0.8999999999999999
+        ],
+        "highlight": {
+          "red": 1.0,
+          "green": 0.18823529411764706,
+          "blue": 0.0,
+          "alpha": 1.0
+        }
+      },
+      "dissolve_seed": null
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 150.0,
+            "baseline_y": 121.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 150.0,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 252.04125,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 150.0,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 228.168125,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.199,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 150.0,
+            "baseline_y": 121.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 150.0,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 252.04125,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 150.0,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 228.168125,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.2,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 150.0,
+            "baseline_y": 121.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 150.0,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 252.04125,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 150.0,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 228.168125,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.499,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 150.0,
+            "baseline_y": 121.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 150.0,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 252.04125,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 150.0,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 228.168125,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 150.0,
+            "baseline_y": 121.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 150.0,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 252.04125,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 150.0,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 228.168125,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.7,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 150.0,
+            "baseline_y": 121.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 150.0,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 252.04125,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 150.0,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 228.168125,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 150.0,
+            "baseline_y": 121.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 150.0,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 252.04125,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 150.0,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 228.168125,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 3.9,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 150.0,
+            "baseline_y": 121.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 150.0,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 252.04125,
+            "baseline_y": 165.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 150.0,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 228.168125,
+            "baseline_y": 209.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "karaoke",
+      "start": 1.0,
+      "end": 5.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "Hello",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 108.11125,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 161,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 24.86625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 44.88875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 54.520625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 64.1525,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 61.528125,
+          "baseline_y": 102.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 982,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 28.163125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 48.748125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 62.739375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 597,
+              "x": 72.37125,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "later",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 163.569375,
+          "baseline_y": 102.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 736,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 9.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 888,
+              "x": 29.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 41.84875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 61.87125,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "now",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 81.030625,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 773,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 20.881875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 982,
+              "x": 41.466875,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "last",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 159.19875000000002,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 736,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 9.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 871,
+              "x": 29.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 888,
+              "x": 48.051875,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "karaoke-line",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": {
+        "starts": [
+          0.5,
+          0.2,
+          0.7,
+          0.0,
+          0.8999999999999999
+        ],
+        "highlight": {
+          "red": 1.0,
+          "green": 0.18823529411764706,
+          "blue": 0.0,
+          "alpha": 1.0
+        }
+      },
+      "dissolve_seed": null
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 108.11125,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 61.528125,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 163.569375,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 81.030625,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 159.19875000000002,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.199,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 108.11125,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 61.528125,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 163.569375,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 81.030625,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 159.19875000000002,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.2,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 108.11125,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 61.528125,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 163.569375,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 81.030625,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 159.19875000000002,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.499,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 108.11125,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 61.528125,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 163.569375,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 81.030625,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 159.19875000000002,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 108.11125,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 61.528125,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 163.569375,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 81.030625,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 159.19875000000002,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.7,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 108.11125,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 61.528125,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 163.569375,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 81.030625,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 159.19875000000002,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 108.11125,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 61.528125,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 163.569375,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 81.030625,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 159.19875000000002,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 3.9,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 108.11125,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": 61.528125,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 163.569375,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 81.030625,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 159.19875000000002,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "karaoke",
+      "start": 1.0,
+      "end": 5.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "Hello",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 66.2225,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 161,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 24.86625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 44.88875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 54.520625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 64.1525,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": -26.943749999999994,
+          "baseline_y": 102.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 982,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 28.163125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 48.748125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 62.739375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 597,
+              "x": 72.37125,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "later",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 75.09750000000001,
+          "baseline_y": 102.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 736,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 9.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 888,
+              "x": 29.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 41.84875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 61.87125,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "now",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 12.061250000000001,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 773,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 20.881875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 982,
+              "x": 41.466875,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "last",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 90.229375,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 736,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 9.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 871,
+              "x": 29.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 888,
+              "x": 48.051875,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "karaoke-line",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": {
+        "starts": [
+          0.5,
+          0.2,
+          0.7,
+          0.0,
+          0.8999999999999999
+        ],
+        "highlight": {
+          "red": 1.0,
+          "green": 0.18823529411764706,
+          "blue": 0.0,
+          "alpha": 1.0
+        }
+      },
+      "dissolve_seed": null
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 66.2225,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": -26.943749999999994,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 75.09750000000001,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 12.061250000000001,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 90.229375,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.199,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 66.2225,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": -26.943749999999994,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 75.09750000000001,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 12.061250000000001,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 90.229375,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.2,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 66.2225,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": -26.943749999999994,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 75.09750000000001,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 12.061250000000001,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 90.229375,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.499,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 66.2225,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": -26.943749999999994,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 75.09750000000001,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 12.061250000000001,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 90.229375,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 66.2225,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": -26.943749999999994,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 75.09750000000001,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 12.061250000000001,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 90.229375,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.7,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 66.2225,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": -26.943749999999994,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 75.09750000000001,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 12.061250000000001,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 90.229375,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 66.2225,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": -26.943749999999994,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 75.09750000000001,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 12.061250000000001,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 90.229375,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "time": 3.9,
+        "calls": [
+          {
+            "text": "Hello",
+            "x": 66.2225,
+            "baseline_y": 58.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "world",
+            "x": -26.943749999999994,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "later",
+            "x": 75.09750000000001,
+            "baseline_y": 102.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "now",
+            "x": 12.061250000000001,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          },
+          {
+            "text": "last",
+            "x": 90.229375,
+            "baseline_y": 146.0,
+            "font_size": 32.0,
+            "stroke": 2,
+            "color": [
+              255,
+              48,
+              0,
+              255
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

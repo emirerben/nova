@@ -133,6 +133,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         "smooth-type",
         "staggered-slice",
         "dissolve-out",
+        "karaoke-line",
     }:
         raise UnsupportedPortableText(f"unsupported text effect: {effect}")
     if effect == "dissolve-out" and dissolve_seed is None:
@@ -154,6 +155,8 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
     ):
         if overlay.get(key):
             raise UnsupportedPortableText(f"unsupported text treatment: {key}")
+    if effect == "karaoke-line":
+        return _compile_karaoke_overlay(overlay, layer_id=layer_id, canvas=canvas)
     raw_motion = overlay.get("motion")
     motion = None
     if (
@@ -495,3 +498,94 @@ def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset,
             cursor += 1
         cursors[logical_index] = cursor
     return StaggeredContent(text=text, glyphs=glyphs)
+
+
+def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
+    from app.kria.portable_text import KaraokeContent, PortableTextLayer, PositionedTextRun, TextInk
+    from app.pipeline import text_overlay_skia as cloud
+    from app.services.render_library import bundled_font_asset
+
+    words, starts = [], []
+    acc = 0.0
+    for entry in overlay.get("word_timings") or []:
+        text = str(entry.get("text", "")).strip()
+        if not text:
+            continue
+        start = cloud._finite_float(entry.get("start_s"), acc)
+        fallback = max(0.05, cloud._finite_float(entry.get("duration_cs"), 5.0) / 100)
+        end = cloud._finite_float(entry.get("end_s"), start + fallback)
+        duration = end - start if end > start else fallback
+        words.append(text)
+        starts.append(max(0.0, start))
+        acc = max(acc, max(0.0, start) + duration)
+    if not words:
+        # This handler ignores display_text, including in its static fallback.
+        return compile_text_overlay(
+            {**overlay, "effect": "static", "display_text": None}, layer_id=layer_id, canvas=canvas
+        )
+    resolved = cloud._resolve_typeface_for_overlay(overlay)
+    cloud.assert_lyric_glyphs(resolved.typeface, " ".join(words))
+    asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
+    size = cloud._resolve_font_size_px(overlay)
+    font = skia.Font(resolved.typeface, size)
+    font.setSubpixel(True)
+    spacing = cloud._overlay_letter_spacing_px(overlay, size)
+    rows = cloud._wrap_word_indices(
+        words, font, cloud._overlay_max_width_px(overlay, canvas), spacing
+    )
+    widths = [cloud._measure_line(font, word, spacing) for word in words]
+    gap = font.measureText(" ") + 2 * spacing
+    block = cloud._measure_block(
+        font,
+        [" ".join(words[i] for i in row) for row in rows],
+        line_spacing=cloud.resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=spacing,
+    )
+    cx, cy = cloud._resolve_anchor(overlay, canvas)
+    top = cloud._vertical_block_top(cloud._resolve_vertical_anchor(overlay), cy, block["block_h"])
+    fill, blurs, _ = _resolve_paints(
+        {**overlay, "text_gradient": None}, width=1, height=1, left=0, top=0
+    )
+    highlight, _, _ = _resolve_paints(
+        {"text_color": overlay.get("highlight_color") or "#FFD24A"},
+        width=1,
+        height=1,
+        left=0,
+        top=0,
+    )
+    runs, ordered_starts = [], []
+    for row_index, row in enumerate(rows):
+        width = sum(widths[i] for i in row) + gap * max(0, len(row) - 1)
+        x = cloud._anchored_left_x(cloud._resolve_text_anchor(overlay), cx, width)
+        for i in row:
+            runs.append(
+                PositionedTextRun(
+                    text=words[i],
+                    font_asset_id=asset.id,
+                    font_size=size,
+                    x=x,
+                    baseline_y=top + block["ascent_offset"] + row_index * block["line_step"],
+                    letter_spacing=spacing,
+                    shaped=False,
+                    glyphs=resolve_legacy_glyphs(font, words[i], spacing),
+                    fill=fill,
+                    stroke=TextInk(red=0, green=0, blue=0, alpha=230 / 255),
+                    stroke_width=max(
+                        0, int(overlay.get("outline_px") or overlay.get("stroke_width") or 0) * 2
+                    ),
+                    blur_layers=blurs,
+                )
+            )
+            ordered_starts.append(starts[i])
+            x += widths[i] + gap
+    return PortableTextLayer(
+        id=layer_id,
+        start=overlay["start_s"],
+        end=overlay["end_s"],
+        anchor_x=cx,
+        anchor_y=cy,
+        rotation_degrees=cloud._finite_float(overlay.get("rotation_deg"), 0),
+        runs=runs,
+        effect="karaoke-line",
+        karaoke=KaraokeContent(starts=ordered_starts, highlight=highlight),
+    ), asset

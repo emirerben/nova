@@ -260,7 +260,7 @@ motion versions through native preview and H.264 export. Glyph and composite
 bitmaps share the bounded text-memory budget. This remains disabled for rollout
 until the complete capability matrix and physical-device gates pass.
 
-### Dissolve reference primitives (not activated)
+### Native dissolve coverage (rollout disabled)
 
 `DissolveTiming` matches the cloud's exit window and seeded particle alpha.
 `DissolveNoise` ports Skia's one-octave noise and text displacement map; its
@@ -270,15 +270,14 @@ normalized color matrix receives an offset of `-2 * 255`, so the coarse red
 and green channels clamp to zero; the frequency-1 fine field is neutral at
 integer lattice coordinates. Preserve these observed semantics for parity.
 Skia attribution is bundled in `Kria/Resources/Skia-LICENSE.txt`.
-These primitives do not activate dissolve: the native displacement painter,
-preview/export parity, and separate media-card dissolve still need completion.
+The recipe carries an explicit seed derived from the combined cloud overlay
+index across text, context, and narration lanes. Media-card dissolve remains
+a separate outstanding treatment.
 
 `NativeDissolveWarp` now retains a bounded map and runs nearest-neighbor
 displacement through a Metal Core Image kernel. `DissolveWarpTests` compares
 1,152 actual cloud pixel samples across three seeds and four displacement
-scales, including clipped edges, with exact channel equality. The complete
-text effect still needs its final transform, opacity, and particle composition
-and its preview/export gate. Shader creation failure remains unsupported.
+scales, including clipped edges, with exact channel equality. Shader creation failure remains unsupported.
 
 `NativeDissolveRenderer` now composes the canvas-centered growth and seeded
 particle mask. `DissolveCompositionTests` checks all 4,300,800 alpha pixels over
@@ -288,7 +287,29 @@ orientation and breakup. Unlike its nominal timing helper, the cloud image
 filter does not apply intermediate paint opacity: only the zero-alpha early
 return clears the last frame. Native composition preserves that behavior.
 The map and particle field retain eight bytes per canvas pixel within the
-caller-supplied budget. Portable text-layer integration and preview/export
-verification are still outstanding; this does not enable the effect.
+caller-supplied budget. The integrated text painter reserves twenty bytes per canvas pixel for retained
+maps, text, and intermediate composition. `DissolvePainterTests` verifies its
+time window and exit breakup through native preview and H.264 export.
+Rollout and physical-device verification remain outstanding.
 Generate Python fixtures with `PYTHONPATH=.` so the shared editable environment
 cannot silently import another checkout's renderer.
+
+
+### Native karaoke and slide-in coverage (rollout disabled)
+
+`karaoke-line` carries fixed-size word glyph runs, independently normalized local
+start times, and a highlight color. Each word switches color at its start time
+and remains highlighted; out-of-order starts are preserved. Blank timings use
+the production raw-text static fallback. The compiler preserves per-word wrap,
+tracking, outline, and shadows; production ignores shaping, gradients, and motion
+for this handler. `phone_karaoke_layout.json` captures real production positions
+and colors at timestamp boundaries across all horizontal anchors.
+`NativeKaraokePainter` retains two bounded word images and composes them in draw
+order, with both retained images and composite surfaces charged to the shared
+text budget. Native preview/export tests include backward seeking, time-window
+clipping, and independent word color changes. Both contract validators reject
+missing, mismatched, or invalid timings.
+
+`slide-in` currently renders as static text in the production Skia dispatcher.
+The phone preserves that actual behavior, including ignoring motion and exit
+fades. A cloud full-frame comparison and native timing test pin this behavior.

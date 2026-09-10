@@ -27,7 +27,7 @@ public enum TextTransformTiming {
                               duration: Double, motion: TextMotionParameters?) throws -> TextTransformSample {
         guard duration.isFinite, duration > 0, localTime.isFinite else { throw RecipeError.invalidTimeline }
         // The current cloud renderer treats slide-in as a static hold.
-        if effect == .staggeredSlice || effect == .dissolveOut || effect == .slideIn { return TextTransformSample(alpha: 1, scale: 1, xTranslate: 0, yTranslate: 0, revealProgress: 1) }
+        if effect == .staggeredSlice || effect == .dissolveOut || effect == .slideIn || effect == .karaokeLine { return TextTransformSample(alpha: 1, scale: 1, xTranslate: 0, yTranslate: 0, revealProgress: 1) }
         guard let motion else { return try legacySample(effect: effect, localTime: localTime, duration: duration) }
         let time = try TextMotionTiming.authoredTime(effect: effect, text: text, localTime: localTime, motion: motion)
         let base = try TextMotionTiming.settleDuration(effect: effect, text: text, motion: motion) * motion.speed

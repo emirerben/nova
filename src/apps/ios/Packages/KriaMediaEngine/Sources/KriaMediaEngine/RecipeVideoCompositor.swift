@@ -27,6 +27,7 @@ struct RecipeTextLayer: @unchecked Sendable {
     var smoothReveal: NativeSmoothRevealPainter? = nil
     var staggered: NativeStaggeredPainter? = nil
     var dissolve: NativeDissolveRenderer? = nil
+    var karaoke: NativeKaraokePainter? = nil
 
     static func make(_ text: TextTreatment, start: Double, end: Double, canvas: CGSize) throws -> Self {
         guard let font = CGFont(text.fontName as CFString) else { throw MediaEngineError.unsupportedCapability }
@@ -137,6 +138,7 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                                 .concatenating(CGAffineTransform(translationX: text.portableAnchor.x + dx, y: text.portableAnchor.y + dy))
                             var image = state.revealProgress >= 1 ? text.image : try text.handwriting?.image(progress: state.revealProgress) ?? text.image
                             if let painter = text.discreteReveal { image = try painter.image(localTime: time - text.start, settled: text.image) }
+                            if let painter = text.karaoke { image = painter.image(localTime: time - text.start) }
                             if let painter = text.dissolve { image = try painter.image(source: text.image, localTime: time - text.start, duration: text.end - text.start) }
                             if let painter = text.staggered { image = try painter.image(localTime: time - text.start, settled: text.image) }
                             if let painter = text.smoothReveal { image = try painter.image(localTime: time - text.start, settled: text.image) }

@@ -225,6 +225,19 @@ class StaggeredContent(_TextModel):
         return self
 
 
+class KaraokeContent(_TextModel):
+    starts: list[float] = Field(min_length=1, max_length=100)
+    highlight: TextInk
+
+    @model_validator(mode="after")
+    def valid_starts(self):
+        import math
+
+        if any(not math.isfinite(start) or start < 0 or start > 1800 for start in self.starts):
+            raise ValueError("karaoke starts must be finite local timestamps")
+        return self
+
+
 class PortableTextLayer(_TextModel):
     id: str = Field(min_length=1, max_length=160)
     start: float = Field(ge=0, le=1800)
@@ -250,6 +263,7 @@ class PortableTextLayer(_TextModel):
         "smooth-type",
         "staggered-slice",
         "dissolve-out",
+        "karaoke-line",
     ] = "static"
     motion: ResolvedTextMotion | None = None
     reveal_bounds: TextRevealBounds | None = None
@@ -257,10 +271,18 @@ class PortableTextLayer(_TextModel):
     discrete_reveal: DiscreteRevealContent | None = None
     smooth_reveal: SmoothRevealContent | None = None
     staggered: StaggeredContent | None = None
+    karaoke: KaraokeContent | None = None
     dissolve_seed: int | None = Field(default=None, strict=True, ge=0, le=4294967295)
 
     @model_validator(mode="after")
     def valid_window(self):
+        if (self.effect == "karaoke-line") != (self.karaoke is not None):
+            raise ValueError("karaoke requires timed word geometry")
+        if self.karaoke and (
+            len(self.karaoke.starts) != len(self.runs)
+            or any(run.shaped or run.gradient is not None for run in self.runs)
+        ):
+            raise ValueError("karaoke requires one unshaped solid-color run per timestamp")
         if (self.effect == "dissolve-out") != (self.dissolve_seed is not None):
             raise ValueError("dissolve requires an explicit renderer seed")
         if (self.effect == "staggered-slice") != (self.staggered is not None):

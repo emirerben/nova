@@ -1880,6 +1880,7 @@
     "discrete_reveal": null,
     "smooth_reveal": null,
     "staggered": null,
+    "karaoke": null,
     "dissolve_seed": null
   },
   "samples": [

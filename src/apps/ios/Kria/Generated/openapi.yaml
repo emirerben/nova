@@ -2464,6 +2464,29 @@
         "title": "HandwritingContent",
         "type": "object"
       },
+      "KaraokeContent": {
+        "additionalProperties": false,
+        "properties": {
+          "highlight": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "starts": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Starts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "starts",
+          "highlight"
+        ],
+        "title": "KaraokeContent",
+        "type": "object"
+      },
       "KriaProblem": {
         "additionalProperties": false,
         "properties": {
@@ -4245,6 +4268,14 @@
             "default": null,
             "nullable": true
           },
+          "dissolve_seed": {
+            "default": null,
+            "maximum": 4294967295,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Dissolve Seed",
+            "type": "integer"
+          },
           "effect": {
             "default": "static",
             "enum": [
@@ -4254,6 +4285,7 @@
               "scale-up",
               "slide-up",
               "slide-down",
+              "slide-in",
               "pop-in",
               "bounce",
               "ink-reveal",
@@ -4261,7 +4293,9 @@
               "typewriter",
               "stream-in",
               "smooth-type",
-              "staggered-slice"
+              "staggered-slice",
+              "dissolve-out",
+              "karaoke-line"
             ],
             "title": "Effect",
             "type": "string"
@@ -4283,6 +4317,11 @@
             "minLength": 1,
             "title": "Id",
             "type": "string"
+          },
+          "karaoke": {
+            "$ref": "#/components/schemas/KaraokeContent",
+            "default": null,
+            "nullable": true
           },
           "motion": {
             "$ref": "#/components/schemas/ResolvedTextMotion",
