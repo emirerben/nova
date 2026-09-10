@@ -50,6 +50,20 @@ export function isLyricBar(bar: TextElementBar | TextElement | null | undefined)
   return bar?.role === "lyric_line";
 }
 
+/**
+ * PERSISTENCE predicate: does this bar round-trip through the `caption_cues`
+ * endpoint (barsToCaptionCues / captionDirty / caption_meta), rather than
+ * `text_elements` (textDirty)? `role: "narrated_caption"` is a CLIENT-ONLY
+ * role that only `convertCaptionCues()` ever mints, from the separate
+ * `variant.caption_cues` lane — narrated/subtitled archetypes only.
+ *
+ * Never use this to decide how something LOOKS (lane placement, inspector
+ * heading, mobile labels) — guided-story narration captions are real,
+ * persisted `TextElement`s (role "generative_sequence") that fail this check
+ * by design, because they save through `text_elements`, not `caption_cues`
+ * (see `isNarrationCaptionBar` for that other kind of caption, and
+ * `isCaptionUnitBar` for the UI-only union of both — KRI-18).
+ */
 export function isCaptionBar(bar: TextElementBar | null | undefined): boolean {
   return bar?.role === "narrated_caption";
 }
@@ -232,8 +246,39 @@ function isSyntheticSubtitledCaptionBar(bar: TextElementBar): boolean {
   return /^subtitled-caption-\d+$/.test(bar.id);
 }
 
-function isCaptionCueProjection(bar: TextElementBar): boolean {
-  return bar.source_params?.source === "caption_cue";
+// Mirrors the backend's CAPTION_CUE_SOURCE (app/agents/_schemas/text_element.py).
+// Not imported cross-language; keep the two literals in sync by hand — pinned
+// on the Python side by a producer-side contract test (KRI-18).
+const NARRATION_CAPTION_SOURCE = "caption_cue" as const;
+
+/**
+ * A server-projected caption that persists as an ordinary `TextElement`
+ * (`role: "generative_sequence"` + `source_params.source === "caption_cue"`),
+ * rather than through the separate `caption_cues` lane. Today only
+ * guided-story keeps these in the working bar set — every other caption
+ * archetype's copy is stripped out here in `seedBarsFromVariant` in favor of
+ * the `caption_cues`-derived `isCaptionBar` bars. Timing (`start_s`/`end_s`/
+ * `word_timings`) is pinned server-side (see guided_story.py's narration
+ * merge); only text and styling are editor-owned.
+ */
+export function isNarrationCaptionBar(bar: TextElementBar | TextElement | null | undefined): boolean {
+  return bar?.source_params?.source === NARRATION_CAPTION_SOURCE;
+}
+
+/**
+ * UI-ONLY union: is this bar a caption unit for lane placement, inspector
+ * chrome, and labelling purposes? Covers both caption representations —
+ * `caption_cues`-derived bars (`isCaptionBar`) and guided-story's persisted
+ * narration captions (`isNarrationCaptionBar`). The two are mutually
+ * exclusive on any real working bar set (seedBarsFromVariant never produces
+ * both for the same variant).
+ *
+ * NEVER use this for Save, dirty-flag routing, or endpoint choice — the two
+ * members persist through completely different paths. Use `isCaptionBar` or
+ * `isNarrationCaptionBar` directly for that (KRI-18).
+ */
+export function isCaptionUnitBar(bar: TextElementBar | null | undefined): boolean {
+  return isCaptionBar(bar) || isNarrationCaptionBar(bar);
 }
 
 /** UI-only row assignment: current ordered bars map to compacted rows. */
@@ -466,7 +511,7 @@ export function seedBarsFromVariant(
   // caption archetypes use caption_cues and must exclude duplicate projections.
   const captionsInTextLane = variant.resolved_archetype === "guided_story";
   const textBars = filterLyrics(convertApiTextElements(variant.text_elements)).filter(
-    (bar) => captionsInTextLane || !isCaptionCueProjection(bar),
+    (bar) => captionsInTextLane || !isNarrationCaptionBar(bar),
   );
   const captionBars = captionsInTextLane ? [] : convertCaptionCues(variant.caption_cues, variant);
   if (captionBars.length) return [...captionBars, ...textBars];

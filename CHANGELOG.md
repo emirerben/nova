@@ -9,6 +9,14 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - New kill switch `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` (default on) gates the v2 licensed-music-bed resolver to only ever return a creator-selected treatment, never invent one.
+## [0.75.8.1] — 2026-09-10
+
+### Fixed
+- **Generated voiceover captions now show up as captions, not stray text.** Captions from the latest voiceover flow appear side by side on their own captions track, get the caption editing controls (font, size, color) instead of the generic text panel, and no longer break the editor layout when clicked. Caption text and styling changes save and reflect in the preview; timing stays locked to the narration, with an honest reason shown in the panel.
+- **Clicking a timeline caption no longer collides with the properties panel** in a narrow editor pane (e.g. embedded in chat). Opening a tool no longer docks a panel on top of another one when there isn't room for both.
+
+### Internal
+- Added `CAPTION_CUE_SOURCE`, a shared constant replacing a hand-typed string that classified a caption across five call sites, plus a producer-side contract test pinning it.
 ## [0.75.9.0] - 2026-09-10
 
 ### Changed
@@ -57,6 +65,7 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - The new "slides" render archetype reuses the existing plan-item pipeline end to end: one variant carries a stitched preview alongside the ordered slide list and export bundle, so every existing reader (player, library, TikTok-publish exclusion) keeps working unbranched. Every other editor lane (captions, sound effects, overlays, timeline) is explicitly closed for this archetype at the same choke point every one of those routes already shares. Ships default on, gated by `SLIDE_POSTS_ENABLED` / `NEXT_PUBLIC_SLIDE_POSTS_ENABLED`.
+
 ## [0.75.3.0] - 2026-09-09
 
 ### Changed

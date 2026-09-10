@@ -96,6 +96,14 @@ _VALID_SIZE_CLASSES: frozenset[str] = frozenset(
     {"small", "medium", "large", "xlarge", "xxlarge", "jumbo"}
 )
 
+# source_params["source"] marker for a caption cue projected/persisted as a
+# TextElement (narrated/subtitled caption-cue projections here, plus guided-
+# story's persisted narration captions in pipeline/guided_story.py). This is
+# the ONLY thing that distinguishes a caption TextElement from a generic one
+# — there is no dedicated `role`. Import this constant everywhere the literal
+# would otherwise be hand-typed; do not reintroduce the bare string (KRI-18).
+CAPTION_CUE_SOURCE = "caption_cue"
+
 # Hex color: exactly #RRGGBB (6 hex digits).
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -1324,9 +1332,9 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
                         effect="static",
                         word_timings=cue.get("words"),
                         source_params={
-                            "source": "caption_cue",
+                            "source": CAPTION_CUE_SOURCE,
                             "key": str(i),
-                            "identity": _identity_for_source("caption_cue", str(i)),
+                            "identity": _identity_for_source(CAPTION_CUE_SOURCE, str(i)),
                             "source_text": text,
                         },
                     )
