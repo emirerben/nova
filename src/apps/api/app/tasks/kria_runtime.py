@@ -41,7 +41,11 @@ from app.routes.generative_jobs import (
     enqueue_editor_commit_render,
     prepare_editor_commit,
 )
-from app.services.kria_editor_ops import compile_editor_ops
+from app.services.kria_editor_ops import (
+    compile_editor_ops,
+    merge_editor_draft,
+    project_editor_draft,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -167,31 +171,25 @@ def _strategy_changes(arguments: Any) -> list[str]:
 
 
 def _validate_draft_plan(plan: KriaTurnPlan) -> None:
-    """Fail closed unless the live plan is the one supported atomic tool group.
-
-    Runtime v2 deliberately exposes a narrow launch graph: one reversible draft
-    bundle followed by one approval request that depends on that exact bundle.
-    The editor operation list is the atomic multi-operation unit.  Rejecting any
-    other graph here keeps a future manifest expansion from silently acquiring
-    execution semantics it has not implemented or tested.
-    """
-
-    if plan.mode != "act" or len(plan.intents) != 2:
+    """Allow one atomic draft, optionally followed by its exact render approval."""
+    if plan.mode != "act" or len(plan.intents) not in {1, 2}:
         raise RuntimeError("Kria produced an unsupported tool group")
-    apply_intent, render_intent = plan.intents
+    apply_intent = plan.intents[0]
     if apply_intent.tool_name not in {"draft.apply_strategy", "draft.apply_editor_ops"}:
         raise RuntimeError("Kria produced an unsupported draft tool")
     if apply_intent.depends_on:
         raise RuntimeError("The draft tool cannot depend on an unexecuted intent")
+    apply_tool = KRIA_TOOLS.get(apply_intent.tool_name, apply_intent.tool_version)
+    if apply_tool.definition.risk != "reversible_draft":
+        raise RuntimeError("Kria draft tool risk changed")
+    if len(plan.intents) == 1:
+        return
+    render_intent = plan.intents[1]
     if render_intent.tool_name != "render.request" or render_intent.depends_on != [
         apply_intent.intent_id
     ]:
         raise RuntimeError("Render approval must depend on the exact draft bundle")
-
-    apply_tool = KRIA_TOOLS.get(apply_intent.tool_name, apply_intent.tool_version)
     render_tool = KRIA_TOOLS.get(render_intent.tool_name, render_intent.tool_version)
-    if apply_tool.definition.risk != "reversible_draft":
-        raise RuntimeError("Kria draft tool risk changed")
     if render_tool.definition.risk != "approval_required":
         raise RuntimeError("Kria render tool risk changed")
 
@@ -255,11 +253,13 @@ def _complete_draft_turn(
 ) -> _Completion:
     plan = planned.plan
     _validate_draft_plan(plan)
-    apply_intent, render_intent = plan.intents
+    apply_intent = plan.intents[0]
+    render_intent = plan.intents[1] if len(plan.intents) == 2 else None
     apply_tool = KRIA_TOOLS.get(apply_intent.tool_name, apply_intent.tool_version)
-    render_tool = KRIA_TOOLS.get(render_intent.tool_name, render_intent.tool_version)
     arguments = apply_tool.arguments_model.model_validate(apply_intent.arguments)
-    render_tool.arguments_model.model_validate(render_intent.arguments)
+    if render_intent is not None:
+        render_tool = KRIA_TOOLS.get(render_intent.tool_name, render_intent.tool_version)
+        render_tool.arguments_model.model_validate(render_intent.arguments)
     document: KriaDraftDocument | None = None
     changes: list[str] = []
     snapshot: dict[str, Any] = {}
@@ -338,6 +338,15 @@ def _complete_draft_turn(
 
         variant_key = str(session.target_variant_id or "initial")
         generation_id = str(session.target_generation_id or "") or None
+        head = db.execute(
+            select(CreatorEditDraft)
+            .where(
+                CreatorEditDraft.item_id == item.id,
+                CreatorEditDraft.variant_key == variant_key,
+                CreatorEditDraft.is_head.is_(True),
+            )
+            .with_for_update()
+        ).scalar_one_or_none()
         if apply_intent.tool_name == "draft.apply_editor_ops":
             variant = (
                 next(
@@ -353,14 +362,30 @@ def _complete_draft_turn(
             )
             if variant is None:
                 raise RuntimeError("The exact editor target is no longer available")
-            compiled = compile_editor_ops(job, variant, arguments.operations)
+            prior_payload = (
+                (head.snapshot_json or {}).get("editor_payload") or {}
+                if head is not None
+                and head.base_job_id == job.id
+                and head.base_generation_id == generation_id
+                and (head.snapshot_json or {}).get("kind") == "editor"
+                else {}
+            )
+            if prior_payload and any(
+                op.get("op") == "apply_speech_cut_candidate" for op in arguments.operations
+            ):
+                raise RuntimeError("Save the current draft before applying speech processing")
+            compiled = compile_editor_ops(
+                job, project_editor_draft(variant, prior_payload), arguments.operations
+            )
             changes = compiled.changes
             document = KriaDraftDocument(
                 kind="editor",
                 intent=arguments.summary,
                 edit_format=str(item.edit_format or "montage"),
                 editor_payload=(
-                    compiled.payload.model_dump(mode="json", exclude_none=True)
+                    merge_editor_draft(
+                        prior_payload, compiled.payload.model_dump(mode="json", exclude_none=True)
+                    )
                     if isinstance(compiled.payload, EditorCommitRequest)
                     else compiled.payload
                 ),
@@ -369,15 +394,6 @@ def _complete_draft_turn(
             snapshot, snapshot_hash = canonical_snapshot(document)
         if document is None:
             raise RuntimeError("Kria produced an unsupported draft tool")
-        head = db.execute(
-            select(CreatorEditDraft)
-            .where(
-                CreatorEditDraft.item_id == item.id,
-                CreatorEditDraft.variant_key == variant_key,
-                CreatorEditDraft.is_head.is_(True),
-            )
-            .with_for_update()
-        ).scalar_one_or_none()
         next_revision = (
             int(
                 db.execute(
@@ -434,6 +450,36 @@ def _complete_draft_turn(
             "draft_id": str(draft.id),
             "draft_revision": draft.draft_revision,
         }
+
+        if render_intent is None:
+            event = _append_sync_event(
+                db,
+                thread,
+                role="assistant",
+                event_type="draft_applied",
+                content=arguments.summary,
+                payload={
+                    "turn_id": str(turn.id),
+                    "draft_id": str(draft.id),
+                    "draft_revision": draft.draft_revision,
+                    "snapshot_hash": draft.snapshot_hash,
+                    "changes": changes,
+                    "can_undo": head is not None,
+                    "receipt_ids": [str(draft_execution.id)],
+                    "render_requested": False,
+                },
+            )
+            turn.plan_json = plan.model_dump(mode="json")
+            turn.observed_event_id = event.id
+            turn.status = "completed"
+            turn.completed_at = datetime.now(UTC)
+            turn.lease_owner = None
+            turn.lease_expires_at = None
+            thread_id = thread.id
+            db.commit()
+            return _Completion(
+                committed=True, successor_turn_id=_promote_queued_successor_sync(thread_id)
+            )
 
         render_execution = CreatorAgentExecution(
             session_id=session.id,
@@ -944,7 +990,11 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 )
             return {
                 "turn_id": turn_id,
-                "status": ("awaiting_approval" if planned.plan.mode == "act" else "completed"),
+                "status": (
+                    "awaiting_approval"
+                    if any(intent.tool_name == "render.request" for intent in planned.plan.intents)
+                    else "completed"
+                ),
             }
 
         planned_turn_value = "question" if not snapshot.get("media_labels") else "decision"
