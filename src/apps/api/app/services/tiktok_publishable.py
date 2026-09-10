@@ -73,10 +73,29 @@ def resolve_publishable_output(job: Job, variant_id: str | None = None) -> Publi
         ready = [
             v
             for v in variants
-            if isinstance(v, dict) and v.get("render_status") == "ready" and v.get("video_path")
+            if isinstance(v, dict)
+            and v.get("render_status") == "ready"
+            and v.get("video_path")
+            # A slide post's video_path is a stitched PREVIEW of an ordered
+            # image/video sequence, not a publishable video in its own right —
+            # v1 is export-only (bundle.zip), never TikTok direct-post. Without
+            # this exclusion a slides job's single variant is `ready[0]` and
+            # the preview would get submitted as an ordinary video.
+            and v.get("resolved_archetype") != "slides"
         ]
         if variant_id:
             selected_variant = next((v for v in ready if v.get("variant_id") == variant_id), None)
+            if selected_variant is None:
+                named = next(
+                    (
+                        v
+                        for v in variants
+                        if isinstance(v, dict) and v.get("variant_id") == variant_id
+                    ),
+                    None,
+                )
+                if isinstance(named, dict) and named.get("resolved_archetype") == "slides":
+                    raise PublishableOutputError("Photo posts are export-only")
         elif ready:
             selected_variant = ready[0]
         if selected_variant is None:

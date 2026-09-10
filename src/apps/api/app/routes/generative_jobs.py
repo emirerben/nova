@@ -1919,6 +1919,63 @@ def _variants_for_response(job: Job) -> list[dict]:
                 else:
                     signed_overlays.append(card)
             v = {**v, "media_overlays": signed_overlays}
+        # Slide post (mixed-media carousel/photo post, plans/024): sign each
+        # normalized slide asset into a preview_url and the export bundle
+        # into a bundle_url. Same graceful-skip contract as media_overlays
+        # above — one bad sign must not 500 the poll (risk #9). The public
+        # projection is a denylist (raw *_gcs_path keys survive regardless,
+        # consistent with how video_path is already exposed unsigned on a
+        # failed resign above), so a signing failure degrades to "no preview
+        # yet" on the frontend rather than a 500.
+        raw_slides = v.get("slides")
+        if isinstance(raw_slides, list):
+            signed_slides = []
+            for slide in raw_slides:
+                if not isinstance(slide, dict):
+                    signed_slides.append(slide)
+                    continue
+                src = nonblank_str(slide.get("asset_gcs_path"))
+                if src:
+                    try:
+                        signed_slides.append(
+                            {**slide, "preview_url": signed_get_url(src, PLAYBACK_URL_TTL_MIN)}
+                        )
+                    except Exception:  # noqa: BLE001
+                        log.warning(
+                            "variant_slide_resign_failed",
+                            job_id=str(job.id),
+                            variant_id=v.get("variant_id"),
+                            slide_index=slide.get("index"),
+                            exc_info=True,
+                        )
+                        signed_slides.append(slide)
+                else:
+                    signed_slides.append(slide)
+            v = {**v, "slides": signed_slides}
+        raw_slide_post = v.get("slide_post")
+        if isinstance(raw_slide_post, dict):
+            bundle_path = nonblank_str(raw_slide_post.get("bundle_gcs_path"))
+            if bundle_path:
+                try:
+                    v = {
+                        **v,
+                        "slide_post": {
+                            **raw_slide_post,
+                            "bundle_url": storage.signed_download_url(
+                                bundle_path,
+                                f"kria-{variant_id}-slides.zip",
+                                expiration_minutes=PLAYBACK_URL_TTL_MIN,
+                            ),
+                        },
+                    }
+                except Exception:  # noqa: BLE001 — export button just stays disabled
+                    log.warning(
+                        "variant_slide_bundle_resign_failed",
+                        job_id=str(job.id),
+                        variant_id=v.get("variant_id"),
+                        bundle_path=bundle_path,
+                        exc_info=True,
+                    )
         raw_visual_blocks = v.get("visual_blocks")
         if raw_visual_blocks:
             signed_visual_previews: dict[str, str] = {}
@@ -2220,6 +2277,10 @@ _GUIDED_STORY_TEXT_REQUIRED_ERROR = {
     "code": "guided_story_text_required",
     "message": "Keep the approved title and thought moments; edit their wording instead.",
 }
+_SLIDE_POST_EDIT_ERROR = {
+    "code": "slide_post_edit_unsupported",
+    "message": "Edit the slide order, cover, or caption in the slides panel instead.",
+}
 
 
 def _assert_variant_generation_editable_or_409(job: Job, variant_id: str) -> None:
@@ -2265,6 +2326,18 @@ def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bo
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=_GUIDED_STORY_EDIT_ERROR,
+        )
+    if variant.get("resolved_archetype") == "slides":
+        # A slide post is an ordered image/video bundle, not a video with a
+        # burnable text/caption/overlay layer. None of the montage-renderer
+        # edit lanes below this call (swap-song, retext, media-overlays, sfx,
+        # timeline, editor/commit, ...) are meaningful for it, and letting one
+        # through would re-render the montage renderer over the variant and
+        # silently destroy the slide post (plans/024 risk #2). Editing a slide
+        # post goes through PUT /variants/{id}/slides instead.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_SLIDE_POST_EDIT_ERROR,
         )
     return variant
 
@@ -2414,6 +2487,77 @@ def dispatch_retext(
             remove_text=bool(remove),
             render_gen_id=render_gen_id,
         )
+
+    receipt = _pending_variant_publish(
+        job,
+        variant_id,
+        callback=_publish,
+        render_generation_id=render_gen_id,
+        previous_variant=previous_variant,
+        previous_started_at=previous_started_at,
+    )
+    if publish:
+        receipt()
+    return receipt
+
+
+def _require_slides_variant(job: Job, variant_id: str) -> dict:
+    """Like `require_editable_variant`, but for the ONE archetype it rejects.
+
+    A slide post's `PUT .../variants/{id}/slides` route is the sanctioned way
+    to touch a "slides" variant — every OTHER edit lane still goes through
+    `require_editable_variant` and is rejected there (plans/024 risk #2/#4).
+    """
+    if getattr(job, "status", None) == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled videos cannot be edited.",
+        )
+    _assert_variant_generation_editable_or_409(job, variant_id)
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    if variant.get("render_status") == "rendering":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
+        )
+    if variant.get("resolved_archetype") != "slides":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This variant is not a slide post.",
+        )
+    return variant
+
+
+def dispatch_slide_post_edit(
+    job: Job, variant_id: str, *, publish: bool = True
+) -> PendingVariantPublish:
+    """Validate + enqueue a rebuild of the "slides" variant after a draft edit.
+
+    The caller MUST already have written and committed the new
+    `PlanItem.slide_post` draft before calling this — `rebuild_slide_post_variant`
+    re-reads the draft fresh from the DB; this function only mints the
+    render-generation token and stamps the variant "rendering", the same
+    mint→stamp→commit→publish-after-commit shape `dispatch_retext` above uses.
+    """
+    variant = _require_slides_variant(job, variant_id)
+    previous_variant = copy.deepcopy(variant)
+    previous_started_at = getattr(job, "started_at", None)
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    render_gen_id = uuid.uuid4().hex
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            stamp_variant_attempt(v)
+            v["render_generation_id"] = render_gen_id
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    mark_reattempt(job)
+
+    from app.tasks.generative_build import rebuild_slide_post_variant  # noqa: PLC0415
+
+    def _publish() -> None:
+        rebuild_slide_post_variant.delay(str(job.id), render_gen_id=render_gen_id)
 
     receipt = _pending_variant_publish(
         job,
@@ -5763,6 +5907,63 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # section.
     caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
     from app.config import settings  # noqa: PLC0415
+
+    if archetype == "slides":
+        # A slide post is an ordered image/video bundle assembled by
+        # app/pipeline/slide_post, not a video with a burnable text/caption/
+        # overlay/motion layer. None of the montage-renderer edit lanes below
+        # apply — reorder/add/remove/cover/caption go through the slide-post
+        # draft (PUT .../variants/{id}/slides) instead. Mirrors the
+        # guided_story "legacy" all-closed shape immediately below on purpose
+        # (same contract, different reason code) — see plans/024 risk #4.
+        reason = "slide_post_edit_unsupported"
+        return {
+            "overlay_upload_mode": (
+                "pool" if settings.reliable_overlay_uploads_enabled else "legacy"
+            ),
+            "text_elements": False,
+            "text_elements_max": MAX_GUIDED_EDITOR_TEXT_ELEMENTS,
+            "timeline": False,
+            "timeline_max_slots": _TIMELINE_MAX_SLOTS,
+            "copilot_snapshot_wire_version": 1,
+            "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
+            "split_clips": False,
+            "automatic_cut": False,
+            "automatic_cut_reason": reason,
+            "mix": False,
+            "sfx": False,
+            "overlays": False,
+            "visual_blocks": False,
+            "motion_scenes": False,
+            "motion_runtime_hash": None,
+            "evolving_type": False,
+            "camera_effects": False,
+            "background_music": False,
+            "suggestions": False,
+            "swap_song": False,
+            "intro_controls": False,
+            "reason": reason,
+            "sfx_reason": reason,
+            "overlays_reason": reason,
+            "visual_blocks_reason": reason,
+            "motion_scenes_reason": reason,
+            "camera_effects_reason": reason,
+            "suggestions_reason": reason,
+            "lyrics": {
+                "editable": False,
+                "enabled": False,
+                "can_toggle_on": False,
+                "reason": "disabled",
+                "lyrics_model": "elements",
+            },
+            "orientation": {
+                "editable": False,
+                "value": _variant_orientation(variant),
+                "reason": reason,
+            },
+            "carousel": False,
+            "carousel_reason": reason,
+        }
 
     if archetype == "guided_story":
         # A guided story is an approved, immutable editorial plan. Until an

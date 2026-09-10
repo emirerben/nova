@@ -11,6 +11,23 @@ All notable changes to this project will be documented in this file.
 ### Internal
 - Added `CAPTION_CUE_SOURCE`, a shared constant replacing a hand-typed string that classified a caption across five call sites, plus a producer-side contract test pinning it.
 
+## [0.75.1.0] - 2026-09-09
+
+### Fixed
+- **Chatting with Kria on your phone no longer hides your own messages or the live edit.** The chat drawer used to lose most of its height the instant the on-screen keyboard opened, collapsing the message thread to a sliver — so a sent message and the resulting change both looked like they vanished. Applying an edit or accepting a suggestion from chat also no longer switches away from the chat tool mid-turn.
+- **Accepting a suggestion now gives visible feedback.** A toast confirms the change, and accepting an overlay suggestion seeks the preview to it — before, the card just disappeared with no other sign anything happened.
+- **Tapping Stop mid-turn now actually stops the edit.** A response that arrived after Stop was pressed used to still apply silently; now nothing is applied once a turn is abandoned, and a failure while confirming an already-applied edit no longer deletes the message that caused it.
+- **Closing a tool sheet on mobile is a single tap.** Tapping outside the sheet now closes it (it used to only collapse to half-height), the close button is a proper touch target, and a keyboard-open sheet no longer snaps to full height from ordinary scroll/browser-chrome noise.
+- **Switching music tracks on mobile now plays a preview.** Picking a different track used to request no audio at all for most videos, and even when it did, played nothing unless the video happened to already be playing. Now it previews audibly right away.
+- **The mobile editor's header shows which video you're editing** instead of a generic "Edit video" label.
+## [0.74.0.0] — 2026-09-09
+
+### Added
+- **Creators can now build a mixed-media post — an ordered sequence of photos and videos, like a TikTok photo post or an Instagram carousel — instead of only a single video.** Pick "Photo & video post," let Kria propose the order, cover, and caption from your footage, then reorder, add, remove, or edit anything before exporting a ready-to-post bundle. TikTok photo mode (images only) and Instagram carousels (photos + videos) each get their own platform-fit rules. Export-only in this release — no direct publish yet.
+
+### Internal
+- The new "slides" render archetype reuses the existing plan-item pipeline end to end: one variant carries a stitched preview alongside the ordered slide list and export bundle, so every existing reader (player, library, TikTok-publish exclusion) keeps working unbranched. Every other editor lane (captions, sound effects, overlays, timeline) is explicitly closed for this archetype at the same choke point every one of those routes already shares. Ships default on, gated by `SLIDE_POSTS_ENABLED` / `NEXT_PUBLIC_SLIDE_POSTS_ENABLED`.
+
 ## [0.75.3.0] - 2026-09-09
 
 ### Changed

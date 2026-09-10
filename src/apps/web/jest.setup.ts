@@ -12,6 +12,7 @@
 process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED = "true";
 process.env.NEXT_PUBLIC_UNIFIED_TIMELINE_ENABLED = "true";
 process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED = "true";
+process.env.NEXT_PUBLIC_SLIDE_POSTS_ENABLED = "true";
 if (typeof globalThis.crypto?.randomUUID !== "function") {
   let _uid = 0;
   const existing =

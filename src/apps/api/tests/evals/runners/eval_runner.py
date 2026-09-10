@@ -395,6 +395,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.voiceover_interviewer import VoiceoverInterviewerAgent
 
         return VoiceoverInterviewerAgent
+    if agent_name == "nova.plan.slide_post_composer":
+        from app.agents.slide_post_composer import SlidePostComposerAgent
+
+        return SlidePostComposerAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

@@ -2,6 +2,7 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import CopilotDrawer from "@/app/plan/items/[id]/_editor/CopilotDrawer";
 import type { CopilotMessage } from "@/lib/edit-copilot/useEditCopilot";
+import { installVisualViewportMock } from "@/__tests__/utils/viewport-mocks";
 
 const baseProps = {
   open: true,
@@ -407,5 +408,61 @@ describe("CopilotDrawer — steps feed flag gate", () => {
       ).toBeInTheDocument();
       expect(screen.queryByText(/can't be undone from chat/i)).not.toBeInTheDocument();
     });
+  });
+});
+
+// KRI-19 bugs 10/12/14: the drawer used to add `paddingBottom: keyboardOffset`
+// inside its static `max-h-[74dvh]` box — the border box stayed the same
+// size, so the padding ate directly into the message thread's height (down
+// to a ~15px sliver on a real iPhone keyboard). The fix shrinks `max-height`
+// and shifts `bottom` by the same amount instead, so the thread keeps a
+// usable height and the drawer's visible top edge doesn't move.
+describe("CopilotDrawer — keyboard-open sizing (light mode)", () => {
+  it("shrinks max-height and shifts bottom by the keyboard offset instead of padding the thread away", () => {
+    const vv = installVisualViewportMock();
+    try {
+      render(<CopilotDrawer {...baseProps} layoutMode="light" />);
+      const drawer = screen.getByTestId("copilot-light");
+
+      // No keyboard: static Tailwind classes apply, no inline override.
+      expect(drawer.style.paddingBottom).toBe("");
+      expect(drawer.style.bottom).toBe("");
+      expect(drawer.style.maxHeight).toBe("");
+
+      act(() => {
+        // Comfortably over the shared hook's noise threshold.
+        vv.setHeight(window.innerHeight - 320);
+      });
+
+      expect(drawer.style.paddingBottom).toBe("");
+      expect(drawer.style.bottom).toBe("320px");
+      expect(drawer.style.maxHeight).toBe("calc(74dvh - 320px)");
+      expect(drawer.style.minHeight).toBe("0");
+
+      act(() => {
+        vv.setHeight(window.innerHeight);
+      });
+      expect(drawer.style.bottom).toBe("");
+      expect(drawer.style.maxHeight).toBe("");
+    } finally {
+      vv.restore();
+    }
+  });
+
+  it("does not apply keyboard sizing outside light mode", () => {
+    const vv = installVisualViewportMock();
+    try {
+      render(<CopilotDrawer {...baseProps} layoutMode="full" />);
+      const drawer = screen.getByTestId("copilot-full");
+
+      act(() => {
+        vv.setHeight(window.innerHeight - 320);
+      });
+
+      expect(drawer.style.bottom).toBe("");
+      expect(drawer.style.maxHeight).toBe("");
+    } finally {
+      vv.restore();
+    }
   });
 });

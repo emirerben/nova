@@ -5,17 +5,22 @@
  *     threshold, keyboardOpen disables dismiss, horizontal intent never
  *     changes detent, body drags require scrollTop 0.
  *  2. Half detent: role=dialog WITHOUT aria-modal, no scrim, no focus trap.
- *  3. Full detent: aria-modal + scrim; scrim click demotes to half; Tab is
- *     trapped inside the sheet.
+ *  3. Full detent: aria-modal + scrim; scrim click CLOSES (KRI-19 bug 8 — it
+ *     used to only demote to half, requiring a second dismiss gesture); Tab
+ *     is trapped inside the sheet.
  *  4. transportSlot renders only at full detent.
  *  5. Escape calls onClose (half and full).
  *  6. Keyboard promote via the visualViewport mock: shrink at half →
- *     onDetentChange("full"); restore height → back to "half".
+ *     onDetentChange("full"); restore height → back to "half". Sub-threshold
+ *     noise (< KEYBOARD_OFFSET_THRESHOLD_PX) never promotes. A detent the
+ *     user chose manually while the keyboard was open survives keyboard
+ *     close instead of being silently reverted (KRI-19 bug 8).
  *  7. Absent visualViewport: promote path no-ops, sheet still renders — pins
  *     the unsupported-browser failure mode.
  *  8. Grabber sr button toggles detent.
  *  9. Body scroll locked while open, restored on unmount.
  * 10. Pointer wiring: grabber drag down closes; horizontal drags are inert.
+ * 11. Close button: real tap target, closes on click.
  */
 
 import "@testing-library/jest-dom";
@@ -162,13 +167,14 @@ describe("Sheet — modality", () => {
 
   // ── 3. Full-detent modality ─────────────────────────────────────────────────
 
-  it("full detent: aria-modal + scrim; scrim click demotes to half", () => {
-    const { onDetentChange } = renderSheet({ detent: "full" });
+  it("full detent: aria-modal + scrim; scrim click closes the sheet", () => {
+    const { onClose, onDetentChange } = renderSheet({ detent: "full" });
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-modal", "true");
 
     const scrim = screen.getByTestId("pocket-sheet-scrim");
     fireEvent.click(scrim);
-    expect(onDetentChange).toHaveBeenCalledWith("half");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onDetentChange).not.toHaveBeenCalled();
   });
 
   it("full detent traps Tab inside the sheet", () => {
@@ -242,6 +248,55 @@ describe("Sheet — keyboard promote", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(onDetentChange).not.toHaveBeenCalled();
   });
+
+  it("sub-threshold viewport noise (iOS toolbar collapse, no real keyboard) never promotes", () => {
+    const vv = installVisualViewportMock();
+    try {
+      const { onDetentChange } = renderSheet({ detent: "half" });
+      act(() => {
+        // Below KEYBOARD_OFFSET_THRESHOLD_PX (120) — chrome/scroll noise,
+        // not a keyboard. Regression for KRI-19 bug 8 (sheet jumped to full
+        // with no keyboard visible).
+        vv.setHeight(window.innerHeight - 40);
+      });
+      expect(onDetentChange).not.toHaveBeenCalled();
+    } finally {
+      vv.restore();
+    }
+  });
+
+  it("a detent the user chooses manually while the keyboard is open survives keyboard close", () => {
+    const vv = installVisualViewportMock();
+    try {
+      const { onDetentChange, rerenderDetent } = renderSheet({ detent: "half" });
+
+      act(() => {
+        vv.setHeight(window.innerHeight - 320);
+      });
+      expect(onDetentChange).toHaveBeenLastCalledWith("full");
+      rerenderDetent("full");
+
+      // User deliberately demotes then re-promotes while the keyboard is
+      // still open (e.g. via the grabber button).
+      fireEvent.click(screen.getByRole("button", { name: "Collapse sheet" }));
+      expect(onDetentChange).toHaveBeenLastCalledWith("half");
+      rerenderDetent("half");
+
+      fireEvent.click(screen.getByRole("button", { name: "Expand sheet" }));
+      expect(onDetentChange).toHaveBeenLastCalledWith("full");
+      rerenderDetent("full");
+
+      const callsBeforeKeyboardClose = onDetentChange.mock.calls.length;
+      act(() => {
+        vv.setHeight(window.innerHeight);
+      });
+      // No further call — the auto-promote restore is cancelled because the
+      // user made a deliberate choice in between (KRI-19 bug 8).
+      expect(onDetentChange.mock.calls.length).toBe(callsBeforeKeyboardClose);
+    } finally {
+      vv.restore();
+    }
+  });
 });
 
 // ── 8. Grabber button ─────────────────────────────────────────────────────────
@@ -294,5 +349,17 @@ describe("Sheet — pointer wiring", () => {
     fireEvent.pointerUp(sheet, { clientX: 200, clientY: 380, pointerId: 1 });
     expect(onClose).not.toHaveBeenCalled();
     expect(onDetentChange).not.toHaveBeenCalled();
+  });
+});
+
+// ── 11. Close button ──────────────────────────────────────────────────────────
+
+describe("Sheet — close button", () => {
+  it("is a real tap target and closes on click", () => {
+    const { onClose } = renderSheet({ detent: "full" });
+    const closeButton = screen.getByRole("button", { name: "Close" });
+    expect(closeButton.className).toMatch(/min-h-11/);
+    fireEvent.click(closeButton);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

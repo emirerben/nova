@@ -55,6 +55,7 @@ from app.agents._schemas.edit_format import (
     DAY_VLOG_RENDERER_VERSION,
     NARRATED_EDIT_FORMATS,
     SINGLE_HERO_RENDERER_VERSION,
+    SLIDES_RENDERER_VERSION,
     coerce_edit_format,
     guided_edit_applicable,
 )
@@ -245,6 +246,19 @@ class DayVlogPolicyError(RuntimeError):
 
 class SingleHeroPolicyError(RuntimeError):
     """A single-hero contract failure that must never downgrade to montage."""
+
+    def __init__(self, reason: str, message: str):
+        self.reason = reason
+        super().__init__(message)
+
+
+class SlidePostPolicyError(RuntimeError):
+    """A slide-post contract failure that must never downgrade to montage.
+
+    Same class of hazard as day_vlog/single_hero above even though slides is
+    not a GUIDED_EDIT_FORMATS member: a mixed API/worker deploy must never
+    let an old worker silently render a "slides" job as an ordinary montage.
+    """
 
     def __init__(self, reason: str, message: str):
         self.reason = reason
@@ -1807,9 +1821,13 @@ def orchestrate_generative_job(self, job_id: str) -> None:
         except _GuidedStoryAttemptBusy:
             log.info("guided_story_duplicate_delivery_busy", job_id=job_id)
             return
-        except (DayVlogPolicyError, SingleHeroPolicyError) as exc:
+        except (DayVlogPolicyError, SingleHeroPolicyError, SlidePostPolicyError) as exc:
             rejected_format = (
-                "single_hero" if isinstance(exc, SingleHeroPolicyError) else "day_vlog"
+                "single_hero"
+                if isinstance(exc, SingleHeroPolicyError)
+                else "slides"
+                if isinstance(exc, SlidePostPolicyError)
+                else "day_vlog"
             )
             log.warning(
                 "guided_format_job_rejected",
@@ -2350,6 +2368,17 @@ def _run_generative_job_impl(
                     "flag_disabled",
                     "single_hero is disabled by EDIT_FORMAT_SINGLE_HERO_ENABLED.",
                 )
+        if render_intent_value == "slides":
+            if all_candidates.get("slides_renderer_version") != SLIDES_RENDERER_VERSION:
+                raise SlidePostPolicyError(
+                    "renderer_version_mismatch",
+                    "This slide-post job was created by an incompatible API worker; retry it.",
+                )
+            if not settings.slide_posts_enabled:
+                raise SlidePostPolicyError(
+                    "flag_disabled",
+                    "slides is disabled by SLIDE_POSTS_ENABLED.",
+                )
         # Optional user-supplied voiceover (audio-only). When present it becomes the
         # narration bed and the job renders voiceover variants instead of song/original
         # — resolved in _resolve_archetype below, ahead of the footage-speech logic.
@@ -2464,6 +2493,16 @@ def _run_generative_job_impl(
         if speech_cut_operation_id:
             raise RuntimeError("Speech-cut rerenders are not available on guided stories")
         _run_guided_story_job(job_id, guided_snapshot, render_trace_id=render_trace_id)
+        return
+
+    if render_intent_value == "slides":
+        # A slide post's source of truth is PlanItem.slide_post (resolved by
+        # PlanItemAsset id), never all_candidates.clip_paths — it has no
+        # "clip" concept at all, so this must dispatch strictly BEFORE the
+        # clip_paths_gcs check below (plans/024 risk #6).
+        if speech_cut_operation_id:
+            raise RuntimeError("Speech-cut rerenders are not available on slide posts")
+        _run_slide_post_job(job_id, render_trace_id=render_trace_id)
         return
 
     if not clip_paths_gcs:
@@ -4129,6 +4168,418 @@ def _run_guided_story_job(job_id: str, guided_snapshot: dict, *, render_trace_id
     if _finalize_job(job_id, [result]) is False:
         return
     record_phase(job_id, "finalize", elapsed_ms=_elapsed_ms(finalize_t0))
+
+
+def _resolve_slide_post_draft_and_assets(
+    db,
+    job_id: str,  # noqa: ANN001
+) -> tuple[uuid.UUID, uuid.UUID, SlidePostDraft, list[dict[str, Any]]]:  # noqa: F821
+    """Load the job's plan item, its `slide_post` draft, and every slide's
+    resolved (ownership-checked) `PlanItemAsset` row, as plain dicts.
+
+    Shared by the first render and every rebuild — both need this exact
+    resolution, and it must be re-done fresh each time (never cached),
+    because the draft or the pool can change between renders.
+    """
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.models import PlanItem, PlanItemAsset  # noqa: PLC0415
+    from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
+
+    job = db.get(Job, uuid.UUID(job_id))
+    if job is None or job.content_plan_item_id is None:
+        raise SlidePostPolicyError("missing_item", "Slide posts require a plan item.")
+    content_plan_item_id = job.content_plan_item_id
+    job_user_id = job.user_id
+    item = db.get(PlanItem, content_plan_item_id)
+    draft = parse_slide_post(item.slide_post if item is not None else None)
+    if draft is None or not draft.slides:
+        raise SlidePostPolicyError("empty_draft", "No slides to render.")
+    asset_ids = [ref.asset_id for ref in draft.slides]
+    rows = db.execute(_select(PlanItemAsset).where(PlanItemAsset.id.in_(asset_ids))).scalars().all()
+    assets_by_id = {row.id: row for row in rows}
+    allowed_prefix = f"users/{job_user_id}/plan/{content_plan_item_id}/"
+    # Extract every field we need into plain dicts BEFORE the session
+    # closes — holding onto ORM row objects across the `with` boundary
+    # risks a DetachedInstanceError on any attribute SQLAlchemy didn't
+    # already materialize (same reason _run_generative_job_impl reads
+    # `all_candidates` into plain locals before its own session exits).
+    ordered_assets: list[dict[str, Any]] = []
+    for ref in draft.slides:
+        asset = assets_by_id.get(ref.asset_id)
+        if (
+            asset is None
+            or asset.plan_item_id != content_plan_item_id
+            or asset.user_id != job_user_id
+            or asset.media_status != "ready"
+            or not asset.gcs_path.startswith(allowed_prefix)
+            or asset.kind != ref.kind
+        ):
+            # A stale/foreign/unreadable reference is dropped rather than
+            # failing the whole post — same best-effort posture as a
+            # deleted clip elsewhere in the pipeline. The route layer is
+            # the one place that prevents deleting a REFERENCED asset;
+            # this is defense-in-depth for a draft that outlived that.
+            continue
+        ordered_assets.append(
+            {
+                "id": str(asset.id),
+                "gcs_path": asset.gcs_path,
+                "gcs_generation": asset.gcs_generation,
+                "kind": "image" if asset.kind == "image" else "video",
+                "content_fingerprint": asset.content_fingerprint,
+                "duration_s": asset.duration_s,
+                "alt": ref.alt,
+            }
+        )
+    if not ordered_assets:
+        raise SlidePostPolicyError("no_usable_slides", "No usable slides to render.")
+    return content_plan_item_id, job_user_id, draft, ordered_assets
+
+
+def _build_slide_post_result(
+    job_id: str,
+    *,
+    ordered_assets: list[dict[str, Any]],
+    platform_profile: str,
+    cover_index: int,
+    caption: str,
+    render_trace_id: str,
+) -> dict[str, Any]:
+    """Normalize every slide, stitch the preview, build the export bundle,
+    and return the full variant payload. No DB access — pure render + upload.
+
+    Shared by `_run_slide_post_job` (first render) and
+    `rebuild_slide_post_variant` (post-render edit) so the two paths can
+    never drift: same normalization, same content-addressed reuse, same
+    variant shape.
+    """
+    from app import storage  # noqa: PLC0415
+    from app.pipeline.slide_post import build as slide_build  # noqa: PLC0415
+    from app.pipeline.slide_post import profiles as slide_profiles  # noqa: PLC0415
+    from app.services.pipeline_trace import render_stage_timer  # noqa: PLC0415
+
+    canvas = slide_profiles.PLATFORM_PROFILES[platform_profile].canvas
+    validation = slide_profiles.validate(
+        platform_profile,
+        [
+            slide_profiles.SlideInput(
+                slide_id=asset["id"], kind=asset["kind"], duration_s=asset["duration_s"]
+            )
+            for asset in ordered_assets
+        ],
+    )
+
+    render_generation_id = uuid.uuid4().hex
+    bundle_slides: list[slide_build.BundleSlideFile] = []
+    resolved_slides: list[dict[str, Any]] = []
+    with (
+        render_stage_timer(
+            "slide_post_render",
+            trace_id=render_trace_id,
+            variant_id="slides",
+            counts={"slide_count": len(ordered_assets)},
+        ),
+        tempfile.TemporaryDirectory(
+            prefix="nova_slide_post_", ignore_cleanup_errors=True
+        ) as tmpdir,
+    ):
+        preview_segments: list[str] = []
+        cover_local_path: str | None = None
+        cover_kind: str = "image"
+        for index, asset in enumerate(ordered_assets):
+            kind = asset["kind"]
+            ext = "jpg" if kind == "image" else "mp4"
+            fingerprint = (
+                asset["content_fingerprint"]
+                or hashlib.sha256(asset["gcs_path"].encode("utf-8")).hexdigest()
+            )
+            normalized_key = (
+                f"generative-jobs/{job_id}/slides/normalized/"
+                f"{fingerprint}_{canvas[0]}x{canvas[1]}.{ext}"
+            )
+            normalized_local = os.path.join(tmpdir, f"norm_{index:02d}.{ext}")
+            if storage.object_exists(normalized_key):
+                # Content-addressed reuse: an unchanged slide's normalized
+                # derivative already exists from a prior render — a pure
+                # reorder/caption/cover edit re-encodes nothing.
+                storage.download_to_file(normalized_key, normalized_local)
+            else:
+                source_local = os.path.join(tmpdir, f"src_{index:02d}")
+                if asset["gcs_generation"]:
+                    storage.download_generation_to_file(
+                        asset["gcs_path"], source_local, generation=str(asset["gcs_generation"])
+                    )
+                else:
+                    storage.download_to_file(asset["gcs_path"], source_local)
+                if kind == "image":
+                    slide_build.normalize_image_slide(source_local, normalized_local, canvas=canvas)
+                else:
+                    slide_build.normalize_video_slide(source_local, normalized_local, canvas=canvas)
+                storage.upload_local_file(
+                    normalized_local,
+                    normalized_key,
+                    "image/jpeg" if kind == "image" else "video/mp4",
+                )
+            duration_s = None if kind == "image" else slide_build.probe_duration_s(normalized_local)
+            width, height = slide_build.probe_dimensions(normalized_local)
+            seg_local = os.path.join(tmpdir, f"seg_{index:02d}.mp4")
+            slide_build.render_preview_segment(
+                normalized_local,
+                seg_local,
+                kind=kind,
+                canvas=canvas,
+                hold_s=(
+                    slide_build.DEFAULT_IMAGE_HOLD_S
+                    if kind == "image"
+                    else slide_build.MAX_PREVIEW_VIDEO_SLICE_S
+                ),
+            )
+            preview_segments.append(seg_local)
+            if index == cover_index:
+                cover_local_path = normalized_local
+                cover_kind = kind
+            bundle_slides.append(
+                slide_build.BundleSlideFile(
+                    local_path=normalized_local, kind=kind, index=index, alt=asset["alt"]
+                )
+            )
+            resolved_slides.append(
+                {
+                    "index": index,
+                    "kind": kind,
+                    "asset_id": asset["id"],
+                    "asset_gcs_path": normalized_key,
+                    "width": width,
+                    "height": height,
+                    "duration_s": duration_s,
+                    "alt": asset["alt"],
+                }
+            )
+
+        preview_local = os.path.join(tmpdir, "preview.mp4")
+        slide_build.concat_preview_segments(preview_segments, preview_local, canvas=canvas)
+        preview_key = f"generative-jobs/{job_id}/slides/preview.mp4"
+        storage.upload_local_file(preview_local, preview_key, "video/mp4")
+
+        cover_local = os.path.join(tmpdir, "cover.jpg")
+        assert cover_local_path is not None  # ordered_assets is non-empty, cover_index is clamped
+        slide_build.extract_cover(cover_local_path, cover_kind, cover_local)
+        cover_key = f"generative-jobs/{job_id}/slides/cover.jpg"
+        storage.upload_local_file(cover_local, cover_key, "image/jpeg")
+
+        manifest = slide_build.build_post_manifest(
+            platform_profile=platform_profile,
+            caption=caption,
+            cover_index=cover_index,
+            slides=bundle_slides,
+        )
+        bundle_local = os.path.join(tmpdir, "bundle.zip")
+        slide_build.build_bundle_zip(
+            bundle_local, slides=bundle_slides, manifest=manifest, caption=caption
+        )
+        bundle_key = f"generative-jobs/{job_id}/slides/bundle.zip"
+        storage.upload_local_file(bundle_local, bundle_key, "application/zip")
+
+    return {
+        "variant_id": "slides",
+        "rank": 1,
+        "text_mode": "none",
+        "resolved_archetype": "slides",
+        "render_status": "ready",
+        "ok": True,
+        "slides_renderer_version": SLIDES_RENDERER_VERSION,
+        "slides": resolved_slides,
+        "slide_post": {
+            "platform_profile": platform_profile,
+            "caption": caption,
+            "cover_index": cover_index,
+            "bundle_gcs_path": bundle_key,
+            "validation": {
+                "ok": validation.ok,
+                "errors": [
+                    {"code": e.code, "message": e.message, "slide_id": e.slide_id}
+                    for e in validation.errors
+                ],
+                "warnings": [
+                    {"code": w.code, "message": w.message, "slide_id": w.slide_id}
+                    for w in validation.warnings
+                ],
+            },
+        },
+        "render_generation_id": render_generation_id,
+        "render_finished_at": datetime.utcnow().isoformat() + "Z",
+        "poster_path": cover_key,
+        # Written LAST relative to the fields above in this same dict — the
+        # keys all land in one atomic upsert/merge regardless of source
+        # order, but keeping video_path textually last documents the
+        # invariant it protects: the stuck-variant reaper treats
+        # `video_path` present as "this variant's artifact is complete."
+        # For slides that must mean the export bundle exists too, so
+        # `video_path` is set in the exact same write as
+        # `slide_post.bundle_gcs_path` above (plans/024 risk #7).
+        "video_path": preview_key,
+    }
+
+
+def _stamp_slide_post_rendered_version(content_plan_item_id: uuid.UUID, draft_version: int) -> None:
+    """Record which draft version the just-completed render used.
+
+    Only advances `rendered_version` when the draft is still at the version
+    this render started from — a concurrent edit that bumped the version
+    mid-render must NOT be marked "rendered" (its own rebuild will do that).
+
+    Deliberately UNLOCKED (no `with_for_update`): this call always runs
+    AFTER the Job row lock in `_upsert_variant_entry`/`_update_variant_entry`
+    has already been taken and released in its own prior, already-committed
+    transaction, so a PlanItem lock here would invert the canonical
+    PlanItem-before-Job row-lock order (`tests/routes/test_lock_order.py`).
+    No lock is needed for correctness either way: the write is idempotent
+    under the version-match check below — two concurrent stamps for the
+    same version both write the same value, and a version mismatch is
+    simply skipped, so a benign read-then-write race can never corrupt state.
+    """
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.schemas.slide_post import parse_slide_post  # noqa: PLC0415
+
+    with _sync_session() as db:
+        item = db.get(PlanItem, content_plan_item_id)
+        if item is None:
+            return
+        current = parse_slide_post(item.slide_post)
+        if current is not None and current.version == draft_version:
+            item.slide_post = current.model_copy(
+                update={"rendered_version": draft_version}
+            ).model_dump(mode="json")
+            db.commit()
+
+
+def _run_slide_post_job(job_id: str, *, render_trace_id: str) -> None:
+    """Render one mixed-media "slide post" (ordered images + videos, plans/024)
+    for the FIRST time — this job's one and only variant does not exist yet.
+
+    Unlike every other archetype, a slide post's source of truth is
+    `PlanItem.slide_post` (the reviewable draft), not `all_candidates.clip_paths`
+    — each slide is resolved from the item's `PlanItemAsset` pool by id, never
+    a raw uploaded "clip". Bypasses `_resolve_archetype`/music-matching/text
+    entirely, same shape as `_run_guided_story_job` above.
+
+    Writes exactly one variant (`variant_id == "slides"`, never
+    `"original_text"`/`"song_text"` — those names are hardcoded elsewhere as
+    the clip-timeline-editable set) carrying:
+      - `video_path`/`poster_path`: a stitched preview MP4 + cover, so every
+        existing variant reader (hero player, library tile, TikTok-publish
+        exclusion, `_finalize_job`'s allowlist) keeps working unbranched.
+      - `slides`: the ordered, resolved slide list with signable asset paths.
+      - `slide_post`: platform profile, caption, cover index, the export
+        bundle's GCS key, and the profile-validation result.
+
+    Post-render edits (reorder/add/remove/cover/caption/profile) go through
+    `rebuild_slide_post_variant` below instead — this function never runs
+    again for a given job.
+    """
+    from app.pipeline.slide_post.profiles import coerce_platform_profile  # noqa: PLC0415
+
+    with _sync_session() as db:
+        content_plan_item_id, _job_user_id, draft, ordered_assets = (
+            _resolve_slide_post_draft_and_assets(db, job_id)
+        )
+        platform_profile = coerce_platform_profile(draft.platform_profile)
+        cover_index = min(draft.cover_index, len(ordered_assets) - 1)
+        caption = draft.caption
+        draft_version = draft.version
+
+    result = _build_slide_post_result(
+        job_id,
+        ordered_assets=ordered_assets,
+        platform_profile=platform_profile,
+        cover_index=cover_index,
+        caption=caption,
+        render_trace_id=render_trace_id,
+    )
+    if _upsert_variant_entry(job_id, result) is False:
+        return
+    if _finalize_job(job_id, [result]) is False:
+        return
+    _stamp_slide_post_rendered_version(content_plan_item_id, draft_version)
+
+
+@celery_app.task(
+    name="rebuild_slide_post_variant",
+    bind=True,
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,
+    max_retries=7,
+    soft_time_limit=1740,
+    time_limit=1800,
+)
+@_with_owned_job_fence
+def rebuild_slide_post_variant(self, job_id: str, render_gen_id: str | None = None) -> None:
+    """Re-render the "slides" variant after a post-render draft edit.
+
+    The route side mints `render_gen_id`, calls `stamp_variant_attempt` on
+    the existing "slides" variant, commits, and enqueues this task AFTER
+    that commit — the same mint→stamp→commit→publish-after-commit shape
+    every other in-place variant mutation uses. This task then inherits,
+    via the exact same helper functions `regenerate_generative_variant`
+    uses (not a reimplementation of them), the full concurrency contract:
+    a claimed generation token + heartbeat, and a token-fenced
+    `_update_variant_entry` write. `_finalize_job` is deliberately NOT
+    called here — that per-variant field allowlist only applies to a job's
+    FIRST render; a rebuild is a targeted merge onto an already-terminal
+    job, exactly like every other `regenerate_generative_variant` path.
+    """
+    task_id = str(getattr(self.request, "id", "") or "")
+    claim_state = _claim_creator_craft_generation(job_id, "slides", render_gen_id, task_id=task_id)
+    if claim_state not in {"claimed", "legacy"}:
+        log.info(
+            "slide_post_rebuild_duplicate_delivery_skipped",
+            job_id=job_id,
+            generation=render_gen_id,
+            claim_state=claim_state,
+        )
+        return
+
+    from app.pipeline.slide_post.profiles import coerce_platform_profile  # noqa: PLC0415
+
+    with _sync_session() as db:
+        content_plan_item_id, _job_user_id, draft, ordered_assets = (
+            _resolve_slide_post_draft_and_assets(db, job_id)
+        )
+        platform_profile = coerce_platform_profile(draft.platform_profile)
+        cover_index = min(draft.cover_index, len(ordered_assets) - 1)
+        caption = draft.caption
+        draft_version = draft.version
+
+    heartbeat = (
+        _creator_craft_generation_heartbeat(job_id, "slides", str(render_gen_id), task_id=task_id)
+        if claim_state == "claimed" and render_gen_id
+        else nullcontext()
+    )
+    with heartbeat:
+        result = _build_slide_post_result(
+            job_id,
+            ordered_assets=ordered_assets,
+            platform_profile=platform_profile,
+            cover_index=cover_index,
+            caption=caption,
+            render_trace_id=uuid.uuid4().hex,
+        )
+    if (
+        _update_variant_entry(
+            job_id,
+            "slides",
+            result,
+            expected_render_gen_id=render_gen_id,
+            outcome="slide_post_rebuild_complete",
+            cleanup_followup="none",
+        )
+        is False
+    ):
+        return
+    _stamp_slide_post_rendered_version(content_plan_item_id, draft_version)
 
 
 def _dispatch_post_finalize_suggestion_chains(job_id: str, *, speech_cut_rerender: bool) -> None:
@@ -24370,6 +24821,16 @@ def _finalize_job_decision(
                     "proposal_version": r.get("proposal_version"),
                     "media_digest": r.get("media_digest"),
                     "render_receipt": r.get("render_receipt"),
+                    # Slide post (mixed-media carousel/photo post, plans/024).
+                    # MUST survive finalization — this whitelist silently
+                    # strips anything not re-listed here (see the comment on
+                    # ai_timeline below), and without these two keys a slides
+                    # variant would finish its FIRST render as an ordinary-
+                    # looking video variant with no ordered slide list and no
+                    # export bundle at all. Pinned by
+                    # test_finalize_job_preserves_slide_post.
+                    "slides": r.get("slides"),
+                    "slide_post": r.get("slide_post"),
                     # render fingerprint — the caption editor's remount key reads it, so
                     # stripping it here would silently degrade re-seeding after reburns.
                     "render_finished_at": r.get("render_finished_at"),

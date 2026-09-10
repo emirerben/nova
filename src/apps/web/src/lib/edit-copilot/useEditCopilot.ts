@@ -536,18 +536,32 @@ export function useEditCopilot(
       const shouldClarify = hasPendingPlan || (response.outcome
         ? response.outcome === "clarification"
         : response.needs_clarification);
-      const applyResult = shouldClarify
-        ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
-      : (optsRef.current.applyOpsAtomic ?? optsRef.current.applyOps)(response.ops, snapshot);
+      // Stop() marks the turn abandoned the moment the user taps it — check
+      // BEFORE applying anything. Checking only after apply (as this used
+      // to) meant Stop still applied the edit; only the user's own message
+      // got removed (Stop's abandon bookkeeping), an inconsistent result
+      // that looked like "my edit landed but my message vanished"
+      // (KRI-19 bug 12).
       if (abandonedTurnsRef.current.has(turnId)) {
         abandonedTurnsRef.current.delete(turnId);
         return;
       }
-      const applyMeta = optsRef.current.onApplied?.(
-        applyResult,
-        response,
-        snapshot,
-      );
+      const applyResult = shouldClarify
+        ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
+      : (optsRef.current.applyOpsAtomic ?? optsRef.current.applyOps)(response.ops, snapshot);
+      // From here on the draft has already been mutated. A throw from
+      // onApplied (the caller's UI-side hookup — e.g. seeking the preview,
+      // recording undo history) must NOT fall into the outer catch below,
+      // which deletes the user's message: that would leave the edit applied
+      // with no trace of the request that caused it (KRI-19 bug 12). Mirrors
+      // useEditDirector.completeAcceptance's try/catch around the same call.
+      let applyMeta: ReturnType<NonNullable<typeof optsRef.current.onApplied>> | undefined;
+      try {
+        applyMeta = optsRef.current.onApplied?.(applyResult, response, snapshot);
+      } catch (onAppliedErr) {
+        console.error("[edit-copilot] onApplied threw after ops were applied", onAppliedErr);
+        applyMeta = undefined;
+      }
       const outcome = summaries(applyResult);
       // Server-side capacity checks deliberately stay compact, while the
       // browser preflights the complete runtime timeline. If that atomic

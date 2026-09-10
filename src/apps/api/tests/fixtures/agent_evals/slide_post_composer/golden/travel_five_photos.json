@@ -1,0 +1,32 @@
+{
+  "agent": "nova.plan.slide_post_composer",
+  "prompt_version": "2026-09-09-kria",
+  "input": {
+    "theme": "solo travel",
+    "idea": "a weekend in Lisbon, chronological",
+    "notes": "keep it chronological, arrival to sunset",
+    "persona_summary": "lowercase, in-the-moment travel creator, second-person voice",
+    "platform_profile": "instagram_carousel",
+    "media": [
+      {"id": "a1", "kind": "image", "description": "airport arrival, golden hour light through terminal windows"},
+      {"id": "a2", "kind": "image", "description": "narrow cobblestone alley in Alfama, laundry lines overhead"},
+      {"id": "a3", "kind": "video", "description": "6s clip riding tram 28 through a curve, hand out the window"},
+      {"id": "a4", "kind": "image", "description": "pastel de nata and coffee on a cafe table, midday"},
+      {"id": "a5", "kind": "image", "description": "sunset over the Tagus river from Miradouro da Senhora do Monte"}
+    ]
+  },
+  "raw_text": "{\"order\": [\"a1\", \"a2\", \"a3\", \"a4\", \"a5\"], \"cover_id\": \"a5\", \"caption\": \"a weekend in lisbon, start to finish\", \"alt_text\": {\"a1\": \"golden hour light in the airport terminal\", \"a5\": \"sunset over the tagus river\"}}",
+  "output": {
+    "order": ["a1", "a2", "a3", "a4", "a5"],
+    "cover_id": "a5",
+    "caption": "a weekend in lisbon, start to finish",
+    "alt_text": {
+      "a1": "golden hour light in the airport terminal",
+      "a5": "sunset over the tagus river"
+    }
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Chronological five-slide post (4 images + 1 video), cover picked as the emotional-payoff slide (sunset) rather than the first slide."
+  }
+}
