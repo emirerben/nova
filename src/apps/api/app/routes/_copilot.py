@@ -184,7 +184,7 @@ async def run_copilot_turn(
         )
 
     agent_input = EditCopilotInput(
-        utterance=body.message[:500],
+        utterance=body.message,
         prior_turns=body.turns[:12],
         variant_snapshot=body.snapshot,
     )

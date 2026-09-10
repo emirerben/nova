@@ -32,6 +32,9 @@ export const TYPE_MEDIA: Record<PickerEditFormat, { poster: string; video: strin
   narrated_planned: { poster: "/plan/type-posters/voiceover.jpg", video: "/plan/type-posters/voiceover.mp4" },
   subtitled: { poster: "/plan/type-posters/talking.jpg", video: "/plan/type-posters/talking.mp4" },
   talking_head: { poster: "/plan/type-posters/broll.jpg", video: "/plan/type-posters/broll.mp4" },
+  // No dedicated type-poster loop yet (plans/024) — reuses the "Photo wall"
+  // style tile as a visually-fitting stand-in until curated media exists.
+  slides: { poster: "/plan/style-tiles/polaroid.jpg", video: "/plan/style-tiles/polaroid.mp4" },
 };
 
 export const TYPE_COPY: Record<
@@ -57,6 +60,11 @@ export const TYPE_COPY: Record<
     label: "Talking head + supporting clips",
     desc: "Your talking clip, with supporting footage cut in",
     meta: "1 talking clip + extra footage",
+  },
+  slides: {
+    label: "Photo & video post",
+    desc: "An ordered mixed-media post — TikTok photo mode or Instagram carousel",
+    meta: "Photos + videos, no editing required",
   },
 };
 
@@ -108,6 +116,8 @@ export type SetupPickerProps = {
   montagePreset: MontagePreset;
   subtitledEnabled: boolean;
   showTalkingHead: boolean;
+  /** NEXT_PUBLIC_SLIDE_POSTS_ENABLED (plans/024) — default-on kill switch. */
+  slidePostsEnabled?: boolean;
   /** Item already carries an accepted filming guide — keep its planned flow
       instead of forcing the already-filmed default on re-selection. */
   hasGuide?: boolean;
@@ -342,6 +352,7 @@ export default function SetupPicker({
   montagePreset,
   subtitledEnabled,
   showTalkingHead,
+  slidePostsEnabled = true,
   hasGuide = false,
   startCollapsed = false,
   contentMode,
@@ -372,6 +383,7 @@ export default function SetupPicker({
     "narrated_planned",
     ...(subtitledEnabled ? (["subtitled"] as PickerEditFormat[]) : []),
     ...(showTalkingHead ? (["talking_head"] as PickerEditFormat[]) : []),
+    ...(slidePostsEnabled ? (["slides"] as PickerEditFormat[]) : []),
   ];
 
   const patch = async (updates: SetupPatch) => {

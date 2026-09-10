@@ -28,7 +28,11 @@ const STARTERS = [
   "Tighten the cuts",
 ];
 
-const MAX_CHARS = 500;
+const MAX_CHARS = 2000;
+
+function clampDraft(value: string): string {
+  return Array.from(value).slice(0, MAX_CHARS).join("");
+}
 
 function parseApplied(summary: string): { label: string; value: string } {
   const [label, rest] = summary.split(/:\s*/, 2);
@@ -153,7 +157,7 @@ export default function CopilotDrawer({
 
   useEffect(() => {
     if (!restoredInput) return;
-    setDraft(restoredInput.slice(0, MAX_CHARS));
+    setDraft(clampDraft(restoredInput));
     onClearRestoredInput();
   }, [onClearRestoredInput, restoredInput]);
 
@@ -531,7 +535,7 @@ export default function CopilotDrawer({
             // Typing must NOT live-mutate the queued message — a half-typed
             // fragment would be dispatched if the in-flight turn resolves
             // mid-keystroke. Queued edits happen only on explicit submit.
-            setDraft(value.slice(0, MAX_CHARS));
+            setDraft(clampDraft(value));
           }}
           onSubmit={submit}
           disabled={unavailable}

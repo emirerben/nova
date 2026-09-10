@@ -323,7 +323,7 @@ export default function LyricsConfigPanel(props: Props) {
               href={cache.genius_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-violet-400 hover:text-violet-300 text-xs break-all"
+              className="text-violet-400 hover:text-zinc-100 text-xs break-all"
             >
               {cache.track_title_matched} — {cache.artist_matched}
             </a>
@@ -376,7 +376,7 @@ export default function LyricsConfigPanel(props: Props) {
                 href="https://lrclib.net/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-violet-400 hover:text-violet-300"
+                className="text-violet-400 hover:text-zinc-100"
               >
                 lrclib.net
               </a>{" "}
@@ -400,7 +400,7 @@ export default function LyricsConfigPanel(props: Props) {
             <button
               onClick={handleForceLrclibId}
               disabled={forcing || !forceIdInput.trim()}
-              className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap"
+              className="bg-violet-600 hover:bg-zinc-700 disabled:opacity-40 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap"
             >
               {forcing ? "Re-extracting…" : "Force LRCLIB ID"}
             </button>
@@ -553,7 +553,7 @@ export default function LyricsConfigPanel(props: Props) {
         <button
           onClick={handleSave}
           disabled={saving}
-          className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          className="bg-violet-600 hover:bg-zinc-700 disabled:opacity-40 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
         >
           {saving
             ? "Saving…"

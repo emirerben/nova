@@ -11,6 +11,29 @@ All notable changes to this project will be documented in this file.
 - **Closing a tool sheet on mobile is a single tap.** Tapping outside the sheet now closes it (it used to only collapse to half-height), the close button is a proper touch target, and a keyboard-open sheet no longer snaps to full height from ordinary scroll/browser-chrome noise.
 - **Switching music tracks on mobile now plays a preview.** Picking a different track used to request no audio at all for most videos, and even when it did, played nothing unless the video happened to already be playing. Now it previews audibly right away.
 - **The mobile editor's header shows which video you're editing** instead of a generic "Edit video" label.
+## [0.74.0.0] — 2026-09-09
+
+### Added
+- **Creators can now build a mixed-media post — an ordered sequence of photos and videos, like a TikTok photo post or an Instagram carousel — instead of only a single video.** Pick "Photo & video post," let Kria propose the order, cover, and caption from your footage, then reorder, add, remove, or edit anything before exporting a ready-to-post bundle. TikTok photo mode (images only) and Instagram carousels (photos + videos) each get their own platform-fit rules. Export-only in this release — no direct publish yet.
+
+### Internal
+- The new "slides" render archetype reuses the existing plan-item pipeline end to end: one variant carries a stitched preview alongside the ordered slide list and export bundle, so every existing reader (player, library, TikTok-publish exclusion) keeps working unbranched. Every other editor lane (captions, sound effects, overlays, timeline) is explicitly closed for this archetype at the same choke point every one of those routes already shares. Ships default on, gated by `SLIDE_POSTS_ENABLED` / `NEXT_PUBLIC_SLIDE_POSTS_ENABLED`.
+## [0.75.3.0] - 2026-09-09
+
+### Changed
+- **Creators can give the editor copilot longer, multi-part editing instructions.** Requests now support up to 2,000 characters and can return up to 48 coordinated edits, making it practical to update a full set of text and timeline changes in one turn.
+
+## [0.75.2.0] - 2026-09-09
+
+### Changed
+- **Chat and Gallery share a simpler sidebar.** Start a new chat, reopen recent projects, rename projects inline, and reach account actions from one place. Gallery keeps project navigation visible and shows titles beneath video cards.
+- **Kria's wordmark and browser icons use the same rounded lettering.** Chat messages and editor tools carry the wordmark, while text controls and hover states use quiet Sky and warm-ink colors.
+- **The editor keeps its main controls focused on editing.** Remove the title field, select/pan switch, canvas zoom selector, and re-render badge from the toolbar; retain undo, redo, orientation, playback, and Save.
+
+### Fixed
+- **Project actions remain usable in Gallery and on smaller screens.** Delete confirmations open from the Gallery sidebar, long recent-project lists scroll without hiding account actions, and mobile Gallery keeps a project-navigation button.
+- **Inline project renaming preserves keyboard control.** Enter and blur save once, Escape cancels, failed saves remain editable, and the focused name has a visible outline.
+- **Browser icons retain Kria's lettering without a webfont.** Both favicon variants now use outlined letter shapes.
 
 ## [0.75.0.0] - 2026-09-09
 

@@ -1,7 +1,7 @@
 .wordmark {
   display: inline-flex;
-  align-items: baseline;
-  justify-content: center;
+  align-items: center;
+  justify-content: flex-start;
   color: currentColor;
   font-family: "DynaPuff", system-ui, sans-serif;
   font-size: 1em;

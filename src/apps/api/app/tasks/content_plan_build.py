@@ -1319,6 +1319,35 @@ def _dispatch_item_render(
         )
         if first_selected:
             clip_paths = [first_selected]
+    if not clip_paths and str(item.edit_format or "") == "slides":
+        # Slide posts have no "clip" concept — the render source is the
+        # slide_post draft's ordered PlanItemAsset ids, resolved fresh by
+        # _run_slide_post_job. build_generative_job still needs one server-
+        # validated seed path for its generic Job contract (raw_storage_path);
+        # this seed is never read by the slides worker itself (plans/024).
+        from app.models import PlanItemAsset  # noqa: PLC0415
+
+        raw_draft = item.slide_post if isinstance(item.slide_post, dict) else {}
+        raw_slides = raw_draft.get("slides")
+        first_asset_id = (
+            raw_slides[0].get("asset_id")
+            if isinstance(raw_slides, list) and raw_slides and isinstance(raw_slides[0], dict)
+            else None
+        )
+        if first_asset_id:
+            try:
+                first_asset_uuid = uuid.UUID(str(first_asset_id))
+            except ValueError:
+                first_asset_uuid = None
+            if first_asset_uuid is not None:
+                seed_path = session.execute(
+                    select(PlanItemAsset.gcs_path).where(
+                        PlanItemAsset.id == first_asset_uuid,
+                        PlanItemAsset.plan_item_id == item.id,
+                    )
+                ).scalar_one_or_none()
+                if seed_path:
+                    clip_paths = [seed_path]
     if not clip_paths:
         log.warning("plan_item_render.no_clips", plan_item_id=str(item.id))
         return DispatchResult("invalid_clips")

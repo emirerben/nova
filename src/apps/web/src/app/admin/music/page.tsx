@@ -230,7 +230,7 @@ export default function AdminMusicPage() {
                 extIngesting ||
                 (addMode === "upload" ? !file : !url.trim())
               }
-              className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+              className="bg-violet-600 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
             >
               {creating
                 ? addMode === "upload" ? "Uploading..." : "Downloading..."

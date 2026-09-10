@@ -758,7 +758,8 @@
                       "subtitled",
                       "narrated",
                       "narrated_planned",
-                      "narrated_ready"
+                      "narrated_ready",
+                      "slides"
                     ],
                     "type": "string"
                   },
@@ -825,7 +826,8 @@
                   "subtitled",
                   "narrated",
                   "narrated_planned",
-                  "narrated_ready"
+                  "narrated_ready",
+                  "slides"
                 ],
                 "title": "Edit Format",
                 "type": "string"

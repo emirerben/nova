@@ -1670,6 +1670,55 @@ def test_finalize_job_preserves_ai_timeline(monkeypatch):
     assert variants[1]["mix"] == 0.7
 
 
+def test_finalize_job_preserves_slide_post(monkeypatch):
+    """`_finalize_job`'s per-variant whitelist must re-list `slides`/`slide_post`.
+
+    Same strip class as ai_timeline above: the mid-render success upsert
+    persists the full slides variant, then finalization REPLACES the
+    variants list — any field missing from the whitelist is silently
+    stripped. Without these two keys a slides variant would finish its
+    FIRST render looking like an ordinary variant with no ordered slide
+    list and no export bundle at all (plans/024 risk #1).
+    """
+    captured: dict = {}
+
+    def _capture_set_status(job_id, status, extra_plan=None, **kwargs):
+        captured["status"] = status
+        captured["plan"] = extra_plan
+
+    monkeypatch.setattr(gb, "_set_status", _capture_set_status)
+
+    slides = [
+        {"index": 0, "kind": "image", "asset_gcs_path": "generative-jobs/j/slides/0.jpg"},
+        {"index": 1, "kind": "video", "asset_gcs_path": "generative-jobs/j/slides/1.mp4"},
+    ]
+    slide_post = {
+        "platform_profile": "instagram_carousel",
+        "caption": "hi",
+        "cover_index": 0,
+        "bundle_gcs_path": "generative-jobs/j/slides/bundle.zip",
+        "validation": {"ok": True, "errors": [], "warnings": []},
+    }
+    results = [
+        {
+            "variant_id": "slides",
+            "rank": 1,
+            "text_mode": "none",
+            "resolved_archetype": "slides",
+            "render_status": "ready",
+            "ok": True,
+            "slides": slides,
+            "slide_post": slide_post,
+        },
+    ]
+
+    gb._finalize_job("00000000-0000-0000-0000-000000000001", results)
+
+    variants = captured["plan"]["variants"]
+    assert variants[0]["slides"] == slides, "finalize stripped slides"
+    assert variants[0]["slide_post"] == slide_post, "finalize stripped slide_post"
+
+
 # ── contiguous same-source slot merge (invisible-cut fix, prod job 96771038) ────
 
 

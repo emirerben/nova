@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Check, Download, Film, FolderOpen, Menu, MoreHorizontal, PanelLeftClose,
+  Check, Download, Film, Menu, MoreHorizontal, PanelLeftClose,
   PanelLeftOpen, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, UserRound, WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -20,10 +20,6 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter,
-  DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
@@ -51,7 +47,6 @@ import {
   isCreationThreadRevisionConflict,
   creationVariantPlayable, latestCreationDirection,
   renameCreationThread, sendKriaTurn, undoKriaDraft,
-  creationDirectionReceiptLabel,
   type CreationFormat, type CreationSpeechCleanupChoice, type CreationThread,
   type CreationThreadEvent,
 } from "@/lib/creation-thread-api";
@@ -60,6 +55,7 @@ import CreatorDirectionReceipt from "@/app/plan/_components/CreatorDirectionRece
 import { listMyJobs, type LibraryJob, type LibraryRetentionSummary, type LibraryRetentionWarning } from "@/lib/me-api";
 import { getPlanItemFresh, type PlanItem } from "@/lib/plan-api";
 import LibraryTile from "@/components/library/LibraryTile";
+import KriaWordmark from "@/components/KriaWordmark";
 import AssetPool from "@/app/plan/_components/AssetPool";
 import { useLibraryPosterRecovery } from "@/hooks/useLibraryPosterRecovery";
 import {
@@ -333,15 +329,16 @@ function productionLibraryThread(job: LibraryJob, planItem?: PlanItem): Creation
 function ProductionPreviewVideoCard({ job, title }: { job: LibraryJob; title: string }) {
   const playable = job.status === "ready" && Boolean(job.output_url);
   return (
-    <article className="overflow-hidden rounded-xl border bg-card" data-testid={`production-video-${job.id}`}>
-      <div className="relative aspect-[9/16] bg-zinc-950">
+    <article className="w-full" data-testid={`production-video-${job.id}`}>
+      <div className="relative aspect-[9/16] overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-950">
         {/* Signed production posters use dynamic hosts that cannot be allowlisted for next/image. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {job.poster_url ? <img src={job.poster_url} alt="" className="size-full object-cover" /> : null}
         {!job.poster_url ? <div className="flex size-full items-center justify-center px-4 text-center text-xs text-zinc-400">{job.status === "generating" ? "Rendering…" : job.status === "failed" ? "Render failed" : "Video ready"}</div> : null}
         {playable ? <Button type="button" size="icon" className="absolute inset-0 m-auto size-12 rounded-full" aria-label={`Play ${title}`} onClick={() => window.open(job.output_url ?? "", "_blank", "noopener,noreferrer")}><Play /></Button> : null}
+        <span className="absolute bottom-3 left-3 rounded-full bg-white/90 px-2 py-1 text-[11px] font-semibold leading-[15px] text-[#30352C]">{job.status === "generating" ? "Rendering…" : job.status === "failed" ? "Needs attention" : "Ready"}</span>
       </div>
-      <div className="space-y-1 p-3"><p className="truncate text-sm font-medium">{title}</p><p className="text-xs capitalize text-muted-foreground">{job.status} · {job.mode.replaceAll("_", " ")}</p></div>
+      <p className="mt-2 truncate text-sm font-semibold leading-5 text-[#30352C]">{title}</p>
     </article>
   );
 }
@@ -479,6 +476,9 @@ export default function ChatCreationWorkspace({
   const [threadUnavailable, setThreadUnavailable] = useState(false);
   const [renameTarget, setRenameTarget] = useState<CreationThread | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameInFlightRef = useRef(false);
+  const renameCancelledRef = useRef(false);
   const [deleteTarget, setDeleteTarget] = useState<CreationThread | null>(null);
   const [projectActionBusy, setProjectActionBusy] = useState(false);
   const [projectActionError, setProjectActionError] = useState<string | null>(null);
@@ -1145,11 +1145,6 @@ export default function ChatCreationWorkspace({
   const clipMedia = media.filter((item) => item.kind === "video");
   const clipCount = clipMedia.length || (media.length === 0 ? mediaCount : 0);
   const accountName = session?.user?.name ?? session?.user?.email ?? "Account";
-  const headerSubtitle = productionPreview && isProductionLibraryThread(thread)
-    ? `${projectStatusLabel(thread!)} · ${String(thread?.state.production_mode ?? "Kria").replaceAll("_", " ")}`
-    : format
-      ? `${creationFormatLabel(format)} · ${clipCount} ${clipCount === 1 ? "clip" : "clips"}`
-      : "Start with a format, then tell me what you’re imagining";
 
   const scrollToLiveEdge = useCallback(() => {
     const transcript = transcriptRef.current;
@@ -1454,6 +1449,7 @@ export default function ChatCreationWorkspace({
   }
 
   function beginRename(project: CreationThread) {
+    renameCancelledRef.current = false;
     setRenameTarget(project);
     setRenameValue(projectTitle(project));
     setProjectActionError(null);
@@ -1462,7 +1458,13 @@ export default function ChatCreationWorkspace({
   async function renameProject() {
     const target = renameTarget;
     const name = renameValue.trim();
-    if (!target || !name || projectActionBusy) return;
+    if (!target || projectActionBusy || renameInFlightRef.current || renameCancelledRef.current) return;
+    if (!name || name === projectTitle(target)) {
+      setRenameTarget(null);
+      setProjectActionError(null);
+      return;
+    }
+    renameInFlightRef.current = true;
     setProjectActionBusy(true);
     setProjectActionError(null);
     setError(null);
@@ -1471,6 +1473,7 @@ export default function ChatCreationWorkspace({
       setProjects((items) => items.map((item) => item.id === target.id ? next : item));
       setThread((current) => current?.id === target.id ? next : current);
       setRenameTarget(null);
+      renameInFlightRef.current = false;
       setProjectActionBusy(false);
       return;
     }
@@ -1481,8 +1484,8 @@ export default function ChatCreationWorkspace({
       setRenameTarget(null);
     } catch {
       setProjectActionError("I couldn’t rename that project. Try again in a moment.");
-      setError("I couldn’t rename that project. Try again in a moment.");
     } finally {
+      renameInFlightRef.current = false;
       setProjectActionBusy(false);
     }
   }
@@ -1730,23 +1733,74 @@ export default function ChatCreationWorkspace({
   }
 
   const sidebar = (
-    <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-background p-4" aria-label="Projects">
-      <div className="flex items-center justify-between px-2">
-        <span className="flex items-center gap-2 text-lg font-semibold"><Sparkles className="size-4" /> Kria</span>
+    <aside className="flex h-full w-[260px] shrink-0 flex-col gap-6 border-r border-border bg-background px-[14px] pb-8 pt-6" aria-label="Projects">
+      <div className="flex h-11 shrink-0 items-center justify-between px-3">
+        <span className="flex items-center justify-start gap-2 text-[45px] text-[#9BCAFF]" role="img" aria-label="Kria"><KriaWordmark className="h-[54px] w-[143px]" /></span>
         <Button type="button" variant="ghost" size="icon" className="size-11 md:size-9" aria-label="Hide project sidebar" onClick={() => setSidebarHidden(true)}><PanelLeftClose /></Button>
       </div>
-      <Button type="button" className="mt-6 min-h-11 justify-start" disabled={productionPreview || (initialLoading && !thread) || busy || thinking || uploading} title={productionPreview ? "Production data is read-only in this preview." : undefined} onClick={() => void startNew()}><Film /> New video</Button>
-      <div className="mt-8 flex items-center justify-between px-2"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Projects</p><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" disabled={busy || thinking || uploading} onClick={openGallery}>Gallery</Button></div>
-      <nav className="mt-2 space-y-1 overflow-y-auto" aria-label="Recent projects">
+      <Button
+        type="button"
+        variant="ghost"
+        className={cn(
+          "h-12 w-full shrink-0 justify-start gap-3 rounded-2xl px-3 text-left text-[15px] font-semibold",
+          galleryOpen
+            ? "bg-[#EBF3FF] text-[#30352C] hover:bg-[#EBF3FF]"
+            : "bg-white text-[#30352C] hover:bg-[#F7F7F8]",
+        )}
+        disabled={busy || thinking || uploading}
+        onClick={openGallery}
+      >
+        <Film className="size-6" aria-hidden="true" />
+        Gallery
+      </Button>
+      <div className="flex min-h-0 flex-1 flex-col gap-1" data-testid="recent-chats-section">
+        <div className="flex h-8 shrink-0 items-center px-3">
+          <p className="text-[13px] font-semibold text-muted-foreground">Recent chats</p>
+        </div>
+      <nav className="min-h-0 space-y-1 overflow-y-auto" aria-label="Recent projects">
         {projects.slice(0, 10).map((project) => {
           const title = projectTitle(project);
           const sidebarTitle = projectSidebarTitle(project);
           return (
             <div key={project.id} className="flex min-w-0 items-center gap-1">
-              <Button type="button" variant={project.id === thread?.id ? "secondary" : "ghost"} className="h-auto min-h-11 min-w-0 flex-1 justify-start text-left" disabled={busy || thinking || uploading} onClick={() => void openProject(project)}><FolderOpen className="shrink-0" /><span className="min-w-0"><span className="block truncate">{sidebarTitle}</span><span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span></span></Button>
+              {renameTarget?.id === project.id ? (
+                <form
+                  className={cn("min-h-11 min-w-0 flex-1 rounded-md px-4 py-2 text-sm font-medium", project.id === thread?.id && "bg-[#EBF3FF] text-[#245E9B]")}
+                  aria-label={`Rename ${title}`}
+                  onSubmit={(event) => { event.preventDefault(); void renameProject(); }}
+                >
+                  <Input
+                    aria-label="Project name"
+                    className="block h-5 w-full min-w-0 appearance-none rounded-none border-0 bg-transparent p-0 text-sm font-medium leading-5 text-inherit shadow-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#30352c]"
+                    value={renameValue}
+                    maxLength={120}
+                    readOnly={projectActionBusy}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    ref={renameInputRef}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onBlur={() => { void renameProject(); }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && event.nativeEvent.isComposing) event.preventDefault();
+                      if (event.key === "Escape" && !projectActionBusy) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        renameCancelledRef.current = true;
+                        setRenameTarget(null);
+                        setProjectActionError(null);
+                      }
+                    }}
+                    aria-invalid={Boolean(projectActionError)}
+                    aria-describedby={projectActionError ? `rename-error-${project.id}` : undefined}
+                  />
+                  <span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span>
+                  {projectActionError ? <p id={`rename-error-${project.id}`} className="mt-1 text-xs text-destructive" role="alert">{projectActionError}</p> : null}
+                </form>
+              ) : (
+              <Button type="button" variant="ghost" className={cn("h-auto min-h-11 min-w-0 flex-1 justify-start text-left", project.id === thread?.id ? "bg-[#EBF3FF] text-[#245E9B] hover:bg-[#EBF3FF] hover:text-[#245E9B]" : "hover:bg-[#F7F7F8] hover:text-foreground")} disabled={busy || thinking || uploading} onClick={() => void openProject(project)}><span className="min-w-0"><span className="block truncate">{sidebarTitle}</span><span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span></span></Button>
+              )}
               <DropdownMenu>
               <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:size-9" aria-label={`Project actions for ${title}`} disabled={busy || thinking || uploading}><MoreHorizontal /></Button></DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent align="end" onCloseAutoFocus={(event) => { if (renameInputRef.current) { event.preventDefault(); requestAnimationFrame(() => renameInputRef.current?.focus()); } }}>
                   <DropdownMenuItem onSelect={() => beginRename(project)}>Rename project{productionPreview ? " (preview)" : ""}</DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={projectDeletionBlocked(project)} title={projectDeletionBlocked(project) ? "Finish the active render before deleting this project." : undefined} onSelect={() => setDeleteTarget(project)}>{projectDeletionBlocked(project) ? "Delete after rendering" : `Delete project${productionPreview ? " (preview)" : ""}`}</DropdownMenuItem>
@@ -1756,10 +1810,21 @@ export default function ChatCreationWorkspace({
           );
         })}
       </nav>
-      <div className="mt-auto border-t pt-4">
+      </div>
+      <div className="mt-auto flex shrink-0 items-center justify-between gap-2 border-t pt-4">
+        <Button
+          type="button"
+          className="h-12 w-[132px] shrink-0 justify-center gap-2 rounded-full bg-[#FFF0A6] px-4 text-base font-bold text-[#30352C] hover:bg-[#FFE98A] hover:text-[#30352C]"
+          disabled={productionPreview || (initialLoading && !thread) || busy || thinking || uploading}
+          title={productionPreview ? "Production data is read-only in this preview." : undefined}
+          onClick={() => void startNew()}
+        >
+          <Pencil className="size-[22px]" aria-hidden="true" />
+          New chat
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" className="size-11 rounded-full md:size-9" aria-label="Account menu">
+            <Button type="button" variant="ghost" size="icon" className="size-12 shrink-0 rounded-full" aria-label="Account menu">
               <UserRound aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
@@ -1811,16 +1876,6 @@ export default function ChatCreationWorkspace({
 
   const projectDialogs = (
     <>
-      <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open && !projectActionBusy) setRenameTarget(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Rename project{productionPreview ? " in preview" : ""}</DialogTitle><DialogDescription>{productionPreview ? "This changes only this browser preview and resets on reload. Your production project is untouched." : "Choose a short name you’ll recognize in your project list."}</DialogDescription></DialogHeader>
-          <form onSubmit={(event) => { event.preventDefault(); void renameProject(); }} className="space-y-4">
-            <Input aria-label="Project name" value={renameValue} maxLength={120} onChange={(event) => setRenameValue(event.target.value)} autoFocus aria-describedby={projectActionError ? "project-action-error" : undefined} />
-            {projectActionError ? <p id="project-action-error" className="text-sm text-destructive" role="alert">{projectActionError}</p> : null}
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={projectActionBusy}>Cancel</Button></DialogClose><Button type="submit" disabled={!renameValue.trim() || projectActionBusy}>{projectActionBusy ? "Saving…" : "Save name"}</Button></DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !projectActionBusy) setDeleteTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>{productionPreview ? "Preview the deleted state?" : "Delete project?"}</AlertDialogTitle><AlertDialogDescription>{productionPreview ? `“${deleteTarget ? projectTitle(deleteTarget) : "This project"}” will disappear only from this browser preview and return on reload. No production data will be changed.` : `“${deleteTarget ? projectTitle(deleteTarget) : "This project"}” will permanently delete this chat, its uploads, edit data, and completed Kria videos. This cannot be recovered. Published TikTok posts remain on TikTok.`}</AlertDialogDescription></AlertDialogHeader>
@@ -1834,48 +1889,6 @@ export default function ChatCreationWorkspace({
     <>
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Kria creation chat">
       {productionPreview ? <div className="flex shrink-0 items-center justify-center gap-2 border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950" role="status" data-testid="production-preview-banner"><span className="size-2 rounded-full bg-lime-600" aria-hidden="true" /><strong>Live production data</strong><span>Read-only. Rename and delete are local previews that reset on reload.</span></div> : null}
-      <header className="flex h-14 shrink-0 items-center border-b px-4 sm:px-6">
-        <div className="flex min-w-0 flex-1 items-center" data-testid="workspace-header-start">
-          <div
-            className={cn(
-              "hidden shrink-0 overflow-hidden md:grid",
-              "motion-safe:transition-[grid-template-columns,margin-right,opacity] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
-              sidebarHidden
-                ? "md:mr-3 md:grid-cols-[2.75rem] md:opacity-100"
-                : "pointer-events-none md:mr-0 md:grid-cols-[0rem] md:opacity-0",
-            )}
-            data-state={sidebarHidden ? "open" : "closed"}
-            data-testid="sidebar-toggle-slot"
-          >
-            <div className="min-w-0 overflow-hidden">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "size-11 shrink-0 motion-safe:transition-[transform,opacity] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
-                  sidebarHidden ? "translate-x-0 scale-100 opacity-100" : "-translate-x-1 scale-95 opacity-0",
-                )}
-                aria-label="Show project sidebar"
-                aria-hidden={!sidebarHidden}
-                disabled={!sidebarHidden}
-                tabIndex={sidebarHidden ? 0 : -1}
-                onClick={() => setSidebarHidden(false)}
-              >
-                <PanelLeftOpen />
-              </Button>
-            </div>
-          </div>
-          <div className="min-w-0">
-            <h1 data-testid="project-title" className="truncate font-display text-xl font-medium">{thread ? projectTitle(thread) : "Loading project…"}</h1>
-            <p className="truncate text-xs capitalize text-muted-foreground">{headerSubtitle}</p>
-            {CREATOR_MEMORY_ENABLED && creationDirectionReceiptLabel(thread) ? <p className="truncate text-[11px] text-muted-foreground"><Link href="/plan/profile" className="hover:text-foreground">{creationDirectionReceiptLabel(thread)}</Link></p> : null}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
-        </div>
-      </header>
       {CREATOR_MEMORY_ENABLED && thread?.direction_receipt ? <div className="px-4 sm:px-6"><CreatorDirectionReceipt receipt={thread.direction_receipt} projectId={thread.id} expectedRevision={thread.direction_receipt.memory_revision} /></div> : null}
       <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="creation-live-announcer">{announcement}</p>
       <p className="sr-only" role="status" aria-atomic="true" data-testid="speech-cleanup-live-announcer">{liveAnnouncement}</p>
@@ -1919,13 +1932,13 @@ export default function ChatCreationWorkspace({
         {thinking ? <ChatThinking /> : null}
       </div></div>
       {hasNewUpdate ? <div className="flex shrink-0 justify-center border-t bg-background/95 px-3 py-2"><Button type="button" variant="secondary" className="min-h-11" onClick={scrollToLiveEdge}>New update</Button></div> : null}
-      <div className={cn("shrink-0 bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4", !hasNewUpdate && "border-t")}><AgentComposer ref={composerRef} className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview} submitDisabled={thinking || !thread} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
+      <div className={cn("shrink-0 bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4", !hasNewUpdate && "border-t")}><AgentComposer ref={composerRef} className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview} submitDisabled={thinking || !thread} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
     </section>
     {projectDialogs}
     </>
   );
 
-  const editor = <section className="flex min-w-0 flex-1 flex-col overflow-hidden border-l bg-muted/10" aria-label={productionPreview ? "Production video preview" : "Video editor"}><header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4"><div><p className="text-sm font-medium">{productionPreview ? "Production video" : "Editor"}</p><p className="text-xs text-muted-foreground">{productionPreview ? "Real output · read-only playback" : "Feature-complete overlay editor"}</p></div><Badge variant="secondary"><Check /> Ready</Badge></header>{productionPreview && selectedReadyVariant?.output_url ? <div className="flex min-h-0 flex-1 items-center justify-center bg-zinc-950 p-4"><video key={selectedReadyVariant.output_url} controls playsInline preload="metadata" poster={selectedReadyVariant.poster_url ?? undefined} src={selectedReadyVariant.output_url} className="max-h-full max-w-full rounded-lg shadow-2xl" data-testid="production-video-player">Your browser cannot play this video.</video></div> : editorUrl ? <iframe ref={editorFrameRef} src={editorUrl} title="Full video editor" className="min-h-0 flex-1 border-0 bg-background" /> : <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">The editor will appear when your first cut is ready.</div>}</section>;
+  const editor = <section className="flex min-w-0 flex-1 flex-col overflow-hidden border-l bg-muted/10" aria-label={productionPreview ? "Production video preview" : "Video editor"}>{productionPreview && selectedReadyVariant?.output_url ? <div className="flex min-h-0 flex-1 items-center justify-center bg-zinc-950 p-4"><video key={selectedReadyVariant.output_url} controls playsInline preload="metadata" poster={selectedReadyVariant.poster_url ?? undefined} src={selectedReadyVariant.output_url} className="max-h-full max-w-full rounded-lg shadow-2xl" data-testid="production-video-player">Your browser cannot play this video.</video></div> : editorUrl ? <iframe ref={editorFrameRef} src={editorUrl} title="Full video editor" className="min-h-0 flex-1 border-0 bg-background" /> : <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">The editor will appear when your first cut is ready.</div>}</section>;
 
   const retentionNotice = galleryRetentionSummary ?? (galleryRetentionWarnings.length > 0 ? {
     affected_video_count: galleryRetentionWarnings.length,
@@ -1934,44 +1947,110 @@ export default function ChatCreationWorkspace({
     final_retention_days: galleryRetentionWarnings[0].final_retention_days,
   } : null);
 
-  if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background">{productionPreview ? <div className="border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong> · Read-only playback</div> : null}<header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><div><h1 className="text-lg font-semibold">Gallery</h1>{productionPreview ? <p className="text-xs text-muted-foreground">{accountName} · {galleryJobs.length} recent videos</p> : null}</div><Button type="button" className="min-h-11" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6">{retentionNotice ? <div className="mx-auto mb-4 max-w-5xl rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-800" role="status"><strong>Source-file retention notice.</strong> Editable source files for {retentionNotice.affected_video_count} inactive {retentionNotice.affected_video_count === 1 ? "video" : "videos"} are scheduled for removal as early as {new Date(retentionNotice.earliest_delete_at).toLocaleDateString()}. Your latest final video and poster remain under the {retentionNotice.final_retention_days}-day retention policy.</div> : null}{galleryLoading && galleryJobs.length === 0 ? <div className="py-16 text-center text-sm text-muted-foreground" role="status">Loading your videos…</div> : null}{galleryLoadError ? <div className="mx-auto mb-4 flex max-w-md items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm" role="alert"><span>{galleryLoadError}</span><Button type="button" variant="outline" className="min-h-11 shrink-0" onClick={() => void retryGalleryLoad()}>Retry</Button></div> : null}<ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => {
-    if (!productionPreview) return <li key={job.id}><LibraryTile job={job} onDeleted={(jobId) => void handleGalleryJobDeleted(jobId)} onPosterLoadError={posterRecovery.onPosterLoadError} onPosterLoadSuccess={posterRecovery.onPosterLoadSuccess} posterRecoveryExhausted={posterRecovery.exhaustedJobIds.has(job.id)} posterRefreshUnavailable={posterRecovery.refreshUnavailableJobIds.has(job.id)} /></li>;
-    const matchingProject = projects.find((project) => project.active_job_id === job.id || project.id === `${PRODUCTION_LIBRARY_THREAD_PREFIX}${job.id}`);
-    return <li key={job.id}><ProductionPreviewVideoCard job={job} title={matchingProject ? projectTitle(matchingProject) : productionLibraryTitle(job)} /></li>;
-  })}</ul>{galleryJobs.length === 0 && !galleryLoading && !galleryLoadError ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}{galleryCursor && !galleryLoadError ? <div className="flex justify-center py-8"><Button type="button" variant="outline" className="min-h-11" disabled={galleryLoading} onClick={() => void loadMoreGallery()}>{galleryLoading ? "Loading more videos…" : "Load more videos"}</Button></div> : null}</main></div>;
+  const sidebarShell = (
+    <div
+      ref={desktopSidebarRef}
+      className={cn(
+        "hidden h-full shrink-0 overflow-hidden md:block",
+        "motion-safe:transition-[width] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
+        sidebarHidden ? "pointer-events-none md:w-0" : "md:w-[260px]",
+      )}
+      data-state={sidebarHidden ? "closed" : "open"}
+      data-testid="project-sidebar-shell"
+      aria-hidden={sidebarHidden || undefined}
+    >
+      <div
+        className={cn(
+          "h-full w-[260px] motion-safe:transition-[transform,opacity] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
+          sidebarHidden ? "md:-translate-x-full md:opacity-0" : "md:translate-x-0 md:opacity-100",
+        )}
+        data-testid="project-sidebar-panel"
+      >
+        {sidebar}
+      </div>
+    </div>
+  );
+  const collapsedProjectRail = sidebarHidden ? (
+    <nav aria-label="Project navigation" className="hidden w-16 shrink-0 flex-col items-center border-r border-border bg-background pt-6 md:flex">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="size-11 shrink-0"
+        aria-label="Show project sidebar"
+        title="Show projects"
+        onClick={() => setSidebarHidden(false)}
+      >
+        <PanelLeftOpen aria-hidden="true" />
+      </Button>
+    </nav>
+  ) : null;
+  const projectSheet = (
+    <Sheet open={projectsOpen} onOpenChange={setProjectsOpen}>
+      <SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]">
+        <SheetHeader className="sr-only">
+          <SheetTitle>Projects</SheetTitle>
+          <SheetDescription>Move between creation projects and your gallery.</SheetDescription>
+        </SheetHeader>
+        {sidebar}
+      </SheetContent>
+    </Sheet>
+  );
+
+  if (galleryOpen) return (
+    <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
+      {sidebarShell}
+      {collapsedProjectRail}
+      {projectSheet}
+      {projectDialogs}
+      <section className="flex min-w-0 flex-1 flex-col gap-6 overflow-hidden px-4 py-6 sm:gap-8 sm:px-8 sm:py-10 lg:px-12 lg:py-14">
+        {productionPreview ? <div className="flex shrink-0 items-center justify-center gap-2 border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong><span>Read-only playback</span></div> : null}
+        <header className="flex shrink-0 flex-wrap items-end justify-between gap-4 sm:gap-6">
+          <div className="flex min-w-0 items-end gap-3">
+            <Button type="button" variant="ghost" size="icon" className="mb-1 size-11 shrink-0 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
+            <div className="flex min-w-0 flex-col gap-2">
+              <h1 className="font-display text-[40px] font-medium leading-[48px] text-[#30352C]">Gallery</h1>
+              <p className="text-sm leading-[21px] text-muted-foreground">Finished videos and works in progress.</p>
+              {productionPreview ? <p className="text-xs text-muted-foreground">{accountName} · {galleryJobs.length} recent videos</p> : null}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button type="button" variant="ghost" className="min-h-11 px-3 text-sm" onClick={closeGallery}>Back to chat</Button>
+            <Button
+              type="button"
+              className="h-11 gap-2 rounded-lg bg-[#FFF0A6] px-[18px] text-sm font-semibold text-[#30352C] hover:bg-[#FFE98A] hover:text-[#30352C]"
+              disabled={productionPreview || (initialLoading && !thread) || busy || thinking || uploading}
+              title={productionPreview ? "Production data is read-only in this preview." : undefined}
+              onClick={() => void startNew()}
+            >
+              <Plus className="size-4" aria-hidden="true" />
+              New video
+            </Button>
+          </div>
+        </header>
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          {retentionNotice ? <div className="mb-4 max-w-[1022px] rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-800" role="status"><strong>Source-file retention notice.</strong> Editable source files for {retentionNotice.affected_video_count} inactive {retentionNotice.affected_video_count === 1 ? "video" : "videos"} are scheduled for removal as early as {new Date(retentionNotice.earliest_delete_at).toLocaleDateString()}. Your latest final video and poster remain under the {retentionNotice.final_retention_days}-day retention policy.</div> : null}
+          {galleryLoading && galleryJobs.length === 0 ? <div className="py-16 text-center text-sm text-muted-foreground" role="status">Loading your videos…</div> : null}
+          {galleryLoadError ? <div className="mb-4 flex max-w-md items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm" role="alert"><span>{galleryLoadError}</span><Button type="button" variant="outline" className="min-h-11 shrink-0" onClick={() => void retryGalleryLoad()}>Retry</Button></div> : null}
+          <ul className="flex max-w-[1022px] flex-wrap gap-[18px]">
+            {galleryJobs.map((job) => {
+              if (!productionPreview) return <li key={job.id} className="w-full sm:w-[calc((100%-18px)/2)] lg:w-[242px]"><LibraryTile job={job} title={productionLibraryTitle(job)} onDeleted={(jobId) => void handleGalleryJobDeleted(jobId)} onPosterLoadError={posterRecovery.onPosterLoadError} onPosterLoadSuccess={posterRecovery.onPosterLoadSuccess} posterRecoveryExhausted={posterRecovery.exhaustedJobIds.has(job.id)} posterRefreshUnavailable={posterRecovery.refreshUnavailableJobIds.has(job.id)} /></li>;
+              const matchingProject = projects.find((project) => project.active_job_id === job.id || project.id === `${PRODUCTION_LIBRARY_THREAD_PREFIX}${job.id}`);
+              return <li key={job.id} className="w-full sm:w-[calc((100%-18px)/2)] lg:w-[242px]"><ProductionPreviewVideoCard job={job} title={matchingProject ? projectTitle(matchingProject) : productionLibraryTitle(job)} /></li>;
+            })}
+          </ul>
+          {galleryJobs.length === 0 && !galleryLoading && !galleryLoadError ? <p className="max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}
+          {galleryCursor && !galleryLoadError ? <div className="flex justify-center py-8"><Button type="button" variant="outline" className="min-h-11" disabled={galleryLoading} onClick={() => void loadMoreGallery()}>{galleryLoading ? "Loading more videos…" : "Load more videos"}</Button></div> : null}
+        </main>
+      </section>
+    </div>
+  );
 
   return (
     <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
-      <div
-        ref={desktopSidebarRef}
-        className={cn(
-          "hidden h-full shrink-0 overflow-hidden md:block",
-          "motion-safe:transition-[width] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
-          sidebarHidden ? "pointer-events-none md:w-0" : "md:w-[260px]",
-        )}
-        data-state={sidebarHidden ? "closed" : "open"}
-        data-testid="project-sidebar-shell"
-        aria-hidden={sidebarHidden || undefined}
-      >
-        <div
-          className={cn(
-            "h-full w-[260px] motion-safe:transition-[transform,opacity] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
-            sidebarHidden ? "md:-translate-x-full md:opacity-0" : "md:translate-x-0 md:opacity-100",
-          )}
-          data-testid="project-sidebar-panel"
-        >
-          {sidebar}
-        </div>
-      </div>
-      <Sheet open={projectsOpen} onOpenChange={setProjectsOpen}>
-        <SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]">
-          <SheetHeader className="sr-only">
-            <SheetTitle>Projects</SheetTitle>
-            <SheetDescription>Move between creation projects and your gallery.</SheetDescription>
-          </SheetHeader>
-          {sidebar}
-        </SheetContent>
-      </Sheet>
+      {sidebarShell}
+      {collapsedProjectRail}
+      {projectSheet}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {hasReady && editorOpen ? (
           <div className="shrink-0 border-b p-2 lg:hidden">

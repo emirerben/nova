@@ -13,7 +13,6 @@ import {
 import { libraryPosterIdentity } from "@/lib/library-poster";
 import { getTikTokPublication, shouldPollTikTokPublication, type TikTokPublication } from "@/lib/tiktok-api";
 import { jobFailureCopy } from "@/lib/job-failure-copy";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -57,6 +56,7 @@ function playbackNeedsDirectGesture(error: unknown): boolean {
  */
 export default function LibraryTile({
   job,
+  title,
   onDeleted,
   onPosterLoadError,
   onPosterLoadSuccess,
@@ -64,6 +64,7 @@ export default function LibraryTile({
   posterRefreshUnavailable = false,
 }: {
   job: LibraryJob;
+  title?: string;
   onDeleted?: (jobId: string) => void;
   onPosterLoadError?: (jobId: string, posterIdentity: string | null) => void;
   onPosterLoadSuccess?: (jobId: string, posterIdentity: string | null) => void;
@@ -500,7 +501,7 @@ export default function LibraryTile({
   const media = (
     <div
       className={cn(
-        "relative aspect-[9/16] overflow-hidden rounded-xl border bg-zinc-100",
+        "relative aspect-[9/16] overflow-hidden rounded-2xl border bg-zinc-100",
         isFailed ? "border-dashed border-zinc-300" : "border-zinc-200",
       )}
     >
@@ -543,15 +544,15 @@ export default function LibraryTile({
       )}
 
       {isReady && (
-        <Badge variant="lime-soft" className="absolute bottom-2 left-2 normal-case tracking-normal">
+        <span className="absolute bottom-3 left-3 rounded-full bg-white/90 px-2 py-1 text-[11px] font-semibold leading-[15px] text-[#30352C]">
           Ready to post
-        </Badge>
+        </span>
       )}
       {!isReady && !isFailed && (
-        <Badge variant="zinc" className="absolute bottom-2 left-2 gap-1.5 normal-case tracking-normal">
-          <span className="h-1.5 w-1.5 rounded-full bg-lime-500" aria-hidden="true" />
+        <span className="absolute bottom-3 left-3 flex items-center gap-1.5 rounded-full bg-white/90 px-2 py-1 text-[11px] font-semibold leading-[15px] text-[#30352C]">
+          <span className="size-1.5 rounded-full bg-[#526071]" aria-hidden="true" />
           Rendering…
-        </Badge>
+        </span>
       )}
 
       {href && (
@@ -612,6 +613,7 @@ export default function LibraryTile({
         )}
       </div>
       {latestPublication && <TikTokStatus publication={latestPublication} />}
+      {title ? <p className="mt-2 truncate text-sm font-semibold leading-5 text-[#30352C]">{title}</p> : null}
 
       <AlertDialog open={deleteOpen} onOpenChange={(open) => !isDeleting && setDeleteOpen(open)}>
         <AlertDialogContent

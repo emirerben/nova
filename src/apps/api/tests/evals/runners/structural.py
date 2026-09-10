@@ -76,6 +76,12 @@ from app.agents.sfx_placement import (
     SfxPlacementOutput,
 )
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
+from app.agents.slide_post_composer import (
+    _MAX_ALT_LEN,
+    _MAX_CAPTION_LEN,
+    SlidePostComposerInput,
+    SlidePostComposerOutput,
+)
 from app.agents.smart_edit_planner import SmartEditPlannerInput, SmartEditPlannerOutput
 from app.agents.song_classifier import SongClassifierOutput
 from app.agents.song_sections import (
@@ -2453,6 +2459,39 @@ def check_narration_focus(
     return failures
 
 
+# ── slide_post_composer ──────────────────────────────────────────────────────
+
+
+def check_slide_post_composer(
+    output: SlidePostComposerOutput,
+    input: SlidePostComposerInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.plan.slide_post_composer.
+
+    `parse()` already enforces exact-id-coverage as a hard SchemaError (a
+    dropped/invented/duplicated id never reaches here) and truncates
+    caption/alt_text. This eval re-asserts those guarantees against the
+    parsed Output so the invariant is pinned independently of `parse()`'s
+    own code path — a regression there should fail here too, not just in
+    the agent's own unit tests.
+    """
+    failures: list[str] = []
+    known_ids = {item.id for item in input.media}
+    ordered = output.order
+    if set(ordered) != known_ids or len(set(ordered)) != len(ordered):
+        failures.append(f"order {ordered!r} does not exactly cover known ids {sorted(known_ids)!r}")
+    if output.cover_id not in known_ids:
+        failures.append(f"cover_id={output.cover_id!r} is not one of the given media ids")
+    if len(output.caption) > _MAX_CAPTION_LEN:
+        failures.append(f"caption length {len(output.caption)} exceeds cap {_MAX_CAPTION_LEN}")
+    for key, value in output.alt_text.items():
+        if key not in known_ids:
+            failures.append(f"alt_text references unknown id {key!r}")
+        if len(value) > _MAX_ALT_LEN:
+            failures.append(f"alt_text[{key!r}] length {len(value)} exceeds cap {_MAX_ALT_LEN}")
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -2700,4 +2739,6 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_voiceover_script_writer(output, input)
     if agent_name == "nova.voiceover.interviewer":
         return check_voiceover_interviewer(output, input)
+    if agent_name == "nova.plan.slide_post_composer":
+        return check_slide_post_composer(output, input)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

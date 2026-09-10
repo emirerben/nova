@@ -33,11 +33,14 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-09-v41"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-09-v42"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
-# Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
+# Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
-_MAX_OPS = 12
+# A single creator request may legitimately rename and restyle many distinct
+# text bars. Keep it bounded, but large enough for a full player roster.
+_MAX_OPS = 48
+_MAX_UTTERANCE_CHARS = 2_000
 _GUIDED_TIMELINE_MAX_SLOTS = EDITOR_MAX_TIMELINE_SLOTS
 # Renderer-side guard only — the producer (snapshot.ts COPILOT_BEAT_MARKS_MAX)
 # stride-caps to the same count before sending, preserving late-video marks.
@@ -634,7 +637,7 @@ _FONT_KIND_HINTS: dict[str, str] = {
 class EditCopilotInput(BaseModel):
     """Per-turn input for the editor copilot."""
 
-    utterance: str = Field(default="", max_length=500)
+    utterance: str = Field(default="", max_length=_MAX_UTTERANCE_CHARS)
     prior_turns: list[dict] = Field(default_factory=list, max_length=12)
     variant_snapshot: dict = Field(default_factory=dict)
 
@@ -656,10 +659,26 @@ class EditCopilotOutput(BaseModel):
 
 def _clean_prompt_data(value: object, *, max_chars: int | None = 220) -> str:
     clean = _sanitize_text(str(value or ""))
-    clean = re.sub(r"[\x00-\x1f\x7f]+", " ", clean)
+    # Preserve line boundaries for the role-marker pass below.  Collapsing a
+    # newline first would make an embedded ``system:`` marker look like prose.
+    clean = re.sub(r"[\x00-\x09\x0b-\x1f\x7f]+", " ", clean)
     clean = clean.replace("{", "(").replace("}", ")").replace("$", "")
     clean = re.sub(r"\s+", " ", clean).strip()
     return clean if max_chars is None else clean[:max_chars]
+
+
+def _clean_utterance(value: object) -> str:
+    """Keep the bounded creator request intact while defanging prompt markers."""
+    clean = str(value or "")
+    clean = re.sub(r"[\x00-\x09\x0b-\x1f\x7f]+", " ", clean)
+    clean = re.sub(
+        r"(?im)^[ \t]*(system|assistant|user|tool|developer)[ \t]*[:>][ \t]*",
+        "[role-marker-stripped] ",
+        clean,
+    )
+    clean = re.sub(r"```+", "'''", clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    return clean[:_MAX_UTTERANCE_CHARS]
 
 
 def _snapshot_list(snapshot: dict, keys: Iterable[str]) -> list:
@@ -2785,7 +2804,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             utterance=(
                 _clean_component_data(input.utterance)
                 if _component_context_enabled(input.variant_snapshot)
-                else _clean_prompt_data(input.utterance[:500], max_chars=500)
+                else _clean_utterance(input.utterance)
             ),
             prior_turns=_format_prior_turns(input.prior_turns),
             snapshot=_format_snapshot(input.variant_snapshot),
@@ -2793,6 +2812,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             effect_catalog=_effect_catalog(),
             caption_font_catalog=_caption_font_catalog(),
             custom_effect_catalog=_custom_effect_catalog(),
+            max_ops=_MAX_OPS,
         )
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002

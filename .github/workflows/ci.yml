@@ -153,6 +153,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      - name: Disable unused Chrome apt source
+        run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
       - name: Install FFmpeg and Skia runtime libs
         # libegl1 + libgl1 are needed by skia-python (used by
         # app/pipeline/text_overlay_skia.py). On macOS these ship with the OS;
@@ -188,7 +190,7 @@ jobs:
           python -m alembic upgrade 0073
           python scripts/verify_content_plan_owner_constraint.py verify-installed
           python -m alembic downgrade -1
-          python -m alembic upgrade head
+          python -m alembic upgrade 0103
           python scripts/verify_0103_downgrade_state.py seed
           python -m alembic downgrade -1
           python scripts/verify_0103_downgrade_state.py verify
