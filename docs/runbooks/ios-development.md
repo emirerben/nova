@@ -116,7 +116,9 @@ KRIA_IOS_TEST_MODE=prepare-ui bash scripts/ios/verify.sh
 KRIA_IOS_TEST_MODE=ui bash scripts/ios/verify.sh
 ```
 
-`prepare-ui` builds both test bundles and runs unit tests. `ui` runs only the UI
+`prepare-ui` builds both test bundles and runs unit tests. The unit phase
+excludes `KriaUITests` rather than whitelisting a single unit target, so future
+non-UI targets remain covered. Xcode still controls the build dependency graph. `ui` runs only the UI
 bundle and requires a one-use receipt from the successful preparation, matching
 all current native/shared input contents and generated project files. Changed
 inputs or a failed preparation require a fresh build. Receipts are not cached.
@@ -128,6 +130,10 @@ restore them. PRs can restore the default/base branch cache. The first main cach
 from PR #1004 was saved at 10:42 UTC on 2026-09-10, after PR #1005 started at
 10:25, explaining its cold build despite a prior PR cache. See GitHub's
 [cache access restrictions](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache).
+
+Both API-URL build-setting queries use the same cached DerivedData directory as
+compilation. Previously these queries resolved packages through Xcode's default,
+uncached directory before the actual cached build began.
 
 The main push gate seeds the shared cache. CI now saves the compiled build as
 soon as unit tests pass, before UI execution, so this seed is available earlier.
@@ -151,7 +157,8 @@ or relax `build-and-test`.
 
 Local verification of the timestamp restore on 2026-09-10 reset all 126 native
 and shared input mtimes to simulate a fresh checkout, then ran the `unit` mode
-against the existing build. It passed in 37.8 seconds with zero `SwiftCompile`,
+against the existing build. It passed in 37.8 seconds; repeating with the cached build-setting queries passed
+in 32.1 seconds. Both runs had zero `SwiftCompile`,
 `CompileC` or `SwiftEmitModule` actions. This is local incremental-build evidence,
 not a promised GitHub-hosted duration; the first cache without a timestamp
 manifest still needs to establish one.

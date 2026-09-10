@@ -147,13 +147,13 @@ class VerifyShellTests(unittest.TestCase):
         test = next(call for call in self.calls if call[-1] == "test-without-building")
         self.assertEqual(test[test.index("-parallel-testing-enabled") + 1], "NO")
 
-    def test_unit_mode_selects_only_unit_bundle_at_build_and_test(self):
+    def test_unit_mode_filters_ui_tests_for_both_xcode_actions(self):
         result = self.run_verify(suite="unit")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.actions, ["build-for-testing", "test-without-building"])
         for call in self.calls:
             if call[0] == "xcodebuild" and call[-1] in self.actions:
-                self.assertIn("-only-testing:KriaTests", call)
+                self.assertIn("-skip-testing:KriaUITests", call)
         self.assertFalse(
             (self.root / "src/apps/ios/.derived-data/.ci-ui-build").exists()
         )
@@ -163,8 +163,10 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
         build = next(call for call in self.calls if call[-1] == "build-for-testing")
         unit = next(call for call in self.calls if call[-1] == "test-without-building")
-        self.assertFalse(any(arg.startswith("-only-testing:") for arg in build))
-        self.assertIn("-only-testing:KriaTests", unit)
+        self.assertFalse(
+            any(arg.startswith(("-only-testing:", "-skip-testing:")) for arg in build)
+        )
+        self.assertIn("-skip-testing:KriaUITests", unit)
         ui = self.run_verify(suite="ui")
         self.assertEqual(ui.returncode, 0, ui.stderr)
         self.assertEqual(self.actions, ["test-without-building"])
@@ -240,6 +242,17 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(
             build[build.index("-destination") + 1], "generic/platform=iOS Simulator"
         )
+
+    def test_configuration_queries_use_the_cached_package_directory(self):
+        self.assertEqual(self.run_verify(build_only=True).returncode, 0)
+        queries = [call for call in self.calls if "-showBuildSettings" in call]
+        self.assertEqual(len(queries), 2)
+        for query in queries:
+            self.assertEqual(
+                query[query.index("-derivedDataPath") + 1],
+                str(self.root / "src/apps/ios/.derived-data"),
+            )
+            self.assertIn("-skipPackagePluginValidation", query)
 
     def test_build_only_failure_propagates(self):
         self.assertEqual(

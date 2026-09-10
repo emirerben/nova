@@ -49,6 +49,8 @@ assert_api_base_url() {
     xcodebuild \
       -project Kria.xcodeproj \
       -scheme Kria \
+      -derivedDataPath "$DERIVED_DATA" \
+      -skipPackagePluginValidation \
       -configuration "$configuration" \
       -showBuildSettings 2>/dev/null
   } | awk -F ' = ' '/^[[:space:]]*API_BASE_URL = / { print $2; exit }')"
@@ -105,15 +107,15 @@ xcrun simctl bootstatus "$SIMULATOR_ID" -b &
 BOOT_PID=$!
 trap 'kill "$BOOT_PID" 2>/dev/null || true' EXIT
 
-# Unit-only changes do not need to compile the UI runner. prepare-ui compiles
-# both bundles once; the following UI step reuses them without another build.
+# Filter out UI execution for the fast phase while retaining any other test
+# targets. prepare-ui builds the full scheme once for the following UI step.
 BUILD_TEST_ARGS=("${COMMON_ARGS[@]}" -destination "$DESTINATION")
 RUN_TEST_ARGS=("${COMMON_ARGS[@]}" -destination "$DESTINATION" -parallel-testing-enabled NO)
 if [[ "$MODE" == "unit" ]]; then
-  BUILD_TEST_ARGS+=(-only-testing:KriaTests)
+  BUILD_TEST_ARGS+=(-skip-testing:KriaUITests)
 fi
 if [[ "$MODE" == "unit" || "$MODE" == "prepare-ui" ]]; then
-  RUN_TEST_ARGS+=(-only-testing:KriaTests)
+  RUN_TEST_ARGS+=(-skip-testing:KriaUITests)
 fi
 xcodebuild "${BUILD_TEST_ARGS[@]}" build-for-testing
 wait "$BOOT_PID"
