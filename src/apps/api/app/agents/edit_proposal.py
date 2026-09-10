@@ -1463,8 +1463,10 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         if input.direction != "fast_montage":
             beat_duration = math.fsum(beat.duration_s for beat in output.story_beats)
             max_intro_gap = max(6.0, output.duration_s * 0.3)
+            # Source metadata can carry more precision than the declared total;
+            # allow at most one output frame of drift before compilation.
             if (
-                beat_duration - output.duration_s > 1e-6
+                beat_duration - output.duration_s > 1 / 30 + 1e-6
                 or output.duration_s - beat_duration > max_intro_gap
             ):
                 raise SchemaError("edit_proposal: beat durations do not fit the declared duration")

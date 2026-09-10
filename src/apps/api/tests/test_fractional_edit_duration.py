@@ -5,6 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from app.agents._runtime import SchemaError
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents.edit_guide import EditGuideRevision
 from app.agents.edit_proposal import (
@@ -241,3 +242,14 @@ def test_provider_schema_exposes_bounded_fractional_number(model: type, field: s
     assert schema["type"] == "number"
     assert schema["minimum"] == 3
     assert schema["maximum"] == 60
+
+
+def test_fractional_source_precision_allows_subframe_beat_sum_drift() -> None:
+    response = _response()
+    for beat, duration in zip(response["story_beats"], [4.9, 3.733333, 4.068333], strict=True):
+        beat["duration_s"] = duration
+    output = EditProposalAgent(None).parse(json.dumps(response), _input(12.7))
+    assert output.duration_s == 12.7
+    response["story_beats"][0]["duration_s"] += 1 / 30
+    with pytest.raises(SchemaError, match="beat durations do not fit"):
+        EditProposalAgent(None).parse(json.dumps(response), _input(12.7))
