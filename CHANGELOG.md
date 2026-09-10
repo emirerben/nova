@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.7.0] - 2026-09-10
+
+### Changed
+- iOS verification builds the app and tests together for one simulator, starts that simulator during compilation, and reuses Xcode build and package caches in CI. All unit, UI, and contract checks remain required.
+
 ## [0.75.5.0] - 2026-09-10
 
 ### Changed
