@@ -31,9 +31,12 @@ style has passed the complete parity and physical-device gates.
   exact font identity, size, baseline, tracking, fill, outline, and rotation.
   `PortableTextDrawing.swift` draws these through the shared compositor, rejects
   missing glyphs/font substitution, and caps prepared text bitmaps at 64 MiB.
-  The initial lane accepts static shaped text only. Motion, shadows, gradients,
-  glyph-by-glyph legacy layout, and the shared overlay-to-recipe compiler remain
-  outstanding. A Latin font probe matched cloud ink bounds and caught/fixed
+  The lane accepts shaped text with static, fade, scale, slide, pop, and bounce
+  transforms using complete normalized motion parameters. Native whole-layer
+  sampling matches 32 cases captured from the real cloud drawing dispatcher,
+  including exit fades; animated fade runs through preview and H.264 export.
+  Reveal effects, shadows, gradients, glyph-by-glyph legacy layout, and the
+  shared overlay-to-recipe compiler remain outstanding. A Latin font probe matched cloud ink bounds and caught/fixed
   stroke/fill ordering; this is not full typography parity. The native suite
   verifies the lane's time window in actual preview and H.264 export. The new
   `positionedText` capability remains outside the default supported set.

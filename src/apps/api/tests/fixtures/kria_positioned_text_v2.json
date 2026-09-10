@@ -127,7 +127,8 @@
           "stroke_width": 0.0
         }
       ],
-      "effect": "static"
+      "effect": "static",
+      "motion": null
     }
   ]
 }

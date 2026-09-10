@@ -1,0 +1,56 @@
+import Foundation
+
+/// Whole-layer transforms sampled in output-canvas coordinates (positive y is down).
+/// Reveal effects require separate glyph/mask rendering and are rejected here.
+public struct TextTransformSample: Codable, Equatable, Sendable {
+    public let alpha: Double
+    public let scale: Double
+    public let xTranslate: Double
+    public let yTranslate: Double
+}
+
+public enum TextTransformTiming {
+    public static func sample(effect: PortableTextEffect, text: String, localTime: Double,
+                              duration: Double, motion: TextMotionParameters) throws -> TextTransformSample {
+        guard duration.isFinite, duration > 0, localTime.isFinite else { throw RecipeError.invalidTimeline }
+        let time = try TextMotionTiming.authoredTime(effect: effect, text: text, localTime: localTime, motion: motion)
+        let base = try TextMotionTiming.settleDuration(effect: effect, text: text, motion: motion) * motion.speed
+        var alpha = 1.0, scale = 1.0, x = 0.0, y = 0.0
+        func ease(_ value: Double) -> Double { TextMotionTiming.ease(value, motion.easing) }
+        switch effect {
+        case .static, .none: break
+        case .fadeIn: alpha = ease(time / max(base, 0.01))
+        case .scaleUp: scale = 0.6 + 0.4 * ease(time / max(base, 0.01))
+        case .slideUp, .slideDown:
+            let distance = motion.travelPx * (1 - ease(time / base))
+            switch motion.direction {
+            case .left: x = -distance
+            case .right: x = distance
+            case .up: y = -distance
+            case .down: y = distance
+            case .none: break
+            }
+        case .popIn:
+            if time < 0.15 { scale = 0.30 + 0.85 * time / 0.15 }
+            else if time < 0.25 { scale = 1.15 - 0.15 * (time - 0.15) / 0.10 }
+            if scale > 1 { scale = 1 + (scale - 1) * motion.overshoot / 0.15 }
+        case .bounce:
+            let p = time / base
+            if p < 0.36 { scale = 1 + 0.25 * p / 0.36 }
+            else if p < 0.72 { scale = 1.25 - 0.35 * (p - 0.36) / 0.36 }
+            else if p < 1 { scale = 0.90 + 0.10 * (p - 0.72) / 0.28 }
+            if scale > 1 { scale = 1 + (scale - 1) * motion.overshoot / 0.15 }
+        default: throw MediaEngineError.unsupportedCapability
+        }
+        scale = 1 + (scale - 1) * motion.intensity
+        alpha = 1 - (1 - alpha) * motion.intensity
+        x *= motion.intensity; y *= motion.intensity
+        if motion.exitS > 0 {
+            let exit = min(duration, TextMotionTiming.roundOutputFrame(motion.exitS))
+            if localTime >= duration - exit {
+                alpha *= 1 - TextMotionTiming.ease((localTime - duration + exit) / max(exit, 1e-6), .easeInOutCubic)
+            }
+        }
+        return TextTransformSample(alpha: alpha, scale: scale, xTranslate: x, yTranslate: y)
+    }
+}

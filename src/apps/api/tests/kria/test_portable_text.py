@@ -97,3 +97,24 @@ def test_text_contract_fails_closed(mutation):
 def test_shared_positioned_text_fixture_is_current():
     expected = EditRecipeV2.model_validate(text_document()).model_dump(mode="json")
     assert json.loads((FIXTURE.parent / "kria_positioned_text_v2.json").read_text()) == expected
+
+
+def test_animated_text_requires_complete_motion_and_rejects_reveal_effects():
+    from dataclasses import asdict
+
+    from app.pipeline.text_motion_v2 import normalize_text_motion
+
+    document = text_document()
+    layer = document["text_layers"][0]
+    layer["effect"] = "fade-in"
+    with pytest.raises(ValueError, match="resolved motion"):
+        EditRecipeV2.model_validate(document)
+    layer["motion"] = asdict(normalize_text_motion("fade-in", {"version": 2}))
+    assert EditRecipeV2.model_validate(document).text_layers[0].motion is not None
+    layer["motion"]["unknown"] = True
+    with pytest.raises(ValueError):
+        EditRecipeV2.model_validate(document)
+    del layer["motion"]["unknown"]
+    layer["effect"] = "typewriter"
+    with pytest.raises(ValueError):
+        EditRecipeV2.model_validate(document)

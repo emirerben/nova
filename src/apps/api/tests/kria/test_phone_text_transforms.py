@@ -1,0 +1,98 @@
+"""Capture real Skia dispatch transforms for the native whole-layer sampler."""
+
+import json
+import sys
+from dataclasses import asdict
+from pathlib import Path
+from unittest.mock import patch
+
+from app.pipeline.text_motion_v2 import normalize_text_motion
+from app.pipeline.text_overlay_skia import _draw_with_animation
+
+FIXTURE = Path(__file__).parents[1] / "fixtures/phone_text_transforms_v2.json"
+
+
+def reference_cases():
+    cases = []
+    for effect in [
+        "static",
+        "none",
+        "fade-in",
+        "scale-up",
+        "slide-up",
+        "slide-down",
+        "pop-in",
+        "bounce",
+    ]:
+        for index in range(4):
+            motion = asdict(
+                normalize_text_motion(
+                    effect,
+                    {
+                        "version": 2,
+                        "speed": [0.25, 0.53, 1, 4][index],
+                        "intensity": [0, 0.3, 0.8, 1][index],
+                        "easing": ["linear", "ease-out-cubic", "ease-in-out-cubic", "linear"][
+                            index
+                        ],
+                        "direction": ["left", "right", "up", "down"][index],
+                        "travel_px": 137,
+                        "overshoot": [0, 0.15, 0.5, 1][index],
+                        "exit_s": [0, 0.01, 0.5, 2][index],
+                    },
+                )
+            )
+            duration = [0.12, 0.75, 2, 4][index]
+            samples = []
+            for time in sorted(
+                set(
+                    [
+                        0,
+                        1 / 30,
+                        0.1,
+                        0.15,
+                        0.2,
+                        0.25,
+                        0.4,
+                        0.8,
+                        duration / 2,
+                        duration - 1 / 30,
+                        duration,
+                    ]
+                )
+            ):
+                with patch("app.pipeline.text_overlay_skia._draw_centered_text") as draw:
+                    _draw_with_animation(
+                        None,
+                        {"text": "Hello", "effect": effect, "motion": {"version": 2, **motion}},
+                        time,
+                        duration,
+                    )
+                kwargs = draw.call_args.kwargs
+                samples.append(
+                    {
+                        "time": time,
+                        "state": {
+                            key: kwargs[key]
+                            for key in ["alpha", "scale", "x_translate", "y_translate"]
+                        },
+                    }
+                )
+            cases.append(
+                {
+                    "effect": effect,
+                    "text": "Hello",
+                    "duration": duration,
+                    "motion": motion,
+                    "samples": samples,
+                }
+            )
+    return cases
+
+
+def test_native_transform_reference_is_current():
+    assert json.loads(FIXTURE.read_text()) == reference_cases()
+
+
+if __name__ == "__main__" and "--write" in sys.argv:
+    FIXTURE.write_text(json.dumps(reference_cases(), indent=2) + "\n")

@@ -4105,7 +4105,14 @@
           "effect": {
             "default": "static",
             "enum": [
-              "static"
+              "static",
+              "none",
+              "fade-in",
+              "scale-up",
+              "slide-up",
+              "slide-down",
+              "pop-in",
+              "bounce"
             ],
             "title": "Effect",
             "type": "string"
@@ -4122,6 +4129,11 @@
             "minLength": 1,
             "title": "Id",
             "type": "string"
+          },
+          "motion": {
+            "$ref": "#/components/schemas/ResolvedTextMotion",
+            "default": null,
+            "nullable": true
           },
           "rotation_degrees": {
             "maximum": 3600,
@@ -4382,6 +4394,128 @@
           "byte_count"
         ],
         "title": "RenderFingerprint",
+        "type": "object"
+      },
+      "ResolvedTextMotion": {
+        "additionalProperties": false,
+        "properties": {
+          "blur_px": {
+            "maximum": 12,
+            "minimum": 0,
+            "title": "Blur Px",
+            "type": "number"
+          },
+          "cursor_blink_ms": {
+            "maximum": 2000,
+            "minimum": 100,
+            "title": "Cursor Blink Ms",
+            "type": "number"
+          },
+          "cursor_style": {
+            "enum": [
+              "none",
+              "bar",
+              "block",
+              "underscore"
+            ],
+            "title": "Cursor Style",
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "none",
+              "up",
+              "down",
+              "left",
+              "right"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "easing": {
+            "enum": [
+              "linear",
+              "ease-out-cubic",
+              "ease-in-out-cubic"
+            ],
+            "title": "Easing",
+            "type": "string"
+          },
+          "exit_s": {
+            "maximum": 2,
+            "minimum": 0,
+            "title": "Exit S",
+            "type": "number"
+          },
+          "hold_s": {
+            "maximum": 3600,
+            "minimum": 0,
+            "title": "Hold S",
+            "type": "number"
+          },
+          "intensity": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Intensity",
+            "type": "number"
+          },
+          "order": {
+            "enum": [
+              "forward",
+              "reverse",
+              "center-out"
+            ],
+            "title": "Order",
+            "type": "string"
+          },
+          "overshoot": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Overshoot",
+            "type": "number"
+          },
+          "reveal_ramp_ms": {
+            "maximum": 400,
+            "minimum": 40,
+            "title": "Reveal Ramp Ms",
+            "type": "number"
+          },
+          "speed": {
+            "maximum": 4,
+            "minimum": 0.25,
+            "title": "Speed",
+            "type": "number"
+          },
+          "stagger_ms": {
+            "maximum": 250,
+            "minimum": 0,
+            "title": "Stagger Ms",
+            "type": "number"
+          },
+          "travel_px": {
+            "maximum": 600,
+            "minimum": 0,
+            "title": "Travel Px",
+            "type": "number"
+          }
+        },
+        "required": [
+          "speed",
+          "intensity",
+          "easing",
+          "stagger_ms",
+          "order",
+          "direction",
+          "travel_px",
+          "overshoot",
+          "blur_px",
+          "cursor_style",
+          "cursor_blink_ms",
+          "hold_s",
+          "exit_s",
+          "reveal_ramp_ms"
+        ],
+        "title": "ResolvedTextMotion",
         "type": "object"
       },
       "SolidBackground": {

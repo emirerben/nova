@@ -62,6 +62,12 @@ final class PortableTextTests: XCTestCase {
         }
     }
     @MainActor func testIndependentTextAppearsOnlyInsideItsWindowInPreviewAndExport() async throws {
+        try await verifyTextWindow(animated: false)
+    }
+    @MainActor func testAnimatedFadeUsesCompositionTimeInPreviewAndExport() async throws {
+        try await verifyTextWindow(animated: true)
+    }
+    @MainActor private func verifyTextWindow(animated: Bool) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -78,7 +84,8 @@ final class PortableTextTests: XCTestCase {
                 source: asset.id == "font" ? .library(catalog: .font, catalogID: "Inter-Regular.ttf", generation: asset.fingerprint!.hex) : .original(mediaID: "photo"))
         }
         var cue = layer()
-        cue = PortableTextLayer(id: cue.id, start: 0.25, end: 0.75, anchorX: cue.anchorX, anchorY: cue.anchorY, rotationDegrees: 0, runs: cue.runs)
+        cue = PortableTextLayer(id: cue.id, start: 0.25, end: 0.75, anchorX: cue.anchorX, anchorY: cue.anchorY, rotationDegrees: 0, runs: cue.runs,
+            effect: animated ? .fadeIn : .static, motion: animated ? try motionFixture() : nil)
         let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 200, height: 200),
             assets: assets, tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "photo", sourceDuration: 1)])],
             assetManifest: RenderAssetManifest(assets: references), textLayers: [cue])
@@ -91,16 +98,26 @@ final class PortableTextTests: XCTestCase {
         let exported = AVAssetImageGenerator(asset: AVURLAsset(url: output))
         for generator in [reference, exported] {
             generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
-            for seconds in [0.1, 0.5, 0.9] {
+            for seconds in [0.1, 8.0 / 30, 0.3, 0.5, 0.7, 0.9] {
                 let image = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image
                 var pixels = [UInt8](repeating: 0, count: 200 * 200 * 4)
                 CIContext().render(CIImage(cgImage: image), toBitmap: &pixels, rowBytes: 200 * 4,
                     bounds: CGRect(x: 0, y: 0, width: 200, height: 200), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
                 let bright = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 180 }.count
-                if seconds == 0.5 { XCTAssertGreaterThan(bright, 600) }
-                else { XCTAssertEqual(bright, 0) }
+                if seconds >= 0.25 && seconds < 0.75 {
+                    if animated && seconds <= 0.3 { XCTAssertEqual(bright, 0) }
+                    else { XCTAssertGreaterThan(bright, 600) }
+                } else { XCTAssertEqual(bright, 0) }
             }
         }
+    }
+
+    private func motionFixture() throws -> TextMotionParameters {
+        try RecipeJSON.decoder().decode(TextMotionParameters.self, from: Data("""
+        {"speed":1,"intensity":1,"easing":"ease-out-cubic","stagger_ms":0,"order":"forward",
+         "direction":"none","travel_px":0,"overshoot":0.15,"blur_px":0,"cursor_style":"none",
+         "cursor_blink_ms":500,"hold_s":1,"exit_s":0,"reveal_ramp_ms":100}
+        """.utf8))
     }
 
     func testRejectsMissingFontAndUnlicensedFallback() throws {

@@ -33,6 +33,23 @@ class PositionedTextRun(_TextModel):
     stroke_width: float = Field(ge=0, le=100)
 
 
+class ResolvedTextMotion(_TextModel):
+    speed: float = Field(ge=0.25, le=4)
+    intensity: float = Field(ge=0, le=1)
+    easing: Literal["linear", "ease-out-cubic", "ease-in-out-cubic"]
+    stagger_ms: float = Field(ge=0, le=250)
+    order: Literal["forward", "reverse", "center-out"]
+    direction: Literal["none", "up", "down", "left", "right"]
+    travel_px: float = Field(ge=0, le=600)
+    overshoot: float = Field(ge=0, le=1)
+    blur_px: float = Field(ge=0, le=12)
+    cursor_style: Literal["none", "bar", "block", "underscore"]
+    cursor_blink_ms: float = Field(ge=100, le=2000)
+    hold_s: float = Field(ge=0, le=3600)
+    exit_s: float = Field(ge=0, le=2)
+    reveal_ramp_ms: float = Field(ge=40, le=400)
+
+
 class PortableTextLayer(_TextModel):
     id: str = Field(min_length=1, max_length=160)
     start: float = Field(ge=0, le=1800)
@@ -41,11 +58,15 @@ class PortableTextLayer(_TextModel):
     anchor_y: float = Field(ge=-10000, le=10000)
     rotation_degrees: float = Field(ge=-3600, le=3600)
     runs: list[PositionedTextRun] = Field(min_length=1, max_length=100)
-    # Explicit static layout first; new motion programs require schema support.
-    effect: Literal["static"] = "static"
+    effect: Literal[
+        "static", "none", "fade-in", "scale-up", "slide-up", "slide-down", "pop-in", "bounce"
+    ] = "static"
+    motion: ResolvedTextMotion | None = None
 
     @model_validator(mode="after")
     def valid_window(self):
+        if self.effect not in {"static", "none"} and self.motion is None:
+            raise ValueError("animated text requires resolved motion")
         if self.end <= self.start:
             raise ValueError("text layer must have a positive time window")
         if sum(len(run.text) for run in self.runs) > 5000:

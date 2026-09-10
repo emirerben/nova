@@ -22,6 +22,26 @@ public struct TextMotionParameters: Codable, Equatable, Sendable {
     public let exitS: Double
     public let revealRampMs: Double
 
+    private enum CodingKeys: String, CodingKey { case speed, intensity, easing, staggerMs, order, direction, travelPx, overshoot, blurPx, cursorStyle, cursorBlinkMs, holdS, exitS, revealRampMs }
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["speed", "intensity", "easing", "staggerMs", "order", "direction", "travelPx", "overshoot", "blurPx", "cursorStyle", "cursorBlinkMs", "holdS", "exitS", "revealRampMs"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        speed = try c.decode(Double.self, forKey: .speed)
+        intensity = try c.decode(Double.self, forKey: .intensity)
+        easing = try c.decode(Easing.self, forKey: .easing)
+        staggerMs = try c.decode(Double.self, forKey: .staggerMs)
+        order = try c.decode(Order.self, forKey: .order)
+        direction = try c.decode(Direction.self, forKey: .direction)
+        travelPx = try c.decode(Double.self, forKey: .travelPx)
+        overshoot = try c.decode(Double.self, forKey: .overshoot)
+        blurPx = try c.decode(Double.self, forKey: .blurPx)
+        cursorStyle = try c.decode(Cursor.self, forKey: .cursorStyle)
+        cursorBlinkMs = try c.decode(Double.self, forKey: .cursorBlinkMs)
+        holdS = try c.decode(Double.self, forKey: .holdS)
+        exitS = try c.decode(Double.self, forKey: .exitS)
+        revealRampMs = try c.decode(Double.self, forKey: .revealRampMs)
+    }
+
     public func validate() throws {
         let ranges: [(Double, ClosedRange<Double>)] = [
             (speed, 0.25...4), (intensity, 0...1), (staggerMs, 0...250), (travelPx, 0...600),

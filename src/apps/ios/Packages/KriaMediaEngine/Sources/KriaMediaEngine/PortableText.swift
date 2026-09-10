@@ -58,7 +58,7 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
 }
 
 public struct PortableTextLayer: Codable, Equatable, Sendable {
-    public enum Effect: String, Codable, Sendable { case `static` }
+    public enum Effect: String, Codable, Sendable { case `static`, none, fadeIn = "fade-in", scaleUp = "scale-up", slideUp = "slide-up", slideDown = "slide-down", popIn = "pop-in", bounce }
     public let id: String
     public let start: Double
     public let end: Double
@@ -66,19 +66,21 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
     public let anchorY: Double
     public let rotationDegrees: Double
     public let runs: [PositionedTextRun]
+    public let motion: TextMotionParameters?
     public let effect: Effect
-    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect }
+    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion }
     public init(id: String, start: Double, end: Double, anchorX: Double, anchorY: Double,
-                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static) {
+                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil) {
         self.id = id; self.start = start; self.end = end; self.anchorX = anchorX; self.anchorY = anchorY
-        self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect
+        self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect"])
+        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id); start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end); anchorX = try c.decode(Double.self, forKey: .anchorX)
         anchorY = try c.decode(Double.self, forKey: .anchorY); rotationDegrees = try c.decode(Double.self, forKey: .rotationDegrees)
+        motion = try c.decodeIfPresent(TextMotionParameters.self, forKey: .motion)
         runs = try c.decode([PositionedTextRun].self, forKey: .runs); effect = try c.decode(Effect.self, forKey: .effect)
     }
     public func validate(duration: Double, manifest: RenderAssetManifest?) throws {
@@ -86,6 +88,8 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
               start >= 0, end > start, end <= min(1800, duration), abs(anchorX) <= 10000, abs(anchorY) <= 10000,
               abs(rotationDegrees) <= 3600, (1...100).contains(runs.count),
               runs.reduce(0, { $0 + $1.text.unicodeScalars.count }) <= 5000 else { throw RecipeError.invalidTimeline }
+        if effect != .static && effect != .none && motion == nil { throw RecipeError.invalidTimeline }
+        try motion?.validate()
         for run in runs {
             try run.validate()
             guard let font = manifest?.assets.first(where: { $0.id == run.fontAssetID }),

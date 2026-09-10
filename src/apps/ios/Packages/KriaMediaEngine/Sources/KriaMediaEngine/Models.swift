@@ -124,6 +124,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         let clips = tracks.flatMap(\.clips)
         if !clips.isEmpty { result.formUnion([.basicComposition, .local1080Export]) }
         if !textLayers.isEmpty { result.insert(.positionedText) }
+        if textLayers.contains(where: { $0.motion != nil }) { result.insert(.animatedText) }
         if clips.contains(where: { $0.text != nil }) { result.insert(.animatedText) }
         if clips.contains(where: { $0.rate != 1 }) { result.insert(.variableSpeed) }
         if clips.contains(where: { $0.transition != nil }) { result.insert(.crossfade) }

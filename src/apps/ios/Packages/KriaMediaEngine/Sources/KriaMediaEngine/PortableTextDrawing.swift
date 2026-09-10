@@ -53,7 +53,10 @@ extension RecipeTextLayer {
             bounds = bounds.union(box)
             runs.append(Run(line: line, stroke: stroke, origin: origin))
         }
-        bounds = bounds.intersection(CGRect(origin: .zero, size: canvas)).integral
+        // Moving/scaling text can enter the canvas from an offscreen position.
+        // Keep its complete bitmap, still subject to the aggregate memory budget.
+        if layer.motion == nil { bounds = bounds.intersection(CGRect(origin: .zero, size: canvas)) }
+        bounds = bounds.integral
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0,
               bounds.width * bounds.height * 4 <= Double(maxBitmapBytes),
               let context = CGContext(data: nil, width: Int(bounds.width), height: Int(bounds.height), bitsPerComponent: 8,
@@ -69,7 +72,7 @@ extension RecipeTextLayer {
             CTLineDraw(run.line, context)
         }
         guard let image = context.makeImage() else { throw MediaEngineError.exportFailed }
-        return Self(image: CIImage(cgImage: image), frame: bounds, start: layer.start, end: layer.end, animation: .none)
+        return Self(image: CIImage(cgImage: image), frame: bounds, start: layer.start, end: layer.end, animation: .none, portable: layer, portableAnchor: anchor)
     }
 }
 #endif

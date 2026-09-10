@@ -20,6 +20,8 @@ struct RecipeTextLayer: @unchecked Sendable {
     let start: Double
     let end: Double
     let animation: TextAnimation
+    var portable: PortableTextLayer? = nil
+    var portableAnchor: CGPoint = .zero
 
     static func make(_ text: TextTreatment, start: Double, end: Double, canvas: CGSize) throws -> Self {
         guard let font = CGFont(text.fontName as CFString) else { throw MediaEngineError.unsupportedCapability }
@@ -114,6 +116,27 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                     frame = opacity(source.transformed(by: layer.transform), alpha).composited(over: frame).cropped(to: instruction.canvas)
                 }
                 for text in instruction.text where time >= text.start && time < text.end {
+                    if let layer = text.portable, let motion = layer.motion {
+                        do {
+                            let state = try TextTransformTiming.sample(effect: PortableTextEffect(rawValue: layer.effect.rawValue)!,
+                                text: layer.runs.map(\.text).joined(separator: "\n"), localTime: time - text.start,
+                                duration: text.end - text.start, motion: motion)
+                            // The bitmap already contains rotation. Cloud translation occurs in
+                            // the rotated coordinate system; scaling stays centered on its anchor.
+                            let angle = -layer.rotationDegrees * .pi / 180
+                            let dx = state.xTranslate * cos(angle) + state.yTranslate * sin(angle)
+                            let dy = state.xTranslate * sin(angle) - state.yTranslate * cos(angle)
+                            let transform = CGAffineTransform(translationX: text.frame.minX - text.portableAnchor.x,
+                                                              y: text.frame.minY - text.portableAnchor.y)
+                                .concatenating(CGAffineTransform(scaleX: state.scale, y: state.scale))
+                                .concatenating(CGAffineTransform(translationX: text.portableAnchor.x + dx, y: text.portableAnchor.y + dy))
+                            frame = opacity(text.image.transformed(by: transform), state.alpha).composited(over: frame)
+                        } catch {
+                            request.finish(with: error)
+                            return
+                        }
+                        continue
+                    }
                     let elapsed = time - text.start
                     let duration = min(0.3, text.end - text.start)
                     let alpha = text.animation == .none ? 1 : min(1, elapsed / duration)
