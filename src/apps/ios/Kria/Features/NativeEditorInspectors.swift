@@ -1030,7 +1030,7 @@ private func nativeBool(_ value: JSONValue?) -> Bool? {
 private func nativeColor(_ value: String) -> Color {
     switch value.uppercased() {
     case "#FFFFFF": return .white
-    case "#C5F82A": return KriaColor.lime
+    case "#C5F82A": return Color(red: 197/255, green: 248/255, blue: 42/255)
     default: return KriaColor.ink
     }
 }

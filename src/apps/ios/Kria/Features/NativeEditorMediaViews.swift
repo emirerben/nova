@@ -397,7 +397,7 @@ struct NativeVideoPreview: View {
 
             HStack(spacing: 6) {
                 Circle()
-                    .fill(previewKind == "Preview unavailable" ? Color.orange : KriaColor.lime)
+                    .fill(previewKind == "Preview unavailable" ? Color.orange : KriaColor.sky)
                     .frame(width: 6, height: 6)
                 Text(previewKind)
                     .font(KriaFont.body(10).weight(.semibold))
@@ -542,7 +542,7 @@ private struct NativePreviewObjectView: View {
                 HStack(spacing: 4) {
                     ForEach(0..<3, id: \.self) { _ in
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(KriaColor.lime.opacity(0.75))
+                            .fill(KriaColor.sky.opacity(0.75))
                             .frame(width: 28, height: 38)
                     }
                     Text("Carousel")
@@ -567,7 +567,7 @@ private struct NativePreviewObjectView: View {
             if isSelected {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(KriaColor.lime, lineWidth: 2)
+                        .stroke(KriaColor.sky, lineWidth: 2)
                     if onResize != nil {
                         VStack {
                             HStack {
@@ -602,7 +602,7 @@ private struct NativePreviewObjectView: View {
 
     private var resizeHandle: some View {
         Circle()
-            .fill(KriaColor.lime)
+            .fill(KriaColor.sky)
             .overlay { Circle().stroke(.white, lineWidth: 1) }
             .frame(width: 12, height: 12)
     }
@@ -706,7 +706,7 @@ struct NativeMiniStrip: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(KriaColor.ink)
-            .background(KriaColor.lime, in: Circle())
+            .background(KriaColor.sky, in: Circle())
             .accessibilityLabel(session.isPlaying ? "Pause preview" : "Play preview")
             .accessibilityIdentifier("native-editor-play-pause")
 
@@ -814,35 +814,35 @@ struct NativeMiniStrip: View {
                 VStack(spacing: rowGap) {
                     filmstrip(width: width, playheadX: playheadX)
                     if hasText {
-                        timedLane(title: "Text", items: textItems, color: KriaColor.lime, playheadX: playheadX)
+                        timedLane(title: "Text", items: textItems, color: KriaColor.lilac, playheadX: playheadX)
                     }
                     if hasCaptions {
                         if captionsExpanded {
-                            timedLane(title: "Captions", items: captionItems, color: KriaColor.ink, playheadX: playheadX)
+                            timedLane(title: "Captions", items: captionItems, color: KriaColor.lilac, playheadX: playheadX)
                         } else {
                             captionDensityLane(width: width, playheadX: playheadX)
                         }
                     }
                     if hasSoundEffects {
-                        timedLane(title: "Sound effects", items: soundEffectItems, color: KriaColor.mutedInk, playheadX: playheadX)
+                        timedLane(title: "Sound effects", items: soundEffectItems, color: KriaColor.sage, playheadX: playheadX)
                     }
                     if hasMediaOverlays {
-                        timedLane(title: "Media overlays", items: mediaOverlayItems, color: KriaColor.lime, playheadX: playheadX)
+                        timedLane(title: "Media overlays", items: mediaOverlayItems, color: KriaColor.sky, playheadX: playheadX)
                     }
                     if hasVisualBlocks {
-                        timedLane(title: "Visual blocks", items: visualBlockItems, color: KriaColor.ink, playheadX: playheadX)
+                        timedLane(title: "Visual blocks", items: visualBlockItems, color: KriaColor.sky, playheadX: playheadX)
                     }
                     if hasMotionScenes {
-                        timedLane(title: "Motion scenes", items: motionSceneItems, color: KriaColor.zinc, playheadX: playheadX)
+                        timedLane(title: "Motion scenes", items: motionSceneItems, color: KriaColor.sky, playheadX: playheadX)
                     }
                     if hasCameraEffects {
-                        timedLane(title: "Camera effects", items: cameraEffectItems, color: KriaColor.mutedInk, playheadX: playheadX)
+                        timedLane(title: "Camera effects", items: cameraEffectItems, color: KriaColor.sky, playheadX: playheadX)
                     }
                     if hasCarousel {
-                        timedLane(title: "Carousel", items: carouselItems, color: KriaColor.lime, playheadX: playheadX)
+                        timedLane(title: "Carousel", items: carouselItems, color: KriaColor.sky, playheadX: playheadX)
                     }
                     if hasMusic {
-                        timedLane(title: "Music", items: musicItems, color: KriaColor.mutedInk, playheadX: playheadX)
+                        timedLane(title: "Music", items: musicItems, color: KriaColor.sage, playheadX: playheadX)
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1160,10 +1160,10 @@ private struct NativePlayhead: View {
         VStack(spacing: 0) {
             Image(systemName: "arrowtriangle.down.fill")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(KriaColor.lime)
+                .foregroundStyle(KriaColor.sky)
                 .frame(width: 20, height: 18)
             Rectangle()
-                .fill(KriaColor.lime)
+                .fill(KriaColor.sky)
                 .frame(width: 2, height: max(0, height - 18))
         }
         .frame(width: 20, height: height, alignment: .top)
@@ -1202,7 +1202,7 @@ private struct NativeTimelineBar: View {
                     Text(name)
                         .font(KriaFont.body(10).weight(.semibold))
                         .lineLimit(1)
-                        .foregroundStyle(item.kind == .text ? KriaColor.ink : .white)
+                        .foregroundStyle(KriaColor.ink)
                 }
             }
             .padding(.horizontal, 8)
@@ -1210,7 +1210,7 @@ private struct NativeTimelineBar: View {
             .background(color.opacity(isSelected ? 0.98 : 0.78), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(isSelected ? KriaColor.lime : .clear, lineWidth: isSelected ? 2 : 0)
+                    .stroke(isSelected ? KriaColor.sky : .clear, lineWidth: isSelected ? 2 : 0)
             }
             .offset(x: (hitWidth - frame.width) / 2)
 
@@ -1304,10 +1304,10 @@ private struct NativeClipSurface: View {
     var body: some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected ? KriaColor.lime.opacity(0.24) : .clear)
+                .fill(isSelected ? KriaColor.sky.opacity(0.24) : .clear)
                 .overlay {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(isSelected ? KriaColor.lime : .white.opacity(0.15), lineWidth: isSelected ? 2 : 1)
+                        .stroke(isSelected ? KriaColor.sky : .white.opacity(0.15), lineWidth: isSelected ? 2 : 1)
                 }
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onSelect)
@@ -1366,7 +1366,7 @@ private struct NativeTrimHandle: View {
     var body: some View {
         ZStack {
             Capsule()
-                .fill(KriaColor.lime)
+                .fill(KriaColor.sky)
                 .frame(width: 12, height: min(56, max(44, height - 20)))
                 .offset(x: visualOffset)
         }

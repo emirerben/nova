@@ -3,8 +3,8 @@ import UIKit
 
 struct CanonicalPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
-    var fill = KriaColor.ink
-    var foreground = Color.white
+    var fill = KriaColor.butter
+    var foreground = KriaColor.ink
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -36,239 +36,128 @@ struct CanonicalSecondaryButtonStyle: ButtonStyle {
     }
 }
 
+extension EnvironmentValues {
+    @Entry var projectsDrawerOpen = false
+    @Entry var projectsDrawerProgress: CGFloat = 0
+}
+
+struct WorkspaceSurface: View {
+    @Environment(\.projectsDrawerProgress) private var progress
+
+    var body: some View {
+        KriaColor.paper.overlay { KriaColor.menu.opacity(Double(progress)) }
+            .ignoresSafeArea(.container)
+    }
+}
+
 struct WorkspaceHeader: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     let project: ProjectSummary
     let showsEditorSwitch: Bool
     let openProjects: () -> Void
     let openEditor: () -> Void
     let openAccount: () -> Void
-    @EnvironmentObject private var auth: AuthStore
-
-    private var initial: String {
-        String((auth.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).first ?? "E")).uppercased()
-    }
+    @EnvironmentObject private var model: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
+            HStack(spacing: 8) {
+                Button(action: openProjects) { KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle()) }
+                    .accessibilityLabel(projectsDrawerOpen ? "Close projects" : "Open projects")
+                    .accessibilityIdentifier("workspace-menu-toggle")
                 Text(project.workspaceTitle)
-                    .font(KriaFont.body(14).weight(.semibold))
-                    .foregroundStyle(KriaColor.ink)
-                    .lineLimit(1)
-                    .frame(maxWidth: 170)
+                    .font(KriaFont.body(15).weight(.semibold))
+                    .lineLimit(1).frame(maxWidth: .infinity)
                     .accessibilityIdentifier("workspace-project-title")
-
-                HStack {
-                    Button("Projects", action: openProjects)
-                        .font(KriaFont.body(14).weight(.medium))
-                        .foregroundStyle(KriaColor.ink)
-                        .frame(minWidth: 68, minHeight: 44, alignment: .leading)
-                        .accessibilityLabel("Open projects")
-
-                    Spacer()
-
-                    Button(action: openAccount) {
-                        Text(initial)
-                            .font(KriaFont.body(13).weight(.semibold))
-                            .foregroundStyle(KriaColor.ink)
-                            .frame(width: 32, height: 32)
-                            .background(KriaColor.softZinc)
-                            .clipShape(Circle())
-                    }
-                    .frame(width: 44, height: 44)
-                    .accessibilityLabel("Open account")
-                }
+                    .accessibilityHidden(projectsDrawerOpen)
+                ProjectActionsMenu(project: project)
+                    .accessibilityHidden(projectsDrawerOpen)
+                    .allowsHitTesting(!projectsDrawerOpen)
             }
-            .padding(.horizontal, 16)
-            .frame(height: 54)
-
+            .padding(.horizontal, 16).frame(minHeight: 64)
             if showsEditorSwitch {
                 HStack(spacing: 4) {
-                    Text("Chat")
-                        .font(KriaFont.body(13).weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 34)
-                        .background(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-
-                    Button("Editor", action: openEditor)
-                        .font(KriaFont.body(13).weight(.medium))
-                        .foregroundStyle(KriaColor.zinc)
-                        .frame(maxWidth: .infinity, minHeight: 34)
-                }
-                .padding(3)
-                .background(KriaColor.softZinc)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .padding(.horizontal, 16)
-                .padding(.bottom, 9)
+                    Text("Chat").font(KriaFont.body(13).weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 10))
+                        .accessibilityAddTraits(.isSelected)
+                    Button("Editor", action: openEditor).font(KriaFont.body(13).weight(.medium))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }.padding(.horizontal, 16).padding(.bottom, 8)
+                    .accessibilityHidden(projectsDrawerOpen)
+                    .allowsHitTesting(!projectsDrawerOpen)
             }
-
-            Rectangle().fill(KriaColor.line).frame(height: 1)
-        }
-        .background(Color.white)
+        }.foregroundStyle(KriaColor.ink).background(WorkspaceSurface())
     }
 }
 
 struct ProjectsDrawer: View {
     let close: () -> Void
     let openGallery: () -> Void
+    var openAccount: () -> Void = {}
     @EnvironmentObject private var model: AppModel
-    @State private var isCreating = false
+    @AccessibilityFocusState private var menuFocused: Bool
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Color.black.opacity(0.18)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: close)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        Text("Projects").font(KriaFont.display(26))
-                        Spacer()
-                        Button(action: close) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 14, weight: .semibold))
-                                .frame(width: 40, height: 40)
-                        }
-                        .accessibilityLabel("Close projects")
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-
-                    Button {
-                        Task {
-                            isCreating = true
-                            await model.createProject()
-                            isCreating = false
-                            if model.selectedProject != nil { close() }
-                        }
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text(isCreating ? "Starting…" : "New video")
-                                .font(KriaFont.body(14).weight(.semibold))
-                            Spacer()
-                        }
-                        .padding(.horizontal, 14)
-                        .frame(height: 44)
-                    }
-                    .foregroundStyle(KriaColor.ink)
-                    .background(KriaColor.softZinc)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .disabled(isCreating)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 18)
-
-                    Text("RECENT")
-                        .font(KriaFont.body(10).weight(.semibold))
-                        .tracking(1.4)
-                        .foregroundStyle(KriaColor.zinc)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 28)
-                        .padding(.bottom, 9)
-
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            if model.projects.isEmpty {
-                                switch model.projectsState {
-                                case .idle, .loading:
-                                    ProgressView("Loading projects…")
-                                        .tint(KriaColor.limeText)
-                                        .frame(maxWidth: .infinity, minHeight: 96)
-                                case .failed:
-                                    VStack(spacing: 8) {
-                                        Text("Projects couldn’t load.")
-                                            .font(KriaFont.body(13))
-                                            .foregroundStyle(KriaColor.zinc)
-                                        Button("Try again") { Task { await model.loadProjects() } }
-                                            .font(KriaFont.body(12).weight(.semibold))
-                                    }
-                                    .frame(maxWidth: .infinity, minHeight: 96)
-                                case .empty, .loaded:
-                                    Text("No projects yet")
-                                        .font(KriaFont.body(13))
-                                        .foregroundStyle(KriaColor.zinc)
-                                        .frame(maxWidth: .infinity, minHeight: 96)
-                                }
-                            } else {
-                                ForEach(model.projects) { project in
-                                    Button {
-                                        model.selectProject(project)
-                                        close()
-                                    } label: {
-                                        ProjectDrawerRow(
-                                            project: project,
-                                            isSelected: project.id == model.selectedProject?.id
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                }
+        VStack(alignment: .leading, spacing: 24) {
+            HStack {
+                KriaWordmark().accessibilityFocused($menuFocused)
+                Spacer()
+            }.padding(.horizontal, 12)
+            Button(action: openGallery) {
+                HStack(spacing: 12) {
+                    KriaIcon(.gallery)
+                    Text("Gallery").font(KriaFont.body(15).weight(.medium))
+                    Spacer()
+                    Text("\(model.libraryProjects.count) \(model.libraryProjects.count == 1 ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                }.frame(minHeight: 44).padding(.horizontal, 12)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Recent chats").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk).padding(.horizontal, 12)
+                ScrollView {
+                    LazyVStack(spacing: 3) {
+                        if model.projects.isEmpty {
+                            Text("No projects yet").font(KriaFont.body(14)).padding(12)
+                            if case .failed = model.projectsState {
+                                Button("Try again") { Task { await model.loadProjects() } }.buttonStyle(KriaSecondaryButtonStyle())
                             }
                         }
-                        .padding(.horizontal, 10)
-                    }
-
-                    Rectangle().fill(KriaColor.line).frame(height: 1)
-                    Button(action: openGallery) {
-                        HStack {
-                            Image(systemName: "square.grid.2x2")
-                            Text("Gallery").font(KriaFont.body(14).weight(.medium))
-                            Spacer()
-                            Text("\(model.libraryProjects.count)")
-                                .font(KriaFont.body(12))
-                                .foregroundStyle(KriaColor.zinc)
+                        ForEach(model.projects) { project in
+                            HStack(spacing: 0) {
+                                Button { model.selectProject(project); close() } label: {
+                                    ProjectDrawerRow(project: project, isSelected: project.id == model.selectedProject?.id)
+                                }.buttonStyle(.plain)
+                                ProjectActionsMenu(project: project)
+                            }.background(project.id == model.selectedProject?.id ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
                         }
-                        .frame(height: 52)
-                        .padding(.horizontal, 20)
                     }
-                    .foregroundStyle(KriaColor.ink)
                 }
-                .frame(width: min(332, geometry.size.width * 0.86))
-                .frame(maxHeight: .infinity)
-                .background(Color.white)
-                .shadow(color: .black.opacity(0.08), radius: 20, x: 4)
-                .transition(.move(edge: .leading))
+            }
+            Spacer(minLength: 0)
+            HStack {
+                NewChatButton(afterCreate: close)
+                Spacer()
+                Button(action: openAccount) { KriaIcon(.settings).frame(width: 44, height: 44) }
+                    .accessibilityLabel("Open account")
             }
         }
-        .task { await model.loadLibrary() }
+        .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity).background(KriaColor.paper)
+        .accessibilityAction(.escape, close)
+        .foregroundStyle(KriaColor.ink)
+        .task { menuFocused = true; await model.loadLibrary() }
     }
 }
 
-private struct ProjectDrawerRow: View {
+struct ProjectDrawerRow: View {
     let project: ProjectSummary
     let isSelected: Bool
-
     var body: some View {
-        HStack(spacing: 11) {
-            ProjectPosterView(project: project)
-                .frame(width: 34, height: 42)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay {
-                    if project.status == .ready {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(KriaColor.lime)
-                            .shadow(color: .black.opacity(0.35), radius: 2)
-                    }
-                }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(project.workspaceTitle)
-                    .font(KriaFont.body(13).weight(.medium))
-                    .foregroundStyle(KriaColor.ink)
-                    .lineLimit(1)
-                Text(project.workspaceStatusLabel)
-                    .font(KriaFont.body(11))
-                    .foregroundStyle(KriaColor.zinc)
-            }
-            Spacer()
+        VStack(alignment: .leading, spacing: 3) {
+            Text(project.workspaceTitle).font(KriaFont.body(14).weight(.medium)).lineLimit(1)
+            Text(project.workspaceStatusLabel).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
         }
-        .padding(.horizontal, 10)
-        .frame(height: 56)
-        .background(isSelected ? KriaColor.softZinc : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).padding(.horizontal, 12)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
@@ -323,14 +212,12 @@ struct ChatMessageRow: View {
 private struct AssistantHeading: View {
     let title: String
     let bodyText: String
+    var isFormatHeading = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Kria")
-                .font(KriaFont.body(11).weight(.semibold))
-                .foregroundStyle(KriaColor.zinc)
             Text(title)
-                .font(KriaFont.display(25))
+                .font(isFormatHeading ? KriaFont.display(28) : KriaFont.body(20))
                 .foregroundStyle(KriaColor.ink)
                 .fixedSize(horizontal: false, vertical: true)
             Text(bodyText)
@@ -343,6 +230,12 @@ private struct AssistantHeading: View {
     }
 }
 
+/// Descendant horizontal scrollers retain their own drags while the drawer is closed.
+struct DrawerGestureExclusionPreference: PreferenceKey {
+    static var defaultValue: [CGRect] { [] }
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) { value += nextValue() }
+}
+
 struct FormatStage: View {
     let formats: [CreationFormat]
     let isBusy: Bool
@@ -352,7 +245,8 @@ struct FormatStage: View {
         VStack(alignment: .leading, spacing: 20) {
             AssistantHeading(
                 title: "What kind of video are we making?",
-                bodyText: "Choose a starting point. We’ll shape the direction together next."
+                bodyText: "Choose a starting point. We can shape the details together.",
+                isFormatHeading: true
             )
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -362,14 +256,14 @@ struct FormatStage: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 BundledPosterImage(name: format.imageName)
                                     .scaledToFill()
-                                    .frame(width: 120, height: 154)
+                                    .frame(width: 156, height: 164)
                                     .clipped()
                                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 Text(format.title)
-                                    .font(KriaFont.body(13).weight(.semibold))
+                                    .font(KriaFont.display(18))
                                     .foregroundStyle(KriaColor.ink)
                             }
-                            .frame(width: 120, alignment: .leading)
+                            .frame(width: 156, alignment: .leading)
                         }
                         .buttonStyle(.plain)
                         .disabled(isBusy)
@@ -378,6 +272,12 @@ struct FormatStage: View {
                 }
             }
             .contentMargins(.horizontal, 0, for: .scrollContent)
+            .accessibilityIdentifier("format-carousel")
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: DrawerGestureExclusionPreference.self, value: [geometry.frame(in: .global)])
+                }
+            }
         }
     }
 }
@@ -409,9 +309,9 @@ struct FootageStage: View {
                 VStack(spacing: 9) {
                     Image(systemName: "plus")
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(KriaColor.limeText)
+                        .foregroundStyle(KriaColor.ink)
                         .frame(width: 34, height: 34)
-                        .background(KriaColor.limeSoft)
+                        .background(KriaColor.sage)
                         .clipShape(Circle())
                     Text("Choose videos")
                         .font(KriaFont.body(14).weight(.semibold))
@@ -454,7 +354,7 @@ struct FootageStage: View {
                         .foregroundStyle(KriaColor.zinc)
                     if let active = uploads.first {
                         ProgressView(value: progress[active.id] ?? 0)
-                            .tint(KriaColor.limeText)
+                            .tint(KriaColor.ink)
                             .frame(maxWidth: 160)
                     }
                 }
@@ -464,7 +364,7 @@ struct FootageStage: View {
             Button("Change format", action: changeFormat)
                 .font(KriaFont.body(12).weight(.medium))
                 .foregroundStyle(KriaColor.zinc)
-                .frame(minHeight: 34)
+                .frame(minHeight: 44)
         }
     }
 }
@@ -495,7 +395,7 @@ private struct FootageThumbnail: View {
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(Color.white)
                     .frame(width: 17, height: 17)
-                    .background(KriaColor.limeText)
+                    .background(KriaColor.ink)
                     .clipShape(Circle())
                     .padding(5)
             }
@@ -525,9 +425,9 @@ struct DirectionStage: View {
                 Text("CREATIVE DIRECTION")
                     .font(KriaFont.body(10).weight(.bold))
                     .tracking(1.3)
-                    .foregroundStyle(KriaColor.limeText)
+                    .foregroundStyle(KriaColor.ink)
                 Text(directionTitle.isEmpty ? "A considered first cut" : directionTitle)
-                    .font(KriaFont.display(20))
+                    .font(KriaFont.body(22))
                     .foregroundStyle(KriaColor.ink)
                     .lineLimit(3)
 
@@ -538,7 +438,7 @@ struct DirectionStage: View {
                 DirectionRow(label: "Opening", value: "The story, right away")
             }
             .padding(16)
-            .background(Color.white)
+            .background(KriaColor.sage)
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(KriaColor.border, lineWidth: 1)
@@ -594,7 +494,7 @@ struct RenderingStage: View {
                 )
             }
             .padding(16)
-            .background(Color.white)
+            .background(KriaColor.paper)
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(KriaColor.border, lineWidth: 1)
@@ -604,15 +504,15 @@ struct RenderingStage: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(KriaColor.limeText)
+                    .foregroundStyle(KriaColor.ink)
                 Text("You can leave this screen. I’ll keep working and your cut will appear here when it’s ready.")
                     .font(KriaFont.body(12))
-                    .foregroundStyle(KriaColor.limeText)
+                    .foregroundStyle(KriaColor.ink)
                     .lineSpacing(3)
             }
             .padding(13)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(KriaColor.limeSoft)
+            .background(KriaColor.sage)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
     }
@@ -630,13 +530,13 @@ private struct RenderStep: View {
                 if let icon {
                     Image(systemName: icon)
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(KriaColor.limeText)
+                        .foregroundStyle(KriaColor.ink)
                 } else {
                     Circle().fill(KriaColor.ink).frame(width: 8, height: 8)
                 }
             }
             .frame(width: 20, height: 20)
-            .background(icon == nil ? KriaColor.softZinc : KriaColor.limeSoft)
+            .background(icon == nil ? KriaColor.softZinc : KriaColor.sage)
             .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 2) {
@@ -674,7 +574,7 @@ struct ReadyStage: View {
                             if let image = phase.image {
                                 image.resizable().scaledToFill()
                             } else if phase.error == nil {
-                                ProgressView().tint(KriaColor.limeText)
+                                ProgressView().tint(KriaColor.ink)
                             } else {
                                 ProjectPosterPlaceholder()
                             }
@@ -691,10 +591,10 @@ struct ReadyStage: View {
                     Text("READY")
                         .font(KriaFont.body(9).weight(.bold))
                         .tracking(1.1)
-                        .foregroundStyle(KriaColor.limeText)
+                        .foregroundStyle(KriaColor.ink)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 4)
-                        .background(KriaColor.limeSoft)
+                        .background(KriaColor.sage)
                         .clipShape(Capsule())
                     Text(project.workspaceTitle)
                         .font(KriaFont.body(14).weight(.semibold))
@@ -709,7 +609,7 @@ struct ReadyStage: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(12)
-            .background(Color.white)
+            .background(KriaColor.paper)
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(KriaColor.border, lineWidth: 1)
@@ -733,7 +633,7 @@ private struct ProjectPosterPlaceholder: View {
             KriaColor.ink
             Image(systemName: "film.stack")
                 .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(KriaColor.lime)
+                .foregroundStyle(KriaColor.sky)
         }
         .accessibilityLabel("Video thumbnail loading")
     }
@@ -774,7 +674,7 @@ struct FailedStage: View {
 struct ThinkingRow: View {
     var body: some View {
         HStack(spacing: 9) {
-            ProgressView().controlSize(.small).tint(KriaColor.limeText)
+            ProgressView().controlSize(.small).tint(KriaColor.ink)
             Text("Kria is thinking…")
                 .font(KriaFont.body(12))
                 .foregroundStyle(KriaColor.zinc)
@@ -808,6 +708,7 @@ struct RecoveryCard: View {
 }
 
 struct ChatComposer: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @Binding var text: String
     let isSending: Bool
     let canAttach: Bool
@@ -819,57 +720,24 @@ struct ChatComposer: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .bottom) {
-                TextField("Message Kria…", text: $text, axis: .vertical)
-                    .font(KriaFont.body(14))
-                    .lineLimit(1...4)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
-                    .padding(.bottom, 45)
-                    .accessibilityLabel("Message Kria")
-                    .submitLabel(.send)
-                    .onSubmit { if canSend { send() } }
-
-                HStack {
-                    Button(action: attach) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundStyle(KriaColor.ink)
-                            .frame(width: 40, height: 40)
-                    }
-                    .disabled(!canAttach)
-                    .accessibilityLabel("Attach footage")
-                    .accessibilityHint(canAttach ? "" : "Choose a video format first")
-
-                    Spacer()
-
-                    Button(action: send) {
-                        Image(systemName: isSending ? "ellipsis" : "arrow.up")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(Color.white)
-                            .frame(width: 40, height: 40)
-                            .background(KriaColor.ink)
-                            .clipShape(Circle())
-                    }
-                    .disabled(!canSend)
-                    .accessibilityLabel(isSending ? "Sending message" : "Send message")
-                }
-                .padding(.horizontal, 6)
-                .padding(.bottom, 5)
-            }
-            .frame(minHeight: 76)
-            .background(Color.white)
-            .overlay {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .stroke(KriaColor.border, lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 7)
+        HStack(alignment: .bottom, spacing: 4) {
+            Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
+                .disabled(!canAttach).accessibilityLabel("Attach footage")
+                .accessibilityHint(canAttach ? "" : "Choose a video format first")
+            TextField("Tell Kria what you want…", text: $text, axis: .vertical)
+                .font(KriaFont.body(15)).lineLimit(1...4)
+                .frame(minHeight: 44).accessibilityLabel("Message Kria")
+                .submitLabel(.send).onSubmit { if canSend { send() } }
+            Button(action: send) {
+                Image(systemName: isSending ? "ellipsis" : "arrow.up")
+                    .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+                    .frame(width: 44, height: 44).background(KriaColor.ink, in: Circle())
+            }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
+                .accessibilityLabel(isSending ? "Sending message" : "Send message")
         }
-        .background(Color.white)
+        .padding(7).background(WorkspaceSurface())
+        .overlay(RoundedRectangle(cornerRadius: 30).stroke(KriaColor.border, lineWidth: 1))
+        .padding(.horizontal, 14).padding(.vertical, 12).background(WorkspaceSurface())
     }
 }
 
@@ -877,7 +745,8 @@ struct BundledPosterImage: View {
     let name: String
 
     var body: some View {
-        if let image = UIImage(named: name, in: .main, compatibleWith: nil) {
+        if let url = Bundle.main.url(forResource: name, withExtension: "jpg"),
+           let image = UIImage(contentsOfFile: url.path) {
             Image(uiImage: image).resizable()
         } else {
             KriaColor.softZinc

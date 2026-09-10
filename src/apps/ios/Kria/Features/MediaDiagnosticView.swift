@@ -125,7 +125,7 @@ struct MediaDiagnosticView: View {
                     } else {
                         RoundedRectangle(cornerRadius: 20)
                             .fill(KriaColor.ink)
-                            .overlay(Image(systemName: "film.stack").font(.largeTitle).foregroundStyle(KriaColor.lime))
+                            .overlay(Image(systemName: "film.stack").font(.largeTitle).foregroundStyle(KriaColor.sky))
                     }
                 }
                 .aspectRatio(9 / 16, contentMode: .fit)

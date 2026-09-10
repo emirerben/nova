@@ -195,6 +195,13 @@ struct RenderReceipt: Codable, Identifiable, Hashable, Sendable {
         cached.title = project.title; cached.statusRaw = project.status.rawValue; cached.updatedAt = project.updatedAt; cached.posterURLString = project.posterURL?.absoluteString; cached.runtimeVersion = project.runtimeVersion; cached.serverRevision = project.serverRevision; cached.activeJobID = project.activeJobID; cached.outputVariantID = project.outputVariantID; cached.activePlanItemID = project.activePlanItemID
         try context.save()
     }
+    func removeProject(_ id: UUID) throws {
+        try context.delete(model: CachedProject.self, where: #Predicate { $0.id == id })
+        try context.delete(model: CachedAsset.self, where: #Predicate { $0.projectID == id })
+        try context.delete(model: CachedUploadJob.self, where: #Predicate { $0.projectID == id })
+        try context.delete(model: CachedReceipt.self, where: #Predicate { $0.projectID == id })
+        try context.save()
+    }
     func projects() throws -> [CachedProject] { try context.fetch(FetchDescriptor<CachedProject>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)])) }
     func store(_ receipt: RenderReceipt) throws { context.insert(CachedReceipt(receipt)); try context.save() }
 }

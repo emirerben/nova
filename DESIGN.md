@@ -521,3 +521,13 @@ does not synthesize.
 ---
 
 *Rendered-video (FFmpeg burn-in) overlay design is a separate medium — see `docs/pipelines/template.md` and `docs/pipelines/layer2-text-overlay.md` for font and sizing rules.*
+
+## Native iOS alignment
+
+The iOS app uses the same Sunlit semantic roles and approved DynaPuff wordmark as
+web, implemented in `src/apps/ios/Kria/DesignSystem/`. Paper’s **Mobile Flow** is
+the native composition reference. Inter/Fraunces retain Dynamic Type; native
+system authentication, pickers, consent, and share interfaces keep platform
+behavior. Navigation uses a branded left drawer with Gallery, recent chats,
+New chat, and account access. Composer input is text and attachments; microphone
+chat input is deferred. See `docs/runbooks/ios-development.md` for review fixtures.

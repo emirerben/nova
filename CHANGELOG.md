@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 - Creation and editing share one Kria conversation. Editor reviews, suggestions, confirmations, progress, and undo now appear in the main chat, including the mobile Chat tab.
 - Previewable AI edits remain unsaved until Save/export. Server-only effects and speech processing require confirmation, and stale responses cannot overwrite a changed draft.
 - Direct editor links reopen the owning conversation and selected variant. Editor history retries survive a reload without replaying edits.
+## [0.75.5.0] - 2026-09-10
+
+### Changed
+- The iOS app now shares Kria’s Sunlit branding, wordmark, chat composer, and left navigation with the web experience. Gallery, account, consent, and editor surfaces use the same visual system.
+- Creators can start chats and rename or delete projects from native project menus, with confirmation, revision conflict recovery, and protection for active renders/uploads.
+- The projects drawer follows the swipe continuously, with a gradual paper-color transition, rounded full-screen corners, and a light haptic when it opens or closes.
 
 ## [0.75.1.0] - 2026-09-09
 
