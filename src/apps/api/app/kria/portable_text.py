@@ -240,6 +240,7 @@ class PortableTextLayer(_TextModel):
         "scale-up",
         "slide-up",
         "slide-down",
+        "slide-in",
         "pop-in",
         "bounce",
         "ink-reveal",

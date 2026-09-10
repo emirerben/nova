@@ -123,6 +123,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         "scale-up",
         "slide-up",
         "slide-down",
+        "slide-in",
         "pop-in",
         "bounce",
         "ink-reveal",
@@ -156,7 +157,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
     raw_motion = overlay.get("motion")
     motion = None
     if (
-        effect not in {"static", "none", "dissolve-out"}
+        effect not in {"static", "none", "slide-in", "dissolve-out"}
         and isinstance(raw_motion, dict)
         and raw_motion.get("version") == 2
     ):

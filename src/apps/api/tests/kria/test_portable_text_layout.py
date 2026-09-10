@@ -180,3 +180,30 @@ def test_dissolve_compiles_settled_text_with_explicit_seed_and_ignores_motion():
     assert dissolve.motion is None
     assert dissolve.dissolve_seed == 138
     assert same_font == font
+
+
+def test_slide_in_matches_actual_cloud_static_hold():
+    import numpy as np
+
+    canvas = Canvas(300, 200)
+    overlay = {
+        "text": "Hello",
+        "font_family": "Inter",
+        "text_size_px": 32,
+        "start_s": 0,
+        "end_s": 4,
+        "effect": "slide-in",
+        "motion": {"version": 2, "speed": 4, "exit_s": 1},
+    }
+    assert not cloud._is_animated(overlay)
+    expected = (
+        cloud._draw_frame({**overlay, "effect": "static"}, 0, 4, render_canvas=canvas)
+        .toarray()
+        .copy()
+    )
+    for time in [0, 0.2, 1, 3.9]:
+        actual = cloud._draw_frame(overlay, time, 4, render_canvas=canvas).toarray().copy()
+        np.testing.assert_array_equal(actual, expected)
+    layer, _ = compile_text_overlay(overlay, layer_id="slide-in", canvas=canvas)
+    assert layer.effect == "slide-in"
+    assert layer.motion is None

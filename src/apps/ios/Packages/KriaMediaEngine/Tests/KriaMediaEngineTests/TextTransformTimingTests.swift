@@ -20,6 +20,14 @@ final class TextTransformTimingTests: XCTestCase {
         try checkFixture("phone_text_transforms_legacy.json")
     }
 
+    func testSlideInPreservesProductionStaticHold() throws {
+        for time in [0.0, 0.2, 1.0, 3.9] {
+            let state = try TextTransformTiming.sample(effect: .slideIn, text: "Hello", localTime: time, duration: 4, motion: nil)
+            XCTAssertEqual(state.alpha, 1); XCTAssertEqual(state.scale, 1)
+            XCTAssertEqual(state.xTranslate, 0); XCTAssertEqual(state.yTranslate, 0)
+        }
+    }
+
     private func checkFixture(_ filename: String) throws {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("../../../../../api/tests/fixtures/\(filename)").standardizedFileURL

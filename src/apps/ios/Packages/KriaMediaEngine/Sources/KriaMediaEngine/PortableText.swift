@@ -172,7 +172,7 @@ public struct TextRevealBounds: Codable, Equatable, Sendable {
 }
 
 public struct PortableTextLayer: Codable, Equatable, Sendable {
-    public enum Effect: String, Codable, Sendable { case `static`, none, fadeIn = "fade-in", scaleUp = "scale-up", slideUp = "slide-up", slideDown = "slide-down", popIn = "pop-in", bounce, inkReveal = "ink-reveal", handwriting, typewriter, streamIn = "stream-in", smoothType = "smooth-type", staggeredSlice = "staggered-slice", dissolveOut = "dissolve-out" }
+    public enum Effect: String, Codable, Sendable { case `static`, none, fadeIn = "fade-in", scaleUp = "scale-up", slideUp = "slide-up", slideDown = "slide-down", slideIn = "slide-in", popIn = "pop-in", bounce, inkReveal = "ink-reveal", handwriting, typewriter, streamIn = "stream-in", smoothType = "smooth-type", staggeredSlice = "staggered-slice", dissolveOut = "dissolve-out" }
     public let id: String
     public let start: Double
     public let end: Double
