@@ -639,7 +639,20 @@ def _apply_explicit_render_intent(
         # needs an explicit connector ("is", "should say", or a colon); a
         # bare "add intro text" is a treatment directive, not literal pixels.
         title_match = re.search(
-            r"\b(?:opening\s+)?(?:title|intro|hook|text)(?!\s+(?:texts|copies)\b)"
+            r"\b(?:opening\s+)?(?:title|intro|hook)(?!\s+(?:texts|copies)\b)"
+            r"\s*(?:text|copy)?\b\s*"
+            r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)\s*"
+            r"([A-Za-z0-9][^,\n]{0,279}?)(?=\s*(?:,|$)|\s+(?:using|with|font|colou?r)\b"
+            r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b))",
+            request,
+            re.IGNORECASE,
+        )
+    if title_match is None:
+        # The legacy title grammar permits multi-sentence literal copy. Keep
+        # that contract intact; the newer unquoted "text saying" fallback
+        # stops at punctuation before a following style sentence.
+        title_match = re.search(
+            r"\b(?:opening\s+)?(?:text)(?!\s+(?:texts|copies)\b)"
             r"\s*(?:text|copy)?\b\s*"
             r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)\s*"
             r"([A-Za-z0-9][^,.;!?\n]{0,279}?)(?=\s*(?:[,.;!?]|$)|\s+(?:using|with|font|colou?r)\b"
