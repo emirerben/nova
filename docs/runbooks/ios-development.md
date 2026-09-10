@@ -32,6 +32,14 @@ packages, with keys scoped to the Xcode version, architecture and package/projec
 configuration. Source changes still go through Xcode's incremental build checks.
 Changing Xcode or dependency configuration starts a fresh cache.
 
+To check the verification script’s build, boot, and failure handling without
+launching Xcode or a simulator, run the offline orchestration tests from the repo
+root (CI also runs these before the full gate):
+
+```bash
+python3 -m unittest discover -s scripts/ios/tests -v
+```
+
 ## Architecture boundaries
 
 - Creation threads, runtime-v2 drafts, approvals, editor commits, and jobs remain
