@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.3.0] - 2026-09-10
+
+### Changed
+- feat(release): automate version metadata (#1012) <!-- release-pr: 1012 -->
+
 ## [0.76.2.0] - 2026-09-10
 
 ### Fixed
@@ -13,10 +18,6 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Narrow native PRs run affected UI tests plus cross-app smoke coverage; shared, unknown, and multi-feature changes and main pushes retain the complete suite. All selected unit tests remain required.
 - iOS verification records phase timings and result bundles, verifies selected UI tests actually passed, and uploads diagnostics on failure.
-## [0.75.10.0] - 2026-09-10
-
-### Fixed
-- **A creation whose video render lost its link no longer looks deleted.** Loading a project used to withhold the whole chat — title, transcript, everything — the moment any part of its render graph drifted, and the client read that as "this project may have been deleted." The chat and title now load with a quiet notice when only the video link is affected, and a transient network or service error shows a retryable state instead of implying loss. Load failures are now typed (missing record, deleted, authorization, or service failure) so the right message and action show up, and an admin can read a project's exact integrity state without guessing.
 
 ## [0.76.0.0] - 2026-09-10
 
@@ -29,7 +30,11 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - Per-slide edits are deliberately NOT built on the main editor (`EditorShell.tsx`, ~9,300 lines, entirely coupled to a rendered video Job/variant/timeline) — a small, purpose-built single-asset editor was built instead, reusing only the underlying FFmpeg filter primitives. Fixes a real cache-correctness gap found during this work: the slide-render cache key now includes a hash of each slide's edits, so editing a slide's text or look and re-rendering can no longer silently reuse the pre-edit normalized file.
+
 ## [0.75.10.0] - 2026-09-10
+
+### Fixed
+- **A creation whose video render lost its link no longer looks deleted.** Loading a project used to withhold the whole chat — title, transcript, everything — the moment any part of its render graph drifted, and the client read that as "this project may have been deleted." The chat and title now load with a quiet notice when only the video link is affected, and a transient network or service error shows a retryable state instead of implying loss. Load failures are now typed (missing record, deleted, authorization, or service failure) so the right message and action show up, and an admin can read a project's exact integrity state without guessing.
 
 ### Fixed
 - Creator requests preserve user-authored on-screen text and styling across natural phrasing and languages, with source-grounded intent and planner/compiler fallback protection. Video-only, once-only montage confirmations respect available source duration.
@@ -60,6 +65,7 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - Added `CAPTION_CUE_SOURCE`, a shared constant replacing a hand-typed string that classified a caption across five call sites, plus a producer-side contract test pinning it.
+
 ## [0.75.9.0] - 2026-09-10
 
 ### Changed
@@ -91,6 +97,23 @@ All notable changes to this project will be documented in this file.
 - Creators can start chats and rename or delete projects from native project menus, with confirmation, revision conflict recovery, and protection for active renders/uploads.
 - The projects drawer follows the swipe continuously, with a gradual paper-color transition, rounded full-screen corners, and a light haptic when it opens or closes.
 
+## [0.75.3.0] - 2026-09-09
+
+### Changed
+- **Creators can give the editor copilot longer, multi-part editing instructions.** Requests now support up to 2,000 characters and can return up to 48 coordinated edits, making it practical to update a full set of text and timeline changes in one turn.
+
+## [0.75.2.0] - 2026-09-09
+
+### Changed
+- **Chat and Gallery share a simpler sidebar.** Start a new chat, reopen recent projects, rename projects inline, and reach account actions from one place. Gallery keeps project navigation visible and shows titles beneath video cards.
+- **Kria's wordmark and browser icons use the same rounded lettering.** Chat messages and editor tools carry the wordmark, while text controls and hover states use quiet Sky and warm-ink colors.
+- **The editor keeps its main controls focused on editing.** Remove the title field, select/pan switch, canvas zoom selector, and re-render badge from the toolbar; retain undo, redo, orientation, playback, and Save.
+
+### Fixed
+- **Project actions remain usable in Gallery and on smaller screens.** Delete confirmations open from the Gallery sidebar, long recent-project lists scroll without hiding account actions, and mobile Gallery keeps a project-navigation button.
+- **Inline project renaming preserves keyboard control.** Enter and blur save once, Escape cancels, failed saves remain editable, and the focused name has a visible outline.
+- **Browser icons retain Kria's lettering without a webfont.** Both favicon variants now use outlined letter shapes.
+
 ## [0.75.1.0] - 2026-09-09
 
 ### Fixed
@@ -108,23 +131,6 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - The new "slides" render archetype reuses the existing plan-item pipeline end to end: one variant carries a stitched preview alongside the ordered slide list and export bundle, so every existing reader (player, library, TikTok-publish exclusion) keeps working unbranched. Every other editor lane (captions, sound effects, overlays, timeline) is explicitly closed for this archetype at the same choke point every one of those routes already shares. Ships default on, gated by `SLIDE_POSTS_ENABLED` / `NEXT_PUBLIC_SLIDE_POSTS_ENABLED`.
-
-## [0.75.3.0] - 2026-09-09
-
-### Changed
-- **Creators can give the editor copilot longer, multi-part editing instructions.** Requests now support up to 2,000 characters and can return up to 48 coordinated edits, making it practical to update a full set of text and timeline changes in one turn.
-
-## [0.75.2.0] - 2026-09-09
-
-### Changed
-- **Chat and Gallery share a simpler sidebar.** Start a new chat, reopen recent projects, rename projects inline, and reach account actions from one place. Gallery keeps project navigation visible and shows titles beneath video cards.
-- **Kria's wordmark and browser icons use the same rounded lettering.** Chat messages and editor tools carry the wordmark, while text controls and hover states use quiet Sky and warm-ink colors.
-- **The editor keeps its main controls focused on editing.** Remove the title field, select/pan switch, canvas zoom selector, and re-render badge from the toolbar; retain undo, redo, orientation, playback, and Save.
-
-### Fixed
-- **Project actions remain usable in Gallery and on smaller screens.** Delete confirmations open from the Gallery sidebar, long recent-project lists scroll without hiding account actions, and mobile Gallery keeps a project-navigation button.
-- **Inline project renaming preserves keyboard control.** Enter and blur save once, Escape cancels, failed saves remain editable, and the focused name has a visible outline.
-- **Browser icons retain Kria's lettering without a webfont.** Both favicon variants now use outlined letter shapes.
 
 ## [0.75.0.0] - 2026-09-09
 
@@ -3696,6 +3702,7 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
 ### Changed
 - Persona generating shimmer copy updated: "Reading everything you shared…" replaces "Crafting your persona…" when the persona was generated from a chat interview.
 - `PersonaStatus` type now includes `"chat_pending"` for users in the middle of onboarding chat.
+
 ## [0.4.80.0] - 2026-06-06
 
 ### Changed
@@ -3705,6 +3712,7 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
 
 ### Fixed
 - **Pop-up lyric previews now recover missing repeated-hook tails from audio-backed Whisper timings.** When a synced LRCLIB row matches only a low-confidence prefix and its canonical tail diverges from the recording, lyrics alignment preserves the trusted prefix and replaces the bad tail with unused Whisper words from the same line window. The lyric extractor prompt version was bumped so stale cached rows refresh before production renders reuse old timing blobs. Regression coverage locks the production preview job `9cc0cb15-9cc0-4302-9ef6-661ce63e2a3d` and negative guardrails for loose mid-window speech.
+
 ## [0.4.79.1] - 2026-06-05
 
 ### Fixed
@@ -3734,17 +3742,18 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
 - **Pop-up lyric previews now trim repeated hook lead-ins and clear stale line tails.** The per-word pop injector drops repeated parenthetical prefixes when a preview starts mid-line and clamps any previous same-lane pop-up stage when the next lyric begins. The production preview job `c9dc62c7-1215-4e49-a12e-b6912d359a63` now opens on the audible hook and no longer stacks the prior line tail under the next word.
 - **Pop-up lyric previews now clear overlapping lyric lines before the next vocal line appears.** The per-word pop injector truncates an outgoing cumulative line when the next lyric line starts before that row's own end time, preventing the Billie Jean preview job `20ebb8b8-b604-435d-961e-6ff1f6873b96` from rendering `She` on top of the previous `Do think twice Ah-hoo` popup. Regression coverage locks the one-frame clear gap and verifies the Line-style frozen range still points at unchanged Line code.
 
+## [0.4.77.0] - 2026-06-05
+
+### Fixed
+- **Karaoke lyric renders now recover line starts when LRCLIB anchors land late.** The lyrics extractor admits a strong matching prefix from just before the LRC anchor, spreads collapsed Whisper word clusters instead of flashing them all at once, and keeps those local repairs out of whole-track reanchor math. The Roger Sanchez "Again" production regression now caches the audible `"I swear to God..."` start time and survives the render-time section rebase.
+- **Lyrics-enabled renders no longer silently burn stale cached timing blobs.** Music jobs, templated music jobs, template-linked music renders, generative lyrics variants, and admin lyric previews now refresh old `lyrics_cached` rows before rendering; if a fresh publishable LRCLIB result cannot be produced, the render fails loudly instead of shipping the old misaligned cache.
+
 ## [0.4.76.1] - 2026-06-05
 
 ### Fixed
 - **Pop-up lyric previews no longer render short nested ad-libs over the main lyric line.** The per-word pop injector now suppresses one- and two-word lines that materially overlap a longer lyric line in the same one-lane visual surface, fixing the `Ok` / `Ok stop` overlap from preview job `1b23fc80-db29-40ed-8c69-ca6bf30fd3d6` while keeping valid adjacent short lyric lines with only tiny boundary overlap.
 - **Pop-up preview starts now drop clipped previous-sentence tails.** When a preview window begins mid-line, leading fragments such as `do you?` are trimmed before the intended opening phrase, so the render starts on `You men are all alike` instead of showing stale context from before the selected section.
 - **Malformed pop-up word timing clusters are repaired before stage generation.** Large collapsed or non-monotonic word timing runs are redistributed across the available phrase window, and implausibly late collapsed lines are pulled earlier after the previous line. This keeps fast phrases such as `I swear to God I don't even know why I put up with you` revealing in sync instead of arriving late in a burst.
-## [0.4.77.0] - 2026-06-05
-
-### Fixed
-- **Karaoke lyric renders now recover line starts when LRCLIB anchors land late.** The lyrics extractor admits a strong matching prefix from just before the LRC anchor, spreads collapsed Whisper word clusters instead of flashing them all at once, and keeps those local repairs out of whole-track reanchor math. The Roger Sanchez "Again" production regression now caches the audible `"I swear to God..."` start time and survives the render-time section rebase.
-- **Lyrics-enabled renders no longer silently burn stale cached timing blobs.** Music jobs, templated music jobs, template-linked music renders, generative lyrics variants, and admin lyric previews now refresh old `lyrics_cached` rows before rendering; if a fresh publishable LRCLIB result cannot be produced, the render fails loudly instead of shipping the old misaligned cache.
 
 ## [0.4.76.0] - 2026-06-05
 
@@ -3960,6 +3969,7 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
   - **Song preview (`SongPicker.tsx`, backend `music.py`).** The public `/music-tracks` gallery now returns a short-lived (60 min) signed `preview_audio_url` + `preview_start_s` (the matched hook). The picker shows album art (gradient-initials fallback) and a play button that streams the song seeked to its hook, all client-side. Signing is best-effort — a failure hides the play button, never 500s the gallery. *(Note: full-track audio behind a public URL is a deliberate-but-flagged exposure; the documented mitigation is a pre-rendered ~6s hook clip if rights/abuse ever bite.)*
   - **a11y / responsive.** Filmstrip + style chips are `radiogroup`s with roving tabindex; play/pause buttons carry toggling `aria-label`s; edit controls are ≥44px touch targets; mobile stacks hero → filmstrip → editor. The "Only N songs" short list is the prod publish/backfill gate (not a frontend cap) — tracked as a separate ops follow-up; the picker shows a "More songs coming soon" helper.
   - **Refactor + tests.** `PlanVariantCard` → `PlanVariantEditor` (+ new `PlanFilmstrip`, `StyleChip`, `SongPicker`); `PlanShell` gains a wider `size="results"` tier. Jest tests migrated to `PlanVariantEditor` (controls, swap hidden on original-audio, callback args, disabled-while-rendering); backend tests for the new style-set typography fields + signed preview-audio (URL, hook offset, 60-min TTL, null-without-audio). No renderer/overlay/burn-dict code touched (`make verify-overlays` N/A).
+
 ## [0.4.62.0] - 2026-05-30
 
 ### Added
@@ -3967,6 +3977,7 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
   - **Backend — `GET /me/jobs` + `POST /me/jobs/{id}/add-to-plan` (`routes/me.py`, registered at `/me`).** The list returns the signed-in user's jobs across every mode (generative, content_plan, template, music), newest first, keyset-paginated on the indexed `created_at`; a derived `ready|generating|failed` status + a single playable `output_url` are computed across the two output shapes (`assembly_plan["variants"][*].output_url` vs `assembly_plan["output_url"]`). Both endpoints use the **strict** `CurrentUser` dependency (never the synthetic fallback), so scope comes from the validated `X-User-Id` header — there is no `user_id` input to forge, making the list IDOR-safe by construction. Add-to-plan verifies BOTH the job and the target plan day belong to the caller (404, not 403, on any cross-user reference) before linking the existing circular FK pair (`plan_items.current_job_id` + `jobs.content_plan_item_id`) — no migration.
   - **Frontend — `/library` page + shared proxy (`api-proxy.ts`, `me-api.ts`, `app/library/`).** A "Your videos" grid wired to `GET /me/jobs` with all designed states (loading shimmer, first-run empty with a warm Create CTA, error+retry, 9:16 tiles, load-more). Each ready video plays inline and can be pinned to a plan day via a day picker; generating/failed render their own tiles. The `/api/plan` proxy was refactored to a shared `makeProxyHandlers` helper (the auth-sensitive `X-User-Id` injection now lives in ONE audited place) and reused by the new `/api/me` proxy. A "Library" nav link appears for signed-in users.
   - **Tests.** Backend: 10 route tests (user-scoping, forged `?user_id` ignored, derived status + preview-url extraction across modes, pagination, add-to-plan ownership on both FK sides, bad-id 400). Frontend: 5 me-api client tests (URL/query construction, 401 → NotAuthenticatedError, error-detail surfacing). No renderer/overlay/burn-dict code touched (`make verify-overlays` N/A).
+
 ## [0.4.61.0] - 2026-05-30
 
 ### Added
@@ -4058,6 +4069,7 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
 
 ### Added (dev/testing infra)
 - **Env-gated dev-login (`ALLOW_DEV_LOGIN`).** A NextAuth Credentials provider that mints a session from just an email (upserting via `/auth/google-upsert`), so the Google-gated content-plan flow can be driven end-to-end in local dev + automated QA without an interactive Google consent. Added **only** when `ALLOW_DEV_LOGIN === "true"` — never set in prod (Vercel/Fly). Guarded by `auth-dev-login.test.ts`, which fails if the provider ever appears without the flag.
+
 ## [0.4.53.0] - 2026-05-29
 
 ### Added
@@ -4133,17 +4145,18 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
 ### Fixed
 - **The AI hero-intro text on generative-edit videos now stays on screen for the whole video instead of vanishing a few seconds in.** It was injected into the hero slot only with `end_s` hard-capped at `MAX_INTRO_S = 3.0`s, so on the text variants (`song_text`, `original_text`) the intro disappeared at ~3s. Generative overlays burn onto the *joined* video with absolute timestamps, and the Skia renderer caps *animated* overlays at `MAX_OVERLAY_FRAMES` (~4s) — so simply extending the animated overlay's `end_s` would have made it vanish at the cap. Instead the intro is now emitted as two overlays in the hero slot: a bounded **animated reveal** `[0, reveal_window]` (the agent's effect; `reveal_window = min(slot0_dur, MAX_INTRO_S)`, kept under the frame cap), followed by a **static hold** in the effect's settled color (`highlight_color` for karaoke, else `text_color`) whose `end_s` spans the whole joined video — a static overlay is a single looped PNG, immune to the frame cap. `MAX_INTRO_S` now caps the reveal animation only, not display time. Applies to the text variants only; `song_lyrics` (changing karaoke lyrics) is unchanged.
 - A scoped guard in `_collect_absolute_overlays` Dedup-1 marks `role="generative_intro"` overlays no-merge, so the reveal and hold (same text/position, and same color for `pop-in`) are never merged into one animated overlay that would re-trip the frame cap. No effect on template/music overlays.
-## [0.4.47.5] - 2026-05-26
-
-### Tests
-- **No-lyric-stacking coverage at the consolidation + burn layers, using the gate-tripping `effective_lyrics_config` shape that PRs #343/#344 fixed at the inject level.** The lyric-stacking bug class has shipped ~11 times (#282, #285, #287, #303, #306, #307, #324, #332, #336, #343, #344) — #343 added a dynamic crossfade + sqrt curve, then #344 had to drop a user-override gate because the admin/generative form-default `fade_in_ms=150`/`fade_out_ms=250` were misread as operator overrides and silently disabled the crossfade (confirmed live: generative job `792f2d52`, rendered before the #344 deploy, burned "Do do…" and "And it goes" on top of each other at t≈6.7s). The prior no-stacking suites replay alpha over the raw `inject_lyric_overlays` output only — they never run `_collect_absolute_overlays` (cross-slot segment merge by `lyric_line_id` + slot→absolute rebasing) or the real burn pipeline. New tests in `test_lyric_injector_no_stacking.py` feed the realistic `effective_lyrics_config` (the exact shape that tripped the gate) through `_collect_absolute_overlays` and assert Level 1 (no double-bright) + Level 2 (no readable same-slot stacking), anchored to the real Milky overlapping-"doo doo" lines (track 29da2cbf) across single- and multi-slot cuts; a dedicated test pins that the sqrt crossfade curve survives the cross-slot merge. Test-only — the production fix is #343 + #344.
-- **Burned-pixel verification through the real Skia + FFmpeg pipeline.** `test_real_milky_overlapping_lines_crossfade_through_burn_pipeline` (in `test_text_overlay_skia.py`) takes the consecutive overlapping lyric pair from `inject_lyric_overlays` → `_collect_absolute_overlays` under the realistic `effective_lyrics_config`, renders it through `_render_overlay_sequences` + `_ffmpeg_burn_pngs`, samples the overlap-midpoint frame, and asserts NEITHER line burns at full opacity — actual-pixel proof (not just alpha math) that the crossfade reaches the rendered MP4. Verified end-to-end: ran the gate-tripping config through the deployed prod worker (`CROSSFADE_ACTIVE`, sqrt curve fires) and visually inspected every transition frame of the burned Milky timeline (same-text handoffs overlap as one readable line; different-text handoffs show a bright incoming line with a sub-readable outgoing ghost — a real crossfade, never two stacked readable lines).
 
 ## [0.4.47.6] - 2026-05-26
 
 ### Fixed
 - **Dark and night footage no longer macroblocks (the "pixels" and color blotching in the sky).** Rendered videos showed 16×16 block quantization and chroma blotching in dark gradients — reproduced on a real iPhone HLG-HDR night clip whose three output variants all pinned to ~8.5 Mbps. Two compounding causes, both fixed: (1) the output bitrate ceiling was **8M, which starved CRF 18** — the same footage actually wants ~16 Mbps, so on hard content quality dropped below the CRF target; raised `output_video_bitrate` 8M→16M (capped CRF still governs, so bright/simple clips stay small — verified byte-identical under both ceilings). (2) The intermediate `reframe` encode ran at `ultrafast crf 18`, baking block artifacts into dark gradients before the final pass could ever see clean input; lowered both intermediate call sites to `crf 14` (preset stays `ultrafast`, so render speed is unchanged — only temp-file size grows). Faithful prod-image A/B (real zscale HDR→SDR tonemap) on the failing clip: dark-region distortion down ~49% (SSIM 0.910→0.954), macroblocking visually gone, colors unchanged. Locked by `test_encoder_policy.py` (the capped-CRF assertion is relational, so the ceiling bump needs no test edit). Verified end-to-end through the full generative pipeline (`make local-render`): the delivered variant rose from 8.7 Mbps (prod, before) to 14.9 Mbps on the same clip — off the ceiling.
 - **xfade transitions no longer bypass the encoder quality budget.** `join_with_transitions` hardcoded its encoder args with **no maxrate ceiling and no bt709 color tags**, so the transition-blend generation (one of the encode passes on multi-clip jobs) could starve on dark gradients and shipped untagged whenever a no-overlay job sent that output straight to the user. Routed it through the shared `_encoding_args` (new `include_audio=False` flag preserves the `-an` video-only contract) so it gets the same 16M capped-CRF ceiling + closed-GOP as every other final-class encode, plus a `setparams=bt709` filter on the xfade output to stamp full color VUI (combining two inputs in a filtergraph resets color metadata, so the encoder-side flags alone only set the matrix). Added the call site to the `test_encoder_policy.py` audit so it can't silently regress.
+
+## [0.4.47.5] - 2026-05-26
+
+### Tests
+- **No-lyric-stacking coverage at the consolidation + burn layers, using the gate-tripping `effective_lyrics_config` shape that PRs #343/#344 fixed at the inject level.** The lyric-stacking bug class has shipped ~11 times (#282, #285, #287, #303, #306, #307, #324, #332, #336, #343, #344) — #343 added a dynamic crossfade + sqrt curve, then #344 had to drop a user-override gate because the admin/generative form-default `fade_in_ms=150`/`fade_out_ms=250` were misread as operator overrides and silently disabled the crossfade (confirmed live: generative job `792f2d52`, rendered before the #344 deploy, burned "Do do…" and "And it goes" on top of each other at t≈6.7s). The prior no-stacking suites replay alpha over the raw `inject_lyric_overlays` output only — they never run `_collect_absolute_overlays` (cross-slot segment merge by `lyric_line_id` + slot→absolute rebasing) or the real burn pipeline. New tests in `test_lyric_injector_no_stacking.py` feed the realistic `effective_lyrics_config` (the exact shape that tripped the gate) through `_collect_absolute_overlays` and assert Level 1 (no double-bright) + Level 2 (no readable same-slot stacking), anchored to the real Milky overlapping-"doo doo" lines (track 29da2cbf) across single- and multi-slot cuts; a dedicated test pins that the sqrt crossfade curve survives the cross-slot merge. Test-only — the production fix is #343 + #344.
+- **Burned-pixel verification through the real Skia + FFmpeg pipeline.** `test_real_milky_overlapping_lines_crossfade_through_burn_pipeline` (in `test_text_overlay_skia.py`) takes the consecutive overlapping lyric pair from `inject_lyric_overlays` → `_collect_absolute_overlays` under the realistic `effective_lyrics_config`, renders it through `_render_overlay_sequences` + `_ffmpeg_burn_pngs`, samples the overlap-midpoint frame, and asserts NEITHER line burns at full opacity — actual-pixel proof (not just alpha math) that the crossfade reaches the rendered MP4. Verified end-to-end: ran the gate-tripping config through the deployed prod worker (`CROSSFADE_ACTIVE`, sqrt curve fires) and visually inspected every transition frame of the burned Milky timeline (same-text handoffs overlap as one readable line; different-text handoffs show a bright incoming line with a sub-readable outgoing ghost — a real crossfade, never two stacked readable lines).
 
 ## [0.4.47.4] - 2026-05-26
 
@@ -4196,6 +4209,7 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
   - **Auto-selected per job.** After writing the intro text, `orchestrate_generative_job` picks a generative-eligible style set (reusing `AgenticStyleSelectorAgent` against the generative catalog) and applies it to every variant — the AI intro on the text variants (`song_text` / `original_text`) via `resolve_overlay_style`, and the lyric typography on the `song_lyrics` variant via the lyric injector's `style_set_id` path. Each generative set gained a `lyric_line` role in its own font so lyrics inherit the set's look. The set is authoritative; the agent's per-attribute output drops to advisory (fills only what the set leaves null). Best-effort: selection failure falls back to `default`, never blocks a job.
   - **User- and admin-changeable.** New `POST /generative-jobs/{id}/variants/{vid}/change-style` re-renders one variant against a different set (async, mirroring `swap-song`/`retext`), and `GET /generative-jobs/style-sets` lists the generative-eligible sets. The public generative page gets a "Style…" picker on every variant card, and a new admin detail page (`/admin/generative/{id}`) surfaces the same per-variant controls (previously admin was view-only). The chosen `style_set_id` is persisted on each variant in `assembly_plan["variants"]` so it survives song-swaps and text edits.
   - The hero-intro overlay's effect allowlist widened to the curated-set vocabulary (`typewriter`, `stream-in`, `pop-in`, …) so a set's effect survives instead of being flattened to `static`; `build_intro_overlay` now threads the set's `font_family` / `stroke_width` / `text_size_px` / position fracs. Verified un-clipped across all nine generative sets via `make verify-overlays` (the Skia render gate).
+
 ## [0.4.46.5] - 2026-05-25
 
 ### Fixed
@@ -4360,6 +4374,7 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
 
 ### Added
 - **Pre-PR text-overlay verify gate (`make verify-overlays`).** Catch "looks right locally, clips in prod" (the #296 class) *before* opening a PR instead of after a bad render ships. The gate renders a recipe's text overlays through the real Skia path inside the prod Docker image — so fonts (`fonts-dejavu-core` + bundled Playfair) and ffmpeg match prod — then asserts every overlay renders un-clipped and writes a border-coded `montage.png` + `report.json` to `.overlay-verify/`. The clipping check (opaque-pixel bbox vs frame edges) is the primary, font-independent signal and exits non-zero so it gates the PR; content correctness is the montage, reviewed visually (or by the agent, which reads PNGs — better than tesseract on stylized fonts). Run it as `make verify-overlays ARGS="--fixtures"` (committed regression set), `--recipe <path>`, or `--template <uuid>`. Optional automated OCR content matching runs as a host stage afterward. This turns CLAUDE.md's prose rule ("an agentic/music overlay change is verified against the burned Skia output, not the Pillow admin preview") into automation. New: `app/pipeline/overlay_verify.py`, `app/cli/verify_overlays.py`, fixtures under `tests/fixtures/overlay_verify/`, and the `test_overlay_verify.py` guard (synthetic-frame detector tests prove the verifier actually catches clipping/truncation, plus a real-Skia fixture regression suite).
+
 ## [0.4.44.11] - 2026-05-24
 
 ### Added
@@ -4368,6 +4383,7 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
   - **T8 — `require-eval-fixture.yml`.** Trips when a PR touches `prompts/**`, `app/agents/*.py` (excluding `_runtime.py`), or `app/agents/_schemas/*.py`. The PR must ALSO touch `tests/fixtures/agent_evals/**` or `tests/evals/**`, OR carry a `[skip-eval-check] <reason>` marker (≥10-char justification) in the body. This makes "I changed a prompt but didn't update its eval" fail loudly at the gate instead of silently degrading agent quality in prod.
   - **Architecture: no drift between what CI checks and what tests assert.** Path matching and PR-body validation are extracted into two reusable shell helpers — `scripts/ci/check-touched-paths.sh` (categories `local-test`, `eval-input`, `eval-coverage`; handles `**` glob collapse and the `_runtime.py` exclude pattern for the eval-input category) and `scripts/ci/check-pr-body.sh` (`--required-regex` + `--skip-marker` with a 10-char minimum justification, CRLF-tolerant). Both the workflow YAML and the test harness invoke these exact helpers, so the gate logic is the same code path in CI and in tests — the two cannot drift.
   - **Tests: 18/18 passing** across `tests/workflows/test_require_local_test.sh` (9 cases) and `tests/workflows/test_require_eval_fixture.sh` (9 cases). Coverage includes every required case plus extras: per-agent path coverage, trailing-junk after a `Local test:` marker, CRLF PR bodies, and the `_runtime.py` exclusion.
+
 ## [0.4.44.10] - 2026-05-24
 
 ### Added
@@ -4375,6 +4391,7 @@ Both a codex outside-voice review (plan stage) and an independent subagent revie
 - **`app/services/ocr/` package** — `OCREngine` Protocol (`recognize(image_path) -> list[OCRWord]`), `OCRWord` frozen dataclass with normalized `[0,1]` bboxes, and two adapters: `PytesseractEngine` (local, no auth) and `CloudVisionEngine` (reuses the existing `app.storage.get_gcp_credentials` service-account chain — same auth the production OCR backend uses). Adapter SDK imports are deferred to `__init__` so importing the package never triggers grpc / system-binary loads. `cross_check_engines()` normalizes tokens (lowercase + whitespace-collapse), scores order-invariant agreement via stdlib `difflib.SequenceMatcher.ratio()` (no new C-extension dep), and returns the agreed token set or a disagreement record.
 - Scope: **OCR ground truth only.** Whisper transcript ground truth is deferred — the `TranscriptAgent` requires a Gemini File API URI obtained by uploading the video (the production path at `gemini_analyzer.py` does this), not a raw GCS path. Wiring that upload into the autobuilder is a follow-up.
 - Test coverage: 10 unit tests on the cross-check decision logic, 7 adapter-contract tests, and 3 regression tests against the existing hand-verified fixtures that lock the UNION-mode token-merge behavior (so any future switch to intersection mode is a deliberate, visible diff rather than a silent change). 20 pass, 3 skip (the `fdaf3bbc` fixture carries no extractable overlay tokens).
+
 ## [0.4.44.9] - 2026-05-24
 
 ### Changed
