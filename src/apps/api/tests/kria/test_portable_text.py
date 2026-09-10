@@ -134,3 +134,28 @@ def test_ink_reveal_requires_valid_bounds_and_other_effects_reject_them():
     layer["effect"] = "none"
     with pytest.raises(ValueError, match="reveal bounds"):
         EditRecipeV2.model_validate(document)
+
+
+@pytest.mark.parametrize("seed", [0, 101, 4294967295])
+def test_dissolve_requires_and_preserves_explicit_renderer_seed(seed):
+    document = text_document()
+    document["text_layers"][0].update(effect="dissolve-out", dissolve_seed=seed)
+    assert EditRecipeV2.model_validate(document).text_layers[0].dissolve_seed == seed
+
+
+@pytest.mark.parametrize(
+    "effect,seed",
+    [
+        ("static", 101),
+        ("dissolve-out", None),
+        ("dissolve-out", -1),
+        ("dissolve-out", 4294967296),
+        ("dissolve-out", True),
+        ("dissolve-out", 1.5),
+    ],
+)
+def test_dissolve_rejects_missing_or_invalid_seed(effect, seed):
+    document = text_document()
+    document["text_layers"][0].update(effect=effect, dissolve_seed=seed)
+    with pytest.raises(ValidationError):
+        EditRecipeV2.model_validate(document)

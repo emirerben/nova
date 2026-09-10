@@ -2,7 +2,7 @@
 import Foundation
 import CoreImage
 
-/// Full text dissolve composition, kept staged until portable-layer integration.
+/// Full text dissolve composition shared by preview and export.
 final class NativeDissolveRenderer: @unchecked Sendable {
     let warp: NativeDissolveWarp
     let bitmapBytes: Int

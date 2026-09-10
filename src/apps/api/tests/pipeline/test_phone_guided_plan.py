@@ -138,3 +138,27 @@ def test_editor_lanes_cannot_disappear(lane):
     setattr(plan, lane, [{"id": "required"}])
     with pytest.raises(ValueError, match=lane):
         compile_phone_guided_plan(plan, bindings)
+
+
+def test_dissolve_seed_follows_cloud_combined_lane_indices():
+    plan, bindings = fixture()
+    for index, lane in enumerate(
+        ("text_elements", "context_label_text_elements", "narration_label_text_elements")
+    ):
+        setattr(
+            plan,
+            lane,
+            [
+                TextElement(
+                    id=f"label-{index}",
+                    text="This view",
+                    start_s=0.5,
+                    end_s=2.5,
+                    font_family="Inter-Bold",
+                    effect="dissolve-out",
+                    size_px=64,
+                )
+            ],
+        )
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert [layer.dissolve_seed for layer in recipe.text_layers] == [101, 138, 175]

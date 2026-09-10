@@ -1879,7 +1879,8 @@
     },
     "discrete_reveal": null,
     "smooth_reveal": null,
-    "staggered": null
+    "staggered": null,
+    "dissolve_seed": null
   },
   "samples": [
     {

@@ -116,7 +116,7 @@ public struct PreviewComposition: @unchecked Sendable {
         var textBitmapBytes = textLayers.reduce(0) { $0 + Int($1.image.extent.width * $1.image.extent.height * 4) }
         for layer in recipe.textLayers {
             let painted = try RecipeTextLayer.make(layer, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: 64 * 1024 * 1024 - textBitmapBytes)
-            textBitmapBytes += painted.staggered?.bitmapBytes ?? painted.smoothReveal?.bitmapBytes ?? (Int(painted.image.extent.width * painted.image.extent.height * 4) * (painted.handwriting == nil && painted.discreteReveal == nil ? 1 : 2))
+            textBitmapBytes += painted.dissolve.map { $0.bitmapBytes + Int(painted.image.extent.width * painted.image.extent.height * 12) } ?? painted.staggered?.bitmapBytes ?? painted.smoothReveal?.bitmapBytes ?? (Int(painted.image.extent.width * painted.image.extent.height * 4) * (painted.handwriting == nil && painted.discreteReveal == nil ? 1 : 2))
             textLayers.append(painted)
         }
         if !layers.contains(where: { $0.trackID != nil }) {

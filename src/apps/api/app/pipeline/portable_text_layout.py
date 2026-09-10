@@ -92,7 +92,7 @@ def _resolve_paints(overlay: dict, *, width: float, height: float, left: float, 
     return fill, blurs, gradient
 
 
-def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
+def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed: int | None = None):
     """Resolve a supported cloud overlay into geometry plus its exact font asset.
 
     Reuses the production layout helpers. No image, frame, or encoded media is
@@ -131,8 +131,11 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         "stream-in",
         "smooth-type",
         "staggered-slice",
+        "dissolve-out",
     }:
         raise UnsupportedPortableText(f"unsupported text effect: {effect}")
+    if effect == "dissolve-out" and dissolve_seed is None:
+        raise UnsupportedPortableText("dissolve requires its cloud overlay-index seed")
     # These fields invoke specialized drawing or timing outside the base line
     # painter. Accepting their base text would silently lose creator intent.
     for key in (
@@ -153,7 +156,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
     raw_motion = overlay.get("motion")
     motion = None
     if (
-        effect not in {"static", "none"}
+        effect not in {"static", "none", "dissolve-out"}
         and isinstance(raw_motion, dict)
         and raw_motion.get("version") == 2
     ):
@@ -326,6 +329,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         rotation_degrees=cloud._finite_float(overlay.get("rotation_deg"), 0),
         runs=runs,
         effect=effect,
+        dissolve_seed=dissolve_seed if effect == "dissolve-out" else None,
         motion=motion,
         reveal_bounds=reveal_bounds,
         discrete_reveal=discrete_reveal,

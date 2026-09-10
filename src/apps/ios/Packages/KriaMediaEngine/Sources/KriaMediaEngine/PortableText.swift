@@ -172,7 +172,7 @@ public struct TextRevealBounds: Codable, Equatable, Sendable {
 }
 
 public struct PortableTextLayer: Codable, Equatable, Sendable {
-    public enum Effect: String, Codable, Sendable { case `static`, none, fadeIn = "fade-in", scaleUp = "scale-up", slideUp = "slide-up", slideDown = "slide-down", popIn = "pop-in", bounce, inkReveal = "ink-reveal", handwriting, typewriter, streamIn = "stream-in", smoothType = "smooth-type", staggeredSlice = "staggered-slice" }
+    public enum Effect: String, Codable, Sendable { case `static`, none, fadeIn = "fade-in", scaleUp = "scale-up", slideUp = "slide-up", slideDown = "slide-down", popIn = "pop-in", bounce, inkReveal = "ink-reveal", handwriting, typewriter, streamIn = "stream-in", smoothType = "smooth-type", staggeredSlice = "staggered-slice", dissolveOut = "dissolve-out" }
     public let id: String
     public let start: Double
     public let end: Double
@@ -186,15 +186,16 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
     public let discreteReveal: DiscreteRevealContent?
     public let smoothReveal: SmoothRevealContent?
     public let staggered: StaggeredContent?
+    public let dissolveSeed: UInt32?
     public let effect: Effect
-    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered }
+    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed }
     public init(id: String, start: Double, end: Double, anchorX: Double, anchorY: Double,
-                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil) {
+                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil) {
         self.id = id; self.start = start; self.end = end; self.anchorX = anchorX; self.anchorY = anchorY
-        self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered
+        self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered; self.dissolveSeed = dissolveSeed
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered"])
+        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id); start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end); anchorX = try c.decode(Double.self, forKey: .anchorX)
@@ -205,6 +206,7 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         discreteReveal = try c.decodeIfPresent(DiscreteRevealContent.self, forKey: .discreteReveal)
         smoothReveal = try c.decodeIfPresent(SmoothRevealContent.self, forKey: .smoothReveal)
         staggered = try c.decodeIfPresent(StaggeredContent.self, forKey: .staggered)
+        dissolveSeed = try c.decodeIfPresent(UInt32.self, forKey: .dissolveSeed)
         runs = try c.decode([PositionedTextRun].self, forKey: .runs); effect = try c.decode(Effect.self, forKey: .effect)
     }
     public func validate(duration: Double, manifest: RenderAssetManifest?) throws {
@@ -221,6 +223,7 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         try smoothReveal?.validate(runs: runs)
         guard (effect == .staggeredSlice) == (staggered != nil) else { throw RecipeError.invalidTimeline }
         try staggered?.validate()
+        guard (effect == .dissolveOut) == (dissolveSeed != nil) else { throw RecipeError.invalidTimeline }
         guard (effect == .inkReveal) == (revealBounds != nil) else { throw RecipeError.invalidTimeline }
         try revealBounds?.validate()
         try motion?.validate()

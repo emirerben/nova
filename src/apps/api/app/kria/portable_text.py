@@ -248,6 +248,7 @@ class PortableTextLayer(_TextModel):
         "stream-in",
         "smooth-type",
         "staggered-slice",
+        "dissolve-out",
     ] = "static"
     motion: ResolvedTextMotion | None = None
     reveal_bounds: TextRevealBounds | None = None
@@ -255,9 +256,12 @@ class PortableTextLayer(_TextModel):
     discrete_reveal: DiscreteRevealContent | None = None
     smooth_reveal: SmoothRevealContent | None = None
     staggered: StaggeredContent | None = None
+    dissolve_seed: int | None = Field(default=None, strict=True, ge=0, le=4294967295)
 
     @model_validator(mode="after")
     def valid_window(self):
+        if (self.effect == "dissolve-out") != (self.dissolve_seed is not None):
+            raise ValueError("dissolve requires an explicit renderer seed")
         if (self.effect == "staggered-slice") != (self.staggered is not None):
             raise ValueError("staggered slice requires glyph geometry")
         if (self.effect == "smooth-type") != (self.smooth_reveal is not None):

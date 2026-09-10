@@ -159,3 +159,24 @@ def test_ink_reveal_bounds_match_actual_styled_cloud_clip(rotation, glow):
             (bounds.left, bounds.top, (bounds.left + bounds.right) / 2, bounds.bottom), abs=0.0001
         )
     ]
+
+
+def test_dissolve_compiles_settled_text_with_explicit_seed_and_ignores_motion():
+    overlay = {
+        "text": "Dissolve",
+        "start_s": 0,
+        "end_s": 4,
+        "font_family": "Inter",
+        "text_size_px": 36,
+    }
+    static, font = compile_text_overlay(overlay, layer_id="test", canvas=Canvas(600, 400))
+    dissolve, same_font = compile_text_overlay(
+        {**overlay, "effect": "dissolve-out", "motion": {"version": 2, "speed": 4}},
+        layer_id="test",
+        canvas=Canvas(600, 400),
+        dissolve_seed=138,
+    )
+    assert dissolve.runs == static.runs
+    assert dissolve.motion is None
+    assert dissolve.dissolve_seed == 138
+    assert same_font == font

@@ -118,7 +118,14 @@ def compile_phone_guided_plan(
         for index, overlay in enumerate(overlays):
             if overlay.get("role") == "generative_sequence" and lane == "text":
                 raise UnsupportedPhonePlan("text sequence composition requires a native program")
-            layer, font = compile_text_overlay(overlay, layer_id=f"{lane}-{index}", canvas=canvas)
+            # Guided cloud rendering concatenates the three lanes before assigning
+            # overlay indices; the dissolve noise seed must use that same order.
+            layer, font = compile_text_overlay(
+                overlay,
+                layer_id=f"{lane}-{index}",
+                canvas=canvas,
+                dissolve_seed=101 + len(layers) * 37,
+            )
             if font is not None:
                 manifest[font.id] = font
                 assets[font.id] = MediaAsset(
