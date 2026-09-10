@@ -188,6 +188,43 @@ class SmoothRevealContent(_TextModel):
     lines: list[SmoothRevealLine] = Field(min_length=1, max_length=100)
 
 
+class StaggeredGlyph(_TextModel):
+    logical_line: int = Field(ge=0, le=99)
+    glyph_index: int = Field(ge=0, le=4999)
+    run: PositionedTextRun
+    pivot_x: float = Field(ge=-20000, le=20000)
+    pivot_y: float = Field(ge=-20000, le=20000)
+
+
+class StaggeredContent(_TextModel):
+    text: str = Field(min_length=1, max_length=5000)
+    glyphs: list[StaggeredGlyph] = Field(min_length=1, max_length=5000)
+
+    @model_validator(mode="after")
+    def valid_glyphs(self):
+        import regex
+
+        if "\n".join(" ".join(line.split()) for line in self.text.split("\n")) != self.text:
+            raise ValueError("staggered text must be normalized")
+        lines = [regex.findall(r"\X", line) for line in self.text.split("\n")]
+        if len(lines) > 100:
+            raise ValueError("too many logical lines")
+        indices = [(glyph.logical_line, glyph.glyph_index) for glyph in self.glyphs]
+        if indices != sorted(set(indices)):
+            raise ValueError("staggered glyph indices must be ordered and unique")
+        for glyph in self.glyphs:
+            if (
+                glyph.logical_line >= len(lines)
+                or glyph.glyph_index >= len(lines[glyph.logical_line])
+                or glyph.run.text != lines[glyph.logical_line][glyph.glyph_index]
+                or glyph.run.shaped
+            ):
+                raise ValueError("staggered glyph requires matching unshaped text")
+        if sum(len(glyph.run.glyphs or []) for glyph in self.glyphs) > 10000:
+            raise ValueError("too many staggered glyphs")
+        return self
+
+
 class PortableTextLayer(_TextModel):
     id: str = Field(min_length=1, max_length=160)
     start: float = Field(ge=0, le=1800)
@@ -210,15 +247,19 @@ class PortableTextLayer(_TextModel):
         "typewriter",
         "stream-in",
         "smooth-type",
+        "staggered-slice",
     ] = "static"
     motion: ResolvedTextMotion | None = None
     reveal_bounds: TextRevealBounds | None = None
     handwriting: HandwritingContent | None = None
     discrete_reveal: DiscreteRevealContent | None = None
     smooth_reveal: SmoothRevealContent | None = None
+    staggered: StaggeredContent | None = None
 
     @model_validator(mode="after")
     def valid_window(self):
+        if (self.effect == "staggered-slice") != (self.staggered is not None):
+            raise ValueError("staggered slice requires glyph geometry")
         if (self.effect == "smooth-type") != (self.smooth_reveal is not None):
             raise ValueError("smooth reveal requires per-line geometry")
         if self.smooth_reveal:

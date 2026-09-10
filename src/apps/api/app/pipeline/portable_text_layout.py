@@ -130,6 +130,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         "typewriter",
         "stream-in",
         "smooth-type",
+        "staggered-slice",
     }:
         raise UnsupportedPortableText(f"unsupported text effect: {effect}")
     # These fields invoke specialized drawing or timing outside the base line
@@ -165,9 +166,11 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
             overlay, layer_id=layer_id, canvas=canvas, motion=motion
         ), None
     original_text = text
-    if effect in {"typewriter", "stream-in"}:
+    if effect in {"typewriter", "stream-in", "staggered-slice"}:
         text = cloud._normalize_reveal_text(text)
-    shaped = effect == "smooth-type" or bool(overlay.get("shape_text"))
+    shaped = effect != "staggered-slice" and (
+        effect == "smooth-type" or bool(overlay.get("shape_text"))
+    )
     resolved = cloud._resolve_typeface_for_overlay(overlay)
     font_asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
     spacing_em = cloud.resolve_letter_spacing_em(overlay.get("letter_spacing"))
@@ -327,6 +330,17 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         reveal_bounds=reveal_bounds,
         discrete_reveal=discrete_reveal,
         smooth_reveal=smooth_reveal,
+        staggered=_compile_staggered_content(
+            overlay,
+            text=text,
+            canvas=canvas,
+            font=font,
+            size=size,
+            font_asset=font_asset,
+            spacing=spacing,
+        )
+        if effect == "staggered-slice"
+        else None,
     ), font_asset
 
 
@@ -397,3 +411,82 @@ def _compile_handwriting_overlay(overlay: dict, *, layer_id: str, canvas, motion
             gradient=gradient,
         ),
     )
+
+
+def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset, spacing):
+    from app.kria.portable_text import PositionedTextRun, StaggeredContent, StaggeredGlyph, TextInk
+    from app.pipeline import text_overlay_skia as cloud
+
+    max_width = cloud._overlay_max_width_px(overlay, canvas)
+    rows = [
+        (index, row)
+        for index, line in enumerate(text.split("\n"))
+        for row in cloud._wrap_text_to_lines(line, font, max_width, spacing)
+    ]
+    block = cloud._measure_block(
+        font,
+        [row for _, row in rows],
+        line_spacing=cloud.resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=spacing,
+    )
+    cx, cy = cloud._resolve_anchor(overlay, canvas)
+    anchor = cloud._resolve_text_anchor(overlay)
+    top = cloud._vertical_block_top(cloud._resolve_vertical_anchor(overlay), cy, block["block_h"])
+    fill, blurs, gradient = _resolve_paints(
+        overlay,
+        width=max(block["widths"]),
+        height=block["block_h"],
+        left=cloud._anchored_left_x(anchor, cx, max(block["widths"])),
+        top=top,
+    )
+    logical_glyphs = [cloud._segment_graphemes(line) for line in text.split("\n")]
+    cursors = [0] * len(logical_glyphs)
+    seen = set()
+    glyphs = []
+    for row_index, (logical_index, row) in enumerate(rows):
+        source = logical_glyphs[logical_index]
+        cursor = cursors[logical_index]
+        if logical_index in seen:
+            while cursor < len(source) and source[cursor].isspace():
+                cursor += 1
+        seen.add(logical_index)
+        x = cloud._anchored_left_x(anchor, cx, block["widths"][row_index])
+        baseline = top + block["ascent_offset"] + row_index * block["line_step"]
+        for grapheme in cloud._segment_graphemes(row):
+            if cursor >= len(source):
+                break
+            if source[cursor] != grapheme:
+                cursor = next(
+                    (i for i in range(cursor, len(source)) if source[i] == grapheme), cursor
+                )
+            width = font.measureText(grapheme)
+            glyphs.append(
+                StaggeredGlyph(
+                    logical_line=logical_index,
+                    glyph_index=cursor,
+                    pivot_x=x + width / 2,
+                    pivot_y=baseline - size * 0.4,
+                    run=PositionedTextRun(
+                        text=grapheme,
+                        font_asset_id=font_asset.id,
+                        font_size=size,
+                        x=x,
+                        baseline_y=baseline,
+                        letter_spacing=spacing,
+                        shaped=False,
+                        glyphs=resolve_legacy_glyphs(font, grapheme, spacing),
+                        fill=fill,
+                        stroke=TextInk(red=0, green=0, blue=0, alpha=230 / 255),
+                        stroke_width=max(
+                            0,
+                            int(overlay.get("outline_px") or overlay.get("stroke_width") or 0) * 2,
+                        ),
+                        blur_layers=blurs,
+                        gradient=gradient,
+                    ),
+                )
+            )
+            x += width + spacing
+            cursor += 1
+        cursors[logical_index] = cursor
+    return StaggeredContent(text=text, glyphs=glyphs)

@@ -54,7 +54,10 @@ class EditRecipeV2(EditRecipeV1):
                 if layer.discrete_reveal
                 else []
             )
-            for run in layer.runs + cursor_runs:
+            staggered_runs = (
+                [glyph.run for glyph in layer.staggered.glyphs] if layer.staggered else []
+            )
+            for run in layer.runs + cursor_runs + staggered_runs:
                 font = manifest.get(run.font_asset_id)
                 if font is None or font.kind != "library" or font.catalog != "font":
                     raise ValueError("text requires an exact library font")

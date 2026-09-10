@@ -371,7 +371,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -719,7 +720,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -1232,7 +1234,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -1580,7 +1583,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -2093,7 +2097,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -2441,7 +2446,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -2954,7 +2960,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -3302,7 +3309,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -3815,7 +3823,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -4163,7 +4172,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -4676,7 +4686,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",
@@ -5024,7 +5035,8 @@
           }
         ]
       },
-      "smooth_reveal": null
+      "smooth_reveal": null,
+      "staggered": null
     },
     "font": {
       "kind": "library",

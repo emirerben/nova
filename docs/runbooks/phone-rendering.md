@@ -244,3 +244,18 @@ composites. `SmoothRevealTests` compares masks to real cloud drawing calls and
 exercises rotated text through native preview and H.264 export in all three
 orders. This remains staged: the remaining effects/styles and physical-device
 performance and visual gates are still required before rollout.
+
+### Staggered Slice parity (staged)
+
+The compiler carries individually positioned grapheme runs and their logical
+line/index mapping across wrapped rows. Native timing preserves the first-word,
+remainder, and subsequent-line stages, short legacy window compression, and v2
+speed/intensity. Each glyph gets its own opacity, vertical offset, and pivoted
+rotation before the settled text takes over. The production partial branch uses
+per-glyph rotation; only its settled branch applies the overlay rotation. The
+phone preserves that distinction and does not add the common text exit fade.
+`phone_staggered_timing.json` covers 105 timing cases, and
+`StaggeredPainterTests` compares actual cloud draw calls and exercises both
+motion versions through native preview and H.264 export. Glyph and composite
+bitmaps share the bounded text-memory budget. This remains disabled for rollout
+until the complete capability matrix and physical-device gates pass.

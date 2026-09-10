@@ -118,7 +118,7 @@ def test_failed_native_compile_leaves_entire_baseline_untouched(monkeypatch, fai
     assert vars(job) == before
 
 
-@pytest.mark.parametrize("effect", ["typewriter", "stream-in", "smooth-type"])
+@pytest.mark.parametrize("effect", ["typewriter", "stream-in", "smooth-type", "staggered-slice"])
 def test_reveal_save_stays_on_device(monkeypatch, effect):
     job = phone_job(monkeypatch)
     monkeypatch.setattr(gj.settings, "text_motion_v2_enabled", True)
@@ -126,7 +126,7 @@ def test_reveal_save_stays_on_device(monkeypatch, effect):
     request = device_status(job, "guided_story").request
     layer = request.recipe.text_layers[0]
     assert layer.effect == effect
-    content = layer.smooth_reveal if effect == "smooth-type" else layer.discrete_reveal
+    content = layer.staggered or layer.smooth_reveal or layer.discrete_reveal
     assert content.text == "After"
     assert request.identity.recipe_revision == 2
     with patch("app.tasks.generative_build.regenerate_generative_variant.apply_async") as cloud:

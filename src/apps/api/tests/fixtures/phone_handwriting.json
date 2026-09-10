@@ -1878,7 +1878,8 @@
       "gradient": null
     },
     "discrete_reveal": null,
-    "smooth_reveal": null
+    "smooth_reveal": null,
+    "staggered": null
   },
   "samples": [
     {

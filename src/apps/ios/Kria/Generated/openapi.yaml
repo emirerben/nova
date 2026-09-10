@@ -4260,7 +4260,8 @@
               "handwriting",
               "typewriter",
               "stream-in",
-              "smooth-type"
+              "smooth-type",
+              "staggered-slice"
             ],
             "title": "Effect",
             "type": "string"
@@ -4309,6 +4310,11 @@
           },
           "smooth_reveal": {
             "$ref": "#/components/schemas/SmoothRevealContent",
+            "default": null,
+            "nullable": true
+          },
+          "staggered": {
+            "$ref": "#/components/schemas/StaggeredContent",
             "default": null,
             "nullable": true
           },
@@ -4808,6 +4814,73 @@
           "type"
         ],
         "title": "SolidBackground",
+        "type": "object"
+      },
+      "StaggeredContent": {
+        "additionalProperties": false,
+        "properties": {
+          "glyphs": {
+            "items": {
+              "$ref": "#/components/schemas/StaggeredGlyph"
+            },
+            "maxItems": 5000,
+            "minItems": 1,
+            "title": "Glyphs",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "glyphs"
+        ],
+        "title": "StaggeredContent",
+        "type": "object"
+      },
+      "StaggeredGlyph": {
+        "additionalProperties": false,
+        "properties": {
+          "glyph_index": {
+            "maximum": 4999,
+            "minimum": 0,
+            "title": "Glyph Index",
+            "type": "integer"
+          },
+          "logical_line": {
+            "maximum": 99,
+            "minimum": 0,
+            "title": "Logical Line",
+            "type": "integer"
+          },
+          "pivot_x": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Pivot X",
+            "type": "number"
+          },
+          "pivot_y": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Pivot Y",
+            "type": "number"
+          },
+          "run": {
+            "$ref": "#/components/schemas/PositionedTextRun"
+          }
+        },
+        "required": [
+          "logical_line",
+          "glyph_index",
+          "run",
+          "pivot_x",
+          "pivot_y"
+        ],
+        "title": "StaggeredGlyph",
         "type": "object"
       },
       "SubmitTurnBody": {
