@@ -1,0 +1,93 @@
+from unittest.mock import patch
+
+import pytest
+
+from app.pipeline import text_overlay_skia as cloud
+from app.pipeline.canvas import Canvas
+from app.pipeline.portable_text_layout import UnsupportedPortableText, compile_text_overlay
+
+
+@pytest.mark.parametrize("shaped", [False, True])
+@pytest.mark.parametrize("anchor", ["left", "center", "right"])
+@pytest.mark.parametrize("fixed", [False, True])
+def test_compiled_runs_match_actual_cloud_layout(shaped, anchor, fixed):
+    canvas = Canvas(600, 400)
+    overlay = {
+        "text": "AV fi İstanbul çok güzel\nA second line of text",
+        "start_s": 0.2,
+        "end_s": 2,
+        "font_family": "Inter",
+        "text_size_px": 36,
+        "text_anchor": anchor,
+        "vertical_anchor": "center",
+        "position_x_frac": 0.4,
+        "position_y_frac": 0.6,
+        "letter_spacing": 0.04,
+        "line_spacing": 1.2,
+        "shape_text": shaped,
+        "preserve_font_size": fixed,
+        "text_color": "#E84A8A",
+        "stroke_width": 2,
+        "shadow_style": "high_visibility",
+        "glow_color": "#123456",
+        "glow_strength": 0.6,
+        "text_gradient": {"colors": ["#FF0000", "#0000FF"], "angle_deg": 135},
+    }
+    layer, asset = compile_text_overlay(overlay, layer_id="test", canvas=canvas)
+    with patch.object(cloud, "_draw_line_with_layers") as draw:
+        import skia
+
+        cloud._draw_overlay_on_canvas(
+            skia.Surface(600, 400).getCanvas(), overlay, 0, 1.8, render_canvas=canvas
+        )
+    assert len(layer.runs) == draw.call_count
+    assert asset.catalog == "font"
+    for run, call in zip(layer.runs, draw.call_args_list, strict=True):
+        _, text, x, baseline, font, color, stroke, shadow = call.args
+        assert (run.text, run.x, run.baseline_y) == (text, x, baseline)
+        assert run.font_size == font.getSize()
+        assert run.stroke_width == stroke * 2
+        assert run.letter_spacing == call.kwargs["letter_spacing_px"]
+        assert run.shaped == call.kwargs["shape_text"]
+        assert (run.glyphs is None) == shaped
+        assert run.gradient is not None
+        assert len(run.blur_layers) == 4  # two glow layers, then ambient/contact shadows
+        assert [blur.sigma for blur in run.blur_layers] == [8, 20, 14, 3]
+        assert run.font_asset_id == asset.id
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"effect": "typewriter"},
+        {"effect": "pop-in"},
+        {"emoji_prefix": "🙂"},
+        {"behind_subject": True},
+        {"theme_transition": {"type": "giant-title-wipe"}},
+        {"fade_out_ms": 100},
+        {"spans": [{"text": "hello"}]},
+    ],
+)
+def test_compiler_refuses_treatments_it_cannot_preserve(extra):
+    with pytest.raises(UnsupportedPortableText):
+        compile_text_overlay(
+            {"text": "Hello", "start_s": 0, "end_s": 2, **extra},
+            layer_id="test",
+            canvas=Canvas(600, 400),
+        )
+
+
+def test_normalized_motion_is_preserved_but_static_dispatch_ignores_it():
+    overlay = {
+        "text": "Hello",
+        "start_s": 0,
+        "end_s": 2,
+        "effect": "pop-in",
+        "motion": {"version": 2, "speed": 0.53},
+    }
+    layer, _ = compile_text_overlay(overlay, layer_id="test", canvas=Canvas(600, 400))
+    assert layer.motion.speed == 0.53
+    layer, _ = compile_text_overlay(
+        {**overlay, "effect": "static"}, layer_id="test", canvas=Canvas(600, 400)
+    )
+    assert layer.motion is None

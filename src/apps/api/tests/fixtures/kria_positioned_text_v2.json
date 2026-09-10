@@ -126,7 +126,8 @@
           },
           "stroke_width": 0.0,
           "blur_layers": [],
-          "gradient": null
+          "gradient": null,
+          "glyphs": null
         }
       ],
       "effect": "static",

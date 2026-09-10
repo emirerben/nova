@@ -82,6 +82,24 @@ public struct TextGradient: Codable, Equatable, Sendable {
     }
 }
 
+public struct PositionedGlyph: Codable, Equatable, Sendable {
+    public let glyphID: Int
+    public let x: Double
+    public let y: Double
+    public init(glyphID: Int, x: Double, y: Double) { self.glyphID = glyphID; self.x = x; self.y = y }
+    private enum CodingKeys: String, CodingKey { case glyphID = "glyphId", x, y }
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["glyphId", "x", "y"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        glyphID = try c.decode(Int.self, forKey: .glyphID)
+        x = try c.decode(Double.self, forKey: .x); y = try c.decode(Double.self, forKey: .y)
+    }
+    func validate() throws {
+        guard (1...65535).contains(glyphID), x.isFinite, y.isFinite,
+              abs(x) <= 10000, abs(y) <= 10000 else { throw RecipeError.invalidTimeline }
+    }
+}
+
 public struct PositionedTextRun: Codable, Equatable, Sendable {
     public let text: String
     public let fontAssetID: String
@@ -90,32 +108,34 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
     public let baselineY: Double
     public let letterSpacing: Double
     public let shaped: Bool
+    public let glyphs: [PositionedGlyph]?
     public let fill: TextInk
     public let stroke: TextInk
     public let strokeWidth: Double
     public let blurLayers: [TextBlurLayer]
     public let gradient: TextGradient?
     private enum CodingKeys: String, CodingKey {
-        case text, fontAssetID = "fontAssetId", fontSize, x, baselineY, letterSpacing, shaped, fill, stroke, strokeWidth, blurLayers, gradient
+        case text, fontAssetID = "fontAssetId", fontSize, x, baselineY, letterSpacing, shaped, fill, stroke, strokeWidth, blurLayers, gradient, glyphs
     }
     public init(text: String, fontAssetID: String, fontSize: Double, x: Double, baselineY: Double,
-                letterSpacing: Double, shaped: Bool, fill: TextInk, stroke: TextInk, strokeWidth: Double, blurLayers: [TextBlurLayer] = [], gradient: TextGradient? = nil) {
+                letterSpacing: Double, shaped: Bool, fill: TextInk, stroke: TextInk, strokeWidth: Double, blurLayers: [TextBlurLayer] = [], gradient: TextGradient? = nil, glyphs: [PositionedGlyph]? = nil) {
         self.text = text; self.fontAssetID = fontAssetID; self.fontSize = fontSize; self.x = x; self.baselineY = baselineY
-        self.letterSpacing = letterSpacing; self.shaped = shaped; self.fill = fill; self.stroke = stroke; self.strokeWidth = strokeWidth; self.blurLayers = blurLayers; self.gradient = gradient
+        self.letterSpacing = letterSpacing; self.shaped = shaped; self.fill = fill; self.stroke = stroke; self.strokeWidth = strokeWidth; self.blurLayers = blurLayers; self.gradient = gradient; self.glyphs = glyphs
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["text", "fontAssetId", "fontSize", "x", "baselineY", "letterSpacing", "shaped", "fill", "stroke", "strokeWidth", "blurLayers", "gradient"])
+        try rejectUnknownAssetFields(decoder, allowed: ["text", "fontAssetId", "fontSize", "x", "baselineY", "letterSpacing", "shaped", "fill", "stroke", "strokeWidth", "blurLayers", "gradient", "glyphs"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = try c.decode(String.self, forKey: .text); fontAssetID = try c.decode(String.self, forKey: .fontAssetID)
         fontSize = try c.decode(Double.self, forKey: .fontSize); x = try c.decode(Double.self, forKey: .x)
         baselineY = try c.decode(Double.self, forKey: .baselineY); letterSpacing = try c.decode(Double.self, forKey: .letterSpacing)
         shaped = try c.decode(Bool.self, forKey: .shaped); fill = try c.decode(TextInk.self, forKey: .fill)
+        glyphs = try c.decodeIfPresent([PositionedGlyph].self, forKey: .glyphs)
         gradient = try c.decodeIfPresent(TextGradient.self, forKey: .gradient)
         blurLayers = try c.decodeIfPresent([TextBlurLayer].self, forKey: .blurLayers) ?? []
         stroke = try c.decode(TextInk.self, forKey: .stroke); strokeWidth = try c.decode(Double.self, forKey: .strokeWidth)
     }
     func validate() throws {
-        guard shaped, !text.isEmpty, text.unicodeScalars.count <= 2000, !fontAssetID.isEmpty, fontAssetID.count <= 160,
+        guard (shaped || glyphs != nil), !text.isEmpty, text.unicodeScalars.count <= 2000, !fontAssetID.isEmpty, fontAssetID.count <= 160,
               [fontSize, x, baselineY, letterSpacing, strokeWidth].allSatisfy(\.isFinite),
               fontSize > 0, fontSize <= 1000, abs(x) <= 10000, abs(baselineY) <= 10000,
               (-100...1000).contains(letterSpacing), (0...100).contains(strokeWidth) else { throw RecipeError.invalidTimeline }
@@ -123,6 +143,10 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
         guard blurLayers.count <= 8 else { throw RecipeError.invalidTimeline }
         for layer in blurLayers { try layer.validate() }
         try gradient?.validate()
+        if let glyphs {
+            guard (1...4000).contains(glyphs.count) else { throw RecipeError.invalidTimeline }
+            for glyph in glyphs { try glyph.validate() }
+        }
     }
 }
 
@@ -156,7 +180,8 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         guard !id.isEmpty, id.count <= 160, [start, end, anchorX, anchorY, rotationDegrees].allSatisfy(\.isFinite),
               start >= 0, end > start, end <= min(1800, duration), abs(anchorX) <= 10000, abs(anchorY) <= 10000,
               abs(rotationDegrees) <= 3600, (1...100).contains(runs.count),
-              runs.reduce(0, { $0 + $1.text.unicodeScalars.count }) <= 5000 else { throw RecipeError.invalidTimeline }
+              runs.reduce(0, { $0 + $1.text.unicodeScalars.count }) <= 5000,
+              runs.reduce(0, { $0 + ($1.glyphs?.count ?? 0) }) <= 10000 else { throw RecipeError.invalidTimeline }
         if effect != .static && effect != .none && motion == nil { throw RecipeError.invalidTimeline }
         try motion?.validate()
         for run in runs {

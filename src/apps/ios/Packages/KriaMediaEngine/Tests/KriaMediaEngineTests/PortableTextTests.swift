@@ -61,14 +61,56 @@ final class PortableTextTests: XCTestCase {
                                                   colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         }
     }
+    func testLegacyGlyphPositionsDrawWithoutNativeReshaping() throws {
+        struct Case: Decodable { let text: String; let fontSize: Double; let spacing: Double; let glyphs: [PositionedGlyph] }
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../../../api/tests/fixtures/phone_legacy_glyphs.json").standardizedFileURL
+        let cases = try RecipeJSON.decoder().decode([Case].self, from: Data(contentsOf: fixture))
+        var widths: [Double] = []
+        for (index, test) in cases.enumerated() {
+            let run = PositionedTextRun(text: test.text, fontAssetID: "font", fontSize: test.fontSize, x: 20, baselineY: 100,
+                letterSpacing: test.spacing, shaped: false, fill: white, stroke: black, strokeWidth: 2, glyphs: test.glyphs)
+            let cue = PortableTextLayer(id: "legacy", start: 0, end: 1, anchorX: 100, anchorY: 100, rotationDegrees: 0, runs: [run])
+            let painted = try RecipeTextLayer.make(cue, assetURLs: ["font": fontURL()], canvas: CGSize(width: 400, height: 200))
+            var pixels = [UInt8](repeating: 0, count: Int(painted.image.extent.width * painted.image.extent.height) * 4)
+            CIContext().render(painted.image, toBitmap: &pixels, rowBytes: Int(painted.image.extent.width) * 4,
+                bounds: painted.image.extent, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            XCTAssertGreaterThan(stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 220 && pixels[$0 + 3] > 220 }.count, 400)
+            widths.append(painted.frame.width)
+            XCTAssertGreaterThan(painted.frame.width, 60)
+            XCTAssertGreaterThan(painted.frame.height, 20)
+            if index == 0, let output = ProcessInfo.processInfo.environment["KRIA_GLYPH_REFERENCE_OUTPUT"] {
+                let full = painted.image.transformed(by: CGAffineTransform(translationX: painted.frame.minX, y: painted.frame.minY))
+                    .composited(over: CIImage(color: .clear).cropped(to: CGRect(x: 0, y: 0, width: 400, height: 200)))
+                try CIContext().writePNGRepresentation(of: full, to: URL(fileURLWithPath: output), format: .RGBA8,
+                    colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            }
+        }
+        XCTAssertGreaterThan(widths[1], widths[0] + 7)
+        let invalid = PositionedTextRun(text: "X", fontAssetID: "font", fontSize: 36, x: 20, baselineY: 100,
+            letterSpacing: 0, shaped: false, fill: white, stroke: black, strokeWidth: 2,
+            glyphs: [PositionedGlyph(glyphID: 65535, x: 0, y: 0)])
+        XCTAssertThrowsError(try RecipeTextLayer.make(PortableTextLayer(id: "invalid", start: 0, end: 1, anchorX: 100,
+            anchorY: 100, rotationDegrees: 0, runs: [invalid]), assetURLs: ["font": fontURL()], canvas: CGSize(width: 200, height: 200)))
+    }
+
     func testGradientFillsGlyphsWithResolvedEndpoints() throws {
+        try verifyGradient(useGlyphs: false)
+        try verifyGradient(useGlyphs: true)
+    }
+    private func verifyGradient(useGlyphs: Bool) throws {
+        struct Case: Decodable { let text: String; let glyphs: [PositionedGlyph] }
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../../../api/tests/fixtures/phone_legacy_glyphs.json").standardizedFileURL
+        let cases = try RecipeJSON.decoder().decode([Case].self, from: Data(contentsOf: fixture))
+        let glyphs = try XCTUnwrap(cases.first { $0.text == "Hello" }?.glyphs)
         let base = layer(), run = layer().runs[0]
         let gradient = TextGradient(startX: 30, startY: 100, endX: 117, endY: 100,
             stops: [TextGradientStop(position: 0, color: TextInk(red: 1, green: 0, blue: 0, alpha: 1)),
                     TextGradientStop(position: 1, color: TextInk(red: 0, green: 0, blue: 1, alpha: 1))])
         let gradientRun = PositionedTextRun(text: run.text, fontAssetID: run.fontAssetID, fontSize: run.fontSize,
-            x: run.x, baselineY: run.baselineY, letterSpacing: 0, shaped: true, fill: white, stroke: black,
-            strokeWidth: 2, gradient: gradient)
+            x: run.x, baselineY: run.baselineY, letterSpacing: 0, shaped: !useGlyphs, fill: white, stroke: black,
+            strokeWidth: 2, gradient: gradient, glyphs: useGlyphs ? glyphs : nil)
         let cue = PortableTextLayer(id: base.id, start: base.start, end: base.end, anchorX: base.anchorX,
             anchorY: base.anchorY, rotationDegrees: 0, runs: [gradientRun])
         let painted = try RecipeTextLayer.make(cue, assetURLs: ["font": fontURL()], canvas: CGSize(width: 200, height: 200))

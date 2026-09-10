@@ -4169,6 +4169,36 @@
         "title": "PortableTextLayer",
         "type": "object"
       },
+      "PositionedGlyph": {
+        "additionalProperties": false,
+        "properties": {
+          "glyph_id": {
+            "maximum": 65535,
+            "minimum": 1,
+            "title": "Glyph Id",
+            "type": "integer"
+          },
+          "x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "glyph_id",
+          "x",
+          "y"
+        ],
+        "title": "PositionedGlyph",
+        "type": "object"
+      },
       "PositionedTextRun": {
         "additionalProperties": false,
         "properties": {
@@ -4202,6 +4232,17 @@
             "title": "Font Size",
             "type": "number"
           },
+          "glyphs": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/PositionedGlyph"
+            },
+            "maxItems": 4000,
+            "minItems": 1,
+            "nullable": true,
+            "title": "Glyphs",
+            "type": "array"
+          },
           "gradient": {
             "$ref": "#/components/schemas/TextGradient",
             "default": null,
@@ -4214,9 +4255,6 @@
             "type": "number"
           },
           "shaped": {
-            "enum": [
-              true
-            ],
             "title": "Shaped",
             "type": "boolean"
           },

@@ -12,7 +12,26 @@ extension RecipeTextLayer {
     /// Baselines and tracking are authored in output pixels. No device-specific
     /// wrap, auto-shrink, font lookup, or substitution occurs here.
     static func make(_ layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int = 64 * 1024 * 1024) throws -> Self {
-        struct Run { let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint; let blurs: [TextBlurLayer]; let gradient: TextGradient? }
+        struct Run {
+            let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint
+            let blurs: [TextBlurLayer]; let gradient: TextGradient?
+            let font: CTFont; let glyphs: [CGGlyph]?; let positions: [CGPoint]
+            let fill: CGColor; let strokeColor: CGColor; let strokeWidth: Double
+            func draw(_ context: CGContext, mode: CGTextDrawingMode = .fill, isMask: Bool = false) {
+                context.setTextDrawingMode(mode)
+                context.textPosition = origin
+                if let glyphs {
+                    context.textPosition = .zero
+                    context.setFillColor(isMask ? CGColor(gray: 1, alpha: 1) : fill)
+                    context.setStrokeColor(strokeColor)
+                    context.setLineWidth(strokeWidth)
+                    context.setLineJoin(.round)
+                    CTFontDrawGlyphs(font, glyphs, positions, glyphs.count, context)
+                } else if mode == .stroke {
+                    if let stroke { CTLineDraw(stroke, context) }
+                } else { CTLineDraw(isMask ? mask : line, context) }
+            }
+        }
         let anchor = CGPoint(x: layer.anchorX, y: canvas.height - layer.anchorY)
         let rotation = CGAffineTransform(translationX: -anchor.x, y: -anchor.y)
             .concatenating(CGAffineTransform(rotationAngle: -layer.rotationDegrees * .pi / 180))
@@ -20,7 +39,7 @@ extension RecipeTextLayer {
         var runs: [Run] = []
         var bounds = CGRect.null
         for run in layer.runs {
-            guard run.shaped else { throw MediaEngineError.unsupportedCapability }
+            guard run.shaped || run.glyphs != nil else { throw MediaEngineError.unsupportedCapability }
             guard let url = assetURLs[run.fontAssetID],
                   let provider = CGDataProvider(url: url as CFURL), let graphicsFont = CGFont(provider) else {
                 throw MediaEngineError.missingAsset(run.fontAssetID)
@@ -41,7 +60,7 @@ extension RecipeTextLayer {
             strokeAttributes[NSAttributedString.Key(kCTStrokeWidthAttributeName as String)] = 100 * run.strokeWidth / run.fontSize
             let stroke = run.strokeWidth > 0 ? CTLineCreateWithAttributedString(NSAttributedString(string: run.text, attributes: strokeAttributes)) : nil
             // Fallback changes typography and is not licensed by this manifest.
-            for item in CTLineGetGlyphRuns(line) as! [CTRun] {
+            for item in (run.glyphs == nil ? CTLineGetGlyphRuns(line) as! [CTRun] : []) {
                 let resolved = (CTRunGetAttributes(item) as NSDictionary)[kCTFontAttributeName] as! CTFont
                 guard CFEqual(CTFontCopyGraphicsFont(resolved, nil), graphicsFont) else {
                     throw MediaEngineError.unsupportedCapability
@@ -51,15 +70,29 @@ extension RecipeTextLayer {
                 guard !glyphs.contains(0) else { throw MediaEngineError.unsupportedCapability }
             }
             let origin = CGPoint(x: run.x, y: canvas.height - run.baselineY)
-            var box = CTLineGetImageBounds(line, nil).offsetBy(dx: origin.x, dy: origin.y)
+            var inkBounds = CTLineGetImageBounds(line, nil).offsetBy(dx: origin.x, dy: origin.y)
+            var glyphIDs: [CGGlyph]? = nil
+            var positions: [CGPoint] = []
+            if let glyphs = run.glyphs {
+                guard !glyphs.isEmpty, glyphs.allSatisfy({ $0.glyphID > 0 && $0.glyphID < graphicsFont.numberOfGlyphs }) else {
+                    throw MediaEngineError.unsupportedCapability
+                }
+                let ids = glyphs.map { CGGlyph($0.glyphID) }
+                positions = glyphs.map { CGPoint(x: origin.x + $0.x, y: origin.y - $0.y) }
+                var boxes = [CGRect](repeating: .zero, count: ids.count)
+                CTFontGetBoundingRectsForGlyphs(font, .default, ids, &boxes, ids.count)
+                inkBounds = zip(boxes, positions).reduce(CGRect.null) { $0.union($1.0.offsetBy(dx: $1.1.x, dy: $1.1.y)) }
+                glyphIDs = ids
+            }
+            var box = inkBounds
             box = box.insetBy(dx: -run.strokeWidth - 2, dy: -run.strokeWidth - 2).applying(rotation)
             bounds = bounds.union(box)
-            let inkBounds = CTLineGetImageBounds(mask, nil).offsetBy(dx: origin.x, dy: origin.y)
             for blur in run.blurLayers {
                 bounds = bounds.union(inkBounds.offsetBy(dx: blur.dx, dy: -blur.dy)
                     .insetBy(dx: -ceil(3 * blur.sigma) - 2, dy: -ceil(3 * blur.sigma) - 2).applying(rotation))
             }
-            runs.append(Run(line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers, gradient: run.gradient))
+            runs.append(Run(line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers, gradient: run.gradient, font: font, glyphs: glyphIDs, positions: positions,
+                            fill: run.fill.cgColor, strokeColor: run.stroke.cgColor, strokeWidth: run.strokeWidth))
         }
         // Moving/scaling text can enter the canvas from an offscreen position.
         // Keep its complete bitmap, still subject to the aggregate memory budget.
@@ -81,8 +114,7 @@ extension RecipeTextLayer {
                 }
                 maskContext.translateBy(x: -bounds.minX, y: -bounds.minY)
                 maskContext.concatenate(rotation)
-                maskContext.textPosition = run.origin
-                CTLineDraw(run.mask, maskContext)
+                run.draw(maskContext, isMask: true)
                 guard let maskImage = maskContext.makeImage() else { throw MediaEngineError.exportFailed }
                 for blur in run.blurs {
                     let angle = -layer.rotationDegrees * .pi / 180
@@ -104,12 +136,9 @@ extension RecipeTextLayer {
             }
             context.saveGState()
             context.concatenate(rotation)
-            context.textPosition = run.origin
-            if let stroke = run.stroke { CTLineDraw(stroke, context) }
-            context.textPosition = run.origin
+            if run.strokeWidth > 0 { run.draw(context, mode: .stroke) }
             if let gradient = run.gradient {
-                context.setTextDrawingMode(.clip)
-                CTLineDraw(run.mask, context)
+                run.draw(context, mode: .clip, isMask: true)
                 guard let cgGradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
                     colors: gradient.stops.map { $0.color.cgColor } as CFArray, locations: gradient.stops.map { CGFloat($0.position) }) else {
                     throw MediaEngineError.unsupportedCapability
@@ -118,7 +147,7 @@ extension RecipeTextLayer {
                     start: CGPoint(x: gradient.startX, y: canvas.height - gradient.startY),
                     end: CGPoint(x: gradient.endX, y: canvas.height - gradient.endY),
                     options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-            } else { CTLineDraw(run.line, context) }
+            } else { run.draw(context) }
             context.restoreGState()
         }
         guard let image = context.makeImage() else { throw MediaEngineError.exportFailed }

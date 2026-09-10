@@ -49,6 +49,12 @@ class TextGradient(_TextModel):
         return self
 
 
+class PositionedGlyph(_TextModel):
+    glyph_id: int = Field(ge=1, le=65535)
+    x: float = Field(ge=-10000, le=10000)
+    y: float = Field(ge=-10000, le=10000)
+
+
 class PositionedTextRun(_TextModel):
     text: str = Field(min_length=1, max_length=2000)
     font_asset_id: str = Field(min_length=1, max_length=160)
@@ -56,13 +62,20 @@ class PositionedTextRun(_TextModel):
     x: float = Field(ge=-10000, le=10000)
     baseline_y: float = Field(ge=-10000, le=10000)
     letter_spacing: float = Field(ge=-100, le=1000)
-    shaped: Literal[True]
+    shaped: bool
+    glyphs: list[PositionedGlyph] | None = Field(default=None, min_length=1, max_length=4000)
     fill: TextInk
     stroke: TextInk
     # Full centered stroke width in pixels (cloud stroke_px is half this value).
     stroke_width: float = Field(ge=0, le=100)
     blur_layers: list[TextBlurLayer] = Field(default_factory=list, max_length=8)
     gradient: TextGradient | None = None
+
+    @model_validator(mode="after")
+    def valid_glyph_layout(self):
+        if not self.shaped and self.glyphs is None:
+            raise ValueError("unshaped text requires resolved glyph positions")
+        return self
 
 
 class ResolvedTextMotion(_TextModel):
@@ -101,6 +114,8 @@ class PortableTextLayer(_TextModel):
             raise ValueError("animated text requires resolved motion")
         if self.end <= self.start:
             raise ValueError("text layer must have a positive time window")
+        if sum(len(run.glyphs or []) for run in self.runs) > 10000:
+            raise ValueError("too many resolved glyphs")
         if sum(len(run.text) for run in self.runs) > 5000:
             raise ValueError("text layer is too large")
         return self
