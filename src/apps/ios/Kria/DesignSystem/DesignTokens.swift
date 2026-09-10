@@ -2,17 +2,29 @@ import SwiftUI
 
 enum KriaColor {
     static let paper = Color.white
-    static let ink = Color(red: 0.094, green: 0.094, blue: 0.106)
-    static let mutedInk = Color(red: 0.39, green: 0.39, blue: 0.42)
-    static let zinc = Color(red: 0.443, green: 0.443, blue: 0.478)
-    static let line = Color(red: 0.894, green: 0.894, blue: 0.906)
-    static let border = Color(red: 0.831, green: 0.831, blue: 0.847)
-    static let softZinc = Color(red: 0.957, green: 0.957, blue: 0.965)
-    static let lime = Color(red: 0.518, green: 0.80, blue: 0.086)
-    static let limeText = Color(red: 0.247, green: 0.384, blue: 0.071)
-    static let limeSoft = Color(red: 0.925, green: 0.988, blue: 0.796)
-    static let failureText = Color(red: 0.58, green: 0.20, blue: 0.20)
-    static let failureSoft = Color(red: 0.98, green: 0.94, blue: 0.94)
+    static let ink = Color(hex: 0x30352C)
+    static let mutedInk = Color(hex: 0x526071)
+    static let zinc = Color(hex: 0x677587)
+    static let line = Color(hex: 0xCAD2DB)
+    static let border = Color(hex: 0x677587)
+    static let softZinc = Color(hex: 0xF7F7F8)
+    static let sky = Color(hex: 0x9BCAFF)
+    static let selectionSoft = Color(hex: 0xEBF3FF)
+    static let butter = Color(hex: 0xFFF0A6)
+    static let sage = Color(hex: 0xDDE6CB)
+    static let lilac = Color(hex: 0xE7DDF5)
+    static let plum = Color(hex: 0x332847)
+    static let menu = Color(hex: 0xFAF8F0)
+    static let success = Color(hex: 0x17633B)
+    static let successSoft = Color(hex: 0xEAF6EE)
+    static let failureText = Color(hex: 0xB42318)
+    static let failureSoft = Color(hex: 0xFFF0ED)
+}
+
+private extension Color {
+    init(hex: UInt32) {
+        self.init(red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255)
+    }
 }
 
 enum KriaFont {
@@ -22,8 +34,8 @@ enum KriaFont {
 
 struct KriaPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
-    var fill = KriaColor.ink
-    var usesLightText = true
+    var fill = KriaColor.butter
+    var usesLightText = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(KriaFont.body(16).weight(.semibold))
@@ -92,7 +104,7 @@ struct KriaStatusPill: View {
 
     private var treatment: (foreground: Color, background: Color) {
         switch status {
-        case .ready: (KriaColor.limeText, KriaColor.limeSoft)
+        case .ready: (KriaColor.success, KriaColor.successSoft)
         case .draft, .rendering: (KriaColor.zinc, KriaColor.softZinc)
         case .failed: (KriaColor.failureText, KriaColor.failureSoft)
         }

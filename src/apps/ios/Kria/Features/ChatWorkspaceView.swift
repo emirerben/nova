@@ -3,60 +3,144 @@ import SwiftUI
 struct ChatWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("kria.workspace.last-project-id") private var lastProjectID = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsProjects = false
+    @State private var drawerDrag: CGFloat = 0
+    @State private var drawerMounted = false
+    @State private var horizontalDrawerDrag: Bool?
+    @State private var drawerGestureExclusions: [CGRect] = []
     @State private var showsGallery = false
     @State private var showsAccount = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let project = model.selectedProject {
-                    CreationWorkspaceView(
-                        project: project,
-                        openProjects: { showsProjects = true },
-                        openAccount: { showsAccount = true }
+        GeometryReader { geometry in
+            let drawerWidth = min(326, max(0, geometry.size.width - 76))
+            let drawerOffset = min(drawerWidth, max(0, (showsProjects ? drawerWidth : 0) + drawerDrag))
+            let drawerActive = showsProjects || drawerOffset > 0
+            let drawerProgress = drawerWidth > 0 ? drawerOffset / drawerWidth : 0
+            let topInset = geometry.safeAreaInsets.top
+            let bottomInset = geometry.safeAreaInsets.bottom
+            ZStack(alignment: .topLeading) {
+                if drawerActive || drawerMounted {
+                    ProjectsDrawer(
+                        close: { setDrawerOpen(false) },
+                        openGallery: { setDrawerOpen(false); showsGallery = true },
+                        openAccount: { setDrawerOpen(false); showsAccount = true }
                     )
-                    .id(project.id)
-                } else if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
-                    WorkspaceLoadingView()
-                } else if model.projectsState == .empty {
-                    WorkspaceEmptyView { Task { await model.createProject() } }
-                } else {
-                    WorkspaceRecoveryView { Task { await model.openWorkspace() } }
+                    .frame(width: drawerWidth, height: geometry.size.height)
+                    .offset(x: drawerOffset - drawerWidth, y: topInset)
+                    .accessibilityHidden(!drawerActive)
+                    .allowsHitTesting(drawerActive)
                 }
+                NavigationStack {
+                    Group {
+                        if let project = model.selectedProject {
+                            CreationWorkspaceView(
+                                project: project,
+                                openProjects: { setDrawerOpen(!showsProjects) },
+                                openAccount: { showsAccount = true }
+                            )
+                            .id(project.id)
+                        } else {
+                            Group {
+                                if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
+                                    WorkspaceLoadingView()
+                                } else if model.projectsState == .empty {
+                                    WorkspaceEmptyView { Task { await model.createProject() } }
+                                } else {
+                                    WorkspaceRecoveryView { Task { await model.openWorkspace() } }
+                                }
+                            }
+                            .accessibilityHidden(showsProjects)
+                            .allowsHitTesting(!showsProjects)
+                            .safeAreaInset(edge: .top) {
+                                HStack {
+                                    Button { setDrawerOpen(!showsProjects) } label: {
+                                        KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle())
+                                    }
+                                    .accessibilityLabel(showsProjects ? "Close projects" : "Open projects")
+                                    .accessibilityIdentifier("workspace-menu-toggle")
+                                    Spacer()
+                                    KriaWordmark().accessibilityHidden(showsProjects)
+                                    Spacer()
+                                    Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+                                }.padding(.horizontal, 16).frame(minHeight: 64).background(WorkspaceSurface())
+                            }
+                        }
+                    }
+                    .toolbar(.hidden, for: .navigationBar)
+                }
+                .environment(\.projectsDrawerOpen, drawerActive)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .padding(.top, topInset)
+                .padding(.bottom, bottomInset)
+                .background(WorkspaceSurface())
+                .clipShape(RoundedRectangle(cornerRadius: 44 * drawerProgress, style: .continuous))
+                .offset(x: drawerOffset)
             }
-            .toolbar(.hidden, for: .navigationBar)
+            .environment(\.projectsDrawerProgress, drawerProgress)
+            .frame(width: geometry.size.width, height: geometry.size.height + topInset + bottomInset, alignment: .topLeading)
+            .clipped()
+            .offset(y: -topInset)
+            .background(KriaColor.paper.ignoresSafeArea())
+            .onPreferenceChange(DrawerGestureExclusionPreference.self) { drawerGestureExclusions = $0 }
+            .simultaneousGesture(drawerGesture(width: drawerWidth))
+            .accessibilityAction(.escape) { setDrawerOpen(false) }
+        }
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: showsProjects)
+        .onChange(of: showsProjects) { _, isOpen in
+            if isOpen { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
         }
         .task { await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID)) }
         .onChange(of: model.selectedProject?.id) { _, identifier in
             lastProjectID = identifier?.uuidString ?? ""
         }
-        .overlay {
-            if showsProjects {
-                ProjectsDrawer(
-                    close: { showsProjects = false },
-                    openGallery: {
-                        showsProjects = false
-                        showsGallery = true
-                    }
-                )
-                .environmentObject(model)
-                .transition(.opacity)
-                .zIndex(10)
-            }
-        }
-        .animation(.easeOut(duration: 0.2), value: showsProjects)
         .fullScreenCover(isPresented: $showsGallery) {
-            NavigationStack { GalleryView() }
+            NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
                 .environmentObject(model)
         }
         .sheet(isPresented: $showsAccount) {
             NavigationStack { AccountView() }
         }
     }
+
+    private func setDrawerOpen(_ isOpen: Bool) {
+        // Commit the destination and release the drag in the same transaction.
+        // GestureState's automatic reset previously replayed the closing offset.
+        drawerMounted = true
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.24)) {
+            showsProjects = isOpen
+            drawerDrag = 0
+        } completion: {
+            if !showsProjects && drawerDrag == 0 { drawerMounted = false }
+        }
+    }
+
+    private func drawerGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 3, coordinateSpace: .global)
+            .onChanged { value in
+                // Choose an axis once, without a 20-point dead zone at touch-down.
+                if horizontalDrawerDrag == nil {
+                    let startsInScroller = !showsProjects && drawerGestureExclusions.contains { $0.contains(value.startLocation) }
+                    horizontalDrawerDrag = !startsInScroller && abs(value.translation.width) > abs(value.translation.height)
+                }
+                guard horizontalDrawerDrag == true else { return }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { drawerDrag = value.translation.width }
+            }
+            .onEnded { value in
+                let wasHorizontal = horizontalDrawerDrag == true
+                horizontalDrawerDrag = nil
+                guard wasHorizontal else { return }
+                let projectedOffset = (showsProjects ? width : 0) + value.predictedEndTranslation.width
+                setDrawerOpen(projectedOffset > width / 2)
+            }
+    }
 }
 
 private struct WorkspaceEmptyView: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     let create: () -> Void
     @EnvironmentObject private var model: AppModel
 
@@ -73,26 +157,28 @@ private struct WorkspaceEmptyView: View {
         }
         .padding(24)
         .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
-        .background(KriaColor.paper)
+        .background(WorkspaceSurface())
     }
 }
 
 private struct WorkspaceLoadingView: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     var body: some View {
         VStack(spacing: 14) {
-            ProgressView().tint(KriaColor.limeText)
+            ProgressView().tint(KriaColor.ink)
             Text("Opening your conversation…")
                 .font(KriaFont.body(14))
                 .foregroundStyle(KriaColor.zinc)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(KriaColor.paper)
+        .background(WorkspaceSurface())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Opening your creation conversation")
     }
 }
 
 private struct WorkspaceRecoveryView: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     let retry: () -> Void
     @EnvironmentObject private var model: AppModel
 
@@ -106,7 +192,7 @@ private struct WorkspaceRecoveryView: View {
         }
         .padding(24)
         .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
-        .background(KriaColor.paper)
+        .background(WorkspaceSurface())
     }
 }
 
@@ -116,6 +202,8 @@ private struct CreationWorkspaceView: View {
     let openAccount: () -> Void
 
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @State private var prompt = ""
     @State private var events: [ThreadEvent] = []
     @State private var pendingMessages: [PendingChatMessage] = []
@@ -217,7 +305,7 @@ private struct CreationWorkspaceView: View {
                     }
                     .frame(maxWidth: 620, alignment: .leading)
                     .padding(.horizontal, 16)
-                    .padding(.top, 96)
+                    .padding(.top, 20)
                     .padding(.bottom, 28)
                     .frame(maxWidth: .infinity)
                 }
@@ -228,8 +316,10 @@ private struct CreationWorkspaceView: View {
                 .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: isThinking) { _, _ in scrollToEnd(proxy) }
             }
+            .accessibilityHidden(projectsDrawerOpen)
+            .allowsHitTesting(!projectsDrawerOpen)
         }
-        .background(KriaColor.paper)
+        .background(WorkspaceSurface())
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: $prompt,
@@ -238,10 +328,15 @@ private struct CreationWorkspaceView: View {
                 attach: { if selectedFormat != nil { showsAttachments = true } },
                 send: { Task { await send() } }
             )
+            .accessibilityHidden(projectsDrawerOpen)
+            .allowsHitTesting(!projectsDrawerOpen)
         }
         .task {
             await refreshCapabilities()
             await pollUntilDismissed()
+        }
+        .onChange(of: currentProject.serverRevision) { _, revision in
+            threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
         }
         .onReceive(model.uploads.$attachedThreads) { threads in
             guard let thread = threads[project.id] else { return }
@@ -313,7 +408,7 @@ private struct CreationWorkspaceView: View {
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.22)) { proxy.scrollTo("conversation-end", anchor: .bottom) }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { proxy.scrollTo("conversation-end", anchor: .bottom) }
     }
 
     private func send(message submittedMessage: String? = nil) async {

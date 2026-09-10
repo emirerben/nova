@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.5.0] - 2026-09-10
+
+### Changed
+- The iOS app now shares Kria’s Sunlit branding, wordmark, chat composer, and left navigation with the web experience. Gallery, account, consent, and editor surfaces use the same visual system.
+- Creators can start chats and rename or delete projects from native project menus, with confirmation, revision conflict recovery, and protection for active renders/uploads.
+- The projects drawer follows the swipe continuously, with a gradual paper-color transition, rounded full-screen corners, and a light haptic when it opens or closes.
+
 ## [0.75.1.0] - 2026-09-09
 
 ### Fixed
@@ -11,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - **Closing a tool sheet on mobile is a single tap.** Tapping outside the sheet now closes it (it used to only collapse to half-height), the close button is a proper touch target, and a keyboard-open sheet no longer snaps to full height from ordinary scroll/browser-chrome noise.
 - **Switching music tracks on mobile now plays a preview.** Picking a different track used to request no audio at all for most videos, and even when it did, played nothing unless the video happened to already be playing. Now it previews audibly right away.
 - **The mobile editor's header shows which video you're editing** instead of a generic "Edit video" label.
+
 ## [0.74.0.0] — 2026-09-09
 
 ### Added
