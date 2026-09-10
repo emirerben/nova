@@ -75,4 +75,44 @@ final class SourceAssetStoreTests: XCTestCase {
         XCTAssertEqual(CapabilityNegotiator().decide(for: recipe).route, .cloud)
     }
 
+    func testRelinkAcceptsOnlyExactOriginalAndSurvivesMissingOldFile() async throws {
+        let project = ProjectDirectory(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        try project.createIfNeeded()
+        let source = project.root.appendingPathComponent("selected.mov")
+        try Data("original footage".utf8).write(to: source)
+        let importer = AssetImportCoordinator(project: project)
+        let original = try await importer.importAsset(from: source)
+        let store = SourceAssetStore(project: project)
+        try store.bind(mediaID: "server", original: original)
+        let reference = RenderAssetReference(id: "clip", fingerprint: try RenderFingerprint(original.fingerprint!), source: .original(mediaID: "server"))
+        try FileManager.default.removeItem(at: project.root.appendingPathComponent(original.relativePath))
+        let replacement = try await importer.importAsset(from: source)
+        try store.relink(reference, original: replacement)
+        XCTAssertEqual(try store.resolve(mediaIDs: ["server"])["server"], project.root.appendingPathComponent(replacement.relativePath))
+        let saved = try store.bindings()
+        try Data("analysis proxy".utf8).write(to: source)
+        let wrong = try await importer.importAsset(from: source)
+        XCTAssertThrowsError(try store.relink(reference, original: wrong))
+        XCTAssertEqual(try store.bindings(), saved)
+        var forged = wrong
+        forged.fingerprint = original.fingerprint
+        XCTAssertThrowsError(try store.relink(reference, original: forged))
+        XCTAssertEqual(try store.bindings(), saved)
+    }
+
+    func testOriginalDirectorySymlinkCannotEscapeManagedProject() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = ProjectDirectory(root: root.appendingPathComponent("project"))
+        try project.createIfNeeded()
+        let outside = root.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try Data("original".utf8).write(to: outside.appendingPathComponent("clip.mov"))
+        try FileManager.default.removeItem(at: project.originals)
+        try FileManager.default.createSymbolicLink(at: project.originals, withDestinationURL: outside)
+        let asset = MediaAsset(id: "clip", relativePath: "originals/clip.mov", fingerprint: try SHA256Fingerprinter().fingerprint(file: outside.appendingPathComponent("clip.mov")))
+        XCTAssertThrowsError(try SourceAssetStore(project: project).bind(mediaID: "server", original: asset))
+    }
+
 }

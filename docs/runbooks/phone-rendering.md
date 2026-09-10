@@ -178,3 +178,17 @@ must succeed before either the desired variant or its next device receipt change
 `phone_text_transforms_{v2,legacy}.json` and `PortableTextTests` cover cloud timing
 references and real native preview/export. All unimplemented lanes still fail
 closed, and the rollout remains disabled pending the complete parity/device gates.
+
+
+### Relinking local originals
+
+The device render status panel offers **Find original files** after a stopped or
+failed local attempt. Selecting a file copies it into app-managed storage and
+checks its complete SHA-256 and byte count against the current immutable recipe.
+Only an exact match replaces the media binding; mismatches and selections for a
+superseded revision leave existing bindings intact. No upload is performed by
+relinking. Once all originals are present, retry uses fresh rollout capabilities.
+This also supports Gallery/cross-device projects that lack a local source mapping.
+Source manifest writes are serialized; neither proxy paths nor symlink escapes
+can become original bindings. Tests: `SourceAssetStoreTests` and
+`DeviceRenderSessionTests.testRelinkRequiresExactBytesAndCurrentRequest`.

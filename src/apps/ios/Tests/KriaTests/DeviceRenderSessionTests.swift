@@ -25,6 +25,12 @@ private actor SessionPublisher: DeviceRenderPublishing {
     }
 }
 
+private actor SessionRequest {
+    var request: DeviceRenderRequest
+    init(_ request: DeviceRenderRequest) { self.request = request }
+    func set(_ request: DeviceRenderRequest) { self.request = request }
+}
+
 @MainActor final class DeviceRenderSessionTests: XCTestCase {
     private func request(_ job: UUID) -> DeviceRenderRequest {
         DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: job, variantID: "first", recipeRevision: 1, recipeDigest: String(repeating: "a", count: 64)),
@@ -102,4 +108,38 @@ private actor SessionPublisher: DeviceRenderPublishing {
         ])])
         XCTAssertEqual(media.map(\.uploadPurpose), ["analysis_proxy", "analysis_proxy", "cloud_render_source"])
     }
+    func testRelinkRequiresExactBytesAndCurrentRequest() async throws {
+        let directory = ProjectDirectory(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: directory.root) }
+        try directory.createIfNeeded()
+        let source = directory.root.appendingPathComponent("selected.mov")
+        try Data("original".utf8).write(to: source)
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: source)
+        let asset = RenderAssetReference(id: "source", fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: "server"))
+        let job = UUID()
+        let initial = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: job, variantID: "first", recipeRevision: 1, recipeDigest: String(repeating: "a", count: 64)),
+            recipe: KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", assets: [MediaAsset(id: "source", relativePath: "source", fingerprint: fingerprint)], tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])], assetManifest: RenderAssetManifest(assets: [asset])))
+        let remote = SessionRequest(initial)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in DeviceRenderStatusResponse(phase: "awaiting_device", request: await remote.request) }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: directory.root.appendingPathComponent("render"), exporter: SessionExport(), sources: SessionSources(), publisher: SessionPublisher())
+        }, projectDirectory: { _ in directory })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: .disabled)
+        let missing = try await sessions.sourcesNeedingRelink(key)
+        let target = try XCTUnwrap(missing.first)
+        XCTAssertEqual(missing.count, 1)
+        let wrong = directory.root.appendingPathComponent("wrong.mov")
+        try Data("proxy".utf8).write(to: wrong)
+        do { try await sessions.relink(target, for: key, from: wrong); XCTFail("Wrong file accepted") } catch {}
+        XCTAssertTrue(try SourceAssetStore(project: directory).bindings().isEmpty)
+        try await sessions.relink(target, for: key, from: source)
+        let remaining = try await sessions.sourcesNeedingRelink(key)
+        XCTAssertTrue(remaining.isEmpty)
+        let next = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: job, variantID: "first", recipeRevision: 2, recipeDigest: String(repeating: "b", count: 64)), recipe: initial.recipe)
+        await remote.set(next)
+        await sessions.reconcile(key, capabilities: .disabled)
+        do { try await sessions.relink(target, for: key, from: source); XCTFail("Stale selection accepted") }
+        catch APIError.conflict {} catch { XCTFail("Unexpected error: \(error)") }
+    }
+
 }

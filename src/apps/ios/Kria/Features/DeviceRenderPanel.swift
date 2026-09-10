@@ -1,17 +1,105 @@
 import SwiftUI
 import AVKit
 import KriaMediaEngine
+import UniformTypeIdentifiers
 
 struct DeviceRenderPanel: View {
     let key: DeviceRenderKey
     let sessions: DeviceRenderSessions
     let retry: () async -> Void
+    @State private var showsSourceRecovery = false
     var body: some View {
+        VStack(spacing: 12) {
         DeviceRenderStatusCard(
             presentation: sessions.presentations[key] ?? DeviceRenderPresentation(phase: .preparing),
             retry: { Task { await retry() } },
             stop: { Task { await sessions.cancel(key) } }
         )
+        if [.needsAttention, .cancelled].contains(sessions.presentations[key]?.phase ?? .preparing) {
+            Button("Find original files") { showsSourceRecovery = true }
+                .buttonStyle(KriaSecondaryButtonStyle())
+                .accessibilityIdentifier("device-render-find-originals")
+        }
+        }
+        .sheet(isPresented: $showsSourceRecovery) {
+            DeviceSourceRecoveryView(key: key, sessions: sessions, retry: retry)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+private struct DeviceSourceRecoveryView: View {
+    let key: DeviceRenderKey
+    let sessions: DeviceRenderSessions
+    let retry: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var targets: [DeviceRelinkTarget] = []
+    @State private var loading = true
+    @State private var message: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Find your originals").font(KriaFont.display(26))
+                Text("Choose the original files used for this project. Kria checks that they match and keeps them on this iPhone.")
+                    .font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+                if loading { ProgressView().accessibilityLabel("Checking original files") }
+                ForEach(targets) { target in
+                    DeviceOriginalRelinkRow(target: target) { file in
+                        try await sessions.relink(target, for: key, from: file)
+                        await refresh()
+                        if targets.isEmpty && message == nil { await retry(); dismiss() }
+                    }
+                }
+                if !loading && targets.isEmpty && message == nil {
+                    Text("The original files are available on this iPhone.").font(KriaFont.body(14))
+                }
+                if let message { Text(message).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc) }
+                Button("Done") { dismiss() }.buttonStyle(KriaSecondaryButtonStyle())
+            }
+            .padding(24)
+        }
+        .background(KriaColor.paper)
+        .task { await refresh() }
+    }
+
+    private func refresh() async {
+        loading = true
+        defer { loading = false }
+        do { targets = try await sessions.sourcesNeedingRelink(key); message = nil }
+        catch { message = "Kria couldn’t check these files. Try again when the project has loaded." }
+    }
+}
+
+private struct DeviceOriginalRelinkRow: View {
+    let target: DeviceRelinkTarget
+    let relink: (URL) async throws -> Void
+    @State private var selecting = false
+    @State private var checking = false
+    @State private var message: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { selecting = true } label: {
+                Label("Find \(target.title.lowercased())", systemImage: "folder")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(KriaSecondaryButtonStyle())
+            .disabled(checking)
+            if checking { ProgressView("Checking original…").font(KriaFont.body(13)) }
+            if let message { Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
+        }
+        .fileImporter(isPresented: $selecting, allowedContentTypes: [.movie, .image, .audio], allowsMultipleSelection: false) { result in
+            guard case .success(let files) = result, let file = files.first else { return }
+            checking = true; message = nil
+            Task {
+                defer { checking = false }
+                do { try await relink(file) }
+                catch APIError.conflict { message = "A newer edit is available. Close this sheet and open it again." }
+                catch { message = "That file couldn’t be verified. Choose the unmodified original used for this project." }
+            }
+        }
     }
 }
 

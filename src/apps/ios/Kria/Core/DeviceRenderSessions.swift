@@ -9,6 +9,13 @@ struct DeviceRenderKey: Hashable, Sendable {
     let variantID: String
 }
 
+struct DeviceRelinkTarget: Identifiable, Sendable {
+    var id: String { asset.id }
+    let identity: DeviceRenderIdentity
+    let asset: RenderAssetReference
+    let title: String
+}
+
 struct DeviceRenderPresentation: Equatable, Sendable {
     var phase: DeviceRenderPhase
     var localFile: URL?
@@ -23,6 +30,7 @@ struct DeviceRenderPresentation: Equatable, Sendable {
     private(set) var presentations: [DeviceRenderKey: DeviceRenderPresentation] = [:]
     @ObservationIgnored private let fetch: Fetch
     @ObservationIgnored private let factory: Factory
+    @ObservationIgnored private let projectDirectory: @MainActor (UUID) -> ProjectDirectory
     @ObservationIgnored private var entries: [DeviceRenderKey: DeviceRenderCoordinator] = [:]
     @ObservationIgnored private var requests: [DeviceRenderKey: DeviceRenderRequest] = [:]
     @ObservationIgnored private var observations: [DeviceRenderKey: Task<Void, Never>] = [:]
@@ -43,8 +51,9 @@ struct DeviceRenderPresentation: Equatable, Sendable {
         })
     }
 
-    init(fetch: @escaping Fetch, factory: @escaping Factory) {
-        self.fetch = fetch; self.factory = factory
+    init(fetch: @escaping Fetch, factory: @escaping Factory,
+         projectDirectory: @escaping @MainActor (UUID) -> ProjectDirectory = { BackgroundUploadCoordinator.projectDirectory($0) }) {
+        self.fetch = fetch; self.factory = factory; self.projectDirectory = projectDirectory
     }
 
     func reconcile(_ key: DeviceRenderKey, capabilities: PhoneRenderingCapabilities, retry: Bool = false) async {
@@ -97,6 +106,39 @@ struct DeviceRenderPresentation: Equatable, Sendable {
             var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
             presentation.message = "Kria couldn’t prepare this edit on your iPhone. Your project is saved. Try again when you’re connected."
             presentations[key] = presentation
+        }
+    }
+
+    func sourcesNeedingRelink(_ key: DeviceRenderKey) async throws -> [DeviceRelinkTarget] {
+        guard let request = requests[key], let manifest = request.recipe.assetManifest else { throw APIError.invalidResponse }
+        let store = SourceAssetStore(project: projectDirectory(key.projectID))
+        return await Task.detached {
+            var missing: [DeviceRelinkTarget] = [], seen = Set<String>()
+            for asset in manifest.assets {
+                guard case .original(let mediaID) = asset.source, seen.insert(mediaID).inserted else { continue }
+                let binding = try? store.bindings().first { $0.mediaID == mediaID }
+                let matches = binding?.original.fingerprint?.hex == asset.fingerprint.sha256
+                    && binding?.original.fingerprint?.byteCount == asset.fingerprint.byteCount
+                if !matches || (try? store.resolve(mediaIDs: [mediaID])) == nil {
+                    missing.append(DeviceRelinkTarget(identity: request.identity, asset: asset, title: "Original \(seen.count)"))
+                }
+            }
+            return missing
+        }.value
+    }
+
+    func relink(_ target: DeviceRelinkTarget, for key: DeviceRenderKey, from file: URL) async throws {
+        guard requests[key]?.identity == target.identity else { throw APIError.conflict }
+        let project = projectDirectory(key.projectID)
+        let original = try await AssetImportCoordinator(project: project).importAsset(from: file)
+        let imported = project.root.appendingPathComponent(original.relativePath)
+        do {
+            guard requests[key]?.identity == target.identity else { throw APIError.conflict }
+            let store = SourceAssetStore(project: project)
+            try await Task.detached { try store.relink(target.asset, original: original) }.value
+        } catch {
+            try? FileManager.default.removeItem(at: imported)
+            throw error
         }
     }
 

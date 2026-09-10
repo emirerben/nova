@@ -17,6 +17,7 @@ public enum SourceAssetError: Error, Equatable, Sendable {
 
 /// Serialize writes through one owner (the upload/render coordinator).
 public struct SourceAssetStore: Sendable {
+    private static let manifestWriteLock = NSLock()
     public let project: ProjectDirectory
     public init(project: ProjectDirectory) { self.project = project }
     private var manifest: URL { project.root.appendingPathComponent("source-assets.json") }
@@ -32,6 +33,8 @@ public struct SourceAssetStore: Sendable {
             throw SourceAssetError.invalidBinding
         }
         _ = try originalURL(original)
+        Self.manifestWriteLock.lock()
+        defer { Self.manifestWriteLock.unlock() }
         var records = try bindings()
         let binding = SourceAssetBinding(mediaID: mediaID, original: original)
         if let existing = records.first(where: { $0.mediaID == mediaID }) {
@@ -39,6 +42,27 @@ public struct SourceAssetStore: Sendable {
             return
         }
         records.append(binding)
+        try project.createIfNeeded()
+        try JSONEncoder().encode(records).write(to: manifest, options: .atomic)
+    }
+
+    /// A creator-selected replacement must be the exact approved original.
+    /// Call off the main actor: verification streams the complete file.
+    public func relink(_ reference: RenderAssetReference, original: MediaAsset) throws {
+        try reference.validate()
+        guard case .original(let mediaID) = reference.source,
+              original.fingerprint == reference.fingerprint.assetFingerprint else {
+            throw SourceAssetError.invalidBinding
+        }
+        let url = try originalURL(original)
+        guard try SHA256Fingerprinter().fingerprint(file: url) == original.fingerprint else {
+            throw SourceAssetError.changedOriginal(mediaID)
+        }
+        Self.manifestWriteLock.lock()
+        defer { Self.manifestWriteLock.unlock() }
+        var records = try bindings()
+        records.removeAll { $0.mediaID == mediaID }
+        records.append(SourceAssetBinding(mediaID: mediaID, original: original))
         try project.createIfNeeded()
         try JSONEncoder().encode(records).write(to: manifest, options: .atomic)
     }
@@ -69,7 +93,7 @@ public struct SourceAssetStore: Sendable {
             throw SourceAssetError.invalidBinding
         }
         let url = project.root.appendingPathComponent(asset.relativePath).resolvingSymlinksInPath()
-        let root = project.originals.resolvingSymlinksInPath().path + "/"
+        let root = project.root.resolvingSymlinksInPath().appendingPathComponent("originals").path + "/"
         guard url.path.hasPrefix(root) else { throw SourceAssetError.invalidBinding }
         return url
     }
