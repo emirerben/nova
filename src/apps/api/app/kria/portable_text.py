@@ -20,6 +20,13 @@ class TextInk(_TextModel):
     alpha: float = Field(ge=0, le=1)
 
 
+class TextBlurLayer(_TextModel):
+    color: TextInk
+    sigma: float = Field(ge=0, le=100)
+    dx: float = Field(ge=-1000, le=1000)
+    dy: float = Field(ge=-1000, le=1000)
+
+
 class PositionedTextRun(_TextModel):
     text: str = Field(min_length=1, max_length=2000)
     font_asset_id: str = Field(min_length=1, max_length=160)
@@ -30,7 +37,9 @@ class PositionedTextRun(_TextModel):
     shaped: Literal[True]
     fill: TextInk
     stroke: TextInk
+    # Full centered stroke width in pixels (cloud stroke_px is half this value).
     stroke_width: float = Field(ge=0, le=100)
+    blur_layers: list[TextBlurLayer] = Field(default_factory=list, max_length=8)
 
 
 class ResolvedTextMotion(_TextModel):

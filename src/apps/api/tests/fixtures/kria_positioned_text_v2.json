@@ -124,7 +124,8 @@
             "blue": 1.0,
             "alpha": 1.0
           },
-          "stroke_width": 0.0
+          "stroke_width": 0.0,
+          "blur_layers": []
         }
       ],
       "effect": "static",

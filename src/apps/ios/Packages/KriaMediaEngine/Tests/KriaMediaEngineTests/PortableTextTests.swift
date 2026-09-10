@@ -61,6 +61,33 @@ final class PortableTextTests: XCTestCase {
                                                   colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         }
     }
+    func testShadowHasVisibleBleedAndPreservesFill() throws {
+        let base = layer()
+        let run = base.runs[0]
+        let shadowRun = PositionedTextRun(text: run.text, fontAssetID: run.fontAssetID, fontSize: run.fontSize,
+            x: run.x, baselineY: run.baselineY, letterSpacing: run.letterSpacing, shaped: true,
+            fill: run.fill, stroke: run.stroke, strokeWidth: run.strokeWidth,
+            blurLayers: [TextBlurLayer(color: TextInk(red: 0, green: 0, blue: 0, alpha: 160.0 / 255), sigma: 12, dx: 0, dy: 6)])
+        let cue = PortableTextLayer(id: base.id, start: base.start, end: base.end, anchorX: base.anchorX,
+            anchorY: base.anchorY, rotationDegrees: 0, runs: [shadowRun])
+        let painted = try RecipeTextLayer.make(cue, assetURLs: ["font": fontURL()], canvas: CGSize(width: 200, height: 200))
+        let plain = try RecipeTextLayer.make(base, assetURLs: ["font": fontURL()], canvas: CGSize(width: 200, height: 200))
+        XCTAssertGreaterThan(painted.frame.width, plain.frame.width + 40)
+        let full = painted.image.transformed(by: CGAffineTransform(translationX: painted.frame.minX, y: painted.frame.minY))
+            .composited(over: CIImage(color: .clear).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 200)))
+        var pixels = [UInt8](repeating: 0, count: 200 * 200 * 4)
+        CIContext().render(full, toBitmap: &pixels, rowBytes: 800, bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
+                           format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        let shadowPixels = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] < 10 && pixels[$0 + 3] > 3 && pixels[$0 + 3] < 100 }.count
+        XCTAssertGreaterThan(shadowPixels, 1000)
+        let whitePixels = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 220 && pixels[$0 + 3] > 220 }.count
+        XCTAssertGreaterThan(whitePixels, 600)
+        if let output = ProcessInfo.processInfo.environment["KRIA_SHADOW_REFERENCE_OUTPUT"] {
+            try CIContext().writePNGRepresentation(of: full.cropped(to: CGRect(x: 0, y: 0, width: 200, height: 200)),
+                to: URL(fileURLWithPath: output), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        }
+    }
+
     @MainActor func testIndependentTextAppearsOnlyInsideItsWindowInPreviewAndExport() async throws {
         try await verifyTextWindow(animated: false)
     }

@@ -4178,6 +4178,14 @@
             "title": "Baseline Y",
             "type": "number"
           },
+          "blur_layers": {
+            "items": {
+              "$ref": "#/components/schemas/TextBlurLayer"
+            },
+            "maxItems": 8,
+            "title": "Blur Layers",
+            "type": "array"
+          },
           "fill": {
             "$ref": "#/components/schemas/TextInk"
           },
@@ -4620,6 +4628,40 @@
           "status"
         ],
         "title": "TemporaryUploadCancellationResponse",
+        "type": "object"
+      },
+      "TextBlurLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "dx": {
+            "maximum": 1000,
+            "minimum": -1000,
+            "title": "Dx",
+            "type": "number"
+          },
+          "dy": {
+            "maximum": 1000,
+            "minimum": -1000,
+            "title": "Dy",
+            "type": "number"
+          },
+          "sigma": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Sigma",
+            "type": "number"
+          }
+        },
+        "required": [
+          "color",
+          "sigma",
+          "dx",
+          "dy"
+        ],
+        "title": "TextBlurLayer",
         "type": "object"
       },
       "TextCardBlock": {

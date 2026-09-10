@@ -35,8 +35,11 @@ style has passed the complete parity and physical-device gates.
   transforms using complete normalized motion parameters. Native whole-layer
   sampling matches 32 cases captured from the real cloud drawing dispatcher,
   including exit fades; animated fade runs through preview and H.264 export.
-  Reveal effects, shadows, gradients, glyph-by-glyph legacy layout, and the
-  shared overlay-to-recipe compiler remain outstanding. A Latin font probe matched cloud ink bounds and caught/fixed
+  Ordered colored blur layers provide shadows/glow behind each run; a standard
+  shadow probe is visually close to Skia (not a full style-parity gate). Stroke
+  width is the full centered width, twice the cloud `stroke_px` value. Reveal
+  effects, gradients, glyph-by-glyph legacy layout, and the shared
+  overlay-to-recipe compiler remain outstanding. A Latin font probe matched cloud ink bounds and caught/fixed
   stroke/fill ordering; this is not full typography parity. The native suite
   verifies the lane's time window in actual preview and H.264 export. The new
   `positionedText` capability remains outside the default supported set.

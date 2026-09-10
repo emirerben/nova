@@ -20,6 +20,28 @@ public struct TextInk: Codable, Equatable, Sendable {
     }
 }
 
+public struct TextBlurLayer: Codable, Equatable, Sendable {
+    public let color: TextInk
+    public let sigma: Double
+    public let dx: Double
+    public let dy: Double
+    private enum CodingKeys: String, CodingKey { case color, sigma, dx, dy }
+    public init(color: TextInk, sigma: Double, dx: Double, dy: Double) {
+        self.color = color; self.sigma = sigma; self.dx = dx; self.dy = dy
+    }
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["color", "sigma", "dx", "dy"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        color = try c.decode(TextInk.self, forKey: .color); sigma = try c.decode(Double.self, forKey: .sigma)
+        dx = try c.decode(Double.self, forKey: .dx); dy = try c.decode(Double.self, forKey: .dy)
+    }
+    func validate() throws {
+        try color.validate()
+        guard sigma.isFinite, (0...100).contains(sigma), dx.isFinite, dy.isFinite,
+              abs(dx) <= 1000, abs(dy) <= 1000 else { throw RecipeError.invalidTimeline }
+    }
+}
+
 public struct PositionedTextRun: Codable, Equatable, Sendable {
     public let text: String
     public let fontAssetID: String
@@ -31,21 +53,23 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
     public let fill: TextInk
     public let stroke: TextInk
     public let strokeWidth: Double
+    public let blurLayers: [TextBlurLayer]
     private enum CodingKeys: String, CodingKey {
-        case text, fontAssetID = "fontAssetId", fontSize, x, baselineY, letterSpacing, shaped, fill, stroke, strokeWidth
+        case text, fontAssetID = "fontAssetId", fontSize, x, baselineY, letterSpacing, shaped, fill, stroke, strokeWidth, blurLayers
     }
     public init(text: String, fontAssetID: String, fontSize: Double, x: Double, baselineY: Double,
-                letterSpacing: Double, shaped: Bool, fill: TextInk, stroke: TextInk, strokeWidth: Double) {
+                letterSpacing: Double, shaped: Bool, fill: TextInk, stroke: TextInk, strokeWidth: Double, blurLayers: [TextBlurLayer] = []) {
         self.text = text; self.fontAssetID = fontAssetID; self.fontSize = fontSize; self.x = x; self.baselineY = baselineY
-        self.letterSpacing = letterSpacing; self.shaped = shaped; self.fill = fill; self.stroke = stroke; self.strokeWidth = strokeWidth
+        self.letterSpacing = letterSpacing; self.shaped = shaped; self.fill = fill; self.stroke = stroke; self.strokeWidth = strokeWidth; self.blurLayers = blurLayers
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["text", "fontAssetId", "fontSize", "x", "baselineY", "letterSpacing", "shaped", "fill", "stroke", "strokeWidth"])
+        try rejectUnknownAssetFields(decoder, allowed: ["text", "fontAssetId", "fontSize", "x", "baselineY", "letterSpacing", "shaped", "fill", "stroke", "strokeWidth", "blurLayers"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = try c.decode(String.self, forKey: .text); fontAssetID = try c.decode(String.self, forKey: .fontAssetID)
         fontSize = try c.decode(Double.self, forKey: .fontSize); x = try c.decode(Double.self, forKey: .x)
         baselineY = try c.decode(Double.self, forKey: .baselineY); letterSpacing = try c.decode(Double.self, forKey: .letterSpacing)
         shaped = try c.decode(Bool.self, forKey: .shaped); fill = try c.decode(TextInk.self, forKey: .fill)
+        blurLayers = try c.decodeIfPresent([TextBlurLayer].self, forKey: .blurLayers) ?? []
         stroke = try c.decode(TextInk.self, forKey: .stroke); strokeWidth = try c.decode(Double.self, forKey: .strokeWidth)
     }
     func validate() throws {
@@ -54,6 +78,8 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
               fontSize > 0, fontSize <= 1000, abs(x) <= 10000, abs(baselineY) <= 10000,
               (-100...1000).contains(letterSpacing), (0...100).contains(strokeWidth) else { throw RecipeError.invalidTimeline }
         try fill.validate(); try stroke.validate()
+        guard blurLayers.count <= 8 else { throw RecipeError.invalidTimeline }
+        for layer in blurLayers { try layer.validate() }
     }
 }
 

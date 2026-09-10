@@ -12,7 +12,7 @@ extension RecipeTextLayer {
     /// Baselines and tracking are authored in output pixels. No device-specific
     /// wrap, auto-shrink, font lookup, or substitution occurs here.
     static func make(_ layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int = 64 * 1024 * 1024) throws -> Self {
-        struct Run { let line: CTLine; let stroke: CTLine?; let origin: CGPoint }
+        struct Run { let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint; let blurs: [TextBlurLayer] }
         let anchor = CGPoint(x: layer.anchorX, y: canvas.height - layer.anchorY)
         let rotation = CGAffineTransform(translationX: -anchor.x, y: -anchor.y)
             .concatenating(CGAffineTransform(rotationAngle: -layer.rotationDegrees * .pi / 180))
@@ -33,6 +33,9 @@ extension RecipeTextLayer {
                 NSAttributedString.Key(kCTLigatureAttributeName as String): run.shaped ? 1 : 0
             ]
             let line = CTLineCreateWithAttributedString(NSAttributedString(string: run.text, attributes: attributes))
+            var maskAttributes = attributes
+            maskAttributes[NSAttributedString.Key(kCTForegroundColorAttributeName as String)] = CGColor(gray: 1, alpha: 1)
+            let mask = CTLineCreateWithAttributedString(NSAttributedString(string: run.text, attributes: maskAttributes))
             var strokeAttributes = attributes
             strokeAttributes[NSAttributedString.Key(kCTStrokeColorAttributeName as String)] = run.stroke.cgColor
             strokeAttributes[NSAttributedString.Key(kCTStrokeWidthAttributeName as String)] = 100 * run.strokeWidth / run.fontSize
@@ -51,11 +54,16 @@ extension RecipeTextLayer {
             var box = CTLineGetImageBounds(line, nil).offsetBy(dx: origin.x, dy: origin.y)
             box = box.insetBy(dx: -run.strokeWidth - 2, dy: -run.strokeWidth - 2).applying(rotation)
             bounds = bounds.union(box)
-            runs.append(Run(line: line, stroke: stroke, origin: origin))
+            let inkBounds = CTLineGetImageBounds(mask, nil).offsetBy(dx: origin.x, dy: origin.y)
+            for blur in run.blurLayers {
+                bounds = bounds.union(inkBounds.offsetBy(dx: blur.dx, dy: -blur.dy)
+                    .insetBy(dx: -ceil(3 * blur.sigma) - 2, dy: -ceil(3 * blur.sigma) - 2).applying(rotation))
+            }
+            runs.append(Run(line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers))
         }
         // Moving/scaling text can enter the canvas from an offscreen position.
         // Keep its complete bitmap, still subject to the aggregate memory budget.
-        if layer.motion == nil { bounds = bounds.intersection(CGRect(origin: .zero, size: canvas)) }
+        if layer.motion == nil && layer.runs.allSatisfy({ $0.blurLayers.isEmpty }) { bounds = bounds.intersection(CGRect(origin: .zero, size: canvas)) }
         bounds = bounds.integral
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0,
               bounds.width * bounds.height * 4 <= Double(maxBitmapBytes),
@@ -64,12 +72,43 @@ extension RecipeTextLayer {
             throw MediaEngineError.unsupportedCapability
         }
         context.translateBy(x: -bounds.minX, y: -bounds.minY)
-        context.concatenate(rotation)
+        let imageContext = CIContext(options: [.cacheIntermediates: false])
         for run in runs {
+            if !run.blurs.isEmpty {
+                guard let maskContext = CGContext(data: nil, width: Int(bounds.width), height: Int(bounds.height), bitsPerComponent: 8,
+                    bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                    throw MediaEngineError.exportFailed
+                }
+                maskContext.translateBy(x: -bounds.minX, y: -bounds.minY)
+                maskContext.concatenate(rotation)
+                maskContext.textPosition = run.origin
+                CTLineDraw(run.mask, maskContext)
+                guard let maskImage = maskContext.makeImage() else { throw MediaEngineError.exportFailed }
+                for blur in run.blurs {
+                    let angle = -layer.rotationDegrees * .pi / 180
+                    let dx = blur.dx * cos(angle) + blur.dy * sin(angle)
+                    let dy = blur.dx * sin(angle) - blur.dy * cos(angle)
+                    var shadow = CIImage(cgImage: maskImage).applyingFilter("CIColorMatrix", parameters: [
+                        "inputRVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.red * blur.color.alpha),
+                        "inputGVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.green * blur.color.alpha),
+                        "inputBVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.blue * blur.color.alpha),
+                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.alpha)
+                    ])
+                    if blur.sigma > 0 { shadow = shadow.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": blur.sigma]) }
+                    shadow = shadow.transformed(by: CGAffineTransform(translationX: dx, y: dy))
+                    guard let cgShadow = imageContext.createCGImage(shadow, from: CGRect(origin: .zero, size: bounds.size)) else {
+                        throw MediaEngineError.exportFailed
+                    }
+                    context.draw(cgShadow, in: bounds)
+                }
+            }
+            context.saveGState()
+            context.concatenate(rotation)
             context.textPosition = run.origin
             if let stroke = run.stroke { CTLineDraw(stroke, context) }
             context.textPosition = run.origin
             CTLineDraw(run.line, context)
+            context.restoreGState()
         }
         guard let image = context.makeImage() else { throw MediaEngineError.exportFailed }
         return Self(image: CIImage(cgImage: image), frame: bounds, start: layer.start, end: layer.end, animation: .none, portable: layer, portableAnchor: anchor)
