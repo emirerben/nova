@@ -272,3 +272,10 @@ integer lattice coordinates. Preserve these observed semantics for parity.
 Skia attribution is bundled in `Kria/Resources/Skia-LICENSE.txt`.
 These primitives do not activate dissolve: the native displacement painter,
 preview/export parity, and separate media-card dissolve still need completion.
+
+`NativeDissolveWarp` now retains a bounded map and runs nearest-neighbor
+displacement through a Metal Core Image kernel. `DissolveWarpTests` compares
+1,152 actual cloud pixel samples across three seeds and four displacement
+scales, including clipped edges, with exact channel equality. The complete
+text effect still needs its final transform, opacity, and particle composition
+and its preview/export gate. Shader creation failure remains unsupported.
