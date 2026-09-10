@@ -11,7 +11,7 @@ import json
 import re
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
@@ -32,7 +32,7 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-10-v19"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-10-v21"
 
 
 class MainCreatorInput(BaseModel):
@@ -96,6 +96,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         )
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
+        self._schema_feedback = ""
         try:
             data = json.loads(raw_text)
             if not isinstance(data, dict):
@@ -164,11 +165,24 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     }
                 )
             return MainCreatorOutput(action=action)
+        except ValidationError as exc:
+            # Tell the retry which contract fields failed, without echoing
+            # private field values or the model's full response into logs.
+            self._schema_feedback = "; ".join(
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['type']}"
+                for error in exc.errors(include_input=False, include_context=False)[:8]
+            )[:1000]
+            raise SchemaError(f"main_creator: invalid output: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
 
     def schema_clarification(self) -> str:
-        return "\nReturn only the documented JSON envelope with one valid action object."
+        feedback = getattr(self, "_schema_feedback", "")
+        return (
+            "\nReturn only the documented JSON envelope with one valid action object."
+            + (f"\nCorrect these schema errors: {feedback}." if feedback else "")
+            + " Use only documented fields, exact enum values, and #RRGGBB colors."
+        )
 
 
 def _repair_action_envelope(action: object) -> object:

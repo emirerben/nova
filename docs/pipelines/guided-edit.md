@@ -584,10 +584,15 @@ omit this field so their hashes and playback contracts stay unchanged.
 Guards: `tests/services/test_video_reuse_policy.py`,
 `tests/agents/test_main_creator_agent.py`, and the no-reuse / explicit-loop agent evals.
 
-### Exact title requests after planner failures
+### Creator-authored text and planner failures
 
 Creator requests such as “Add a text saying Summer in Madrid. Make it pastel yellow”
-preserve the literal title separately from the following style sentence. Pastel yellow
+preserve the literal title separately from the following style sentence. The main
+creator interprets natural wording and languages into typed text/font/color intent,
+with verbatim creator-request evidence for each field. The server validates that
+evidence against creator messages (including the latest message beyond capped
+history); footage metadata cannot authorize on-screen copy. Legacy deterministic
+extraction remains a fallback. Pastel yellow
 maps to `#FFF0A6`, distinct from ordinary yellow. Both normal planning and compiler
 fallbacks pass through the explicit-intent boundary. Once-only, video-only montage
 confirmations are capped to known source duration before approval (photos, explicit

@@ -34,6 +34,7 @@ from app.agents._schemas.creator_agent import (
     CreativeStrategy,
     CreatorCraftBundle,
     CreatorEditPlan,
+    CreatorRenderIntentEvidence,
     ProposeStrategy,
     ReviewDecision,
     SetLicensedSfxCommand,
@@ -539,22 +540,33 @@ def _apply_explicit_render_intent(
     creator_request: str,
     manifest: Any | None = None,
     latest_user_message: str = "",
+    render_intent_evidence: CreatorRenderIntentEvidence | None = None,
 ) -> CreativeStrategy:
-    """Promote explicit creator wording into the typed render contract.
+    """Preserve grounded semantic intent, with legacy literal extraction as fallback.
 
-    The Main Creator model may describe an exact title/style in prose while the
-    original v1 schema only had advisory ``intro_hook``.  This deterministic
-    extractor runs at the authenticated planning boundary, fills only missing
-    typed fields, and never creates executable operations. Unsupported styles
-    are ignored here and therefore cannot reach a renderer without schema
-    validation.
+    The model interprets the creator's wording and returns typed values with
+    verbatim supporting excerpts. Verify provenance and exact title copy here;
+    do not require English keywords to authorize a semantic interpretation.
+    The legacy recognizer remains a fallback for old or failed model responses.
     """
 
     request = " ".join(str(creator_request or "").split())
-    # These fields become pixels, so only explicit creator-authored wording may
-    # populate them. Clear any model-authored values first, then promote the
-    # bounded request matches below. This prevents a plausible-but-wrong model
-    # title/style from overriding the user's exact copy.
+    semantic_updates: dict[str, object] = {}
+    creator_sources = (request, " ".join(str(latest_user_message or "").split()))
+    if render_intent_evidence is not None:
+        for field in ("opening_title", "font_family", "text_color"):
+            quote = " ".join(str(getattr(render_intent_evidence, field) or "").split())
+            if not quote or not any(quote in source for source in creator_sources):
+                continue
+            value = getattr(strategy, field)
+            # Typography and color are semantic choices from a validated
+            # schema. Literal on-screen words must also occur in the excerpt.
+            if field == "opening_title" and value is not None:
+                if " ".join(value.split()) not in quote:
+                    continue
+            semantic_updates[field] = value
+    # Ungrounded model values cannot become pixels. Only creator excerpts or
+    # the legacy literal recognizer below can restore these fields.
     updates: dict[str, object] = {
         "opening_title": None,
         "font_family": None,
@@ -813,6 +825,7 @@ def _apply_explicit_render_intent(
         target_duration_s = _pinned_narration_target_duration_s(manifest)
     if target_duration_s is not None:
         updates["target_duration_s"] = target_duration_s
+    updates.update(semantic_updates)
     return CreativeStrategy.model_validate({**strategy.model_dump(mode="json"), **updates})
 
 
@@ -1769,6 +1782,9 @@ async def _run_planning_turn(
                 creator_request,
                 manifest=planning_manifest,
                 latest_user_message=user_message,
+                render_intent_evidence=(
+                    action.render_intent_evidence if isinstance(action, ProposeStrategy) else None
+                ),
             )
             try:
                 strategy = normalize_creator_strategy_media(
@@ -1909,11 +1925,19 @@ async def _run_planning_turn(
                         update={
                             "video_reuse_policy": reuse_policy,
                             "montage_cadence": cadence,
+                            "opening_title": strategy.opening_title,
+                            "font_family": strategy.font_family,
+                            "text_color": strategy.text_color,
                         }
                     ),
                     creator_request,
                     manifest=manifest,
                     latest_user_message=user_message,
+                    render_intent_evidence=(
+                        action.render_intent_evidence
+                        if isinstance(action, ProposeStrategy)
+                        else None
+                    ),
                 ),
                 repair_model_output=True,
             )

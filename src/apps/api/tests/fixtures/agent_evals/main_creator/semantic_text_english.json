@@ -2,7 +2,7 @@
   "agent": "nova.creator.main",
   "prompt_version": "2026-09-10-v21",
   "input": {
-    "user_message": "Add a text saying Summer in Madrid. Make it pastel yellow",
+    "user_message": "Could you put Summer in Madrid across the opening? A soft buttery shade would be nice.",
     "creator_context": "",
     "item_context": "Untitled video; montage; no recorded voiceover.",
     "media_context": [
@@ -85,13 +85,13 @@
       "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
-    "creator_request": "Add a text saying Summer in Madrid. Make it pastel yellow"
+    "creator_request": "Could you put Summer in Madrid across the opening? A soft buttery shade would be nice."
   },
-  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"fast_montage\", \"edit_format\": \"montage\", \"archetype\": \"montage\", \"audio_strategy\": \"licensed_music\", \"story_structure\": [], \"caption_style\": \"clean\", \"intro_hook\": null, \"pacing\": \"balanced\", \"render_program\": \"guided\", \"selected_media_ids\": [], \"optional_treatments\": [], \"mixed_media_timing\": null, \"rationale\": \"Use the three clips once with the requested title.\", \"opening_title\": \"Summer in Madrid\", \"text_color\": \"pastel yellow\", \"target_duration_s\": 12}, \"summary\": \"A short montage with Summer in Madrid in pastel yellow.\", \"render_intent_evidence\": {\"opening_title\": \"Add a text saying Summer in Madrid.\", \"text_color\": \"Make it pastel yellow\"}}}",
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"fast_montage\", \"edit_format\": \"montage\", \"archetype\": \"montage\", \"audio_strategy\": \"licensed_music\", \"story_structure\": [], \"caption_style\": \"clean\", \"intro_hook\": null, \"pacing\": \"balanced\", \"render_program\": \"guided\", \"selected_media_ids\": [], \"optional_treatments\": [], \"mixed_media_timing\": null, \"rationale\": \"Use the three clips once with the requested title.\", \"opening_title\": \"Summer in Madrid\", \"text_color\": \"pastel yellow\", \"target_duration_s\": 12}, \"summary\": \"A short montage with Summer in Madrid in pastel yellow.\", \"render_intent_evidence\": {\"opening_title\": \"Could you put Summer in Madrid across the opening?\", \"text_color\": \"A soft buttery shade would be nice.\"}}}",
   "output": {},
   "meta": {
     "source": "hand_authored_golden",
-    "case": "madrid_pastel_title",
+    "case": "semantic_text_english",
     "text_intent": {
       "title": "Summer in Madrid",
       "color": "#FFF0A6"

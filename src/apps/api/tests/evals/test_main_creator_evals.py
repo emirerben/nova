@@ -29,13 +29,28 @@ def test_main_creator_eval(
         shadow_prompts_dir=shadow_prompts_dir,
         live_input_normalizer=live_input_normalizer,
     )
-    assert result.passed, result.summary()
+    assert result.passed, f"{result.summary()}: {result.structural_failures}"
 
-    if fixture_path.stem == "madrid_pastel_title":
+    expected = fixture.meta.get("text_intent")
+    if expected:
+        from app.agents._schemas.creator_agent import (
+            CreativeStrategy,
+            CreatorRenderIntentEvidence,
+        )
+        from app.routes.creator_agent import _apply_explicit_render_intent
+
         assert result.output is not None
         action = result.output["action"]
         assert action["kind"] == "propose_strategy"
         strategy = action["strategy"]
-        assert strategy["opening_title"] == "Summer in Madrid"
-        assert strategy["text_color"] == "#FFF0A6"
+        assert strategy["opening_title"] == expected["title"]
+        assert strategy["text_color"] == expected["color"]
         assert strategy["target_duration_s"] <= 12
+        evidence = CreatorRenderIntentEvidence.model_validate(action["render_intent_evidence"])
+        validated = _apply_explicit_render_intent(
+            CreativeStrategy.model_validate(strategy),
+            fixture.input["creator_request"],
+            render_intent_evidence=evidence,
+        )
+        assert validated.opening_title == expected["title"]
+        assert validated.text_color == expected["color"]

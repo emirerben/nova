@@ -446,3 +446,19 @@ def test_creator_initial_and_followup_reuse_is_grounded(words, previous_words, p
     if policy == "allow_repeat":
         assert result.action.strategy.render_program == "guided"
         assert result.action.strategy.direction == "fast_montage"
+
+
+def test_schema_retry_names_failed_field_without_echoing_private_value() -> None:
+    from app.agents._runtime import SchemaError
+
+    agent = MainCreatorAgent(None)
+    raw = json.loads(_raw(audio_strategy="licensed_music", selected=[]))
+    raw["action"]["strategy"]["caption_style"] = "private-invalid-style"
+    with pytest.raises(SchemaError):
+        agent.parse(json.dumps(raw), _input())
+    clarification = agent.schema_clarification()
+    assert "caption_style" in clarification
+    assert "literal_error" in clarification
+    assert "private-invalid-style" not in clarification
+    agent.parse(_raw(audio_strategy="licensed_music", selected=[]), _input())
+    assert "caption_style" not in agent.schema_clarification()

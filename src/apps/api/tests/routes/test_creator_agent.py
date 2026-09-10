@@ -4985,9 +4985,11 @@ def test_negated_text_saying_does_not_add_title(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("compile_fails_once", [False, True])
+@pytest.mark.parametrize("semantic_plan", [False, True])
 async def test_route_schema_failure_preserves_madrid_text_and_source_capacity(
     monkeypatch,
     compile_fails_once,
+    semantic_plan,
 ) -> None:
     from app.services import creator_capabilities
 
@@ -5040,6 +5042,33 @@ async def test_route_schema_failure_preserves_madrid_text_and_source_capacity(
     monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
     monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
 
+    message = "Add a text saying Summer in Madrid. Make it pastel yellow"
+    if semantic_plan:
+        from app.agents._schemas.creator_agent import CreatorRenderIntentEvidence
+
+        message = "Put Summer in Madrid across the opening. Give the letters a soft buttery tint."
+        monkeypatch.setattr(
+            creator_routes.asyncio,
+            "to_thread",
+            AsyncMock(
+                return_value=SimpleNamespace(
+                    action=ProposeStrategy(
+                        kind="propose_strategy",
+                        strategy=CreativeStrategy(
+                            opening_title="Summer in Madrid",
+                            text_color="#FFF0A6",
+                            audio_strategy="original_audio",
+                        ),
+                        summary="Summer in Madrid in soft yellow over your clips.",
+                        render_intent_evidence=CreatorRenderIntentEvidence(
+                            opening_title="Put Summer in Madrid across the opening.",
+                            text_color="Give the letters a soft buttery tint.",
+                        ),
+                    ),
+                )
+            ),
+        )
+
     if compile_fails_once:
         real_compile = creator_routes.compile_active_plan
         attempts = 0
@@ -5059,7 +5088,7 @@ async def test_route_schema_failure_preserves_madrid_text_and_source_capacity(
         user=user,
         session_id=session.id,
         expected_revision=1,
-        user_message=("Add a text saying Summer in Madrid. Make it pastel yellow"),
+        user_message=message,
     )
 
     assert result is response
@@ -5071,3 +5100,110 @@ async def test_route_schema_failure_preserves_madrid_text_and_source_capacity(
     assert session.active_plan["target_duration_s"] <= 12.701666
     assert session.active_plan["video_reuse_policy"] == "once"
     assert len(strategy["selected_media_ids"]) == 3
+
+
+@pytest.mark.parametrize(
+    "creator_message,title,color,evidence",
+    [
+        (
+            "Could you put Summer in Madrid across the opening? "
+            "A soft buttery shade would be nice.",
+            "Summer in Madrid",
+            "#FFF0A6",
+            {
+                "opening_title": "Could you put Summer in Madrid across the opening?",
+                "text_color": "A soft buttery shade would be nice.",
+            },
+        ),
+        (
+            "Videonun başına Madrid'de Yaz yaz. Harfler açık sarı olsun.",
+            "Madrid'de Yaz",
+            "#FFF0A6",
+            {
+                "opening_title": "Videonun başına Madrid'de Yaz yaz.",
+                "text_color": "Harfler açık sarı olsun.",
+            },
+        ),
+        (
+            "Escribe Verano en Madrid al principio, con letras amarillas suaves.",
+            "Verano en Madrid",
+            "#FFF0A6",
+            {
+                "opening_title": (
+                    "Escribe Verano en Madrid al principio, con letras amarillas suaves."
+                ),
+                "text_color": "con letras amarillas suaves.",
+            },
+        ),
+        (
+            "No words on screen anymore. Keep the soft yellow for later.",
+            None,
+            None,
+            {
+                "opening_title": "No words on screen anymore.",
+                "text_color": "Keep the soft yellow for later.",
+            },
+        ),
+    ],
+)
+def test_grounded_semantic_text_intent_does_not_require_english_keywords(
+    monkeypatch,
+    creator_message,
+    title,
+    color,
+    evidence,
+):
+    from app.agents._schemas.creator_agent import CreatorRenderIntentEvidence
+
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(opening_title=title, text_color=color),
+        creator_message,
+        manifest=_manifest(monkeypatch),
+        render_intent_evidence=CreatorRenderIntentEvidence(**evidence),
+    )
+    assert strategy.opening_title == title
+    assert strategy.text_color == color
+
+
+@pytest.mark.parametrize(
+    "title,quote",
+    [
+        ("Beautiful sunsets", "Beautiful sunsets"),  # Metadata cannot invent an excerpt.
+        ("Amazing Madrid", "Put Summer in Madrid across the opening."),  # Invented copy.
+    ],
+)
+def test_semantic_title_requires_creator_evidence_and_exact_copy(monkeypatch, title, quote):
+    from app.agents._schemas.creator_agent import CreatorRenderIntentEvidence
+
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(opening_title=title, text_color="#123456"),
+        "Put Summer in Madrid across the opening.",
+        manifest=_manifest(monkeypatch),
+        render_intent_evidence=CreatorRenderIntentEvidence(
+            opening_title=quote,
+            text_color="Metadata says dark blue",
+        ),
+    )
+    assert strategy.opening_title is None
+    assert strategy.text_color is None
+
+
+@pytest.mark.parametrize(
+    "title,latest",
+    [
+        ("Winter in Berlin", "Put Winter in Berlin across the opening."),
+        (None, "Leave the video without any writing now."),
+    ],
+)
+def test_latest_semantic_revision_survives_capped_creator_history(monkeypatch, title, latest):
+    from app.agents._schemas.creator_agent import CreatorRenderIntentEvidence
+
+    history = ('Use title "Summer in Madrid". ' + "Earlier direction. " * 1000)[:12000]
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(opening_title=title),
+        history,
+        manifest=_manifest(monkeypatch),
+        latest_user_message=latest,
+        render_intent_evidence=CreatorRenderIntentEvidence(opening_title=latest),
+    )
+    assert strategy.opening_title == title

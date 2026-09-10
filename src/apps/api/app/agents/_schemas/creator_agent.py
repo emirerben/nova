@@ -428,10 +428,21 @@ class AskUser(_CreatorModel):
     options: list[str] = Field(default_factory=list, max_length=8)
 
 
+class CreatorRenderIntentEvidence(_CreatorModel):
+    """Verbatim creator excerpts grounding semantic text/style decisions."""
+
+    opening_title: str | None = Field(default=None, max_length=1200)
+    font_family: str | None = Field(default=None, max_length=1200)
+    text_color: str | None = Field(default=None, max_length=1200)
+
+
 class ProposeStrategy(_CreatorModel):
     kind: Literal["propose_strategy"]
     strategy: CreativeStrategy
     summary: str = Field(default="", max_length=1000)
+    render_intent_evidence: CreatorRenderIntentEvidence | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class ReviewDecision(_CreatorModel):
