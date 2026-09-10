@@ -1,55 +1,23 @@
 name: iOS
 
+# Always report the stable build-and-test check; select work at job level.
 on:
   pull_request:
     branches: [main, dev]
-    paths:
-      - "src/apps/ios/**"
-      - "src/apps/api/app/cli/kria_contracts.py"
-      - "src/apps/api/app/config.py"
-      - "src/apps/api/app/kria/**"
-      - "src/apps/api/app/models.py"
-      - "src/apps/api/app/routes/auth.py"
-      - "src/apps/api/app/routes/creation_threads.py"
-      - "src/apps/api/app/routes/generative_jobs.py"
-      - "src/apps/api/app/routes/me.py"
-      - "src/apps/api/app/routes/personas.py"
-      - "src/apps/api/app/services/mobile_auth.py"
-      - "src/apps/api/app/tasks/mobile_upload_cleanup.py"
-      - "src/apps/api/app/migrations/versions/0100_mobile_identity_sessions.py"
-      - "src/apps/api/app/worker.py"
-      - "src/apps/api/tests/fixtures/kria_mobile.json"
-      - "src/apps/api/tests/fixtures/kria_edit_recipe_v1.json"
-      - "scripts/ios/**"
-      - ".github/workflows/ios.yml"
   push:
     branches: [main]
-    paths:
-      - "src/apps/ios/**"
-      - "src/apps/api/app/cli/kria_contracts.py"
-      - "src/apps/api/app/config.py"
-      - "src/apps/api/app/kria/**"
-      - "src/apps/api/app/models.py"
-      - "src/apps/api/app/routes/auth.py"
-      - "src/apps/api/app/routes/creation_threads.py"
-      - "src/apps/api/app/routes/generative_jobs.py"
-      - "src/apps/api/app/routes/me.py"
-      - "src/apps/api/app/routes/personas.py"
-      - "src/apps/api/app/services/mobile_auth.py"
-      - "src/apps/api/app/tasks/mobile_upload_cleanup.py"
-      - "src/apps/api/app/migrations/versions/0100_mobile_identity_sessions.py"
-      - "src/apps/api/app/worker.py"
-      - "src/apps/api/tests/fixtures/kria_mobile.json"
-      - "src/apps/api/tests/fixtures/kria_edit_recipe_v1.json"
-      - "scripts/ios/**"
-      - ".github/workflows/ios.yml"
 
 concurrency:
   group: ios-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build-and-test:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
+  ios-tests:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -96,3 +64,14 @@ jobs:
             ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
       - name: Generate, build, and test Kria
         run: bash scripts/ios/verify.sh
+
+  build-and-test:
+    if: always()
+    needs: [changes, ios-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require selected iOS tests to pass
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-tests.py gate ios ios-tests

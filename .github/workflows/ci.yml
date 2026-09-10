@@ -1,58 +1,72 @@
 name: CI
 
-# `push: main` is not redundant with `pull_request`. A PR is tested as a MERGE
-# of its branch with main, so a suite can be green on every open PR while main
-# itself is broken — and the breakage then surfaces on whichever unrelated PR
-# opens next, attributed to the wrong author.
-#
-# That is not hypothetical here. On 2026-08-13 a stale-read bug on main made
-# tests/routes/test_plan_item_sync_dispatch.py fail deterministically. test-api
-# is a REQUIRED check, so it blocked every PR in the repo, and it was first seen
-# on a frontend-only PR that touched zero Python — costing an hour to prove the
-# failure was not that PR's. Running on push attributes it to the commit that
-# caused it, immediately.
-#
-# Cost: roughly double the CI minutes (test-api alone is ~8 min).
+# PRs select affected suites; main always runs full regression coverage.
+# Required check names stay stable and validate intentional skips explicitly.
 on:
   pull_request:
     branches: [main, dev]
   push:
     branches: [main]
 
+# Superseded PR commits should not keep consuming runners. Main runs finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  lint:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
+  lint-suites:
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.web == 'true'
         with:
           node-version: "20"
       - uses: pnpm/action-setup@v3
+        if: needs.changes.outputs.web == 'true'
         with:
           version: 9
       - name: Get pnpm store directory
+        if: needs.changes.outputs.web == 'true'
         id: pnpm-store
         run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
+        if: needs.changes.outputs.web == 'true'
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('src/apps/web/package.json') }}
           restore-keys: pnpm-store-${{ runner.os }}-
       - name: Install web dependencies
+        if: needs.changes.outputs.web == 'true'
         working-directory: src/apps/web
         run: pnpm install --no-frozen-lockfile
       - uses: actions/setup-python@v5
+        if: needs.changes.outputs.api == 'true'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: src/apps/api/pyproject.toml
       - name: Install API dependencies
+        if: needs.changes.outputs.api == 'true'
         working-directory: src/apps/api
         run: pip install -e ".[dev]"
-      - name: Run lint
-        run: make lint
+      - name: Run web lint
+        if: needs.changes.outputs.web == 'true'
+        working-directory: src/apps/web
+        run: pnpm lint
+      - name: Run API lint
+        if: needs.changes.outputs.api == 'true'
+        working-directory: src/apps/api
+        run: ruff check .
 
   test-web-suites:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     name: web (${{ matrix.group }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -110,23 +124,43 @@ jobs:
           JOB_STATUS: ${{ job.status }}
         run: echo "Web group ${{ matrix.group }} job outcome (including setup) $JOB_STATUS" >> "$GITHUB_STEP_SUMMARY"
 
-  # Keep a stable check name for consumers. An absent/skipped/cancelled matrix
-  # must not turn into a green check through Actions' default needs skipping.
-  test-web:
+  # These gates remain present on every PR, including docs-only changes.
+  lint:
     if: always()
-    needs: [test-web-suites]
+    needs: [changes, lint-suites]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Require every web test group to pass
+      - name: Require selected lint jobs to pass
         env:
-          WEB_TEST_NEEDS: ${{ toJSON(needs) }}
-        run: node scripts/ci/web-tests.mjs gate
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-tests.py gate lint lint-suites
+
+  test-web:
+    if: always()
+    needs: [changes, test-web-suites]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require selected web suites to pass
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-tests.py gate web test-web-suites
 
   test-api:
+    if: always()
+    needs: [changes, test-api-suite]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require selected API tests to pass
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select-tests.py gate api test-api-suite
+
+  test-api-suite:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:

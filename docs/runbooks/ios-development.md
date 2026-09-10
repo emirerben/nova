@@ -88,3 +88,10 @@ for edit/save/export verification.
 
 See the [KRI-23 native design review](../reviews/kri-23/README.md) for screenshot
 comparisons, behavior coverage, and the remaining live-device validation limits.
+
+### Change-based CI
+
+The iOS workflow always reports `build-and-test`. The shared
+[CI selector](change-based-ci.md) schedules the macOS build only for affected PRs;
+every push to main runs the full iOS gate. Unrelated PRs report an explicit
+not-applicable result through a small Ubuntu gate without allocating a Mac.
