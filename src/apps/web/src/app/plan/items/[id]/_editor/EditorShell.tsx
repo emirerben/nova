@@ -165,7 +165,9 @@ import {
   captionBarPatchFromMetaPatch,
   captionMetaPatchFromCaptionBarPatch,
   isCaptionBar,
+  isCaptionUnitBar,
   isLyricBar,
+  isNarrationCaptionBar,
   localCaptionBarPatchFromPatch,
   seedBarsFromLyricSeeds,
   seedBarsFromVariant,
@@ -271,7 +273,7 @@ import {
   createEditorPlaybackClock,
   type EditorPlaybackClock,
 } from "./editor-playback-clock";
-import { useEditorLayoutMode } from "./useEditorLayoutMode";
+import { overlayInspectorDocked, useEditorLayoutMode, useIsDesktopWidth } from "./useEditorLayoutMode";
 import type { EditorLayoutMode } from "./useEditorLayoutMode";
 import {
   projectBaseTime,
@@ -998,6 +1000,7 @@ export default function EditorShell({
 
   // ── View state ──────────────────────────────────────────────────────────────
   const layoutMode = useEditorLayoutMode();
+  const isDesktopWidth = useIsDesktopWidth();
   const { selection, select, clear } = useEditorSelection();
   // Pocket-editor chrome state (which sheet, which detent). Deliberately NOT
   // in useEditorHistory — chrome state is not undoable document state.
@@ -1008,6 +1011,14 @@ export default function EditorShell({
    * one-shot auto-retry when the browser comes back online). */
   const networkSaveErrorRef = useRef(false);
   const [activeTool, setActiveTool] = useState<EditorTool | null>(null); // drawer CLOSED at first paint
+  // Chrome state, not undoable document state (same reasoning as `activeTool`
+  // above) — whether the captions timeline lane is expanded to full rows.
+  // Decoupled from `activeTool === "captions"` so (a) clicking a caption bar
+  // doesn't collapse a lane the user just expanded by hand (the drawer used
+  // to auto-close on selection and take the lane with it), and (b) guided-
+  // story narration captions — which have no Captions drawer to open at all
+  // — can still expand their lane (KRI-18).
+  const [captionsLaneExpanded, setCaptionsLaneExpanded] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("basic");
   const [lightSheetOpen, setLightSheetOpen] = useState(false);
   const [flashTextIds, setFlashTextIds] = useState<Set<string>>(new Set());
@@ -1993,6 +2004,17 @@ export default function EditorShell({
       ? state.bars
       : state.bars.filter((bar) => !isLyricBar(bar));
   }, [lyricBarsAvailable, lyricsEnabled, lyricsOptionalActive, state.bars]);
+  // Prune an orphaned text selection: a copilot-driven delete or a variant
+  // reseed can leave `selection` pointing at a bar that no longer exists,
+  // which leaves the inspector silently showing its empty state while the
+  // shell still believes something is selected (KRI-18 AC7). The undo
+  // restore path above already re-selects a resurrected bar in the same
+  // synchronous handler, so this never fights that case.
+  useEffect(() => {
+    if (selection?.kind === "text" && !visibleTextBars.some((b) => b.id === selection.id)) {
+      clear();
+    }
+  }, [clear, selection, visibleTextBars]);
   const lyricLineOverrides = useMemo(
     () =>
       lyricBarsAvailable
@@ -6128,6 +6150,13 @@ export default function EditorShell({
         notify("Lyric timing is locked to the vocal.");
         return;
       }
+      if (isNarrationCaptionBar(bar)) {
+        // SPLIT_BAR spreads the original bar, so a split would duplicate this
+        // caption's pinned source_params.identity — the guided-editor commit
+        // rejects that mismatch on save.
+        notify("Caption timing follows your narration.");
+        return;
+      }
       const at = Math.round(baseCurrentTime * 10) / 10;
       const MIN = 0.2;
       if (at <= bar.start_s + MIN - 1e-9 || at >= bar.end_s - MIN + 1e-9) {
@@ -6186,7 +6215,7 @@ export default function EditorShell({
       if (readOnly || selection?.kind !== "text") return;
       const bar = selectedBar;
       if (!bar) return;
-      if (isLyricBar(bar)) return;
+      if (isLyricBar(bar) || isNarrationCaptionBar(bar)) return;
       const start_s = nudgeBarStart(bar, deltaS, duration);
       if (start_s === bar.start_s) return;
       history.record();
@@ -6224,6 +6253,7 @@ export default function EditorShell({
     selection?.kind === "text" &&
     !!selectedBar &&
     !isLyricBar(selectedBar) &&
+    !isNarrationCaptionBar(selectedBar) &&
     Math.round(splitBaseTime * 10) / 10 > selectedBar.start_s + 0.2 - 1e-9 &&
     Math.round(splitBaseTime * 10) / 10 < selectedBar.end_s - 0.2 + 1e-9;
   const selectedClipCanSplitAtPlayhead =
@@ -6240,6 +6270,8 @@ export default function EditorShell({
     splitReason = "Music fits the cut automatically";
   } else if (selection?.kind === "text" && selectedBar && isLyricBar(selectedBar)) {
     splitReason = "Lyric timing is locked to the vocal.";
+  } else if (selection?.kind === "text" && selectedBar && isNarrationCaptionBar(selectedBar)) {
+    splitReason = "Caption timing follows your narration.";
   } else if (selection?.kind === "text" && !selectedTextCanSplitAtPlayhead) {
     splitReason = "Move the playhead over the text to split it.";
   } else if (selection?.kind === "clip" && !splitClipsAllowed) {
@@ -7207,13 +7239,23 @@ export default function EditorShell({
     },
     onClear: clear,
     textBars: visibleTextBars,
-    captionsExpanded: activeTool === "captions",
+    // Expanding stays sticky once the user (or the drawer) has opened it —
+    // see the captionsLaneExpanded declaration for why this no longer keys
+    // solely off activeTool.
+    captionsExpanded: captionsLaneExpanded || activeTool === "captions",
     captionsEnabled: captionMeta?.enabled ?? true,
     onOpenCaptionCue: (id: string) => {
-      setActiveTool("captions");
-      const cue = captionCueRows.find((c) => c.id === id);
-      if (cue) seekPlaybackTo(baseToOutputTimeRef.current(cue.start_s + 0.02));
-      selectElement("text", id, { preserveOverlayTool: true });
+      setCaptionsLaneExpanded(true);
+      // Resolve from the live bar set, not captionCueRows — the latter is
+      // empty on guided_story (captions there aren't caption_cues), which
+      // silently no-op'd the seek for that archetype.
+      const bar = visibleTextBars.find((b) => b.id === id);
+      if (bar) seekPlaybackTo(baseToOutputTimeRef.current(bar.start_s + 0.02));
+      // No preserveOverlayTool, no setActiveTool("captions"): a caption click
+      // now behaves like any other timeline-bar click — select only, closing
+      // whatever tool drawer might be open in overlay mode instead of piling
+      // a second panel on top of it (KRI-18 Defect B).
+      selectElement("text", id);
     },
     readOnly,
     textReadOnly: !textElementsAllowed,
@@ -7509,7 +7551,7 @@ export default function EditorShell({
   const pocketTimelineLanes: MiniStripLane[] = (() => {
     const lanes: MiniStripLane[] = [];
     const textItems = canvasTextBars
-      .filter((bar) => !isCaptionBar(bar))
+      .filter((bar) => !isCaptionUnitBar(bar))
       .map((bar) => ({
         id: bar.id,
         kind: "text" as const,
@@ -7525,7 +7567,7 @@ export default function EditorShell({
               : null,
       }));
     const captionItems = canvasTextBars
-      .filter((bar) => isCaptionBar(bar))
+      .filter((bar) => isCaptionUnitBar(bar))
       .map((bar) => ({
         id: bar.id,
         kind: "text" as const,
@@ -7534,9 +7576,11 @@ export default function EditorShell({
         label: bar.text.trim() || "Caption",
         resizeDisabledReason: readOnly
           ? readOnlyReason
-          : !textElementsAllowed
-            ? (textDisabledReason ?? "Caption timing is locked for this edit.")
-            : null,
+          : isNarrationCaptionBar(bar)
+            ? "Caption timing follows your narration."
+            : !textElementsAllowed
+              ? (textDisabledReason ?? "Caption timing is locked for this edit.")
+              : null,
       }));
     const visualItems = canvasVisualBlocks.map((block) => ({
       id: block.id,
@@ -7759,7 +7803,7 @@ export default function EditorShell({
   ) : null;
   const pocketInspectorTitle =
     selection?.kind === "text"
-      ? selectedBar && isCaptionBar(selectedBar)
+      ? selectedBar && isCaptionUnitBar(selectedBar)
         ? "Edit caption"
         : "Edit text"
       : selection?.kind === "clip"
@@ -8306,6 +8350,7 @@ export default function EditorShell({
             canvas={activeCanvas}
           />
         </div>
+        {overlayInspectorDocked({ layoutMode, activeTool, isDesktopWidth }) && (
         <InspectorPanel
           selection={selection}
           bar={selectedBar}
@@ -8412,6 +8457,7 @@ export default function EditorShell({
           onPickPreset={pickPreset}
           onTab={setInspectorTab}
         />
+        )}
       </div>
       )}
 

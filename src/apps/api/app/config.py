@@ -1174,6 +1174,17 @@ class Settings(BaseSettings):
     # + machine restart (worker).
     smart_music_bed_enabled: bool = True
 
+    # KRI-20: the v2 bed used to auto-match a track on EVERY subtitled
+    # (talking-to-camera) render with no creator intent involved — an
+    # unrequested edit to the user's audio. Default True: a bed is now only
+    # ever created via the explicit editor background-music picker; a
+    # render never invents one, and a persisted (user-selected) treatment is
+    # preserved verbatim across reburns/re-renders instead of being
+    # re-matched or dropped. False restores the pre-fix auto-match.
+    # Apply: fly secrets set SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED=false
+    # --app nova-video + machine restart (worker).
+    smart_music_bed_requires_request_enabled: bool = True
+
     # Overlay auto-placement (plan 005, PR0+). Gates the plan-item asset-pool
     # routes (upload-urls / register / list / delete) and, in later PRs, the
     # matcher + suggestion routes. Frontend twin: NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED

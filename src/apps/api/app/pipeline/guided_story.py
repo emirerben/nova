@@ -18,7 +18,7 @@ from typing import Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.agents._schemas.text_element import TextElement
+from app.agents._schemas.text_element import CAPTION_CUE_SOURCE, TextElement
 from app.config import settings
 from app.pipeline.canvas import LANDSCAPE, PORTRAIT, Canvas
 from app.pipeline.duration_contract import (
@@ -1298,7 +1298,7 @@ def _narration_caption_elements(snapshot: EditProposalSnapshot) -> list[dict]:
                 max_width_frac=0.84,
                 word_timings=[word.model_dump(mode="json") for word in words],
                 source_params={
-                    "source": "caption_cue",
+                    "source": CAPTION_CUE_SOURCE,
                     "key": str(index),
                     "identity": f"pinned-narration-caption-{index}",
                 },
@@ -1859,7 +1859,7 @@ def execution_plan_with_editor_state(
                 element
                 if (
                     typed.narration is not None
-                    and (element.source_params or {}).get("source") == "caption_cue"
+                    and (element.source_params or {}).get("source") == CAPTION_CUE_SOURCE
                 )
                 else supplied_by_id[element.id]
                 if element.id in supplied_by_id
@@ -2107,7 +2107,7 @@ def compile_guided_runtime_plan(
                 canonical_element = canonical_text_by_id.get(element.id)
                 if (
                     canonical_element is not None
-                    and (canonical_element.source_params or {}).get("source") == "caption_cue"
+                    and (canonical_element.source_params or {}).get("source") == CAPTION_CUE_SOURCE
                 ):
                     # Caption copy and styling are editor-owned. Their timing
                     # and timed-word identity remain pinned to the approved
@@ -3635,7 +3635,8 @@ def _tag_guided_text_overlays(
             )
             overlay["element_id"] = by_timing.get(key)
             element = by_id.get(overlay.get("element_id"))
-        if element is not None and (element.source_params or {}).get("source") == "caption_cue":
+        source_params = element.source_params if element is not None else None
+        if (source_params or {}).get("source") == CAPTION_CUE_SOURCE:
             overlay["role"] = "generative_narration_caption"
     return compiled
 

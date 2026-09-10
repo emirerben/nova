@@ -297,6 +297,18 @@ even though the code default is `false`.
   (`total`/`ready`/`labeled_current`/`sectioned_current`/`eligible`) so a
   future empty pool is diagnosable from `/admin/jobs` without guessing which
   clause killed it.
+- **KRI-20 — request-gated (default on):** the resolver never INVENTS a
+  treatment. With `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED=true` (default) it
+  returns `_persisted_music_treatment(job_id, variant_id)` — a bed already on
+  the variant's `smart_music_treatment`, set only via the editor's explicit
+  background-music picker (`POST` editor commit → `_resolve_background_music_treatment`
+  in `routes/generative_jobs.py`) — verbatim, or `None` with
+  `reason="not_user_requested"` when nothing was persisted. The auto-match
+  path below (eligible-library scan + `_run_music_matcher`) only runs when the
+  flag is `false`. Guard: `test_smart_music_bed_requires_explicit_request`,
+  `test_persisted_music_treatment_survives_rerender`,
+  `test_smart_music_bed_request_kill_switch_restores_auto_match` in
+  `tests/tasks/test_generative_build.py`.
 - **Mix:** `MusicBedTreatment` in `app/pipeline/sound_effects.py` — looped bed,
   sidechain-ducked under speech (`speech_duck_db`, default −12 dB), loudnorm to
   `final_lufs` (default −14), mixed with reveal SFX in ONE voice-safe graph that

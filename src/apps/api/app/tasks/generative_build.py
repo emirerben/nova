@@ -18617,6 +18617,30 @@ def _smart_music_track_eligible(track: Any) -> bool:
     )
 
 
+def _persisted_music_treatment(*, job_id: str, variant_id: str) -> dict[str, Any] | None:
+    """Read whatever music bed is already persisted on this variant, if any.
+
+    KRI-20: used to tell an explicit, editor-selected bed (persisted via the
+    background-music commit route, `smart_music_treatment`) apart from one this
+    resolver would otherwise invent on its own. Read-only, best-effort — a DB
+    hiccup here must fail open to "no persisted treatment", never crash a render.
+    """
+
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job is None:
+                return None
+            variants = (job.assembly_plan or {}).get("variants") or []
+            existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
+            if existing is None:
+                return None
+            treatment = existing.get("smart_music_treatment")
+            return treatment if isinstance(treatment, dict) else None
+    except Exception:  # noqa: BLE001 — fail open, never block a render on this read
+        return None
+
+
 def _resolve_smart_music_treatment(
     *,
     cues: list[dict[str, Any]],
@@ -18640,6 +18664,24 @@ def _resolve_smart_music_treatment(
         return None, receipt
     if not audio_intents:
         receipt["reason"] = "no_audio_intent"
+        return None, receipt
+    # KRI-20: a bed must never appear on a talking-to-camera edit unless the
+    # creator explicitly asked for one. This resolver no longer INVENTS a
+    # treatment — it only ever returns a treatment the creator already chose
+    # (via the editor's background-music picker), preserved verbatim so a
+    # re-render/reburn can never re-match or silently drop it.
+    if settings.smart_music_bed_requires_request_enabled:
+        existing_treatment = _persisted_music_treatment(job_id=job_id, variant_id=variant_id)
+        if existing_treatment is not None:
+            receipt.update(
+                {
+                    "status": "preserved",
+                    "reason": "user_selected",
+                    "track_id": existing_treatment.get("track_id"),
+                }
+            )
+            return existing_treatment, receipt
+        receipt["reason"] = "not_user_requested"
         return None, receipt
     floor = max(float(intent.get("music_match_min_score") or 7.0) for intent in audio_intents)
     cache_key = f"smart-captions:music-treatment:{job_id}:{variant_id}"
