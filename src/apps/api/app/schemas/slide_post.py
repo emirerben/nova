@@ -25,6 +25,7 @@ import uuid
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.pipeline.look_presets import LookPreset
 from app.pipeline.slide_post.profiles import PlatformProfile
 
 # Hard outer bound independent of platform profile — the tightest profile
@@ -33,6 +34,35 @@ from app.pipeline.slide_post.profiles import PlatformProfile
 # renderer. Profile-specific limits (e.g. instagram_carousel's 20) are
 # enforced by `app.pipeline.slide_post.profiles.validate`, not here.
 MAX_SLIDES = 35
+
+# v1 per-slide editing is deliberately narrow (plans/024 follow-up eng-review,
+# 2026-09-10): one optional text overlay in one of three fixed positions, plus
+# a look preset. No free-drag positioning, no stacked overlays, no Overlays/
+# Captions/Sounds — those need pipelines not yet verified reusable outside a
+# rendered Job (see the plan's Decision 2). Cap text length so a burned
+# drawtext overlay can never overflow the canvas unpredictably.
+MAX_SLIDE_TEXT_LENGTH = 120
+
+
+class TextOverlay(BaseModel):
+    """One static text overlay burned onto a single slide via FFmpeg drawtext."""
+
+    content: str = Field(min_length=1, max_length=MAX_SLIDE_TEXT_LENGTH)
+    position: str = Field(pattern="^(top|center|bottom)$")
+
+
+class SlideEdits(BaseModel):
+    """Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.
+
+    Deliberately flat and small — see plans/024 follow-up eng-review for why
+    this is NOT a scaled-down `EditorShell` document (media_overlays, text
+    lanes, etc). Every field here must correspond to an FFmpeg filter fragment
+    `normalize_image_slide`/`normalize_video_slide` can append to their
+    existing `-vf` chain; there is no separate rendering subsystem.
+    """
+
+    text: TextOverlay | None = None
+    look_preset: LookPreset = "none"
 
 
 class SlideRef(BaseModel):
@@ -46,6 +76,12 @@ class SlideRef(BaseModel):
     # Per-slide accessibility / caption text. Optional — the composer agent
     # fills it; the user may edit or clear it.
     alt: str | None = Field(default=None, max_length=500)
+    # None means "unedited" — must stay distinguishable from
+    # SlideEdits(text=None, look_preset="none") so the render-cache key (see
+    # generative_build.py's slide normalize loop) doesn't have to special-case
+    # an all-default SlideEdits differently from no edits at all; both hash
+    # the same way in practice, but None is the honest default.
+    edits: SlideEdits | None = None
 
 
 class SlidePostDraft(BaseModel):

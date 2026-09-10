@@ -147,13 +147,15 @@ async def test_existing_empty_persona_is_repaired_without_replacing_nonempty() -
     assert empty.persona == preserved
 
 
-def test_paper_capabilities_expose_only_three_live_formats(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_paper_capabilities_expose_all_four_live_formats(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "narrated_archetype_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "slide_posts_enabled", True)
     assert _available_formats() == {
         "montage": "montage",
         "narrated": "narrated_planned",
         "talking_to_camera": "subtitled",
+        "slides": "slides",
     }
 
 
@@ -162,7 +164,22 @@ def test_unavailable_format_is_removed_from_capability_manifest(
 ) -> None:
     monkeypatch.setattr(settings, "narrated_archetype_enabled", False)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", False)
+    monkeypatch.setattr(settings, "slide_posts_enabled", False)
     assert _available_formats() == {"montage": "montage"}
+
+
+def test_slide_posts_disabled_removes_slides_from_capability_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kill-switch: SLIDE_POSTS_ENABLED=false must byte-for-byte match pre-feature capabilities."""
+    monkeypatch.setattr(settings, "slide_posts_enabled", False)
+    assert "slides" not in _available_formats()
+
+
+def test_slide_posts_default_on_is_present_in_capability_manifest() -> None:
+    """Default-on pin: the suite must fail if SLIDE_POSTS_ENABLED's default flips to false."""
+    assert settings.slide_posts_enabled is True
+    assert _available_formats()["slides"] == "slides"
 
 
 def test_chat_format_clip_limits_match_plan_item_setup() -> None:

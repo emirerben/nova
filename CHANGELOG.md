@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.0.0] - 2026-09-10
+
+### Added
+- **Creators can now start a "Photo & video post" directly from the chat-first "New video" flow.** Choosing it shows a mixed image/video upload zone instead of the video-only clip dropzone, then hands off to the existing slide-post compose screen — closing the gap where the feature had no live creation entry point.
+- **Each photo or video in a slide post can now be edited individually.** A new per-slide editor adds one positioned text overlay and a look preset (Olive Film, Smoky Split-Tone, Golden Hour, Faded Analog) per slide, reusing the same FFmpeg look-preset filters the main editor uses. Both tools apply identically to photos and videos; there is no separate video-only tool set.
+
+### Changed
+- The slide-post panel's export action is now labeled "Download" — it already forced a real file download of every slide plus the post manifest and caption; the label just didn't say so.
+
+### Internal
+- Per-slide edits are deliberately NOT built on the main editor (`EditorShell.tsx`, ~9,300 lines, entirely coupled to a rendered video Job/variant/timeline) — a small, purpose-built single-asset editor was built instead, reusing only the underlying FFmpeg filter primitives. Fixes a real cache-correctness gap found during this work: the slide-render cache key now includes a hash of each slide's edits, so editing a slide's text or look and re-rendering can no longer silently reuse the pre-edit normalized file.
 ## [0.75.10.0] - 2026-09-10
 
 ### Fixed

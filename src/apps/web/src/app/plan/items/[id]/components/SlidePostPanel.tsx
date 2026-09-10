@@ -28,12 +28,14 @@ import {
   type PlanItemVariant,
   type PlatformProfile,
   type PoolAsset,
+  type SlideEdits,
   type SlideRef,
   composeSlidePost,
   getSlidePostBundleUrl,
   listPoolAssets,
   putSlidePostDraft,
 } from "@/lib/plan-api";
+import SlideEditModal from "./SlideEditModal";
 
 const PLATFORM_LABELS: Record<PlatformProfile, string> = {
   tiktok_photo: "TikTok photo post",
@@ -71,6 +73,7 @@ export default function SlidePostPanel({ item, variant, onRefetch }: SlidePostPa
   const [error, setError] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   // Re-sync local state when a fresh item lands (compose/rebuild finished).
   useEffect(() => {
@@ -94,6 +97,14 @@ export default function SlidePostPanel({ item, variant, onRefetch }: SlidePostPa
 
   const isStale = draft != null && draft.rendered_version !== draft.version;
   const validation = variant?.slide_post?.validation ?? null;
+
+  function previewUrlFor(slide: SlideRef): string | null {
+    const rendered = variant?.slides?.find((s) => s.asset_id === slide.asset_id);
+    const poolAsset = poolAssets.find((a) => a.id === slide.asset_id);
+    return rendered?.preview_url ?? poolAsset?.display_url ?? null;
+  }
+
+  const editingSlide = editingIndex !== null ? slides[editingIndex] ?? null : null;
 
   async function save(next: {
     slides: SlideRef[];
@@ -144,6 +155,12 @@ export default function SlidePostPanel({ item, variant, onRefetch }: SlidePostPa
     void save({ slides: next, coverIndex, caption, platformProfile });
   }
 
+  async function saveSlideEdits(index: number, edits: SlideEdits | null) {
+    const next = slides.map((s, i) => (i === index ? { ...s, edits } : s));
+    setSlides(next);
+    await save({ slides: next, coverIndex, caption, platformProfile });
+  }
+
   function setCover(index: number) {
     setCoverIndex(index);
     void save({ slides, coverIndex: index, caption, platformProfile });
@@ -178,7 +195,7 @@ export default function SlidePostPanel({ item, variant, onRefetch }: SlidePostPa
       const { url } = await getSlidePostBundleUrl(item.id, variant.variant_id);
       window.open(url, "_blank", "noopener,noreferrer");
     } catch {
-      setError("Export isn't ready yet — fix the flagged slides or wait for the render to finish.");
+      setError("Download isn't ready yet — fix the flagged slides or wait for the render to finish.");
     }
   }
 
@@ -231,9 +248,7 @@ export default function SlidePostPanel({ item, variant, onRefetch }: SlidePostPa
         className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4"
       >
         {slides.map((slide, index) => {
-          const rendered = variant?.slides?.find((s) => s.asset_id === slide.asset_id);
-          const poolAsset = poolAssets.find((a) => a.id === slide.asset_id);
-          const previewUrl = rendered?.preview_url ?? poolAsset?.display_url ?? null;
+          const previewUrl = previewUrlFor(slide);
           const isCover = index === coverIndex;
           return (
             <div
@@ -281,6 +296,17 @@ export default function SlidePostPanel({ item, variant, onRefetch }: SlidePostPa
                   Cover
                 </span>
               )}
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                aria-label={`Edit slide ${index + 1}`}
+                disabled={saving}
+                onClick={() => setEditingIndex(index)}
+                className="absolute right-1.5 top-1.5 h-6 bg-white/90 px-2 text-[10px] font-semibold hover:bg-white"
+              >
+                Edit
+              </Button>
               <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-gradient-to-t from-black/70 to-transparent p-1.5">
                 <div className="flex gap-1">
                   <Button
@@ -395,9 +421,21 @@ export default function SlidePostPanel({ item, variant, onRefetch }: SlidePostPa
           onClick={exportBundle}
           disabled={!variant || slides.length === 0 || (validation ? !validation.ok : false)}
         >
-          Export
+          Download
         </Button>
       </div>
+
+      {editingSlide && editingIndex !== null && (
+        <SlideEditModal
+          open
+          onOpenChange={(open) => {
+            if (!open) setEditingIndex(null);
+          }}
+          slide={editingSlide}
+          previewUrl={previewUrlFor(editingSlide)}
+          onSave={(edits) => saveSlideEdits(editingIndex, edits)}
+        />
+      )}
     </div>
   );
 }
