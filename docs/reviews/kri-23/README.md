@@ -11,6 +11,10 @@ not supply a percentage; the preview does not fabricate Paper's example progress
 
 ## Visual evidence
 
+- [Updated drawer and centered header](drawer-toggle.jpg): the menu button moves
+  with the main screen and toggles the drawer. New chat remains in the drawer.
+  This follow-up supersedes the header and drawer navigation in the original captures.
+
 - [All eight mobile states](mobile-flow.jpg): format, footage, direction, rendering,
   ready, editor, projects, Gallery. Reviewed against each Paper artboard.
 - [Supporting screens](supporting-screens.jpg): sign-in, account, consent, recovery,
@@ -26,7 +30,7 @@ switch is selected. The software keyboard leaves the composer visible and suppor
 multiple lines. The accessibility tree exposes full project titles, descriptive
 icon labels, selected project state and disabled controls, and hides the underlying
 chat while the drawer is open. Long header titles truncate within their flexible
-slot rather than displacing the three 44-point controls.
+slot rather than displacing the two 44-point controls.
 
 ## Behavior coverage
 

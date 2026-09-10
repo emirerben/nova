@@ -41,7 +41,23 @@ final class KriaUITests: XCTestCase {
         // workspace must stay on its conservative Montage-only fallback.
         XCTAssertFalse(app.staticTexts["Narrated"].exists)
 
-        app.buttons["Open projects"].tap()
+        let toggle = app.buttons["workspace-menu-toggle"]
+        let closedMenuX = toggle.frame.minX
+        let viewport = app.windows.firstMatch.frame
+        XCTAssertEqual(app.staticTexts["workspace-project-title"].frame.midX, viewport.midX, accuracy: 2)
+        XCTAssertFalse(app.buttons["header-new-chat"].exists)
+        toggle.tap()
+        XCTAssertTrue(app.staticTexts["Recent chats"].waitForExistence(timeout: 2))
+        XCTAssertEqual(toggle.label, "Close projects")
+        XCTAssertTrue(toggle.isHittable)
+        XCTAssertGreaterThan(toggle.frame.minX, closedMenuX + 200)
+        XCTAssertLessThanOrEqual(toggle.frame.maxX, viewport.maxX)
+        XCTAssertEqual(app.buttons.matching(identifier: "Close projects").count, 1)
+        toggle.tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == 'Open projects'"), object: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 3), .completed)
+        XCTAssertEqual(toggle.frame.minX, closedMenuX, accuracy: 2)
+        toggle.tap()
         XCTAssertTrue(app.staticTexts["Recent chats"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.buttons["drawer-new-chat"].exists)
 

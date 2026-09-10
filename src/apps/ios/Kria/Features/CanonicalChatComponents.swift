@@ -36,7 +36,12 @@ struct CanonicalSecondaryButtonStyle: ButtonStyle {
     }
 }
 
+extension EnvironmentValues {
+    @Entry var projectsDrawerOpen = false
+}
+
 struct WorkspaceHeader: View {
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     let project: ProjectSummary
     let showsEditorSwitch: Bool
     let openProjects: () -> Void
@@ -48,13 +53,16 @@ struct WorkspaceHeader: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Button(action: openProjects) { KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle()) }
-                    .accessibilityLabel("Open projects")
+                    .accessibilityLabel(projectsDrawerOpen ? "Close projects" : "Open projects")
+                    .accessibilityIdentifier("workspace-menu-toggle")
                 Text(project.workspaceTitle)
                     .font(KriaFont.body(15).weight(.semibold))
                     .lineLimit(1).frame(maxWidth: .infinity)
                     .accessibilityIdentifier("workspace-project-title")
-                NewChatButton(compact: true)
+                    .accessibilityHidden(projectsDrawerOpen)
                 ProjectActionsMenu(project: project)
+                    .accessibilityHidden(projectsDrawerOpen)
+                    .allowsHitTesting(!projectsDrawerOpen)
             }
             .padding(.horizontal, 16).frame(minHeight: 64)
             if showsEditorSwitch {
@@ -66,6 +74,8 @@ struct WorkspaceHeader: View {
                     Button("Editor", action: openEditor).font(KriaFont.body(13).weight(.medium))
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }.padding(.horizontal, 16).padding(.bottom, 8)
+                    .accessibilityHidden(projectsDrawerOpen)
+                    .allowsHitTesting(!projectsDrawerOpen)
             }
         }.foregroundStyle(KriaColor.ink).background(KriaColor.paper)
     }
@@ -79,63 +89,51 @@ struct ProjectsDrawer: View {
     @AccessibilityFocusState private var menuFocused: Bool
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Color.black.opacity(0.28).ignoresSafeArea()
-                    .contentShape(Rectangle()).onTapGesture(perform: close)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 24) {
-                    HStack {
-                        KriaWordmark().accessibilityFocused($menuFocused)
-                        Spacer()
-                        Button(action: close) { KriaIcon(.close).frame(width: 44, height: 44) }
-                            .accessibilityLabel("Close projects")
-                    }.padding(.horizontal, 12)
-                    Button(action: openGallery) {
-                        HStack(spacing: 12) {
-                            KriaIcon(.gallery)
-                            Text("Gallery").font(KriaFont.body(15).weight(.medium))
-                            Spacer()
-                            Text("\(model.libraryProjects.count) \(model.libraryProjects.count == 1 ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                        }.frame(minHeight: 44).padding(.horizontal, 12)
-                    }
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Recent chats").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk).padding(.horizontal, 12)
-                        ScrollView {
-                            LazyVStack(spacing: 3) {
-                                if model.projects.isEmpty {
-                                    Text("No projects yet").font(KriaFont.body(14)).padding(12)
-                                    if case .failed = model.projectsState {
-                                        Button("Try again") { Task { await model.loadProjects() } }.buttonStyle(KriaSecondaryButtonStyle())
-                                    }
-                                }
-                                ForEach(model.projects) { project in
-                                    HStack(spacing: 0) {
-                                        Button { model.selectProject(project); close() } label: {
-                                            ProjectDrawerRow(project: project, isSelected: project.id == model.selectedProject?.id)
-                                        }.buttonStyle(.plain)
-                                        ProjectActionsMenu(project: project)
-                                    }.background(project.id == model.selectedProject?.id ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
-                                }
+        VStack(alignment: .leading, spacing: 24) {
+            HStack {
+                KriaWordmark().accessibilityFocused($menuFocused)
+                Spacer()
+            }.padding(.horizontal, 12)
+            Button(action: openGallery) {
+                HStack(spacing: 12) {
+                    KriaIcon(.gallery)
+                    Text("Gallery").font(KriaFont.body(15).weight(.medium))
+                    Spacer()
+                    Text("\(model.libraryProjects.count) \(model.libraryProjects.count == 1 ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                }.frame(minHeight: 44).padding(.horizontal, 12)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Recent chats").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk).padding(.horizontal, 12)
+                ScrollView {
+                    LazyVStack(spacing: 3) {
+                        if model.projects.isEmpty {
+                            Text("No projects yet").font(KriaFont.body(14)).padding(12)
+                            if case .failed = model.projectsState {
+                                Button("Try again") { Task { await model.loadProjects() } }.buttonStyle(KriaSecondaryButtonStyle())
                             }
                         }
-                    }
-                    Spacer(minLength: 0)
-                    HStack {
-                        NewChatButton(afterCreate: close)
-                        Spacer()
-                        Button(action: openAccount) { KriaIcon(.settings).frame(width: 44, height: 44) }
-                            .accessibilityLabel("Open account")
+                        ForEach(model.projects) { project in
+                            HStack(spacing: 0) {
+                                Button { model.selectProject(project); close() } label: {
+                                    ProjectDrawerRow(project: project, isSelected: project.id == model.selectedProject?.id)
+                                }.buttonStyle(.plain)
+                                ProjectActionsMenu(project: project)
+                            }.background(project.id == model.selectedProject?.id ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
+                        }
                     }
                 }
-                .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 20)
-                .frame(width: min(326, geometry.size.width - 44))
-                .frame(maxHeight: .infinity).background(KriaColor.paper)
-                .transition(.move(edge: .leading))
-                .accessibilityAddTraits(.isModal)
-                .accessibilityAction(.escape, close)
+            }
+            Spacer(minLength: 0)
+            HStack {
+                NewChatButton(afterCreate: close)
+                Spacer()
+                Button(action: openAccount) { KriaIcon(.settings).frame(width: 44, height: 44) }
+                    .accessibilityLabel("Open account")
             }
         }
+        .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity).background(KriaColor.paper)
+        .accessibilityAction(.escape, close)
         .foregroundStyle(KriaColor.ink)
         .task { menuFocused = true; await model.loadLibrary() }
     }

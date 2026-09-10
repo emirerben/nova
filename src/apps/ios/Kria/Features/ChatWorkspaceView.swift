@@ -9,60 +9,73 @@ struct ChatWorkspaceView: View {
     @State private var showsAccount = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let project = model.selectedProject {
-                    CreationWorkspaceView(
-                        project: project,
-                        openProjects: { showsProjects = true },
-                        openAccount: { showsAccount = true }
+        GeometryReader { geometry in
+            let drawerWidth = min(326, max(0, geometry.size.width - 76))
+            ZStack(alignment: .leading) {
+                if showsProjects {
+                    ProjectsDrawer(
+                        close: { showsProjects = false },
+                        openGallery: { showsProjects = false; showsGallery = true },
+                        openAccount: { showsProjects = false; showsAccount = true }
                     )
-                    .id(project.id)
-                } else if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
-                    WorkspaceLoadingView()
-                } else if model.projectsState == .empty {
-                    WorkspaceEmptyView { Task { await model.createProject() } }
-                } else {
-                    WorkspaceRecoveryView { Task { await model.openWorkspace() } }
+                    .frame(width: drawerWidth)
+                    .transition(.move(edge: .leading))
                 }
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityHidden(showsProjects)
-            .allowsHitTesting(!showsProjects)
-            .toolbar(.hidden, for: .navigationBar)
-            .safeAreaInset(edge: .top) {
-                if model.selectedProject == nil {
-                    HStack {
-                        Button { showsProjects = true } label: { KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle()) }
-                            .accessibilityLabel("Open projects")
-                        Spacer()
-                        KriaWordmark()
-                        Spacer()
-                        NewChatButton(compact: true)
-                    }.padding(.horizontal, 16).background(KriaColor.paper)
+                NavigationStack {
+                    Group {
+                        if let project = model.selectedProject {
+                            CreationWorkspaceView(
+                                project: project,
+                                openProjects: { showsProjects.toggle() },
+                                openAccount: { showsAccount = true }
+                            )
+                            .id(project.id)
+                        } else {
+                            Group {
+                                if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
+                                    WorkspaceLoadingView()
+                                } else if model.projectsState == .empty {
+                                    WorkspaceEmptyView { Task { await model.createProject() } }
+                                } else {
+                                    WorkspaceRecoveryView { Task { await model.openWorkspace() } }
+                                }
+                            }
+                            .accessibilityHidden(showsProjects)
+                            .allowsHitTesting(!showsProjects)
+                            .safeAreaInset(edge: .top) {
+                                HStack {
+                                    Button { showsProjects.toggle() } label: {
+                                        KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle())
+                                    }
+                                    .accessibilityLabel(showsProjects ? "Close projects" : "Open projects")
+                                    .accessibilityIdentifier("workspace-menu-toggle")
+                                    Spacer()
+                                    KriaWordmark().accessibilityHidden(showsProjects)
+                                    Spacer()
+                                    Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+                                }.padding(.horizontal, 16).frame(minHeight: 64).background(KriaColor.paper)
+                            }
+                        }
+                    }
+                    .toolbar(.hidden, for: .navigationBar)
                 }
+                .environment(\.projectsDrawerOpen, showsProjects)
+                .frame(width: geometry.size.width)
+                .offset(x: showsProjects ? drawerWidth : 0)
             }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
+            .clipped()
+            .background(KriaColor.paper)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: showsProjects)
+            .accessibilityAction(.escape) { showsProjects = false }
+        }
+        .onChange(of: showsProjects) { _, isOpen in
+            if isOpen { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
         }
         .task { await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID)) }
         .onChange(of: model.selectedProject?.id) { _, identifier in
             lastProjectID = identifier?.uuidString ?? ""
         }
-        .overlay {
-            if showsProjects {
-                ProjectsDrawer(
-                    close: { showsProjects = false },
-                    openGallery: {
-                        showsProjects = false
-                        showsGallery = true
-                    },
-                    openAccount: { showsProjects = false; showsAccount = true }
-                )
-                .environmentObject(model)
-                .transition(.opacity)
-                .zIndex(10)
-            }
-        }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: showsProjects)
         .fullScreenCover(isPresented: $showsGallery) {
             NavigationStack { GalleryView(openProjects: { showsGallery = false; showsProjects = true }) }
                 .environmentObject(model)
@@ -134,6 +147,7 @@ private struct CreationWorkspaceView: View {
 
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @State private var prompt = ""
     @State private var events: [ThreadEvent] = []
     @State private var pendingMessages: [PendingChatMessage] = []
@@ -246,6 +260,8 @@ private struct CreationWorkspaceView: View {
                 .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: isThinking) { _, _ in scrollToEnd(proxy) }
             }
+            .accessibilityHidden(projectsDrawerOpen)
+            .allowsHitTesting(!projectsDrawerOpen)
         }
         .background(KriaColor.paper)
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -256,6 +272,8 @@ private struct CreationWorkspaceView: View {
                 attach: { if selectedFormat != nil { showsAttachments = true } },
                 send: { Task { await send() } }
             )
+            .accessibilityHidden(projectsDrawerOpen)
+            .allowsHitTesting(!projectsDrawerOpen)
         }
         .task {
             await refreshCapabilities()
