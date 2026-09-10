@@ -899,6 +899,71 @@ describe("useEditCopilot", () => {
     expect(result.current.messages).toEqual([]);
   });
 
+  // KRI-19 bug 12: Stop used to still apply the response's ops once it
+  // arrived — only the user's own message was removed, so the edit landed
+  // with no visible trace of the request that caused it. The abandon check
+  // must run BEFORE applyOps/onApplied, not after.
+  it("stop prevents the late-arriving response from being applied at all", async () => {
+    const turn = deferred<EditCopilotTurnResponse>();
+    mockEditCopilotTurn.mockReturnValueOnce(turn.promise);
+    const applyOps = jest.fn(() =>
+      appliedResult({ applied: [{ label: "Alignment", from: "left", to: "center" }] }),
+    );
+    const onApplied = jest.fn();
+    const { result } = renderCopilot({ applyOps, onApplied });
+
+    act(() => {
+      void result.current.send("center the text");
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(1));
+
+    act(() => result.current.stop());
+
+    await act(async () => {
+      turn.resolve(
+        response({ reply: "Centered", ops: [{ op: "edit_text", bar_index: 0, text: "x" }] }),
+      );
+      await turn.promise;
+    });
+
+    expect(applyOps).not.toHaveBeenCalled();
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(result.current.messages).toEqual([]);
+  });
+
+  // KRI-19 bug 12: onApplied is the CALLER's UI-side hookup (seek preview,
+  // record undo history) and runs AFTER applyOps has already mutated the
+  // draft. A throw there used to fall into the outer catch, which deleted
+  // the user's message even though the edit had already landed.
+  it("keeps the user's message and the applied edit when onApplied throws", async () => {
+    mockEditCopilotTurn.mockResolvedValueOnce(
+      response({ reply: "Centered the text" }),
+    );
+    const applyOps = jest.fn(() =>
+      appliedResult({ applied: [{ label: "Alignment", from: "left", to: "center" }] }),
+    );
+    const onApplied = jest.fn(() => {
+      throw new Error("boom");
+    });
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = renderCopilot({ applyOps, onApplied });
+
+    await act(async () => {
+      await result.current.send("center the text");
+    });
+
+    expect(applyOps).toHaveBeenCalledTimes(1);
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[0]).toMatchObject({
+      role: "user",
+      text: "center the text",
+    });
+    expect(result.current.messages[1].role).toBe("assistant");
+    expect(result.current.messages[1].applied).toEqual(["Alignment: left, now center"]);
+    consoleError.mockRestore();
+  });
+
   it("clears mirrored storage on explicit clear", async () => {
     mockEditCopilotTurn.mockResolvedValueOnce(response({ reply: "Stored" }));
     const { result } = renderCopilot({ variantId: "variant-clear" });
