@@ -79,7 +79,7 @@ def test_model_cannot_author_render_target_pins() -> None:
         raise AssertionError("render.request accepted model-authored target pins")
 
 
-def test_editor_revision_becomes_portable_draft_then_exact_render_request() -> None:
+def test_editor_revision_stays_a_portable_draft_without_render_request() -> None:
     plan = adapt_editor_action(
         reply="I prepared a tighter opening and quieter music.",
         ops=[
@@ -89,12 +89,8 @@ def test_editor_revision_becomes_portable_draft_then_exact_render_request() -> N
     )
 
     assert plan.mode == "act"
-    assert [intent.tool_name for intent in plan.intents] == [
-        "draft.apply_editor_ops",
-        "render.request",
-    ]
+    assert [intent.tool_name for intent in plan.intents] == ["draft.apply_editor_ops"]
     assert plan.intents[0].arguments["operations"][0]["op"] == "trim_output_start"
-    assert plan.intents[1].depends_on == ["apply-editor-ops"]
     assert KRIA_TOOLS.get("draft.apply_editor_ops", 1).definition.risk == "reversible_draft"
 
 
@@ -121,7 +117,12 @@ async def test_editor_revision_copies_orm_values_before_releasing_read_transacti
     session_id = uuid.uuid4()
     item = SimpleNamespace(current_job_id=job_id)
     thread = SimpleNamespace(active_creator_agent_session_id=session_id)
-    session = SimpleNamespace(target_job_id=job_id, target_variant_id="original_text")
+    session = SimpleNamespace(
+        target_job_id=job_id,
+        target_variant_id="original_text",
+        plan_item_id=uuid.uuid4(),
+        target_generation_id=None,
+    )
     job = SimpleNamespace(
         id=job_id,
         assembly_plan={
@@ -146,7 +147,8 @@ async def test_editor_revision_copies_orm_values_before_releasing_read_transacti
         get=AsyncMock(side_effect=get),
         execute=AsyncMock(
             return_value=SimpleNamespace(
-                scalars=lambda: SimpleNamespace(all=lambda: [ExpiringRow()])
+                scalar_one_or_none=lambda: None,
+                scalars=lambda: SimpleNamespace(all=lambda: [ExpiringRow()]),
             )
         ),
         rollback=AsyncMock(side_effect=rollback),
@@ -270,3 +272,16 @@ async def test_live_creator_plan_releases_transaction_and_offloads_sync_agent(
         )
         assert result.plan.turn_value == "question"
     assert offloaded is True
+
+
+def test_explicit_server_editor_action_retains_exact_render_approval() -> None:
+    plan = adapt_editor_action(
+        reply="Apply the reviewed speech cut.",
+        ops=[{"op": "apply_speech_cut_candidate", "candidate_id": "cut-1"}],
+        request_render=True,
+    )
+    assert [intent.tool_name for intent in plan.intents] == [
+        "draft.apply_editor_ops",
+        "render.request",
+    ]
+    assert plan.intents[1].depends_on == ["apply-editor-ops"]

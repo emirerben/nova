@@ -7,6 +7,13 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - iOS verification builds the app and tests together for one simulator, starts that simulator during compilation, and reuses Xcode build and package caches in CI. All unit, UI, and contract checks remain required.
 
+## [0.75.6.0] - 2026-09-10
+
+### Changed
+- Creation and editing share one Kria conversation. Editor reviews, suggestions, confirmations, progress, and undo now appear in the main chat, including the mobile Chat tab.
+- Previewable AI edits remain unsaved until Save/export. Server-only effects and speech processing require confirmation, and stale responses cannot overwrite a changed draft.
+- Direct editor links reopen the owning conversation and selected variant. Editor history retries survive a reload without replaying edits.
+
 ## [0.75.5.0] - 2026-09-10
 
 ### Changed

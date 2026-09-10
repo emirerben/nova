@@ -935,7 +935,7 @@ describe("useEditCopilot", () => {
   // record undo history) and runs AFTER applyOps has already mutated the
   // draft. A throw there used to fall into the outer catch, which deleted
   // the user's message even though the edit had already landed.
-  it("keeps the user's message and the applied edit when onApplied throws", async () => {
+  it.each([false, true])("keeps the user's message when onApplied fails (async: %s)", async (asyncFailure) => {
     mockEditCopilotTurn.mockResolvedValueOnce(
       response({ reply: "Centered the text" }),
     );
@@ -943,6 +943,7 @@ describe("useEditCopilot", () => {
       appliedResult({ applied: [{ label: "Alignment", from: "left", to: "center" }] }),
     );
     const onApplied = jest.fn(() => {
+      if (asyncFailure) return Promise.reject(new Error("boom"));
       throw new Error("boom");
     });
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -1061,5 +1062,95 @@ describe("useEditCopilot", () => {
     expect(assistantMessage.isRenderTurn).toBeUndefined();
     expect(assistantMessage.undoVersion).toBe(5);
     expect(assistantMessage.text).toBe("Staged: Size: 64, now 54. Save to render the new video.");
+  });
+});
+
+describe("shared editor conversation", () => {
+  test("passes creation history and the stable request identity to the existing agent", async () => {
+    mockEditCopilotTurn.mockResolvedValue(response());
+    const { result } = renderHook(() => useEditCopilot(copilotOptions({ persistLocally: false })));
+    await act(async () => result.current.send("Make it smaller", {
+      requestId: "main-chat-request", turns: [{ role: "user", content: "This is a quiet morning film" }],
+    }));
+    expect(mockEditCopilotTurn).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), expect.objectContaining({
+      client_request_id: "main-chat-request", turns: [{ role: "user", content: "This is a quiet morning film" }],
+    }));
+  });
+
+  test("rejects an AI response when a manual edit changes the draft in flight", async () => {
+    const pending = deferred<EditCopilotTurnResponse>();
+    mockEditCopilotTurn.mockReturnValue(pending.promise);
+    let revision = "one";
+    const applyOpsAtomic = jest.fn(() => appliedResult());
+    const onApplied = jest.fn();
+    const { result } = renderHook(() => useEditCopilot(copilotOptions({
+      getDraftRevision: () => revision, applyOpsAtomic, onApplied,
+    })));
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.send("Make the title smaller"); });
+    revision = "two";
+    await act(async () => { pending.resolve(response({ ops: [{ op: "set_title", title: "Hello" }] })); await sending; });
+    expect(applyOpsAtomic).not.toHaveBeenCalled();
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(result.current.error).toContain("draft changed");
+  });
+
+  test("waits for server confirmation and a dispatch acknowledgement before claiming rendering", async () => {
+    mockEditCopilotTurn.mockResolvedValue(response({ ops: [{ op: "set_intro_layout", layout: "cluster" }] }));
+    const confirmation = deferred<boolean>();
+    const dispatch = deferred<{ isRenderTurn: boolean; assistantText: string }>();
+    const onApplied = jest.fn(() => dispatch.promise);
+    const { result } = renderHook(() => useEditCopilot(copilotOptions({
+      getDraftRevision: () => "one", confirmServerAction: () => confirmation.promise, onApplied,
+      applyOpsAtomic: () => appliedResult({ renderRequest: { kind: "set_intro_layout", layout: "cluster" } }),
+    })));
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.send("Use the editorial intro"); });
+    await waitFor(() => expect(mockEditCopilotTurn).toHaveBeenCalled());
+    expect(onApplied).not.toHaveBeenCalled();
+    await act(async () => { confirmation.resolve(true); });
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    expect(result.current.messages.some((message) => message.isRenderTurn)).toBe(false);
+    await act(async () => { dispatch.resolve({ isRenderTurn: true, assistantText: "The new version is rendering." }); await sending; });
+    expect(result.current.messages.at(-1)?.isRenderTurn).toBe(true);
+  });
+
+  test("a failed server dispatch never claims that the render was applied", async () => {
+    mockEditCopilotTurn.mockResolvedValue(response({ ops: [{ op: "set_intro_layout", layout: "cluster" }] }));
+    const { result } = renderHook(() => useEditCopilot(copilotOptions({
+      persistLocally: false,
+      confirmServerAction: async () => true,
+      onApplied: async () => { throw new Error("Dispatch failed"); },
+      applyOpsAtomic: () => appliedResult({ renderRequest: { kind: "set_intro_layout", layout: "cluster" } }),
+    })));
+    await act(async () => result.current.send("Use the editorial intro"));
+    expect(result.current.error).toBeTruthy();
+    expect(result.current.messages[0]).toMatchObject({ role: "user", pending: false });
+    expect(result.current.messages.some((message) => message.isRenderTurn)).toBe(false);
+    expect(result.current.messages.at(-1)?.applied).toBeUndefined();
+  });
+
+  test("declining a server action leaves the draft unchanged and never dispatches", async () => {
+    mockEditCopilotTurn.mockResolvedValue(response({ ops: [{ op: "set_intro_layout", layout: "cluster" }] }));
+    const onApplied = jest.fn();
+    const { result } = renderHook(() => useEditCopilot(copilotOptions({
+      confirmServerAction: async () => false, onApplied,
+      applyOpsAtomic: () => appliedResult({ renderRequest: { kind: "set_intro_layout", layout: "cluster" } }),
+    })));
+    await act(async () => result.current.send("Use the editorial intro"));
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(result.current.messages.at(-1)?.text).toContain("No render was started");
+  });
+
+  test("closing the editor before the response arrives cannot apply operations", async () => {
+    const pending = deferred<EditCopilotTurnResponse>();
+    mockEditCopilotTurn.mockReturnValue(pending.promise);
+    const applyOpsAtomic = jest.fn(() => appliedResult());
+    const { result, unmount } = renderHook(() => useEditCopilot(copilotOptions({ applyOpsAtomic })));
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.send("Move the text"); });
+    unmount();
+    await act(async () => { pending.resolve(response({ ops: [{ op: "set_title", title: "Hello" }] })); await sending; });
+    expect(applyOpsAtomic).not.toHaveBeenCalled();
   });
 });
