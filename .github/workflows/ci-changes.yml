@@ -9,6 +9,8 @@ on:
         value: ${{ jobs.select.outputs.api }}
       ios:
         value: ${{ jobs.select.outputs.ios }}
+      ios_ui_groups:
+        value: ${{ jobs.select.outputs.ios_ui_groups }}
       ios_ui:
         value: ${{ jobs.select.outputs.ios_ui }}
 
@@ -20,6 +22,7 @@ jobs:
       api: ${{ steps.select.outputs.api }}
       ios: ${{ steps.select.outputs.ios }}
       ios_ui: ${{ steps.select.outputs.ios_ui }}
+      ios_ui_groups: ${{ steps.select.outputs.ios_ui_groups }}
     steps:
       - uses: actions/checkout@v4
         with:

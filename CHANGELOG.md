@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.75.11.0] - 2026-09-10
+
+### Changed
+- Narrow native PRs run affected UI tests plus cross-app smoke coverage; shared, unknown, and multi-feature changes and main pushes retain the complete suite. All selected unit tests remain required.
+- iOS verification records phase timings and result bundles, verifies selected UI tests actually passed, and uploads diagnostics on failure.
+
 ## [0.75.10.0] - 2026-09-10
 
 ### Fixed

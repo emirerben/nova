@@ -35,6 +35,7 @@ elif name == 'xcodebuild':
         value = {'Debug': 'http://localhost:8000', 'Staging': 'https://staging.usekria.com', 'Release': 'https://nova-video.fly.dev'}[config]
         bad = (mode == 'bad_url' and config == 'Staging') or (mode == 'bad_debug_url' and config == 'Debug')
         print(' API_BASE_URL = ' + ('https:' if bad else value))
+        sys.exit(29 if mode == 'settings_failure' else 0)
     elif args[-1] == 'build-for-testing':
         deadline = time.monotonic() + 5
         while not (root / 'boot_started').exists():
@@ -45,11 +46,26 @@ elif name == 'xcodebuild':
     elif args[-1] == 'test-without-building':
         if not (root / 'boot_finished').exists():
             sys.exit(98)
+        bundle = pathlib.Path(args[args.index('-resultBundlePath') + 1])
+        bundle.mkdir()
+        (bundle / 'args.json').write_text(json.dumps(args))
         sys.exit(25 if mode == 'test_failure' else 0)
     elif args[-1] == 'build':
         sys.exit(26 if mode == 'build_only_failure' else 0)
 elif name == 'xcrun':
-    if args[:3] == ['simctl', 'list', 'devices']:
+    if args[:4] == ['xcresulttool', 'get', 'test-results', 'tests']:
+        bundle = pathlib.Path(args[args.index('--path') + 1])
+        test_args = json.loads((bundle / 'args.json').read_text())
+        manifest = json.loads((root / 'scripts/ios/ui-test-groups.json').read_text())
+        tests = sorted(set(t for values in manifest['groups'].values() for t in values))
+        selected = [arg.removeprefix('-only-testing:') for arg in test_args if arg.startswith('-only-testing:')]
+        if selected != ['KriaUITests']:
+            tests = selected
+        if mode == 'empty_results':
+            tests = []
+        print(json.dumps({'testNodes': [{'nodeType': 'UI test bundle', 'name': 'KriaUITests', 'children': [
+            {'nodeType': 'Test Case', 'nodeIdentifier': t.removeprefix('KriaUITests/') + '()', 'result': 'Passed'} for t in tests]}]}))
+    elif args[:3] == ['simctl', 'list', 'devices']:
         if mode == 'list_failure':
             sys.exit(27)
         devices = {} if mode == 'no_simulator' else {
@@ -85,8 +101,18 @@ class VerifyShellTests(unittest.TestCase):
         scripts.mkdir(parents=True)
         (self.root / "src/apps/ios").mkdir(parents=True)
         original = Path(__file__).resolve().parents[1]
-        for name in ("verify.sh", "generate-project.sh", "cache-inputs.py"):
+        for name in (
+            "verify.sh",
+            "generate-project.sh",
+            "cache-inputs.py",
+            "ui_tests.py",
+            "ui-test-groups.json",
+        ):
             shutil.copy2(original / name, scripts / name)
+        shutil.copytree(
+            original.parents[1] / "src/apps/ios/Tests/KriaUITests",
+            self.root / "src/apps/ios/Tests/KriaUITests",
+        )
         (self.root / "src/apps/ios/source.swift").write_text("let value = 1")
         self.bin = self.root / "bin"
         self.bin.mkdir()
@@ -102,6 +128,7 @@ class VerifyShellTests(unittest.TestCase):
         suite="full",
         restore_times=False,
         simulator_id="",
+        groups="full",
     ):
         env = {
             **os.environ,
@@ -109,6 +136,7 @@ class VerifyShellTests(unittest.TestCase):
             "HARNESS_ROOT": str(self.root),
             "HARNESS_MODE": mode,
             "KRIA_IOS_TEST_MODE": suite,
+            "KRIA_IOS_UI_GROUPS": groups,
             "KRIA_SIMULATOR_ID": simulator_id,
             "KRIA_RESTORE_INPUT_TIMES": "1" if restore_times else "0",
             "KRIA_SKIP_SIMULATOR_TESTS": "1" if build_only else "0",
@@ -134,7 +162,10 @@ class VerifyShellTests(unittest.TestCase):
     def test_full_gate_builds_once_then_tests_serially_on_same_destination(self):
         result = self.run_verify()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.actions, ["build-for-testing", "test-without-building"])
+        self.assertEqual(
+            self.actions,
+            ["build-for-testing", "test-without-building", "test-without-building"],
+        )
         for call in self.calls:
             if call[0] == "xcodebuild" and call[-1] in self.actions:
                 self.assertEqual(
@@ -176,8 +207,57 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(
             call[call.index("-destination") + 1], "platform=iOS Simulator,id=selected"
         )
-        self.assertFalse(any(call[0] in ("xcodegen", "xcrun") for call in self.calls))
+        self.assertFalse(
+            any(
+                call[0] == "xcodegen" or call[:2] == ["xcrun", "simctl"]
+                for call in self.calls
+            )
+        )
         self.assertNotEqual(self.run_verify(suite="ui").returncode, 0)
+
+    def test_focused_filters_are_exact_and_deduplicated(self):
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        result = self.run_verify(suite="ui", groups="smoke,creation")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads((self.root / "scripts/ios/ui-test-groups.json").read_text())
+        expected = set(data["groups"]["smoke"] + data["groups"]["creation"])
+        call = next(c for c in self.calls if c[-1] == "test-without-building")
+        filters = [
+            a.removeprefix("-only-testing:")
+            for a in call
+            if a.startswith("-only-testing:")
+        ]
+        self.assertEqual(filters, sorted(expected))
+        self.assertEqual(call[call.index("-parallel-testing-enabled") + 1], "NO")
+
+    def test_invalid_or_empty_selection_never_runs_xcode(self):
+        for groups in ("", "none", "smoke,typo", "creation", "smoke,editor,creation"):
+            with self.subTest(groups=groups):
+                self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+                self.assertNotEqual(
+                    self.run_verify(suite="ui", groups=groups).returncode, 0
+                )
+                self.assertEqual(self.actions, [])
+
+    def test_zero_executed_tests_cannot_pass(self):
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        result = self.run_verify("empty_results", suite="ui")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("coverage mismatch", result.stderr)
+
+    def test_full_gate_has_distinct_result_bundles_and_timings(self):
+        result = self.run_verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c for c in self.calls if c[-1] == "test-without-building"]
+        paths = [c[c.index("-resultBundlePath") + 1] for c in calls]
+        self.assertEqual(
+            [Path(p).name for p in paths], ["unit.xcresult", "ui.xcresult"]
+        )
+        self.assertIn("-skip-testing:KriaUITests", calls[0])
+        self.assertIn("-only-testing:KriaUITests", calls[1])
+        self.assertIn("Compilation", result.stdout)
+        self.assertIn("Unit execution", result.stdout)
+        self.assertIn("UI execution", result.stdout)
 
     def test_ui_requires_successful_current_build(self):
         self.assertNotEqual(self.run_verify(suite="ui").returncode, 0)
@@ -271,6 +351,11 @@ class VerifyShellTests(unittest.TestCase):
         self.assertNotEqual(self.run_verify("list_failure").returncode, 0)
         self.assertEqual(self.actions, [])
 
+    def test_failed_settings_query_cannot_pass_with_valid_stdout(self):
+        result = self.run_verify("settings_failure")
+        self.assertEqual(result.returncode, 29)
+        self.assertEqual(self.actions, [])
+
     def test_bad_api_url_stops_before_build(self):
         result = self.run_verify("bad_url")
         self.assertNotEqual(result.returncode, 0)
@@ -280,7 +365,9 @@ class VerifyShellTests(unittest.TestCase):
     def test_truncated_debug_api_url_stops_before_build(self):
         result = self.run_verify("bad_debug_url")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Expected Debug to resolve a complete HTTP(S) API URL", result.stderr)
+        self.assertIn(
+            "Expected Debug to resolve a complete HTTP(S) API URL", result.stderr
+        )
         self.assertEqual(self.actions, [])
 
     def test_generation_failure_stops_before_xcode(self):

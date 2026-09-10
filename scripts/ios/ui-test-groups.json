@@ -1,0 +1,59 @@
+{
+  "groups": {
+    "creation": [
+      "KriaUITests/CreationUITests/testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize",
+      "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
+      "KriaUITests/CreationUITests/testEveryCreationFormatOpensTheAttachmentFlow",
+      "KriaUITests/CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
+      "KriaUITests/CreationUITests/testSlowDirectionAndPreJobFailureNeverReturnToUploading",
+      "KriaUITests/CreationUITests/testExpiredApprovalCannotStartGeneration",
+      "KriaUITests/CreationUITests/testUnavailableCapabilitiesShowRetryInsteadOfDeadFormatCards"
+    ],
+    "projects": [
+      "KriaUITests/ProjectsUITests/testProjectActionsCanBeCancelledWithoutChangingProject",
+      "KriaUITests/ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+    ],
+    "editor": [
+      "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
+      "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
+      "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock",
+      "KriaUITests/EditorUITests/testNativeEditorPlaysTheRenderedAssetThroughItsRealEndAndReplays",
+      "KriaUITests/EditorUITests/testNativeEditorLongTextEditPreservesDurationAndClipGeometry",
+      "KriaUITests/EditorUITests/testNativeEditorTrimHandleShortensExtendsAndUndoesAsOneGesture",
+      "KriaUITests/EditorUITests/testNativeEditorNamedFixturesLaunchWithoutAnAccount",
+      "KriaUITests/NativeEditorInspectorUITests/testEditorChromeFitsViewportAndEveryToolRemainsReachable",
+      "KriaUITests/NativeEditorInspectorUITests/testTimelineTextSelectionOpensTextInspector",
+      "KriaUITests/NativeEditorInspectorUITests/testCaptionSelectionOpensCaptionInspector",
+      "KriaUITests/NativeEditorInspectorUITests/testAllPersistedLanesExposeStableTimelineIdentityAndInspector",
+      "KriaUITests/NativeEditorInspectorUITests/testPreviewDragIsOneUndoableTextEdit",
+      "KriaUITests/NativeEditorInspectorUITests/testStressFixtureRemainsReachableAtAccessibilityTypeWithReduceMotion"
+    ],
+    "smoke": [
+      "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
+      "KriaUITests/CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
+      "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
+      "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock"
+    ]
+  },
+  "sources": {
+    "src/apps/ios/Kria/Core/CreationFlow.swift": "creation",
+    "src/apps/ios/Kria/Features/CreationAttachments.swift": "creation",
+    "src/apps/ios/Kria/Features/CreationConfirmationStage.swift": "creation",
+    "src/apps/ios/Kria/Features/UploadViews.swift": "creation",
+    "src/apps/ios/Kria/Features/CanonicalChatComponents.swift": "creation",
+    "src/apps/ios/Kria/Features/ChatUITestTransport.swift": "creation",
+    "src/apps/ios/Kria/Core/NativeEditorDocument.swift": "editor",
+    "src/apps/ios/Kria/Core/NativeEditorInteraction.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorView.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorMediaViews.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorInspectors.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorComponents.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorUITestFixtures.swift": "editor",
+    "src/apps/ios/Kria/Features/EditorViews.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/CreationUITests.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift": "projects",
+    "src/apps/ios/Tests/KriaUITests/EditorUITests.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift": "editor"
+  }
+}
