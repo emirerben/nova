@@ -948,7 +948,7 @@ def _latest_cadence_question(events: list[CreatorAgentEvent]) -> dict[str, Any] 
 
 def _latest_planned_cadence(
     events: list[CreatorAgentEvent],
-) -> tuple[MontageCadenceConstraint | None, int | None]:
+) -> tuple[MontageCadenceConstraint | None, int | float | None]:
     """Recover the last accepted typed cadence after active-plan reset."""
 
     for event in sorted(events, key=lambda value: value.sequence, reverse=True):
@@ -960,7 +960,7 @@ def _latest_planned_cadence(
         except (KeyError, ValueError):
             return None, None
         target_s = payload.get("target_duration_s")
-        return cadence, int(target_s) if isinstance(target_s, (int, float)) else None
+        return cadence, target_s if isinstance(target_s, (int, float)) else None
     return None, None
 
 
@@ -1053,7 +1053,7 @@ async def _record_cadence_duration_unavailable(
     session: CreatorAgentSession,
     *,
     cadence: MontageCadenceConstraint,
-    target_duration_s: int | None = None,
+    target_duration_s: int | float | None = None,
 ) -> None:
     await _record_required_cadence_question(
         db,
@@ -1080,29 +1080,24 @@ async def _record_cadence_duration_unavailable(
     )
 
 
-def _balanced_integer_duration_s(*, limit_s: float, cycle_s: float) -> int:
-    """Find the longest whole-second target made of complete cadence cycles."""
+def _balanced_duration_s(*, limit_s: float, cycle_s: float) -> int | float:
+    """Find the longest target made of complete cadence cycles."""
 
-    cycle_count = int((limit_s + 0.001) // cycle_s)
-    for cycles in range(cycle_count, 0, -1):
-        duration_s = cycles * cycle_s
-        rounded_s = round(duration_s)
-        if 3 <= rounded_s <= 60 and abs(duration_s - rounded_s) <= 0.001:
-            return int(rounded_s)
-    return 0
+    cycles = math.floor((min(limit_s, 60) + 0.001) / cycle_s)
+    duration_s = round(cycles * cycle_s, 6)
+    return (int(duration_s) if duration_s % 1 == 0 else duration_s) if 3 <= duration_s <= 60 else 0
 
 
-def _next_balanced_integer_duration_s(*, minimum_s: float, limit_s: float, cycle_s: float) -> int:
-    """Find the shortest whole-second complete-cycle target above a lower bound."""
+def _next_balanced_duration_s(*, minimum_s: float, limit_s: float, cycle_s: float) -> int | float:
+    """Find the shortest complete-cycle target at or above a lower bound."""
 
-    first_cycle = max(1, math.ceil((minimum_s - 0.001) / cycle_s))
-    last_cycle = int((limit_s + 0.001) // cycle_s)
-    for cycles in range(first_cycle, last_cycle + 1):
-        duration_s = cycles * cycle_s
-        rounded_s = round(duration_s)
-        if 3 <= rounded_s <= 60 and abs(duration_s - rounded_s) <= 0.001:
-            return int(rounded_s)
-    return 0
+    cycles = max(1, math.ceil((max(3, minimum_s) - 0.001) / cycle_s))
+    duration_s = round(cycles * cycle_s, 6)
+    return (
+        (int(duration_s) if duration_s % 1 == 0 else duration_s)
+        if 3 <= duration_s <= min(limit_s, 60) + 0.001
+        else 0
+    )
 
 
 def _selected_cadence_sources(
@@ -1152,7 +1147,7 @@ def _resolved_cadence_for_turn(
     manifest: Any,
     creator_request: str,
     user_message: str,
-) -> tuple[MontageCadenceConstraint | None, int | None]:
+) -> tuple[MontageCadenceConstraint | None, int | float | None]:
     if rejects_round_robin_cadence(user_message):
         return None, None
     prior = _latest_cadence_question(events)
@@ -1177,13 +1172,13 @@ def _resolved_cadence_for_turn(
                 return (
                     cadence,
                     recognize_total_duration_s(user_message)
-                    or int(prior.get("target_duration_s") or 0)
+                    or float(prior.get("target_duration_s") or 0)
                     or recognize_total_duration_s(creator_request)
                     or None,
                 )
             recommendation = str(prior.get("recommendation") or "")
-            requested_s = int(prior.get("requested_duration_s") or 24)
-            recommended_s = int(prior.get("recommended_duration_s") or 0)
+            requested_s = float(prior.get("requested_duration_s") or 24)
+            recommended_s = float(prior.get("recommended_duration_s") or 0)
             normalized = " ".join(user_message.casefold().split())
             if recommendation and normalized == recommendation.casefold():
                 if recognize_cadence_reuse_policy(user_message) == "allow_repeat":
@@ -1194,9 +1189,11 @@ def _resolved_cadence_for_turn(
                 return cadence, recommended_s
             if recognize_cadence_reuse_policy(user_message) == "allow_repeat":
                 return cadence.model_copy(update={"reuse_policy": "allow_repeat"}), requested_s
-            target_match = re.search(r"\b(\d{1,2})\s*(?:seconds?|secs?|s)\b", normalized)
+            target_match = re.search(
+                r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", normalized
+            )
             if target_match:
-                return cadence, int(target_match.group(1))
+                return cadence, float(target_match.group(1))
 
     current_cut_duration_s = recognize_round_robin_cadence(user_message)
     if current_cut_duration_s is None:
@@ -1233,11 +1230,11 @@ MAIN_CREATOR_FALLBACK_SUMMARY = (
 )
 
 
-def _pinned_narration_target_duration_s(manifest: Any) -> int | None:
+def _pinned_narration_target_duration_s(manifest: Any) -> float | None:
     narration = getattr(manifest, "narration", None)
     if not getattr(manifest, "has_voiceover", False) or narration is None:
         return None
-    duration_s = int(round(float(narration.duration_s)))
+    duration_s = float(narration.duration_s)
     max_duration_s = int(getattr(getattr(manifest, "limits", None), "max_output_duration_s", 60))
     return max(3, min(max_duration_s, duration_s))
 
@@ -1710,14 +1707,14 @@ async def _run_planning_turn(
                     if cadence.reuse_policy == "allow_repeat"
                     else min(capacity_s, requested_s)
                 )
-                balanced_s = _balanced_integer_duration_s(limit_s=limit_s, cycle_s=cycle_s)
+                balanced_s = _balanced_duration_s(limit_s=limit_s, cycle_s=cycle_s)
                 if balanced_s < 3:
                     # A minimum-length request can fall between complete
                     # cycles (for example 3s requested with a 2s A/B cycle).
                     # Recommend the next renderable cycle instead of offering
                     # reuse, which cannot make an incomplete cycle valid.
                     expansion_limit_s = 60 if cadence.reuse_policy == "allow_repeat" else capacity_s
-                    balanced_s = _next_balanced_integer_duration_s(
+                    balanced_s = _next_balanced_duration_s(
                         minimum_s=requested_s,
                         limit_s=expansion_limit_s,
                         cycle_s=cycle_s,

@@ -149,6 +149,7 @@ from app.schemas.edit_proposal import (
     MediaRef,
     OutputOrientation,
     ProposalBrief,
+    ProposalDuration,
     StoryBeat,
     canonical_media_digest,
     parse_edit_proposal,
@@ -2503,7 +2504,7 @@ class ConfirmDirectionBody(BaseModel):
     fingerprint: str = Field(min_length=64, max_length=64)
     direction: Literal["guided_story", "fast_montage", "text_explainer"] | None = None
     pace: Literal["relaxed", "balanced", "fast"] | None = None
-    duration_s: int | None = Field(default=None, ge=3, le=60)
+    duration_s: ProposalDuration | None = None
 
 
 async def _edit_guide_media_summary(

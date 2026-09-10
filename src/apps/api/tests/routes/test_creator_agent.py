@@ -39,13 +39,13 @@ from app.routes.creator_agent import (
     _apply_explicit_render_intent,
     _apply_plan_intent,
     _auto_iteration_already_finalized,
-    _balanced_integer_duration_s,
+    _balanced_duration_s,
     _confirmed_creator_request,
     _creator_speech_cut_source_enabled,
     _explicit_media_scope,
     _fallback_strategy,
     _has_explicit_media_scope,
-    _next_balanced_integer_duration_s,
+    _next_balanced_duration_s,
     _pinned_narration_target_duration_s,
     _previous_creator_clip_order,
     _requests_preserved_clip_order,
@@ -2075,8 +2075,8 @@ def test_creator_route_uses_pinned_narration_duration_without_explicit_total(
         manifest=manifest,
     )
 
-    assert _pinned_narration_target_duration_s(manifest) == 45
-    assert strategy.target_duration_s == 45
+    assert _pinned_narration_target_duration_s(manifest) == 44.688
+    assert strategy.target_duration_s == 44.688
 
     explicit = _apply_explicit_render_intent(
         strategy,
@@ -2176,7 +2176,7 @@ async def test_route_fallback_preserves_pinned_voiceover_and_all_media_draft(
     assert strategy["audio_strategy"] == "voiceover"
     assert strategy["execution_contract"] == "guided_voiceover_v1"
     assert strategy["media_scope"] == "all"
-    assert strategy["target_duration_s"] == 45
+    assert strategy["target_duration_s"] == 44.688
     assert strategy.get("opening_title") is None
     assert strategy.get("intro_hook") is None
     assert strategy["story_structure"] == []
@@ -3176,8 +3176,8 @@ def test_cadence_recognizers_separate_cut_timing_total_length_and_cancellation()
     assert recognize_round_robin_cadence(request) == 1
     assert recognize_total_duration_s(request) == 3
     assert recognize_total_duration_s("I want a 10-second video") == 10
-    assert _balanced_integer_duration_s(limit_s=24, cycle_s=1.4) == 21
-    assert _next_balanced_integer_duration_s(minimum_s=3, limit_s=12, cycle_s=2) == 4
+    assert _balanced_duration_s(limit_s=24, cycle_s=1.4) == 23.8
+    assert _next_balanced_duration_s(minimum_s=3, limit_s=12, cycle_s=2) == 4
     assert rejects_round_robin_cadence("Don't alternate; make it a guided story") is True
 
 

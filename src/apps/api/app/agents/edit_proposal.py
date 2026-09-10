@@ -23,6 +23,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     MontageCadenceConstraint,
     MontageTextBinding,
+    ProposalDuration,
     VideoReusePolicy,
     canonical_narration_duration_s,
     media_context_group,
@@ -237,7 +238,7 @@ class EditProposalAgentInput(BaseModel):
     pace: Literal["relaxed", "balanced", "fast"]
     # No artificial floor — the caller clamps this to what the uploaded
     # footage can actually support before invoking the agent.
-    target_duration_s: int = Field(ge=3, le=60)
+    target_duration_s: ProposalDuration
     media_scope: MediaScope | None = None
     selected_media_ids: list[str] | None = Field(default=None, max_length=MAX_EDIT_PROPOSAL_MEDIA)
     narration_duration_s: float | None = Field(default=None, gt=0)
@@ -601,7 +602,7 @@ class DraftStoryBeat(BaseModel):
 
 class EditProposalAgentOutput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
-    duration_s: int = Field(ge=3, le=60)
+    duration_s: ProposalDuration
     story_beats: list[DraftStoryBeat] = Field(default_factory=list, max_length=5)
     # New fast-montage proposals use exact source windows. Legacy fast snapshots
     # omit this field and continue through the old story-beat compiler.
@@ -1031,7 +1032,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.8.1",
+        prompt_version="1.8.2",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1460,10 +1461,12 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         if abs(output.duration_s - _effective_target_duration_s(input)) > 5:
             raise SchemaError("edit_proposal: duration is too far from the creator's target")
         if input.direction != "fast_montage":
-            beat_duration = sum(beat.duration_s for beat in output.story_beats)
+            beat_duration = math.fsum(beat.duration_s for beat in output.story_beats)
             max_intro_gap = max(6.0, output.duration_s * 0.3)
+            # Source metadata can carry more precision than the declared total;
+            # allow at most one output frame of drift before compilation.
             if (
-                beat_duration > output.duration_s
+                beat_duration - output.duration_s > 1 / 30 + 1e-6
                 or output.duration_s - beat_duration > max_intro_gap
             ):
                 raise SchemaError("edit_proposal: beat durations do not fit the declared duration")

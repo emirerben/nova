@@ -65,6 +65,15 @@ review is enabled, the exact ready generation is queued for the objective
 `video_quality_grader`; the resulting evidence and confirmation-gated revision
 proposal are shown as feedback, never applied automatically by V1 or Stage 2.
 
+Proposal durations accept integer or fractional seconds within 3–60s. Preserve
+fractional values through the Creator strategy, guide revision, specialist input
+and output, saved snapshot, and footage feasibility checks; only frame or complete
+cadence-cycle allocation quantizes timing. Existing integer JSON values remain
+integers so saved approval fingerprints stay stable. Source selection defines
+coverage, while story beats or cuts define playback order. Guards:
+`tests/test_fractional_edit_duration.py` and the fractional initial-draft test in
+`tests/tasks/test_edit_proposal_build.py`.
+
 ### Trust boundaries
 
 - The model receives opaque media/catalog IDs, never GCS paths, signed URLs,
