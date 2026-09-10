@@ -2,13 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.75.7.0] — 2026-09-10
+## [0.75.8.0] — 2026-09-10
 
 ### Fixed
 - **Talking-to-camera edits no longer add background music you didn't ask for.** A fresh render now keeps your own audio, silently, by default — Kria no longer auto-matches a licensed track underneath your speech. Music still plays when you explicitly pick a track from the item's editor, and it now survives re-renders instead of being replaced or dropped. The result label reflects it too, reading "Original audio + music" (or "Narration + music") whenever a background track is live.
 
 ### Internal
 - New kill switch `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` (default on) gates the v2 licensed-music-bed resolver to only ever return a creator-selected treatment, never invent one.
+
+## [0.75.7.0] - 2026-09-10
+
+### Changed
+- iOS verification builds the app and tests together for one simulator, starts that simulator during compilation, and reuses Xcode build and package caches in CI. All unit, UI, and contract checks remain required.
 
 ## [0.75.6.0] - 2026-09-10
 
