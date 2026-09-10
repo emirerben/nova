@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("kria.workspace.last-project-id") private var lastProjectID = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsProjects = false
     @State private var showsGallery = false
     @State private var showsAccount = false
@@ -25,7 +26,22 @@ struct ChatWorkspaceView: View {
                     WorkspaceRecoveryView { Task { await model.openWorkspace() } }
                 }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityHidden(showsProjects)
+            .allowsHitTesting(!showsProjects)
             .toolbar(.hidden, for: .navigationBar)
+            .safeAreaInset(edge: .top) {
+                if model.selectedProject == nil {
+                    HStack {
+                        Button { showsProjects = true } label: { KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle()) }
+                            .accessibilityLabel("Open projects")
+                        Spacer()
+                        KriaWordmark()
+                        Spacer()
+                        NewChatButton(compact: true)
+                    }.padding(.horizontal, 16).background(KriaColor.paper)
+                }
+            }
         }
         .task { await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID)) }
         .onChange(of: model.selectedProject?.id) { _, identifier in
@@ -38,16 +54,17 @@ struct ChatWorkspaceView: View {
                     openGallery: {
                         showsProjects = false
                         showsGallery = true
-                    }
+                    },
+                    openAccount: { showsProjects = false; showsAccount = true }
                 )
                 .environmentObject(model)
                 .transition(.opacity)
                 .zIndex(10)
             }
         }
-        .animation(.easeOut(duration: 0.2), value: showsProjects)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: showsProjects)
         .fullScreenCover(isPresented: $showsGallery) {
-            NavigationStack { GalleryView() }
+            NavigationStack { GalleryView(openProjects: { showsGallery = false; showsProjects = true }) }
                 .environmentObject(model)
         }
         .sheet(isPresented: $showsAccount) {
@@ -80,7 +97,7 @@ private struct WorkspaceEmptyView: View {
 private struct WorkspaceLoadingView: View {
     var body: some View {
         VStack(spacing: 14) {
-            ProgressView().tint(KriaColor.limeText)
+            ProgressView().tint(KriaColor.ink)
             Text("Opening your conversation…")
                 .font(KriaFont.body(14))
                 .foregroundStyle(KriaColor.zinc)
@@ -116,6 +133,7 @@ private struct CreationWorkspaceView: View {
     let openAccount: () -> Void
 
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var prompt = ""
     @State private var events: [ThreadEvent] = []
     @State private var pendingMessages: [PendingChatMessage] = []
@@ -217,7 +235,7 @@ private struct CreationWorkspaceView: View {
                     }
                     .frame(maxWidth: 620, alignment: .leading)
                     .padding(.horizontal, 16)
-                    .padding(.top, 96)
+                    .padding(.top, 20)
                     .padding(.bottom, 28)
                     .frame(maxWidth: .infinity)
                 }
@@ -242,6 +260,9 @@ private struct CreationWorkspaceView: View {
         .task {
             await refreshCapabilities()
             await pollUntilDismissed()
+        }
+        .onChange(of: currentProject.serverRevision) { _, revision in
+            threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
         }
         .onReceive(model.uploads.$attachedThreads) { threads in
             guard let thread = threads[project.id] else { return }
@@ -313,7 +334,7 @@ private struct CreationWorkspaceView: View {
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.22)) { proxy.scrollTo("conversation-end", anchor: .bottom) }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { proxy.scrollTo("conversation-end", anchor: .bottom) }
     }
 
     private func send(message submittedMessage: String? = nil) async {

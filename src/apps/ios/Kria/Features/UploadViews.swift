@@ -92,7 +92,7 @@ struct FootagePickerView: View {
                             Button("Cancel") { Task { await uploads.cancel(recordID: record.id) } }
                         }
                     }
-                    ProgressView(value: uploads.progress[record.id] ?? 0).tint(KriaColor.limeText)
+                    ProgressView(value: uploads.progress[record.id] ?? 0).tint(KriaColor.ink)
                     if let deadline = record.retentionExpiresAt { Text("Temporary source removed by \(deadline.formatted(date: .abbreviated, time: .shortened)).").font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc) }
                 }
             }

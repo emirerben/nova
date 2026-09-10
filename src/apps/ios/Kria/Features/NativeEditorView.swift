@@ -129,7 +129,7 @@ struct NativeEditorView: View {
 
     private func loadEditor() async {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") { return }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)
@@ -166,7 +166,7 @@ private struct NativeEditorLoadSurface: View {
         VStack(spacing: 0) {
             NativeEditorTopBar(onBack: onBack)
             VStack(alignment: .leading, spacing: 14) {
-                if isLoading { ProgressView().tint(KriaColor.limeText) }
+                if isLoading { ProgressView().tint(KriaColor.ink) }
                 Text(title).font(KriaFont.display(29))
                 Text(detail).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                 if let retry {
@@ -461,7 +461,7 @@ private struct NativeStylesInspector: View {
                     }
                     .foregroundStyle(KriaColor.ink)
                     .padding(15)
-                    .background(selected == preset ? KriaColor.limeSoft : KriaColor.softZinc)
+                    .background(selected == preset ? KriaColor.sage : KriaColor.softZinc)
                     .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                 }
                 .accessibilityIdentifier("native-editor-style-\(preset.lowercased())")

@@ -74,7 +74,7 @@ struct PocketEditorView: View {
 }
 
 private struct VideoCanvasView: View {
-    var body: some View { RoundedRectangle(cornerRadius: 22).fill(KriaColor.ink).aspectRatio(9/16, contentMode: .fit).frame(maxHeight: 380).overlay(VStack(spacing: 10) { Image(systemName: "play.fill").font(.title); Text("Preview").font(KriaFont.body(13)) }.foregroundStyle(KriaColor.lime)) .padding(.horizontal, 28).padding(.vertical, 12) }
+    var body: some View { RoundedRectangle(cornerRadius: 22).fill(KriaColor.ink).aspectRatio(9/16, contentMode: .fit).frame(maxHeight: 380).overlay(VStack(spacing: 10) { Image(systemName: "play.fill").font(.title); Text("Preview").font(KriaFont.body(13)) }.foregroundStyle(KriaColor.sky)) .padding(.horizontal, 28).padding(.vertical, 12) }
 }
 
 struct TimelineView: View {
@@ -212,7 +212,7 @@ struct ResultsView: View {
             Text("Your video is ready.").font(KriaFont.display(34))
             Group {
                 if let player { VideoPlayer(player: player).onDisappear { player.pause() } }
-                else { RoundedRectangle(cornerRadius: 22).fill(KriaColor.ink).overlay(ProgressView().tint(KriaColor.lime)) }
+                else { RoundedRectangle(cornerRadius: 22).fill(KriaColor.ink).overlay(ProgressView().tint(KriaColor.sky)) }
             }.aspectRatio(9/16, contentMode: .fit).frame(maxHeight: 420).clipShape(RoundedRectangle(cornerRadius: 22))
             HStack {
                 Button("Edit video") { showsEditor = true }

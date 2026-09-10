@@ -47,3 +47,25 @@ capability, run the instrumented fixture on an iPhone 13 and a current iPhone,
 then record preview FPS, seek-to-visible-frame p95, export duration, peak memory,
 thermal changes, and preview/export parity. Local export stays behind the server
 capability flag until those measurements pass the rollout thresholds.
+
+## Native brand and navigation
+
+KRI-23 aligns the entire native app with Paper’s **Mobile Flow** page in
+[Kria — Chat-First Creation](https://app.paper.design/file/01M166BHQ2QZ6EMMBB1D40GV9W/3-0).
+`DesignSystem/DesignTokens.swift` defines semantic Sunlit roles: Sky selection,
+Butter actions, Sage audio/direction, and Lilac/Plum text tools. `BrandComponents.swift`
+contains the approved DynaPuff wordmark and shared outline navigation icons.
+The font and OFL license are bundled; the wordmark must never rely on a system fallback.
+
+The chat workspace owns the project drawer, Gallery, and account presentation.
+Project actions reuse the authenticated creation-thread PATCH/DELETE contracts,
+including revision checks and rename idempotency. Deletion is confirmed and
+blocked during rendering or pending uploads. Microphone chat input is deferred.
+Native system authentication, Photos, upload consent, and share sheets remain native.
+
+For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
+`KRIA_BRAND_STATE` set to `format`, `footage`, `direction`, `rendering`, `ready`,
+`editor`, `projects`, `gallery`, `signin`, `account`, `consent`, or `recovery`.
+These fixtures compose the real components; they never enter Release navigation.
+Use `-ui-testing-chat` for interactive navigation and the existing editor fixtures
+for edit/save/export verification.
