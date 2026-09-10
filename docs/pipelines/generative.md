@@ -142,6 +142,10 @@ licensing toggle on the music Config tab) and a server-pinned shadow-preset
 canary (migration 0066) that compiles and fingerprints a shadow plan without
 changing output. Rollout stays gated by `SMART_CAPTIONS_ENABLED` exactly as
 above; v2 failures fail open to a standard subtitled render with receipts.
+**KRI-20:** the music bed is additionally request-gated
+(`SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED`, default on) — a talking-to-camera
+render never auto-adds a track; a bed only ever appears if the creator picked
+one in the editor. See `docs/pipelines/smart-captions.md` "Licensed music bed".
 
 **Smart Captions v3 presentation (v0.23.10.0):** newly eligible creators without a
 saved assignment default to `cigdem/v3`; explicit v1/v2 pins and opt-outs still win.
