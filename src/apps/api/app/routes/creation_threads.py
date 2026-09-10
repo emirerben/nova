@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -80,6 +81,8 @@ from app.services.job_storage_paths import (
     normalize_job_storage_path,
     owned_job_output_path,
 )
+
+log = structlog.get_logger()
 
 _MAX_MEDIA = _MAX_CLIPS_PER_ITEM
 _MAX_EVENTS = 200
@@ -479,6 +482,18 @@ class UploadTarget(BaseModel):
     upload_headers: dict[str, str]
 
 
+class ThreadProjectionIntegrityOut(BaseModel):
+    """Reports a render-graph edge dropped by a degraded projection read.
+
+    Only ever attached when at least one edge was detached; a healthy thread
+    carries no ``integrity`` field at all. See ``_load_authorized_projection_rows``.
+    """
+
+    status: Literal["degraded"] = "degraded"
+    detached: list[str] = Field(default_factory=list)
+    codes: list[str] = Field(default_factory=list)
+
+
 class CreationThreadOut(BaseModel):
     id: str
     runtime_version: Literal[1, 2] = 1
@@ -495,6 +510,7 @@ class CreationThreadOut(BaseModel):
     media_capabilities: dict[str, Any] | None = None
     direction_receipt: dict[str, Any] | None = None
     speech_cleanup: dict[str, Any] | None = None
+    integrity: ThreadProjectionIntegrityOut | None = None
     events: list[EventOut]
     created_at: datetime
     updated_at: datetime
@@ -1232,11 +1248,28 @@ async def _load(
     lock: bool = False,
     creator_id: uuid.UUID | None = None,
 ) -> CreationThread:
+    """Load one owner-scoped thread, or raise a typed, distinguishable failure.
+
+    Every branch below intentionally raises the same 404-family status so a
+    foreign thread can never be told apart from a genuinely absent one -- only
+    ``code`` differs, and only for the caller's own rows (see the tombstone
+    scope note). The client uses ``code`` to decide whether a failure is
+    retryable/terminal; before this, a bare untyped 404 made every one of
+    these cases (malformed id, deleted-by-owner, someone else's thread, a
+    transient projection fault surfaced elsewhere) collapse into one
+    "may have been deleted" screen. See agents/DECISIONS.md KRI-26.
+    """
+
+    owner_id = creator_id if creator_id is not None else user.id
     try:
         identifier = uuid.UUID(thread_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail="Creation thread not found") from exc
-    owner_id = creator_id if creator_id is not None else user.id
+        log.warning("creation_thread.load_failed", code="thread_id_invalid", thread_id=thread_id)
+        raise RuntimeFailure(
+            404,
+            "thread_id_invalid",
+            "Creation thread not found",
+        ) from exc
     stmt = select(CreationThread).where(
         CreationThread.id == identifier, CreationThread.creator_id == owner_id
     )
@@ -1244,7 +1277,24 @@ async def _load(
         stmt = stmt.with_for_update().execution_options(populate_existing=True)
     thread = (await db.execute(stmt)).scalar_one_or_none()
     if thread is None:
-        raise HTTPException(status_code=404, detail="Creation thread not found")
+        # Scoped to this same owner_id: proves *this user's* deletion without
+        # ever confirming whether a differently-owned thread id exists.
+        tombstone = (
+            await db.execute(
+                select(CreationThreadDeletion).where(
+                    CreationThreadDeletion.thread_id == identifier,
+                    CreationThreadDeletion.creator_id == owner_id,
+                )
+            )
+        ).scalar_one_or_none()
+        code = "thread_deleted" if tombstone is not None else "thread_not_found"
+        log.warning(
+            "creation_thread.load_failed",
+            code=code,
+            thread_id=str(identifier),
+            creator_id=str(owner_id),
+        )
+        raise RuntimeFailure(404, code, "Creation thread not found")
     return thread
 
 
@@ -1755,9 +1805,14 @@ def _render_projection(
             return None
 
     if job is not None:
-        session_id = getattr(session, "id", None) or getattr(
-            thread, "active_creator_agent_session_id", None
-        )
+        # Never fall back to thread.active_creator_agent_session_id here: a
+        # degraded read can reach this branch with session=None precisely
+        # because that id failed its ownership/epoch fence above. Falling
+        # back to the raw thread pointer would re-adopt the exact id the
+        # fence just rejected into a committed, client-visible projection.
+        # Omitting it (None) is safe -- build_creator_render_projection
+        # already tolerates a missing session_id.
+        session_id = getattr(session, "id", None) if session is not None else None
         return build_creator_render_projection(
             job_status=str(job.status),
             job_id=job.id,
@@ -1822,11 +1877,24 @@ async def _sync_render_projection(
     item: PlanItem | None = None,
     session: CreatorAgentSession | None = None,
     job: Job | None = None,
+    degrade: bool = True,
 ) -> bool:
-    """Persist the current exact render read model when it has changed."""
+    """Persist the current exact render read model when it has changed.
+
+    ``degrade`` controls the fallback lookup only (when the caller does not
+    already have item/session/job in hand) and defaults to True because
+    every current caller either runs inside a read (the exact bug this fixes)
+    or runs immediately after its own controller already durably committed
+    the confirmed Job/Session in a separate transaction -- raising here would
+    abort the request and orphan that already-successful confirmation from
+    its own thread, not prevent anything. Pass ``degrade=False`` only for a
+    call whose own commit below is the sole confirmation of a fresh edge.
+    """
 
     if item is None or session is None or (job is None and not item.current_job_id):
-        item, session, job = await _load_authorized_projection_rows(db, thread)
+        item, session, job, _integrity = await _load_authorized_projection_rows(
+            db, thread, degrade=degrade
+        )
     # A controller can commit the authoritative PlanItem→Job link before the
     # thread projection update.  Adopt that exact current Job (and only that
     # Job) so one GET repairs both the link and the status lane.
@@ -1894,14 +1962,20 @@ async def _lock_reconciliation_graph(
 
 
 async def _load_status_reconciliation_rows(
-    db: AsyncSession, thread: CreationThread, user: CurrentUser
+    db: AsyncSession, thread: CreationThread, user: CurrentUser, *, degrade: bool = False
 ) -> tuple[PlanItem | None, CreatorAgentSession | None, Job | None]:
     """Load the current render graph for a status refresh in lock order.
 
     Status messages must follow the same PlanItem -> Job -> CreatorSession
     ownership boundary as reconciliation, even when the thread projection
-    still points at an older Job.
+    still points at an older Job. Lock acquisition order and WHEN each row
+    is locked are unchanged by ``degrade`` -- only whether an incoherent
+    tier raises (withholding the whole status refresh, and rolling back the
+    user's own just-appended chat message) or is dropped so the refresh can
+    still report on whatever part of the graph is coherent. See KRI-26.
     """
+
+    degrade = degrade and settings.creation_thread_degraded_projection_enabled
 
     if not thread.active_plan_item_id:
         return None, None, None
@@ -1918,7 +1992,10 @@ async def _load_status_reconciliation_rows(
         or plan.user_id != user.id
         or item.content_plan_id != thread.content_plan_id
     ):
-        raise HTTPException(status_code=404, detail="Creation thread not found")
+        if not degrade:
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+        return None, None, None
+
     job = None
     if item.current_job_id:
         job = await db.get(Job, item.current_job_id, with_for_update=True, populate_existing=True)
@@ -1932,7 +2009,10 @@ async def _load_status_reconciliation_rows(
                 != int(plan.ownership_epoch or 0)
             )
         ):
-            raise HTTPException(status_code=404, detail="Creation thread not found")
+            if not degrade:
+                raise HTTPException(status_code=404, detail="Creation thread not found")
+            job = None
+
     session = None
     if thread.active_creator_agent_session_id:
         session = await db.get(
@@ -1951,7 +2031,9 @@ async def _load_status_reconciliation_rows(
                 and (job is None or session.target_job_id != job.id)
             )
         ):
-            raise HTTPException(status_code=404, detail="Creation thread not found")
+            if not degrade:
+                raise HTTPException(status_code=404, detail="Creation thread not found")
+            session = None
     return item, session, job
 
 
@@ -1978,20 +2060,43 @@ def _status_message(
 
 
 async def _load_authorized_projection_rows(
-    db: AsyncSession, thread: CreationThread
-) -> tuple[PlanItem | None, CreatorAgentSession | None, Job | None]:
+    db: AsyncSession, thread: CreationThread, *, degrade: bool = False
+) -> tuple[PlanItem | None, CreatorAgentSession | None, Job | None, ThreadProjectionIntegrityOut]:
     """Load linked rows only when every ownership edge is still coherent.
 
     The foreign keys on CreationThread protect row existence, not tenant
-    identity.  Keep the response path fail-closed so a stale or accidentally
-    cross-linked projection can never re-sign another user's render URL.
+    identity.  A stale or accidentally cross-linked projection must never
+    re-sign another user's render URL -- an incoherent edge is always
+    detached, never projected, in both modes below.
+
+    ``degrade=False`` (default) preserves the original fail-closed contract:
+    the first incoherent edge raises 404 and withholds the whole thread,
+    including its chat transcript. ``degrade=True`` instead drops only the
+    incoherent tier (and every tier whose own check depends on it -- the
+    existing ``item is None`` guards below already encode that dependency)
+    to ``None`` and records it in the returned integrity report, so an
+    intact conversation stays reachable even when its render graph has
+    drifted. Mutation routes keep ``degrade=False``; only read paths use
+    ``degrade=True``. See KRI-26 / agents/DECISIONS.md.
     """
+
+    # The gate is the single point of truth for whether degrade can ever take
+    # effect: off means every caller below is silently strict again, byte-
+    # identical to the pre-fix behavior, regardless of what it requested.
+    degrade = degrade and settings.creation_thread_degraded_projection_enabled
+    integrity = ThreadProjectionIntegrityOut()
+
+    def _detach(edge: str, code: str) -> None:
+        if not degrade:
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+        integrity.detached.append(edge)
+        integrity.codes.append(code)
 
     item_id = thread.active_plan_item_id
     session_id = thread.active_creator_agent_session_id
     job_id = thread.active_job_id
     if item_id is None and (session_id is not None or job_id is not None):
-        raise HTTPException(status_code=404, detail="Creation thread not found")
+        _detach("thread", "thread_pointers_inconsistent")
 
     item = await db.get(PlanItem, item_id) if item_id is not None else None
     plan = None
@@ -2003,7 +2108,9 @@ async def _load_authorized_projection_rows(
             or plan.user_id != thread.creator_id
             or item.content_plan_id != thread.content_plan_id
         ):
-            raise HTTPException(status_code=404, detail="Creation thread not found")
+            _detach("plan_item", "plan_item_detached")
+            item = None
+            plan = None
 
     session = await db.get(CreatorAgentSession, session_id) if session_id is not None else None
     if session_id is not None and (
@@ -2016,7 +2123,8 @@ async def _load_authorized_projection_rows(
         != int(getattr(plan, "ownership_epoch", 0) or 0)
         or (session.target_job_id is not None and session.target_job_id != job_id)
     ):
-        raise HTTPException(status_code=404, detail="Creation thread not found")
+        _detach("creator_agent_session", "creator_session_incoherent")
+        session = None
 
     job = await db.get(Job, job_id) if job_id is not None else None
     if job_id is not None and (
@@ -2031,16 +2139,21 @@ async def _load_authorized_projection_rows(
             != int(getattr(plan, "ownership_epoch", 0) or 0)
         )
     ):
-        raise HTTPException(status_code=404, detail="Creation thread not found")
+        _detach("job", "job_incoherent")
+        job = None
 
-    return item, session, job
+    return item, session, job, integrity
 
 
 async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
     if not thread.active_creator_agent_session_id:
         return
     session = await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
-    if session is None:
+    # Ownership only: this copies session transcript content into the
+    # thread's own state/events, so a cross-tenant session (a stale pointer
+    # on a degraded thread, or any other drift) must never be projected here
+    # -- the same tenant fence _load_authorized_projection_rows enforces.
+    if session is None or session.creator_id != thread.creator_id:
         return
     projection = dict(thread.state or {})
     active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
@@ -2099,7 +2212,18 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
 
 
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
-    item, session, job = await _load_authorized_projection_rows(db, thread)
+    # Degraded: an incoherent render-graph edge is dropped, never 404ed, so
+    # the thread's own row and its full chat transcript stay reachable. See
+    # KRI-26 / agents/DECISIONS.md.
+    item, session, job, integrity = await _load_authorized_projection_rows(db, thread, degrade=True)
+    if integrity.codes:
+        log.warning(
+            "creation_thread.projection_degraded",
+            thread_id=str(thread.id),
+            creator_id=str(thread.creator_id),
+            codes=integrity.codes,
+            detached=integrity.detached,
+        )
     media_capabilities = None
     speech_cleanup = None
     # Unit route tests use lightweight mocks; the real response path uses the
@@ -2221,6 +2345,21 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 # every legacy required_v1 Job. An item genuinely in the cohort
                 # still gets its card through in_cohort.
                 speech_cleanup = None
+    # A detached tier's raw pointer must not reach the client either: the web
+    # and iOS clients infer "still rendering" from active_job_id being set
+    # with no matching `job` projection, which would poll forever against an
+    # id the fence has already rejected. Null exactly the pointers the fence
+    # detached -- an item/session/job that stayed coherent keeps its id.
+    detached_edges = set(integrity.detached)
+    response_active_plan_item_id = (
+        None if "plan_item" in detached_edges else thread.active_plan_item_id
+    )
+    response_active_session_id = (
+        None
+        if "creator_agent_session" in detached_edges
+        else thread.active_creator_agent_session_id
+    )
+    response_active_job_id = None if "job" in detached_edges else thread.active_job_id
     return CreationThreadOut(
         id=str(thread.id),
         runtime_version=int(getattr(thread, "runtime_version", 1)),
@@ -2229,16 +2368,19 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         revision=thread.revision,
         state=public_state,
         content_plan_id=str(thread.content_plan_id) if thread.content_plan_id else None,
-        active_plan_item_id=str(thread.active_plan_item_id) if thread.active_plan_item_id else None,
-        active_creator_agent_session_id=str(thread.active_creator_agent_session_id)
-        if thread.active_creator_agent_session_id
+        active_plan_item_id=str(response_active_plan_item_id)
+        if response_active_plan_item_id
         else None,
-        active_job_id=str(thread.active_job_id) if thread.active_job_id else None,
+        active_creator_agent_session_id=str(response_active_session_id)
+        if response_active_session_id
+        else None,
+        active_job_id=str(response_active_job_id) if response_active_job_id else None,
         creator_agent=_creator_agent_projection(session),
         job=_job_projection(job),
         media_capabilities=media_capabilities,
         direction_receipt=direction_receipt,
         speech_cleanup=speech_cleanup,
+        integrity=integrity if integrity.codes else None,
         events=[
             EventOut(
                 id=str(event.id),
@@ -2682,7 +2824,9 @@ async def record_editor_events(
     thread = await _load(thread_id, user, db, lock=True)
     if thread.status != "active":
         raise HTTPException(status_code=409, detail="Creation thread is archived")
-    item, _session, job = await _load_authorized_projection_rows(db, thread)
+    # Strict: this writes editor receipts against a specific item/variant, so
+    # an incoherent graph must still fail closed.
+    item, _session, job, _integrity = await _load_authorized_projection_rows(db, thread)
     if item is None or item.id != body.item_id or job is None:
         raise HTTPException(status_code=404, detail="Editor target not found")
     if not any(
@@ -2869,8 +3013,12 @@ async def message_thread(
         status_session = None
         status_job = None
         if isinstance(db, AsyncSession) and thread.active_plan_item_id:
+            # Degraded: raising here would roll back the user's own
+            # just-appended message on an otherwise-recoverable project --
+            # the same reasoning as the _load_authorized_projection_rows
+            # call a few lines below.
             _live_item, status_session, status_job = await _load_status_reconciliation_rows(
-                db, thread, user
+                db, thread, user, degrade=True
             )
         elif thread.active_creator_agent_session_id:
             # Canonical lock order: Job before CreatorAgentSession.
@@ -2889,7 +3037,12 @@ async def message_thread(
                 await _repair_missing_thread_job_projection(db, thread, user)
             await _sync_agent(db, thread)
         if isinstance(db, AsyncSession):
-            item, session, job = await _load_authorized_projection_rows(db, thread)
+            # Degraded: a status-only message ("is it ready?") is an inert
+            # read-and-report. Raising here would roll back the user's own
+            # just-appended message on an otherwise-recoverable project.
+            item, session, job, _integrity = await _load_authorized_projection_rows(
+                db, thread, degrade=True
+            )
             if session is not None:
                 status_session = session
             if job is not None:
@@ -3723,6 +3876,11 @@ async def action_thread(
         await _sync_agent(db, thread)
         state = dict(thread.state or {})
         if isinstance(db, AsyncSession):
+            # confirm_creator_plan_controller already durably committed this
+            # exact Job/Session in its own transaction above; this call only
+            # syncs the thread's cached projection of that outcome, so
+            # degrade=True (the default) is deliberate -- raising here would
+            # abort the request and orphan an already-successful confirmation.
             await _sync_render_projection(db, thread)
             # The helper updates the durable read model in-place. Refresh the
             # local action state before the common assignment below; otherwise

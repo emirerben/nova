@@ -703,7 +703,7 @@ describe("ChatCreationWorkspace", () => {
   it("coalesces repeated Retry clicks into one initial load", async () => {
     jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("down", 503));
     render(<ChatCreationWorkspace />);
-    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t open/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t load/i);
 
     const retry = deferred<typeof baseThread[]>();
     jest.mocked(listCreationThreads).mockReturnValueOnce(retry.promise);
@@ -730,7 +730,7 @@ describe("ChatCreationWorkspace", () => {
   it("keeps an unavailable API visible instead of switching experiences", async () => {
     jest.mocked(getCreationCapabilities).mockRejectedValueOnce(new CreationThreadError("off", 404));
     render(<ChatCreationWorkspace />);
-    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t open/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t load/i);
     expect(getCreationCapabilities).toHaveBeenCalledTimes(1);
     expect(listCreationThreads).toHaveBeenCalledTimes(1);
     expect(createCreationThread).not.toHaveBeenCalled();
@@ -743,7 +743,7 @@ describe("ChatCreationWorkspace", () => {
   it("keeps a server error visible instead of silently switching experiences", async () => {
     jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("down", 503));
     render(<ChatCreationWorkspace />);
-    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t open/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t load/i);
   });
 
   it("keeps the current project active when starting a new project fails", async () => {
@@ -2026,10 +2026,49 @@ describe("ChatCreationWorkspace", () => {
   });
 
   it("shows a deterministic unavailable state when a canonical project is missing", async () => {
-    jest.mocked(refreshCreationThread).mockRejectedValueOnce(new CreationThreadError("missing", 404));
+    jest.mocked(refreshCreationThread).mockRejectedValueOnce(new CreationThreadError(
+      "Creation thread not found",
+      404,
+      { code: "thread_not_found", phase: "accept", message: "Creation thread not found", trace_id: "t1" },
+    ));
     render(<ChatCreationWorkspace initialThreadId="deleted-project" />);
     expect(await screen.findByRole("heading", { name: "Project unavailable" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to projects" })).toHaveAttribute("href", "/plan");
+  });
+
+  it("shows a retryable state (never a deletion verdict) for a transient service failure", async () => {
+    jest.mocked(refreshCreationThread).mockRejectedValueOnce(
+      new CreationThreadError("Kria couldn’t complete that request. Retry in a moment.", 502, undefined, {
+        code: "upstream_error",
+        retryable: true,
+      }),
+    );
+    render(<ChatCreationWorkspace initialThreadId="flaky-project" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t load/i);
+    expect(screen.queryByRole("heading", { name: "Project unavailable" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("shows a retryable state for a service-shaped 404 (e.g. a runtime-flag rollback), not a deletion verdict", async () => {
+    jest.mocked(refreshCreationThread).mockRejectedValueOnce(new CreationThreadError(
+      "Creation chat unavailable",
+      404,
+      { code: "kria_runtime_unavailable", phase: "accept", message: "Creation chat unavailable", trace_id: "t2" },
+    ));
+    render(<ChatCreationWorkspace initialThreadId="rollback-project" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t load/i);
+    expect(screen.queryByRole("heading", { name: "Project unavailable" })).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in, not retry, when the session has expired", async () => {
+    jest.mocked(refreshCreationThread).mockRejectedValueOnce(
+      new CreationThreadError("Authentication required", 401),
+    );
+    render(<ChatCreationWorkspace initialThreadId="expired-session-project" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/session expired/i);
+    expect(screen.queryByRole("heading", { name: "Project unavailable" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
   });
 
   it("prevents project switches while a chat mutation is in flight", async () => {

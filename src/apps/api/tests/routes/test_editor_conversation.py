@@ -126,7 +126,9 @@ async def test_editor_receipts_append_once_for_either_runtime(monkeypatch, runti
 
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(
-        routes, "_load_authorized_projection_rows", AsyncMock(return_value=(item, None, job))
+        routes,
+        "_load_authorized_projection_rows",
+        AsyncMock(return_value=(item, None, job, routes.ThreadProjectionIntegrityOut())),
     )
     monkeypatch.setattr(
         routes, "_duplicate", AsyncMock(side_effect=lambda _db, _id, key: recorded.get(key))
@@ -171,7 +173,9 @@ async def test_editor_receipts_reject_stale_or_unowned_associations(monkeypatch,
     db = SimpleNamespace(commit=AsyncMock())
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(
-        routes, "_load_authorized_projection_rows", AsyncMock(return_value=(item, None, job))
+        routes,
+        "_load_authorized_projection_rows",
+        AsyncMock(return_value=(item, None, job, routes.ThreadProjectionIntegrityOut())),
     )
     append = AsyncMock()
     monkeypatch.setattr(routes, "_append", append)

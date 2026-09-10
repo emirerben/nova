@@ -21,6 +21,7 @@ from app.limiter import limiter
 from app.routes import (
     admin,
     admin_build_tasks,
+    admin_creation_threads,
     admin_creator_memory,
     admin_creator_style,
     admin_edit_feedback,
@@ -373,6 +374,11 @@ app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
 app.include_router(admin_kria.router, prefix="/admin/kria", tags=["admin-kria"])
+app.include_router(
+    admin_creation_threads.router,
+    prefix="/admin/creation-threads",
+    tags=["admin-creation-threads"],
+)
 app.include_router(admin_plan_items.router, prefix="/admin/plan-items", tags=["admin-plan-items"])
 app.include_router(admin_music.router, prefix="/admin/music-tracks", tags=["admin-music"])
 app.include_router(
