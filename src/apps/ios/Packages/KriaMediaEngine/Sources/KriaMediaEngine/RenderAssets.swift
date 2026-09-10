@@ -159,6 +159,20 @@ public actor RenderLibraryCache {
         return try resolve(asset)
     }
 
+    public func installBundledFont(_ asset: RenderAssetReference, directory: URL) throws -> URL {
+        guard case .library(catalog: .font, catalogID: let name, generation: let generation) = asset.source,
+              generation == asset.fingerprint.sha256,
+              !name.contains("/"), !name.contains("\\"),
+              ["ttf", "otf"].contains((name as NSString).pathExtension.lowercased()) else {
+            throw RenderAssetError.invalidManifest
+        }
+        let source = directory.appendingPathComponent(name).resolvingSymlinksInPath()
+        guard source.deletingLastPathComponent().path == directory.resolvingSymlinksInPath().path else {
+            throw RenderAssetError.invalidManifest
+        }
+        return try install(downloadedFile: source, for: asset)
+    }
+
     private func location(_ asset: RenderAssetReference) throws -> URL {
         try asset.validate()
         guard case .library = asset.source else { throw RenderAssetError.invalidManifest }

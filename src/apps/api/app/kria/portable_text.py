@@ -1,0 +1,53 @@
+"""Resolved typography instructions; all positions are output-canvas pixels.
+
+The planner owns wrapping and baselines. The phone loads fingerprint-bound font
+bytes and paints text locally. No rendered glyph images cross this boundary.
+"""
+
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class _TextModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+class TextInk(_TextModel):
+    red: float = Field(ge=0, le=1)
+    green: float = Field(ge=0, le=1)
+    blue: float = Field(ge=0, le=1)
+    alpha: float = Field(ge=0, le=1)
+
+
+class PositionedTextRun(_TextModel):
+    text: str = Field(min_length=1, max_length=2000)
+    font_asset_id: str = Field(min_length=1, max_length=160)
+    font_size: float = Field(gt=0, le=1000)
+    x: float = Field(ge=-10000, le=10000)
+    baseline_y: float = Field(ge=-10000, le=10000)
+    letter_spacing: float = Field(ge=-100, le=1000)
+    shaped: Literal[True]
+    fill: TextInk
+    stroke: TextInk
+    stroke_width: float = Field(ge=0, le=100)
+
+
+class PortableTextLayer(_TextModel):
+    id: str = Field(min_length=1, max_length=160)
+    start: float = Field(ge=0, le=1800)
+    end: float = Field(gt=0, le=1800)
+    anchor_x: float = Field(ge=-10000, le=10000)
+    anchor_y: float = Field(ge=-10000, le=10000)
+    rotation_degrees: float = Field(ge=-3600, le=3600)
+    runs: list[PositionedTextRun] = Field(min_length=1, max_length=100)
+    # Explicit static layout first; new motion programs require schema support.
+    effect: Literal["static"] = "static"
+
+    @model_validator(mode="after")
+    def valid_window(self):
+        if self.end <= self.start:
+            raise ValueError("text layer must have a positive time window")
+        if sum(len(run.text) for run in self.runs) > 5000:
+            raise ValueError("text layer is too large")
+        return self

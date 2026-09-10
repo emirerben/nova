@@ -15,12 +15,13 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     public var audio: AudioMixRecipe
     public var requiredCapabilities: Set<MediaCapability>
     public var assetManifest: RenderAssetManifest?
+    public var textLayers: [PortableTextLayer]
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest
+        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest, textLayers
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest"])
+        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest", "textLayers"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
         rendererVersion = try c.decode(String.self, forKey: .rendererVersion)
@@ -31,6 +32,8 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         audio = try c.decode(AudioMixRecipe.self, forKey: .audio)
         requiredCapabilities = try c.decode(Set<MediaCapability>.self, forKey: .requiredCapabilities)
         assetManifest = try c.decodeIfPresent(RenderAssetManifest.self, forKey: .assetManifest)
+        textLayers = try c.decodeIfPresent([PortableTextLayer].self, forKey: .textLayers) ?? []
+        if schemaVersion == 1 && c.contains(.textLayers) { throw RecipeError.invalidTimeline }
     }
 
     public init(schemaVersion: Int = 1,
@@ -39,11 +42,21 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 frameRate: Double = 30,
                 assets: [MediaAsset] = [], tracks: [TimelineTrack] = [],
                 audio: AudioMixRecipe = .default, requiredCapabilities: Set<MediaCapability> = [],
-                assetManifest: RenderAssetManifest? = nil) {
+                assetManifest: RenderAssetManifest? = nil, textLayers: [PortableTextLayer] = []) {
         self.schemaVersion = schemaVersion; self.rendererVersion = rendererVersion
         self.canvas = canvas; self.frameRate = frameRate; self.assets = assets
         self.tracks = tracks; self.audio = audio; self.requiredCapabilities = requiredCapabilities
-        self.assetManifest = assetManifest
+        self.assetManifest = assetManifest; self.textLayers = textLayers
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schemaVersion, forKey: .schemaVersion); try c.encode(rendererVersion, forKey: .rendererVersion)
+        try c.encode(canvas, forKey: .canvas); try c.encode(frameRate, forKey: .frameRate)
+        try c.encode(assets, forKey: .assets); try c.encode(tracks, forKey: .tracks)
+        try c.encode(audio, forKey: .audio); try c.encode(requiredCapabilities, forKey: .requiredCapabilities)
+        try c.encodeIfPresent(assetManifest, forKey: .assetManifest)
+        if schemaVersion == 2 { try c.encode(textLayers, forKey: .textLayers) }
     }
 
     public func validate() throws {
@@ -57,7 +70,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                       let expected = manifest.assets.first(where: { $0.id == asset.id }),
                       asset.fingerprint == expected.fingerprint.assetFingerprint else { throw RecipeError.invalidTimeline }
             }
-        } else if assetManifest != nil { throw RecipeError.invalidTimeline }
+        } else if assetManifest != nil || !textLayers.isEmpty { throw RecipeError.invalidTimeline }
+        guard textLayers.count <= 500, Set(textLayers.map(\.id)).count == textLayers.count else { throw RecipeError.invalidTimeline }
+        for layer in textLayers { try layer.validate(duration: TimelineMath.totalDuration(of: self), manifest: assetManifest) }
         guard frameRate.isFinite && frameRate > 0 && frameRate <= 240 else { throw RecipeError.invalidFrameRate(frameRate) }
         let clips = tracks.flatMap(\.clips)
         guard (16...7680).contains(canvas.width), (16...7680).contains(canvas.height),
@@ -108,6 +123,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         var result = requiredCapabilities
         let clips = tracks.flatMap(\.clips)
         if !clips.isEmpty { result.formUnion([.basicComposition, .local1080Export]) }
+        if !textLayers.isEmpty { result.insert(.positionedText) }
         if clips.contains(where: { $0.text != nil }) { result.insert(.animatedText) }
         if clips.contains(where: { $0.rate != 1 }) { result.insert(.variableSpeed) }
         if clips.contains(where: { $0.transition != nil }) { result.insert(.crossfade) }
@@ -250,7 +266,7 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
     public static let `default` = AudioMixRecipe()
 }
 
-public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable { case basicComposition, animatedText, crossfade, audioMix, variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export }
+public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable { case basicComposition, positionedText, animatedText, crossfade, audioMix, variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
 public struct ThumbnailSample: Codable, Equatable, Sendable { public var time: TimeInterval; public var fileURL: URL; private enum CodingKeys: String, CodingKey { case time, fileURL = "fileUrl" }; public init(time: TimeInterval, fileURL: URL) { self.time = time; self.fileURL = fileURL } }

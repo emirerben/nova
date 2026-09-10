@@ -115,6 +115,7 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
     let request: DeviceRenderRequest
     let originals: SourceAssetStore
     let library: RenderLibraryCache
+    var bundledFonts: URL? = Bundle.main.url(forResource: "fonts", withExtension: nil)
     // No API authorization header or persistent cookies travel to object storage.
     var downloadSession: URLSession = URLSession(configuration: .ephemeral)
 
@@ -128,6 +129,11 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
             try Task.checkCancellation()
             guard case .library = asset.source else { continue }
             if (try? await library.resolve(asset)) != nil { continue }
+            if case .library(catalog: .font, catalogID: _, generation: _) = asset.source {
+                guard let bundledFonts else { throw MediaEngineError.missingAsset(asset.id) }
+                _ = try await library.installBundledFont(asset, directory: bundledFonts)
+                continue
+            }
             let grant = try await api.downloadDeviceAsset(DeviceAssetDownloadBody(identity: request.identity, assetID: asset.id))
             guard grant.assetID == asset.id, grant.downloadURL.scheme == "https", grant.expiresAt > Date() else {
                 throw APIError.invalidResponse

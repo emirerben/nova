@@ -46,6 +46,9 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Kria
+      - path: ../api/assets/fonts
+        type: folder
+        buildPhase: resources
       - path: ../web/public/fonts/Fraunces-Bold.ttf
         buildPhase: resources
       - path: ../web/public/fonts/Inter-Regular.ttf

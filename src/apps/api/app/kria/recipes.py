@@ -98,6 +98,7 @@ class AudioMixRecipe(_RecipeModel):
 
 MediaCapability = Literal[
     "basicComposition",
+    "positionedText",
     "animatedText",
     "crossfade",
     "audioMix",

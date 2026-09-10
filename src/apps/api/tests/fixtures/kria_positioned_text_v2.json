@@ -20,6 +20,20 @@
       "frame_rate": null,
       "orientation_degrees": 0,
       "is_proxy_available": false
+    },
+    {
+      "id": "font",
+      "relative_path": "font",
+      "fingerprint": {
+        "algorithm": "sha256",
+        "hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "byte_count": 100
+      },
+      "duration": null,
+      "natural_size": null,
+      "frame_rate": null,
+      "orientation_degrees": 0,
+      "is_proxy_available": false
     }
   ],
   "tracks": [
@@ -67,8 +81,53 @@
           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "byte_count": 100
         }
+      },
+      {
+        "kind": "library",
+        "id": "font",
+        "catalog": "font",
+        "catalog_id": "Inter-Regular.ttf",
+        "generation": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "fingerprint": {
+          "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "byte_count": 100
+        }
       }
     ]
   },
-  "text_layers": []
+  "text_layers": [
+    {
+      "id": "caption",
+      "start": 0.2,
+      "end": 1.0,
+      "anchor_x": 540.0,
+      "anchor_y": 960.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "Hello world",
+          "font_asset_id": "font",
+          "font_size": 72.0,
+          "x": 200.0,
+          "baseline_y": 960.0,
+          "letter_spacing": 0.0,
+          "shaped": true,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke_width": 0.0
+        }
+      ],
+      "effect": "static"
+    }
+  ]
 }

@@ -22,9 +22,21 @@ style has passed the complete parity and physical-device gates.
   ready music/SFX named in that recipe. It verifies the bytes and rechecks the
   owner, revision, and catalog after verification. The native authorized resolver
   downloads through a separate ephemeral session and verifies cache installation.
-  Shared planning still needs to build these manifests; font/overlay catalog
+  Existing renderer fonts ship in the app bundle with their license files and
+  enter the same verified cache only when the recipe's filename/hash matches.
+  Shared planning still needs to build these manifests; overlay catalog
   downloads and chat integration remain outstanding. V1 projects retain their
   original migration and decoding path.
+- V2 `text_layers` carries independent time windows and positioned text runs:
+  exact font identity, size, baseline, tracking, fill, outline, and rotation.
+  `PortableTextDrawing.swift` draws these through the shared compositor, rejects
+  missing glyphs/font substitution, and caps prepared text bitmaps at 64 MiB.
+  The initial lane accepts static shaped text only. Motion, shadows, gradients,
+  glyph-by-glyph legacy layout, and the shared overlay-to-recipe compiler remain
+  outstanding. A Latin font probe matched cloud ink bounds and caught/fixed
+  stroke/fill ordering; this is not full typography parity. The native suite
+  verifies the lane's time window in actual preview and H.264 export. The new
+  `positionedText` capability remains outside the default supported set.
 - `TextMotionTiming.swift` mirrors the cloud's normalized v2 phase grid and
   smooth-type reveal math. `phone_text_motion_v2.json` covers all 17 effect timing
   rules plus multilingual, emoji, empty-line, ordering, and speed cases. This

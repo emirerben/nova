@@ -13,6 +13,30 @@ from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
 from app.models import MusicTrack, SoundEffect
 
 
+def bundled_font_asset(filename: str, *, asset_id: str) -> LibraryRenderAsset:
+    """The iOS bundle and cloud renderer share these checked-in font bytes."""
+    if (
+        not filename
+        or "/" in filename
+        or "\\" in filename
+        or Path(filename).suffix.lower() not in {".ttf", ".otf"}
+    ):
+        raise ValueError("invalid bundled font")
+    directory = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+    path = (directory / filename).resolve()
+    if path.parent != directory.resolve():
+        raise ValueError("invalid bundled font path")
+    with path.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
+    return LibraryRenderAsset(
+        id=asset_id,
+        catalog="font",
+        catalog_id=filename,
+        generation=digest,
+        fingerprint=RenderFingerprint(sha256=digest, byte_count=path.stat().st_size),
+    )
+
+
 async def catalog_path(db: AsyncSession, catalog: str, catalog_id: str) -> str:
     model = {"music": MusicTrack, "sound_effect": SoundEffect}.get(catalog)
     if model is None:

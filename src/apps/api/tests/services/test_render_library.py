@@ -67,3 +67,19 @@ def test_pin_rejects_metadata_size_mismatch(monkeypatch):
         library.inspect_library_asset(
             "music/track/audio.mp3", asset_id="a", catalog="music", catalog_id="track"
         )
+
+
+def test_bundled_font_identity_uses_exact_shared_bytes():
+    asset = library.bundled_font_asset("Inter-Regular.ttf", asset_id="font")
+    assert asset.catalog == "font"
+    assert asset.generation == asset.fingerprint.sha256
+    assert asset.fingerprint.byte_count > 1000
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["../Inter-Regular.ttf", "folder/font.ttf", "font\\name.ttf", "handwriting-strokes.json"],
+)
+def test_font_catalog_rejects_paths_and_nonfonts(name):
+    with pytest.raises(ValueError):
+        library.bundled_font_asset(name, asset_id="font")

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
+from app.kria.portable_text import PortableTextLayer
 from app.kria.recipes import EditRecipeV1
 from app.kria.render_assets import RenderAssetManifest
 
@@ -21,6 +22,7 @@ class EditRecipeV2(EditRecipeV1):
     schema_version: Literal[2] = 2
     renderer_version: Literal["kria-ios-2"] = "kria-ios-2"
     asset_manifest: RenderAssetManifest
+    text_layers: list[PortableTextLayer] = Field(default_factory=list, max_length=500)
 
     @model_validator(mode="after")
     def validate_asset_manifest(self) -> EditRecipeV2:
@@ -38,4 +40,13 @@ class EditRecipeV2(EditRecipeV1):
                 or asset.fingerprint.byte_count != expected.byte_count
             ):
                 raise ValueError("recipe asset fingerprint differs from its manifest")
+        if len({layer.id for layer in self.text_layers}) != len(self.text_layers):
+            raise ValueError("text layer IDs must be unique")
+        for layer in self.text_layers:
+            if layer.end > self.duration:
+                raise ValueError("text layer exceeds the timeline")
+            for run in layer.runs:
+                font = manifest.get(run.font_asset_id)
+                if font is None or font.kind != "library" or font.catalog != "font":
+                    raise ValueError("text requires an exact library font")
         return self

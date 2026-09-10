@@ -1395,6 +1395,7 @@
             "items": {
               "enum": [
                 "basicComposition",
+                "positionedText",
                 "animatedText",
                 "crossfade",
                 "audioMix",
@@ -1471,6 +1472,7 @@
             "items": {
               "enum": [
                 "basicComposition",
+                "positionedText",
                 "animatedText",
                 "crossfade",
                 "audioMix",
@@ -1493,6 +1495,14 @@
             ],
             "title": "Schema Version",
             "type": "integer"
+          },
+          "text_layers": {
+            "items": {
+              "$ref": "#/components/schemas/PortableTextLayer"
+            },
+            "maxItems": 500,
+            "title": "Text Layers",
+            "type": "array"
           },
           "tracks": {
             "items": {
@@ -4077,6 +4087,151 @@
         "title": "PoolUploadUrlsResponse",
         "type": "object"
       },
+      "PortableTextLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor_x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Anchor X",
+            "type": "number"
+          },
+          "anchor_y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Anchor Y",
+            "type": "number"
+          },
+          "effect": {
+            "default": "static",
+            "enum": [
+              "static"
+            ],
+            "title": "Effect",
+            "type": "string"
+          },
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "rotation_degrees": {
+            "maximum": 3600,
+            "minimum": -3600,
+            "title": "Rotation Degrees",
+            "type": "number"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/PositionedTextRun"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Runs",
+            "type": "array"
+          },
+          "start": {
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "end",
+          "anchor_x",
+          "anchor_y",
+          "rotation_degrees",
+          "runs"
+        ],
+        "title": "PortableTextLayer",
+        "type": "object"
+      },
+      "PositionedTextRun": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Baseline Y",
+            "type": "number"
+          },
+          "fill": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "font_asset_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Font Asset Id",
+            "type": "string"
+          },
+          "font_size": {
+            "exclusiveMinimum": true,
+            "maximum": 1000,
+            "minimum": 0,
+            "title": "Font Size",
+            "type": "number"
+          },
+          "letter_spacing": {
+            "maximum": 1000,
+            "minimum": -100,
+            "title": "Letter Spacing",
+            "type": "number"
+          },
+          "shaped": {
+            "enum": [
+              true
+            ],
+            "title": "Shaped",
+            "type": "boolean"
+          },
+          "stroke": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "stroke_width": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Stroke Width",
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "X",
+            "type": "number"
+          }
+        },
+        "required": [
+          "text",
+          "font_asset_id",
+          "font_size",
+          "x",
+          "baseline_y",
+          "letter_spacing",
+          "shaped",
+          "fill",
+          "stroke",
+          "stroke_width"
+        ],
+        "title": "PositionedTextRun",
+        "type": "object"
+      },
       "QuestionnaireBody": {
         "properties": {
           "hobbies": {
@@ -4452,6 +4607,43 @@
           "background"
         ],
         "title": "TextCardBlock",
+        "type": "object"
+      },
+      "TextInk": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Alpha",
+            "type": "number"
+          },
+          "blue": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Blue",
+            "type": "number"
+          },
+          "green": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Green",
+            "type": "number"
+          },
+          "red": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Red",
+            "type": "number"
+          }
+        },
+        "required": [
+          "red",
+          "green",
+          "blue",
+          "alpha"
+        ],
+        "title": "TextInk",
         "type": "object"
       },
       "TextTreatment": {

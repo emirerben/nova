@@ -113,6 +113,12 @@ public struct PreviewComposition: @unchecked Sendable {
                 if let text = clip.text { textLayers.append(try RecipeTextLayer.make(text, start: clip.timelineStart, end: end, canvas: canvas)) }
             }
         }
+        var textBitmapBytes = textLayers.reduce(0) { $0 + Int($1.image.extent.width * $1.image.extent.height * 4) }
+        for layer in recipe.textLayers {
+            let painted = try RecipeTextLayer.make(layer, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: 64 * 1024 * 1024 - textBitmapBytes)
+            textBitmapBytes += Int(painted.image.extent.width * painted.image.extent.height * 4)
+            textLayers.append(painted)
+        }
         if !layers.contains(where: { $0.trackID != nil }) {
             guard !layers.isEmpty, total > 0 else { throw MediaEngineError.unsupportedCapability }
             let clock = try await StillTimelineClock.make()
