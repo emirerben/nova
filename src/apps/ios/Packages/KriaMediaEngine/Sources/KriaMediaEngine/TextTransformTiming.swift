@@ -8,15 +8,17 @@ public struct TextTransformSample: Codable, Equatable, Sendable {
     public let xTranslate: Double
     public let yTranslate: Double
     public let revealProgress: Double
-    public init(alpha: Double, scale: Double, xTranslate: Double, yTranslate: Double, revealProgress: Double = 1) {
-        self.alpha = alpha; self.scale = scale; self.xTranslate = xTranslate; self.yTranslate = yTranslate; self.revealProgress = revealProgress
+    public let blurPx: Double
+    public init(alpha: Double, scale: Double, xTranslate: Double, yTranslate: Double, revealProgress: Double = 1, blurPx: Double = 0) {
+        self.alpha = alpha; self.scale = scale; self.xTranslate = xTranslate; self.yTranslate = yTranslate; self.revealProgress = revealProgress; self.blurPx = blurPx
     }
-    private enum CodingKeys: String, CodingKey { case alpha, scale, xTranslate, yTranslate, revealProgress }
+    private enum CodingKeys: String, CodingKey { case alpha, scale, xTranslate, yTranslate, revealProgress, blurPx }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         alpha = try c.decode(Double.self, forKey: .alpha); scale = try c.decode(Double.self, forKey: .scale)
         xTranslate = try c.decode(Double.self, forKey: .xTranslate); yTranslate = try c.decode(Double.self, forKey: .yTranslate)
         revealProgress = try c.decodeIfPresent(Double.self, forKey: .revealProgress) ?? 1
+        blurPx = try c.decodeIfPresent(Double.self, forKey: .blurPx) ?? 0
     }
 }
 
@@ -27,10 +29,14 @@ public enum TextTransformTiming {
         guard let motion else { return try legacySample(effect: effect, localTime: localTime, duration: duration) }
         let time = try TextMotionTiming.authoredTime(effect: effect, text: text, localTime: localTime, motion: motion)
         let base = try TextMotionTiming.settleDuration(effect: effect, text: text, motion: motion) * motion.speed
-        var alpha = 1.0, scale = 1.0, x = 0.0, y = 0.0, reveal = 1.0
+        var alpha = 1.0, scale = 1.0, x = 0.0, y = 0.0, reveal = 1.0, blur = 0.0
         func ease(_ value: Double) -> Double { TextMotionTiming.ease(value, motion.easing) }
         switch effect {
         case .static, .none, .typewriter, .streamIn: break
+        case .smoothType:
+            let state = try TextMotionTiming.smoothType(text: text, localTime: localTime, motion: motion)
+            alpha = state.alpha; x = state.xTranslate; y = state.yTranslate
+            reveal = state.revealProgress; blur = state.blurPx
         case .inkReveal, .handwriting: reveal = ease(inkRevealProgress(time: time, duration: base))
         case .fadeIn: alpha = ease(time / max(base, 0.01))
         case .scaleUp: scale = 0.6 + 0.4 * ease(time / max(base, 0.01))
@@ -55,17 +61,19 @@ public enum TextTransformTiming {
             if scale > 1 { scale = 1 + (scale - 1) * motion.overshoot / 0.15 }
         default: throw MediaEngineError.unsupportedCapability
         }
-        scale = 1 + (scale - 1) * motion.intensity
-        alpha = 1 - (1 - alpha) * motion.intensity
-        x *= motion.intensity; y *= motion.intensity
-        reveal = 1 - (1 - reveal) * motion.intensity
+        if effect != .smoothType {
+            scale = 1 + (scale - 1) * motion.intensity
+            alpha = 1 - (1 - alpha) * motion.intensity
+            x *= motion.intensity; y *= motion.intensity
+            reveal = 1 - (1 - reveal) * motion.intensity
+        }
         if motion.exitS > 0 {
             let exit = min(duration, TextMotionTiming.roundOutputFrame(motion.exitS))
             if localTime >= duration - exit {
                 alpha *= 1 - TextMotionTiming.ease((localTime - duration + exit) / max(exit, 1e-6), .easeInOutCubic)
             }
         }
-        return TextTransformSample(alpha: alpha, scale: scale, xTranslate: x, yTranslate: y, revealProgress: reveal)
+        return TextTransformSample(alpha: alpha, scale: scale, xTranslate: x, yTranslate: y, revealProgress: reveal, blurPx: blur)
     }
 
     /// Legacy curves use the authored layer duration, including compressed
@@ -75,7 +83,7 @@ public enum TextTransformTiming {
         var alpha = 1.0, scale = 1.0, y = 0.0, reveal = 1.0
         func ease(_ progress: Double) -> Double { TextMotionTiming.ease(progress, .easeOutCubic) }
         switch effect {
-        case .static, .none, .typewriter, .streamIn: break
+        case .static, .none, .typewriter, .streamIn, .smoothType: break
         case .inkReveal, .handwriting: reveal = inkRevealProgress(time: time, duration: duration)
         case .fadeIn: alpha = ease(time / max(min(0.4, duration), 0.01))
         case .scaleUp: scale = 0.6 + 0.4 * ease(time / max(min(0.6, duration), 0.01))

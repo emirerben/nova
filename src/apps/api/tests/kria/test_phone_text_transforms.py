@@ -27,6 +27,7 @@ def reference_cases(*, legacy=False):
         "handwriting",
         "typewriter",
         "stream-in",
+        "smooth-type",
     ]:
         for index in range(4):
             motion = asdict(
@@ -41,6 +42,7 @@ def reference_cases(*, legacy=False):
                         ],
                         "direction": ["left", "right", "up", "down"][index],
                         "travel_px": 137,
+                        "blur_px": 7,
                         "overshoot": [0, 0.15, 0.5, 1][index],
                         "exit_s": [0, 0.01, 0.5, 2][index],
                     },
@@ -95,13 +97,14 @@ def reference_cases(*, legacy=False):
                     {
                         "time": time,
                         "state": {
-                            key: kwargs[key]
+                            key: kwargs.get(key, 0)
                             for key in [
                                 "alpha",
                                 "scale",
                                 "x_translate",
                                 "y_translate",
                                 "reveal_progress",
+                                "blur_px",
                             ]
                         },
                     }
