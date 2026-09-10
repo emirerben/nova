@@ -74,6 +74,7 @@ const FORMATS: Array<{ value: CreationFormat; label: string; description: string
   { value: "montage", label: "Montage", description: "Music-led cuts from your strongest moments." },
   { value: "narrated_planned", label: "Narrated", description: "Let your voice guide the story." },
   { value: "subtitled", label: "Talking to camera", description: "A clean, captioned edit from your delivery." },
+  { value: "slides", label: "Photo & video post", description: "An ordered mixed-media post, like a TikTok photo post or Instagram carousel." },
 ];
 const FORMAT_GUIDANCE: Record<CreationFormat, { title: string; description: string }> = {
   montage: {
@@ -87,6 +88,10 @@ const FORMAT_GUIDANCE: Record<CreationFormat, { title: string; description: stri
   subtitled: {
     title: "Add your clip",
     description: "Use one clip of you talking.",
+  },
+  slides: {
+    title: "Add photos and videos",
+    description: "Kria will propose an order, cover, and caption you can edit before exporting.",
   },
 };
 
@@ -1242,7 +1247,7 @@ export default function ChatCreationWorkspace({
     if (productionPreview || !thread || busy || (format && !formatPickerOpen) || !availableFormats.includes(value)) return;
     const threadId = thread.id;
     setBusy(true); setError(null);
-    const paperFormat = value === "narrated_planned" ? "narrated" : value === "subtitled" ? "talking_to_camera" : "montage";
+    const paperFormat = value === "narrated_planned" ? "narrated" : value === "subtitled" ? "talking_to_camera" : value === "slides" ? "slides" : "montage";
     try {
       const next = await requestThreadResponse(threadId, () =>
         applyCreationAction(thread, "select_format", { format: paperFormat }));
@@ -1935,6 +1940,18 @@ export default function ChatCreationWorkspace({
     </ChatArtifactCard>
   );
 
+  const slidesUploadArtifact = !productionPreview && format === "slides" && thread?.active_plan_item_id ? (
+    <ChatArtifactCard
+      title={FORMAT_GUIDANCE.slides.title}
+      description={FORMAT_GUIDANCE.slides.description}
+      data-testid="creation-slides-artifact"
+    >
+      <Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground md:h-8 md:min-h-8" disabled={productionPreview} onClick={() => setFormatPickerOpen(true)}>Change format</Button>
+      <AssetPool itemId={thread.active_plan_item_id} embedded concise />
+      <Button type="button" className="mt-3 w-full" onClick={() => router.push(`/plan/items/${thread.active_plan_item_id}`)}>Continue to compose</Button>
+    </ChatArtifactCard>
+  ) : null;
+
   const uploadArtifact = (
     <ChatArtifactCard title={format ? FORMAT_GUIDANCE[format].title : "Add clips"} description={format ? FORMAT_GUIDANCE[format].description : "Choose the footage for your story."}>
       {!productionPreview && format === "narrated_planned" && !latestAudio ? <VoiceRecorder upload={uploadRecordedVoice} onVoiceover={() => undefined} /> : null}
@@ -1945,7 +1962,7 @@ export default function ChatCreationWorkspace({
     </ChatArtifactCard>
   );
 
-  const visualsArtifact = !productionPreview && visualsEnabled && thread?.active_plan_item_id && format
+  const visualsArtifact = !productionPreview && visualsEnabled && thread?.active_plan_item_id && format && format !== "slides"
     && (!thread.active_job_id || creationJobFailed(thread)) ? (
     <ChatArtifactCard
       title="Add visuals (optional)"
@@ -1990,7 +2007,7 @@ export default function ChatCreationWorkspace({
             {message.artifact === "draft" && message.id === latestRuntimeDraftId ? <ChatArtifactCard badge={<Badge variant="secondary">Draft saved</Badge>} title="Your edit is ready to review" description={changes.length > 0 ? changes.join(" · ") : "Kria applied the direction as a reversible draft."}><Button type="button" variant="outline" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void undoRuntimeDraft()}><RefreshCw /> Undo draft</Button></ChatArtifactCard> : null}
             {message.artifact === "approval" && approvalId && pendingRuntimeApprovalIds.has(approvalId) ? <AgentApprovalCard badge={<Badge variant="secondary">Approval required</Badge>} title="Start this render?" description={`${String(message.payload?.consequence_summary ?? "Render the saved draft.")}${message.payload?.cost_summary ? ` ${String(message.payload.cost_summary)}.` : ""}`} actions={<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button type="button" variant="outline" className="min-h-11" disabled={productionPreview || busy} onClick={() => void decideRuntimeApproval(approvalId, "deny")}>Not yet</Button><Button type="button" className="min-h-11" disabled={productionPreview || busy} onClick={() => void decideRuntimeApproval(approvalId, "approve")}><Sparkles />{busy ? "Recording approval…" : "Approve and render"}</Button></div>} /> : null}
             {message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}
-            {message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}
+            {message.artifact === "upload" && !thread?.active_job_id ? (format === "slides" ? slidesUploadArtifact : <>{uploadArtifact}{visualsArtifact}</>) : null}
             {message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}
             {(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection && !speechCleanupOutcomeFailed ? (cleanupCard ?? defaultConfirmationCard) : null}
             {message.artifact === "revision" && hasReady ? <AgentApprovalCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut." actions={<Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button>} /> : null}

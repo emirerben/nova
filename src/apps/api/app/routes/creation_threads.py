@@ -150,6 +150,7 @@ _PAPER_FORMATS = {
     "montage": "montage",
     "narrated": "narrated_planned",
     "talking_to_camera": "subtitled",
+    "slides": "slides",
 }
 # Valid neutral context for a new chat project before onboarding has generated
 # a personalized persona. Keep this schema-valid so render dispatch can use the
@@ -542,6 +543,8 @@ def _available_formats() -> dict[str, str]:
         available["narrated"] = "narrated_planned"
     if settings.subtitled_archetype_enabled:
         available["talking_to_camera"] = "subtitled"
+    if settings.slide_posts_enabled:
+        available["slides"] = "slides"
     return available
 
 
