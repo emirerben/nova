@@ -3,6 +3,8 @@ import {
   barsToPreviewTextElements,
   barsToTextElements,
   buildLyricLineOverrides,
+  isCaptionBar,
+  isCaptionUnitBar,
   seedBarsFromLyricSeeds,
   seedBarsFromVariant,
 } from "@/app/plan/items/[id]/_editor/editor-bars";
@@ -49,6 +51,11 @@ describe("editor-bars lyric helpers", () => {
     const originals = new Map(elements.map((element) => [element.id, element]));
     const bars = seedBarsFromVariant(guided);
     expect(bars).toHaveLength(150);
+    // KRI-18: every seeded guided-story caption is a UI caption unit (drives
+    // Captions-lane placement, "Captions" inspector heading) even though its
+    // role ("generative_sequence") keeps it on the ordinary persistence path.
+    expect(bars.every(isCaptionUnitBar)).toBe(true);
+    expect(bars.every((b) => !isCaptionBar(b))).toBe(true);
     expect(barsToTextElements(bars, originals)).toMatchObject(elements.map((element) => ({ ...element })));
     const saved = barsToTextElements(bars.map((bar, index) => index === 0 ? { ...bar, text: "Corrected" } : bar), originals);
     expect(saved[0].text).toBe("Corrected");
