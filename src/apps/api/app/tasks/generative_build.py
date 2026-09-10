@@ -2132,6 +2132,17 @@ def _run_generative_job_impl(
         if job.status == _CANCELLED_JOB_STATUS:
             return
         candidates = getattr(job, "all_candidates", None) or {}
+        from app.services.phone_sources import PHONE_SOURCES_FIELD  # noqa: PLC0415
+
+        if PHONE_SOURCES_FIELD in (job.assembly_plan or {}):
+            if ownership_epoch is not None:
+                _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
+            phone_snapshot = copy.deepcopy(job.assembly_plan)
+            # Planning uses its own short transactions. Release the entry locks
+            # before invoking it, then recheck the owner/generation at publication.
+            db.commit()
+            _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
+            return
         try:
             require_cloud_source_paths(
                 list(candidates.get("clip_paths") or [])
@@ -3576,6 +3587,79 @@ def _run_generative_job_impl(
         job_id,
         speech_cut_rerender=bool(speech_cut_operation_id),
     )
+
+
+def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int | None) -> None:
+    """Use cloud decisions only; never enter a media renderer for proxy sources."""
+    from app.kria.device_render import make_device_request  # noqa: PLC0415
+    from app.pipeline.guided_story import GuidedStoryExecutionPlan  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import compile_phone_guided_plan  # noqa: PLC0415
+    from app.services.device_render import (  # noqa: PLC0415
+        DEVICE_RENDER_FIELD,
+        pin_device_request,
+    )
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+
+    generation = snapshot.get("creator_generation_id")
+    guided = snapshot.get("guided_edit")
+    if not isinstance(generation, str) or not generation or not isinstance(guided, dict):
+        raise ValueError("Phone rendering requires an immutable approved guided plan")
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in snapshot[PHONE_SOURCES_FIELD]
+    )
+    if not bindings:
+        raise ValueError("Phone rendering requires original source bindings")
+    existing = (snapshot.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
+    if existing is not None and existing.get("base_generation") == generation:
+        return  # A delivery cannot rewrite an already issued device revision.
+    if not settings.phone_rendering_enabled:
+        raise ValueError(
+            "Phone rendering is currently unavailable; originals remain on the device."
+        )
+    raw_plan, _track = _guided_execution_plan(job_id, guided)
+    recipe = compile_phone_guided_plan(GuidedStoryExecutionPlan.model_validate(raw_plan), bindings)
+    request = make_device_request(
+        job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe
+    )
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
+            return
+        job = entry[0]
+        current = copy.deepcopy(job.assembly_plan or {})
+        if any(
+            current.get(field) != snapshot.get(field)
+            for field in ("creator_generation_id", "guided_edit", PHONE_SOURCES_FIELD)
+        ):
+            return
+        prior = (current.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
+        if prior is not None and prior.get("base_generation") == generation:
+            return
+        if prior is not None:
+            raise ValueError("Phone recipe revision must be advanced by the editor")
+        if current.get("variants"):
+            raise ValueError("Initial phone planning cannot replace existing variants")
+        current["variants"] = [
+            {
+                "variant_id": "guided_story",
+                "rank": 1,
+                "text_mode": "agent_text",
+                "resolved_archetype": "guided_story",
+                "render_generation_id": generation,
+                "render_status": "awaiting_device",
+                "render_destination": "device",
+                "proposal_version": raw_plan["proposal_version"],
+                "media_digest": raw_plan["media_digest"],
+                "orientation": raw_plan.get("output_orientation", "portrait"),
+                "ok": False,
+            }
+        ]
+        job.assembly_plan = current
+        pin_device_request(job, request, base_generation=generation)
+        job.status = "awaiting_device"
+        job.error_detail = None
+        job.failure_reason = None
+        db.commit()
 
 
 def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, MusicTrack | None]:

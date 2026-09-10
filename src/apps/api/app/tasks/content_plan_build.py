@@ -1393,6 +1393,18 @@ def _dispatch_item_render(
         db=session,
     )
     try:
+        from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+        from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
+
+        phone_sources = ()
+        if any(is_analysis_proxy_path(path) for path in clip_paths):
+            if (
+                not settings.phone_rendering_enabled
+                or approved_proposal is None
+                or not guided_applicable
+            ):
+                raise ValueError("analysis proxies require an approved phone edit plan")
+            phone_sources = bind_phone_sources(list(item.clip_assignments or []), clip_paths)
         job = build_generative_job(
             user_id=plan.user_id,
             clip_paths=clip_paths,
@@ -1457,6 +1469,7 @@ def _dispatch_item_render(
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
             creator_request=str(creator_request or "")[:12000],
+            **({"phone_sources": phone_sources} if phone_sources else {}),
         )
         # Pin one immutable identity for this Creator-confirmed render before
         # the worker is queued.  Native variants historically received no

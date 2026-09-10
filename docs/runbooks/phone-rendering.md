@@ -43,7 +43,7 @@ style has passed the complete parity and physical-device gates.
   phone does not reshape those runs. `portable_text_layout.py` compiles the
   supported base text styles with production wrapping/anchor helpers and exact
   font assets. It rejects specialized treatments and legacy animation timing;
-  the full scene planner and chat dispatch are not connected yet. Linear gradients use resolved endpoints/stops
+  the full scene planner remains incomplete. Linear gradients use resolved endpoints/stops
   and explicit sRGB colors, clipped to glyphs; a reference probe caught and
   fixed device-RGB conversion adding green to a red/blue gradient. A Latin font probe matched cloud ink bounds and caught/fixed
   stroke/fill ordering; this is not full typography parity. The native suite
@@ -67,7 +67,9 @@ style has passed the complete parity and physical-device gates.
   A completed local file can retry upload without rendering again.
 - `app/kria/device_render.py` defines immutable recipe identity and typed upload
   requests. `app/services/device_render.py` pins one recipe per revision in private
-  job state. No generation worker calls that pinning service yet.
+  job state. The guarded guided-story worker now calls it after shared planning
+  and stops before rendering. Publication rechecks ownership, generation,
+  approval, and source bindings; redelivery preserves the issued request.
 - `app/routes/device_render.py` authenticates job ownership, checks current item
   and ownership epoch under locks, reserves create-only uploads with cleanup
   receipts, and verifies generation, checksum, H.264, geometry, frame rate, pixel
@@ -82,8 +84,10 @@ style has passed the complete parity and physical-device gates.
   Migration 0105 stores the binding before a signed PUT is issued. Registration
   verifies the proxy generation, duration, geometry, frame rate, rotation, and
   source-audio presence. Reserved proxy IDs remain distinguishable after the
-  reservation is consumed. The cloud job constructor and worker entry reject
-  proxy footage or voiceovers. The picker still uses consented cloud uploads;
+  reservation is consumed. The job constructor accepts proxy footage only for
+  gated content-plan jobs with exact private bindings; dispatch also requires
+  an approved guided plan. Every other cloud path still rejects proxies.
+  The picker still uses consented cloud uploads;
   selecting the phone destination remains part of the integration work.
 - `services/phone_sources.py` resolves selected server-owned upload receipts
   into immutable original bindings, rejects mixed/missing/conflicting sources,
@@ -92,7 +96,8 @@ style has passed the complete parity and physical-device gates.
   `pipeline/phone_guided_plan.py` projects the shared guided execution plan into
   V2 original assets, exact contiguous video trims, audio level, and supported
   text layers. Unsupported media treatments, transitions, and editor lanes
-  reject instead of disappearing. These helpers are not yet wired to dispatch.
+  reject instead of disappearing. Supported plans enter `awaiting_device`
+  instead of a cloud-render state; the native UI integration remains pending.
 
 ## Remaining implementation gates
 

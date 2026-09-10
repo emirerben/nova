@@ -1,5 +1,6 @@
 import pytest
 
+from app.agents._schemas.text_element import TextElement
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.pipeline.guided_story import GuidedStoryExecutionPlan
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
@@ -78,6 +79,29 @@ def test_shared_timing_and_original_metadata_preserved():
     plan.montage_audio = {"preserve_source_audio": True}
     plan.editor_audio_level = 0.4
     assert compile_phone_guided_plan(plan, bindings).audio.original_volume == 0.4
+
+
+def test_approved_static_text_uses_shared_layout_and_bound_font():
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id="title",
+            text="This view",
+            start_s=0.5,
+            end_s=2.5,
+            font_family="Inter-Bold",
+            effect="none",
+            size_px=64,
+        )
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert len(recipe.text_layers) == 1
+    layer = recipe.text_layers[0]
+    assert (layer.start, layer.end) == (0.5, 2.5)
+    assert " ".join(run.text for run in layer.runs) == "This view"
+    font = next(a for a in recipe.asset_manifest.assets if a.id == layer.runs[0].font_asset_id)
+    assert font.kind == "library" and font.catalog == "font"
+    assert font.fingerprint.byte_count > 1000
 
 
 @pytest.mark.parametrize(
