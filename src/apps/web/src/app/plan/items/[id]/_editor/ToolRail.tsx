@@ -38,7 +38,6 @@ export const NOVA_TOOL_SEEN_KEY = "nova-tool-seen";
 // glyph stays in the rail's text-glyph family (`T`, `Aa` in InspectorRail) —
 // "CC" reads as captions everywhere without importing an icon set.
 const TOOLS: Array<{ id: EditorTool; icon: string | null; label: string }> = [
-  { id: "nova", icon: null, label: "Kria" },
   { id: "text", icon: "T", label: "Text" },
   { id: "captions", icon: "CC", label: "Captions" },
   { id: "visuals", icon: "▦", label: "Visuals" },

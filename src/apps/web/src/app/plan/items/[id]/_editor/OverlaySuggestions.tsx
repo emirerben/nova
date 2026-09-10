@@ -82,7 +82,9 @@ export default function OverlaySuggestions({
   onRetryAsset = () => {},
   onAccept,
   onSeek,
+  poolOnly = false,
 }: {
+  poolOnly?: boolean;
   itemId?: string;
   variantId?: string;
   suggestions?: EditorOverlaySuggestionsState;
@@ -106,10 +108,10 @@ export default function OverlaySuggestions({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
-  if (poolUnavailable || suggestions.unavailable) {
+  if (poolUnavailable || (!poolOnly && suggestions.unavailable)) {
     return (
       <div className="mt-6 border-t border-zinc-200 pt-4" data-testid="overlay-suggestions">
-        <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Suggested visuals</p>
+        <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">{poolOnly ? "Your visuals" : "Suggested visuals"}</p>
         <p className="rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-[12px] text-[#71717a]">
           {UNAVAILABLE_COPY}
         </p>
@@ -127,7 +129,7 @@ export default function OverlaySuggestions({
 
   return (
     <div className="mt-6 border-t border-zinc-200 pt-4" data-testid="overlay-suggestions">
-      <p className="mb-3 text-[12px] font-semibold text-[#3f3f46]">Suggested visuals</p>
+      <p className="mb-3 text-[12px] font-semibold text-[#3f3f46]">{poolOnly ? "Your visuals" : "Suggested visuals"}</p>
 
       <input
         ref={inputRef}
@@ -305,6 +307,7 @@ export default function OverlaySuggestions({
         </p>
       )}
 
+      {!poolOnly && <>
       {suggestions.staleNotice && (
         <p className="mt-2 rounded border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#3f3f46]">
           Your script changed, so suggestions were cleared. Match visuals again when you&apos;re ready.
@@ -393,6 +396,7 @@ export default function OverlaySuggestions({
           ))}
         </div>
       )}
+      </>}
     </div>
   );
 }

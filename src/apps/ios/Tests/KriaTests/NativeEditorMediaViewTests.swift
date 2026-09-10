@@ -1,9 +1,24 @@
+import AVFoundation
 import XCTest
 @testable import Kria
 
 #if DEBUG
 @MainActor
 final class NativeEditorMediaViewTests: XCTestCase {
+    func testPlaybackTogglePausesWithoutChangingThePlayhead() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.twoText)
+        session.player = AVPlayer()
+        session.currentTime = 1
+
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.togglePlayback()
+
+        XCTAssertFalse(session.isPlaying)
+        XCTAssertEqual(session.player?.rate, 0)
+        XCTAssertEqual(session.currentTime, 1)
+    }
+
     func testPreviewProjectionUsesHalfOpenTextWindows() {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.twoText)
         let text = session.timelineItems.filter { $0.kind == .text }

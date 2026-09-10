@@ -1,21 +1,7 @@
-/**
- * KRI-19 bug 11/14: "the experience of editing through chat and seeing the
- * change live is visually broken."
- *
- * Root cause: chat renders only while `activeTool === "nova"` (light mode),
- * but `handleCopilotOps` — the exact function `useEditDirector` and
- * `useEditCopilot` both call as `onApplied` once an edit lands — switched
- * `activeTool` to `result.openTool` (e.g. "visuals") whenever the response
- * carried one. Applying an edit from chat could silently unmount the chat
- * drawer mid-turn.
- *
- * Harness mirrors EditorShell-director-preview.test.tsx (mocks
- * useEditDirector and captures the real onApplied/handleCopilotOps), but
- * forces the mobile "light" layout and opens the Kria tool first.
- */
+/** Applying shared-chat edits must not reopen the removed mobile Kria drawer. */
 
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import type { ApplyCopilotOpsResult } from "@/lib/edit-copilot/apply-ops";
 import type { UseEditDirectorOptions } from "@/lib/edit-copilot/useEditDirector";
 
@@ -167,20 +153,21 @@ describe("EditorShell — chat stays open through an applied edit (KRI-19 bug 11
     window.sessionStorage.clear();
   });
 
-  it("does not switch tools out from under an open Kria drawer when an edit lands", async () => {
+  it("keeps the editor free of a second chat surface when a shared-chat edit lands", async () => {
     await act(async () => {
       render(<EditorShell itemId="item-1" variantParam="var-sub" />);
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Kria tool" }));
-    expect(await screen.findByTestId("copilot-light")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Kria tool" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("copilot-light")).not.toBeInTheDocument();
+    expect(mockDirectorOptions).not.toBeNull();
 
     // An applied turn whose response carries `openTool: "visuals"` — the
     // exact signal that used to force-switch the dock away from "nova" and
     // unmount the chat drawer mid-turn, regardless of which mutation
     // triggered it.
     await act(async () => {
-      mockDirectorOptions?.onApplied(
+      await mockDirectorOptions?.onApplied(
         result({
           nextSfx: [
             {
@@ -197,8 +184,7 @@ describe("EditorShell — chat stays open through an applied edit (KRI-19 bug 11
       );
     });
 
-    // The drawer is still mounted and visible — not silently swapped for the
-    // Visuals tool sheet.
-    expect(screen.getByTestId("copilot-light")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Kria tool" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("copilot-light")).not.toBeInTheDocument();
   });
 });
