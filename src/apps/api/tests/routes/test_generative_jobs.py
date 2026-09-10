@@ -3989,3 +3989,73 @@ def test_variants_for_response_public_job_gets_no_speech_map(monkeypatch):
     job.content_plan_item_id = None  # public generative job — no editor surface
     out = gj._variants_for_response(job)
     assert "speech_map" not in out[0]
+
+
+def test_variants_for_response_survives_a_guided_revision_that_fails_to_recompile(monkeypatch):
+    """Regression guard (KRI-26): a guided-story revision that fails to
+    recompile on READ must degrade to the text_elements fallback, not crash
+    the whole thread's GET forever.
+
+    Reproduced from a real prod incident: compile_guided_runtime_plan's own
+    contract normalizes every internal failure into GuidedStoryError (its
+    final `except Exception as exc: raise GuidedStoryError(...) from exc`),
+    but the read-path caller's except clause only listed
+    (KeyError, TypeError, ValueError) -- not GuidedStoryError, a RuntimeError
+    subclass. Every subsequent load of that job's parent creation thread
+    (a poll, a page load, an edit) re-ran the same failing compile and
+    re-raised, 500ing the entire response with no recovery. See
+    agents/DECISIONS.md.
+    """
+    import types
+    import uuid
+
+    import app.routes.generative_jobs as gj
+    from app.pipeline import guided_story as guided_story_module
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: "https://fresh.example/x")
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+
+    def _always_fails(*_args, **_kwargs):
+        raise guided_story_module.GuidedStoryError(
+            "guided_story_revision_invalid", "The guided editor revision could not be compiled."
+        )
+
+    monkeypatch.setattr(guided_story_module, "compile_guided_runtime_plan", _always_fails)
+    monkeypatch.setattr(
+        gj,
+        "_guided_v2_revision",
+        lambda _job, _variant: {"text_elements": [], "tombstones": []},
+    )
+
+    job_id = uuid.uuid4()
+    variant = {
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+        "render_status": "failed",
+        "ok": False,
+        "error": "The guided editor revision could not be compiled.",
+        "error_class": "guided_story_revision_invalid",
+        "video_path": f"generative-jobs/{job_id}/variant_guided_story.mp4",
+        "output_url": "https://stale.example/x",
+        "duration_s": 44.7,
+        "guided_edit_revision": {"revision_number": 1},
+    }
+    job = types.SimpleNamespace(
+        id=job_id,
+        status="variants_ready_partial",
+        content_plan_item_id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [variant],
+            "guided_edit": {"raw_source": "generative-jobs/x/source.mov"},
+            "guided_story_execution_plan": {"raw_source": "generative-jobs/x/source.mov"},
+        },
+    )
+
+    out = gj._variants_for_response(job)
+
+    assert len(out) == 1
+    assert out[0]["variant_id"] == "guided_story"
+    # The real render failure is still honestly reported -- this fix is about
+    # not crashing the READ, not about hiding that the render failed.
+    assert out[0]["render_status"] == "failed"
+    assert out[0]["error_class"] == "guided_story_revision_invalid"
