@@ -85,6 +85,7 @@ struct ChatWorkspaceView: View {
             .simultaneousGesture(drawerGesture(width: drawerWidth))
             .accessibilityAction(.escape) { setDrawerOpen(false) }
         }
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: showsProjects)
         .onChange(of: showsProjects) { _, isOpen in
             if isOpen { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
         }
