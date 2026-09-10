@@ -160,3 +160,21 @@ swift test
 From the worktree root: `make ios-verify` and `bash scripts/preship-check.sh`.
 Simulator and synthetic fixture checks do not satisfy the physical-device or
 cloud-reference parity gates.
+
+### Native editor revision integration (staged)
+
+Editor saves retain the existing timeline behavior. The canonical guided runtime
+plan owns ordered moments and total duration; `NativeEditorInteraction` projects
+that document for scrub bounds and timeline geometry. This integration adds no
+insertion, ripple, resizing, or overlap policy: all lane timing remains in the
+existing revision, continuous music stays continuous, and the current trim limits
+and frame rounding apply. Save acknowledgement preserves follow-up edits and
+rebases their undo snapshots; individual gestures remain one undo step.
+
+The phone compiler consumes that same runtime plan. Supported legacy text-only
+saves replace only the editable text lane. Compilation and source binding checks
+must succeed before either the desired variant or its next device receipt changes.
+`test_phone_editor_commit.py` covers revision supersession and atomic failure;
+`phone_text_transforms_{v2,legacy}.json` and `PortableTextTests` cover cloud timing
+references and real native preview/export. All unimplemented lanes still fail
+closed, and the rollout remains disabled pending the complete parity/device gates.

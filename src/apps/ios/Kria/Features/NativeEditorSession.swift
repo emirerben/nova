@@ -61,6 +61,26 @@ enum NativeEditorLoadState: Equatable, Sendable {
     @Published private(set) var canEditCaptions = false
     @Published private(set) var canEditMix = false
     let operations: any EditorOperations
+    @Published private(set) var rendersOnDevice = false
+    private var deviceRenders: DeviceRenderSessions?
+    private var guidedRevisionNumber: Int?
+    var deviceRenderKey: DeviceRenderKey? {
+        guard rendersOnDevice, let jobID, let variantKey else { return nil }
+        return DeviceRenderKey(projectID: threadID ?? projectID, jobID: jobID, variantID: variantKey)
+    }
+
+    func useDeviceRendering(_ sessions: DeviceRenderSessions) { deviceRenders = sessions }
+
+    func refreshDeviceRender(retry: Bool = false) async {
+        guard let key = deviceRenderKey, let api, let deviceRenders else { return }
+        let capabilities = (try? await api.creationCapabilities())?.phoneRendering ?? .disabled
+        await deviceRenders.reconcile(key, capabilities: capabilities, retry: retry)
+    }
+
+    func showDeviceOutput(_ url: URL) {
+        guard rendersOnDevice else { return }
+        installPlayer(url: url, preferredDuration: authoritativeDuration)
+    }
 
     private let projectID: UUID
     private var etag: String = ""
@@ -1084,6 +1104,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
             let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
             let hasPostSubmitEdits = document != submittedDocument
+            guidedRevisionNumber = response.revisionNumber ?? guidedRevisionNumber
             document.revision.number = response.revisionNumber ?? document.revision.number
             document.revision.hash = response.revisionHash ?? document.revision.hash
             if response.ok, let expectedDuration = response.expectedDuration {
@@ -1106,6 +1127,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             if response.ok {
                 pendingRenderRetrySections.removeAll()
                 saveState = .previewPending
+                await refreshDeviceRender()
                 startPreviewRefresh(generation: response.generation)
             } else {
                 pendingRenderRetrySections = acknowledged
@@ -1562,6 +1584,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             cameraEffects: array("camera_effects", .cameraEffects),
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
+            guidedRevisionNumber: guidedRevisionNumber,
             baseGeneration: baseGeneration
         )
     }
@@ -1728,6 +1751,8 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
 
     private func configureCapabilities(from variant: [String: JSONValue]?) {
+        rendersOnDevice = variant?["render_destination"]?.stringValue == "device"
+        guidedRevisionNumber = Self.number(variant?["editor_revision_number"]).flatMap { $0 >= 1 && $0 <= Double(Int32.max) ? Int($0) : nil }
         guard let variant else {
             // Preview fixtures remain interactive, but production never claims
             // renderer support without an authoritative status response.

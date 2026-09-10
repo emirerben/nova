@@ -3648,6 +3648,15 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
                 "render_generation_id": generation,
                 "render_status": "awaiting_device",
                 "render_destination": "device",
+                "duration_s": raw_plan["resolved_duration_s"],
+                "style_set_id": raw_plan["typography"]["style_id"],
+                "intro_mode": "linear",
+                "intro_layout": "linear",
+                "text_elements": copy.deepcopy(raw_plan["text_elements"]),
+                "context_label_text_elements": copy.deepcopy(
+                    raw_plan.get("context_label_text_elements") or []
+                ),
+                "story_timeline": copy.deepcopy(raw_plan["story_timeline"]),
                 "proposal_version": raw_plan["proposal_version"],
                 "media_digest": raw_plan["media_digest"],
                 "orientation": raw_plan.get("output_orientation", "portrait"),

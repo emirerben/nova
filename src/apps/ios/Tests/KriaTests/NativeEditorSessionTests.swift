@@ -440,6 +440,31 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 1); XCTAssertEqual(fake.lastRequest?.baseGeneration, "generation-1"); XCTAssertEqual(session.saveState, .previewPending); XCTAssertFalse(session.hasUnsavedChanges)
     }
 
+    func testPhoneSaveReconcilesAppOwnedRendererWithCreationProjectIdentity() async {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        fake.phoneDestination = true
+        let renderSessions = DeviceRenderSessions(fetch: { job, variant in
+            XCTAssertEqual(job, jobID)
+            XCTAssertEqual(variant, "variant")
+            fake.deviceFetchCount += 1
+            throw APIError.requestFailed
+        }, factory: { _, _ in throw APIError.unsupported })
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        XCTAssertEqual(session.deviceRenderKey, key)
+        XCTAssertEqual(fake.deviceFetchCount, 1)
+        XCTAssertEqual(fake.lastRequest?.guidedRevisionNumber, 7)
+        XCTAssertEqual(renderSessions.presentations[key]?.phase, .needsAttention)
+        XCTAssertEqual(session.saveState, .previewPending)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
     func testSaveKeepsNewerSameSectionEditDirtyWhileCommitIsInFlight() async {
         let threadID = UUID()
         let textID = "text-1"
@@ -906,6 +931,8 @@ private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     private var commitContinuation: CheckedContinuation<Void, Never>?
     private var commitResumeRequested = false
     private var suspendNextCommit: Bool
+    var phoneDestination = false
+    var deviceFetchCount = 0
     var commitCount = 0
     var lastRequest: EditorCommitRequest?
     var openedJobID: UUID?
@@ -953,7 +980,7 @@ private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
         lastVariantID = variantID
         if let editorVariantError { throw editorVariantError }
-        return authoritativeVariant ?? ["variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
+        return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
     }
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]] {
         editorVariantsCallCount += 1

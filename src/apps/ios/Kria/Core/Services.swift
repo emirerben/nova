@@ -685,7 +685,15 @@ struct KriaAPI: KriaAPIClient {
         try await request(path: "generative-jobs/\(jobID.uuidString)/status", method: "GET", bodyData: nil, decode: EditorStatusEnvelope.self).variants
     }
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
-        guard let variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
+        guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
+        if variant["render_destination"] == .string("device"),
+           variant["resolved_archetype"] == .string("guided_story"),
+           case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) {
+            let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
+            guard timeline["base_generation"] == variant["render_generation_id"] else { throw APIError.conflict }
+            variant["user_timeline"] = .object(timeline)
+            variant["editor_revision_number"] = timeline["revision_number"]
+        }
         return variant
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
