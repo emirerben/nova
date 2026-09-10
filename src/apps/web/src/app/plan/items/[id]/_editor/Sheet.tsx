@@ -114,6 +114,20 @@ export default function Sheet({
   } | null>(null);
   /** Detent to restore once the keyboard closes after an auto-promote. */
   const autoPromotedFromRef = useRef<SheetDetent | null>(null);
+  /**
+   * True once the user makes a deliberate detent choice after an
+   * auto-promote — cancels the keyboard-close restore so a choice the user
+   * just made (e.g. re-promoting to full because they want to keep reading)
+   * isn't silently undone the moment they blur the field (KRI-19 bug 8).
+   */
+  const autoPromoteOverriddenRef = useRef(false);
+
+  /** Wraps onDetentChange for USER-initiated changes only (never the
+   * keyboard auto-promote effect itself) so a manual choice sticks. */
+  const changeDetent = (next: SheetDetent) => {
+    if (autoPromotedFromRef.current !== null) autoPromoteOverriddenRef.current = true;
+    onDetentChange(next);
+  };
 
   // ── Mount/animation phase ─────────────────────────────────────────────────
   // "pre" mounts the sheet translated off-screen; the next frame flips to
@@ -154,17 +168,23 @@ export default function Sheet({
   useEffect(() => {
     if (!open) {
       autoPromotedFromRef.current = null;
+      autoPromoteOverriddenRef.current = false;
       return;
     }
     if (keyboardOpen) {
       if (detent === "half" && autoPromotedFromRef.current === null) {
         autoPromotedFromRef.current = detent;
+        autoPromoteOverriddenRef.current = false;
         onDetentChange("full");
       }
     } else if (autoPromotedFromRef.current !== null) {
       const prior = autoPromotedFromRef.current;
+      const overridden = autoPromoteOverriddenRef.current;
       autoPromotedFromRef.current = null;
-      onDetentChange(prior);
+      autoPromoteOverriddenRef.current = false;
+      // Only restore the pre-keyboard detent if the user didn't deliberately
+      // change it themselves while the keyboard was up.
+      if (!overridden) onDetentChange(prior);
     }
   }, [open, keyboardOpen, detent, onDetentChange]);
 
@@ -212,8 +232,8 @@ export default function Sheet({
       detent,
       keyboardOpen,
     });
-    if (action === "promote") onDetentChange("full");
-    else if (action === "demote") onDetentChange("half");
+    if (action === "promote") changeDetent("full");
+    else if (action === "demote") changeDetent("half");
     else if (action === "close") onClose();
   };
 
@@ -235,7 +255,9 @@ export default function Sheet({
         <div
           data-testid={`${testId}-scrim`}
           aria-hidden="true"
-          onClick={() => onDetentChange("half")}
+          // Tapping outside the sheet closes it (KRI-19 bug 8 — closing a
+          // section was a two-step drag before this: demote-then-dismiss).
+          onClick={onClose}
           className={[
             "fixed inset-0 bg-[#0c0c0e]/15",
             "transition-opacity ease-[var(--modal-ease)] motion-reduce:transition-none",
@@ -271,7 +293,7 @@ export default function Sheet({
             variant="ghost"
             size="icon"
             aria-label={isFull ? "Collapse sheet" : "Expand sheet"}
-            onClick={() => onDetentChange(isFull ? "half" : "full")}
+            onClick={() => changeDetent(isFull ? "half" : "full")}
             className="w-16"
           >
             <span aria-hidden="true" className="h-1 w-10 rounded-full bg-zinc-300" />
@@ -290,13 +312,13 @@ export default function Sheet({
           )}
           <Button
             type="button"
-            variant="ghost"
+            variant="secondary"
             size="icon"
             aria-label="Close"
             onClick={onClose}
-            className="flex-none"
+            className="min-h-11 min-w-11 flex-none rounded-full"
           >
-            <CloseIcon className="h-4 w-4" />
+            <CloseIcon className="h-5 w-5" />
           </Button>
         </div>
 
