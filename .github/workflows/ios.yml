@@ -62,6 +62,8 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: src/apps/api/pyproject.toml
+      - name: Test iOS verification orchestration
+        run: python3 -m unittest discover -s scripts/ios/tests -v
       - name: Install contract generator dependencies
         working-directory: src/apps/api
         run: pip install -e .
@@ -75,13 +77,22 @@ jobs:
         run: python -m app.cli.kria_contracts --check
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Cache Swift packages
+      - name: Identify Xcode cache
+        id: xcode-cache
+        run: |
+          echo "toolchain=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Cache Xcode build data
         uses: actions/cache@v4
         with:
           path: |
             ~/Library/Caches/org.swift.swiftpm
-            ~/Library/Developer/Xcode/DerivedData/SourcePackages
-          key: ios-spm-${{ runner.os }}-${{ hashFiles('src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}
-          restore-keys: ios-spm-${{ runner.os }}-
+            src/apps/ios/.derived-data/Build
+            src/apps/ios/.derived-data/SourcePackages
+            src/apps/ios/.derived-data/ModuleCache.noindex
+            src/apps/ios/.derived-data/SDKStatCaches.noindex
+            src/apps/ios/.derived-data/CompilationCache.noindex
+          key: ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
+          restore-keys: |
+            ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
       - name: Generate, build, and test Kria
         run: bash scripts/ios/verify.sh

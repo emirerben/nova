@@ -24,6 +24,14 @@ make ios-verify    # same gate used by CI
 Set `KRIA_SKIP_SIMULATOR_TESTS=1` only when validating compilation on a host
 without an installed iPhone simulator. CI must run the complete gate.
 
+Verification boots the selected simulator while `build-for-testing` compiles the
+app and test bundles, then runs `test-without-building` on that same destination.
+UI tests run serially for deterministic navigation checks.
+CI caches the actual `src/apps/ios/.derived-data` directory, including Swift
+packages, with keys scoped to the Xcode version, architecture and package/project
+configuration. Source changes still go through Xcode's incremental build checks.
+Changing Xcode or dependency configuration starts a fresh cache.
+
 ## Architecture boundaries
 
 - Creation threads, runtime-v2 drafts, approvals, editor commits, and jobs remain
