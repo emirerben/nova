@@ -32,6 +32,7 @@ class VideoProbe:
     # milliseconds longer because AAC packets are frame-sized; render parity
     # must compare the committed timeline to video frames, not audio padding.
     video_stream_duration_s: float | None = None
+    rotation_degrees: float = 0.0
 
 
 class ProbeError(Exception):
@@ -142,6 +143,18 @@ def probe_video(file_path: str) -> VideoProbe:
         # format duration remains valid. Preserve the historical fallback.
         pass
 
+    raw_rotation = next(
+        (
+            entry["rotation"]
+            for entry in video_stream.get("side_data_list", [])
+            if "rotation" in entry
+        ),
+        (video_stream.get("tags") or {}).get("rotate", 0),
+    )
+    try:
+        rotation_degrees = float(raw_rotation)
+    except (TypeError, ValueError):
+        rotation_degrees = float("nan")
     aspect_ratio = _classify_aspect(width, height)
 
     # Never log the full URL when probing a signed GCS URL — the v4 query
@@ -185,6 +198,7 @@ def probe_video(file_path: str) -> VideoProbe:
         color_transfer=color_transfer,
         pix_fmt=pix_fmt,
         video_stream_duration_s=video_stream_duration_s,
+        rotation_degrees=rotation_degrees,
     )
 
 

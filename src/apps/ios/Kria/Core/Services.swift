@@ -77,6 +77,10 @@ struct KeychainTokenStore: TokenStore, @unchecked Sendable {
 struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
 
 protocol KriaAPIClient: Sendable {
+    func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse
+    func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget
+    func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws
+
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread
     func deleteProject(_ project: ProjectSummary) async throws
     func projects() async throws -> [ProjectSummary]
@@ -112,6 +116,7 @@ protocol KriaAPIClient: Sendable {
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose) async throws -> UploadReservation
     func cancelUpload(reservationID: UUID) async throws
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation
+    func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
 }
 
@@ -119,6 +124,12 @@ protocol KriaAPIClient: Sendable {
 /// editor saves fail explicitly when the production commit endpoint is not
 /// implemented by a substitute.
 extension KriaAPIClient {
+    func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+
+    func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse { throw APIError.unsupported }
+    func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget { throw APIError.unsupported }
+    func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws { throw APIError.unsupported }
+
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func deleteProject(_ project: ProjectSummary) async throws { throw APIError.unsupported }
 
@@ -603,6 +614,9 @@ struct KriaAPI: KriaAPIClient {
     /// Compile-time sentinels: removing any critical native route from the
     /// server-owned mobile OpenAPI subset must break the iOS build.
     private static let checkedEditorOperationIDs = [
+        Operations.getDeviceRender.id,
+        Operations.reserveDeviceExport.id,
+        Operations.completeDeviceExport.id,
         Operations.getCreationCapabilities.id,
         Operations.applyCreationAction.id,
         Operations.sendCreationMessage.id,
@@ -685,6 +699,14 @@ struct KriaAPI: KriaAPIClient {
         guard let reservation = reservations.first, reservations.count == 1 else { throw APIError.invalidResponse }
         return reservation
     }
+    func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation {
+        guard contract.purpose == .analysisProxy, contract.proxy != nil else { throw APIError.invalidResponse }
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: "video/mp4", fileSizeBytes: size, clientUploadID: clientUploadID, uploadContract: contract)])
+        let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
+        guard reservations.count == 1, let reservation = reservations.first,
+              reservation.mediaID.hasPrefix("analysis-proxy-") else { throw APIError.invalidResponse }
+        return reservation
+    }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
         let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: contentType.hasPrefix("audio/") ? "audio" : "video", filename: filename, contentType: contentType)
         let body = ProjectMediaAttachmentRequest(media: [media], clientEventID: clientEventID, expectedRevision: expectedRevision)
@@ -750,7 +772,7 @@ private struct ApprovalDecisionRequest: Encodable { let expectedThreadRevision: 
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }
 private struct UploadReservationRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let purpose: UploadPurpose; enum CodingKeys: String, CodingKey { case filename, purpose; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes" } }
 private struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
-private struct ProjectUploadFileRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String; enum CodingKeys: String, CodingKey { case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id" } }
+private struct ProjectUploadFileRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String; var uploadContract: ProjectMediaUploadContract? = nil; enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id" } }
 private struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
 private struct ProjectMediaInput: Encodable { let mediaID: String; let gcsPath: String; let kind: String; let filename: String; let contentType: String; enum CodingKeys: String, CodingKey { case kind, filename; case mediaID = "media_id"; case gcsPath = "gcs_path"; case contentType = "content_type" } }
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }

@@ -303,6 +303,9 @@ def build_generative_job(
             or content_plan_ownership_epoch < 0
         ):
             raise ValueError("content_plan mode requires a non-negative ownership epoch")
+    from app.kria.media_sources import require_cloud_source_paths  # noqa: PLC0415
+
+    require_cloud_source_paths(clip_paths + ([voiceover_gcs_path] if voiceover_gcs_path else []))
     _validate_generative_clip_paths(user_id, clip_paths)
     # Declared edit shape (montage default). The orchestrator's archetype dispatch
     # resolves it against the footage and falls back to montage when unsupported.

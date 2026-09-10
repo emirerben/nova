@@ -11,6 +11,10 @@ GUIDED_STORY_RENDERER_READY = True
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Phone rendering remains off until a capability group has device evidence.
+    phone_rendering_enabled: bool = False
+    phone_render_verified_features: list[str] = Field(default_factory=list)
+
     # Storage
     storage_bucket: str
     storage_provider: str = "gcs"

@@ -22,6 +22,14 @@ from app.kria.api_schemas import (
     TurnCancelled,
 )
 from app.kria.contracts import KRIA_SCHEMA_VERSION
+from app.kria.device_render import (
+    DeviceExportCompleteBody,
+    DeviceExportCompleteOut,
+    DeviceExportReservationBody,
+    DeviceExportReservationOut,
+    DeviceRenderCapabilities,
+    DeviceRenderStatus,
+)
 from app.kria.recipes import EditRecipeV1
 from app.kria.registry import KRIA_TOOLS
 from app.routes.auth import (
@@ -86,6 +94,12 @@ API_MODELS = (
 )
 
 MOBILE_API_MODELS = (
+    DeviceRenderStatus,
+    DeviceRenderCapabilities,
+    DeviceExportReservationBody,
+    DeviceExportReservationOut,
+    DeviceExportCompleteBody,
+    DeviceExportCompleteOut,
     MobileExchangeRequest,
     MobileRefreshRequest,
     MobileSessionOut,
@@ -617,6 +631,40 @@ def mobile_openapi_json() -> str:
                     "operationId": "refreshPlaybackURL",
                     "security": bearer,
                     "responses": _json_responses(LibraryPlaybackResponse),
+                },
+            },
+            "/me/jobs/{job_id}/device-render": {
+                "parameters": [job_id],
+                "get": {
+                    "operationId": "getDeviceRender",
+                    "security": bearer,
+                    "parameters": [
+                        {
+                            "name": "variant_id",
+                            "in": "query",
+                            "required": True,
+                            "schema": {"type": "string", "minLength": 1, "maxLength": 160},
+                        }
+                    ],
+                    "responses": _json_responses(DeviceRenderStatus),
+                },
+            },
+            "/me/jobs/{job_id}/device-render/uploads": {
+                "parameters": [job_id],
+                "post": {
+                    "operationId": "reserveDeviceExport",
+                    "security": bearer,
+                    "requestBody": _json_request(DeviceExportReservationBody),
+                    "responses": _json_responses(DeviceExportReservationOut),
+                },
+            },
+            "/me/jobs/{job_id}/device-render/complete": {
+                "parameters": [job_id],
+                "post": {
+                    "operationId": "completeDeviceExport",
+                    "security": bearer,
+                    "requestBody": _json_request(DeviceExportCompleteBody),
+                    "responses": _json_responses(DeviceExportCompleteOut),
                 },
             },
             "/me/jobs/{job_id}/edit-recipe": {

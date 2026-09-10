@@ -155,7 +155,8 @@ def _is_private_key(key: object) -> bool:
     if not isinstance(key, str):
         return False
     return (
-        key == SPEECH_CLEANUP_INTERNAL_FIELD
+        key == "_device_render_v1"
+        or key == SPEECH_CLEANUP_INTERNAL_FIELD
         or key == CREATOR_DIRECTION_SNAPSHOT_FIELD
         or key in _PRIVATE_IDENTITY_FIELDS
         or key in _PRIVATE_SPEECH_CONTROL_FIELDS

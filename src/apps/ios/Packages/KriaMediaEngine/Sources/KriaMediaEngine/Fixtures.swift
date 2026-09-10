@@ -7,7 +7,7 @@ public enum MediaEngineFixtures {
         let assets = assetIDs.map { MediaAsset(id: $0, relativePath: "originals/\($0).mov", duration: clipDuration) }
         let clips = assetIDs.enumerated().map { index, id in
             TimelineClip(id: "clip-\(index)", sourceAssetID: id, sourceDuration: clipDuration,
-                         timelineStart: Double(index) * clipDuration,
+                         timelineStart: Double(index) * (clipDuration - min(0.25, clipDuration / 2)),
                          transition: index == 0 ? nil : Transition(duration: min(0.25, clipDuration / 2)),
                          text: index == 0 ? TextTreatment(text: "Kria", animation: .fadeScale) : nil)
         }

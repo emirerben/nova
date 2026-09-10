@@ -2127,6 +2127,28 @@ def _run_generative_job_impl(
             log.error("generative_job_entry_rejected", job_id=job_id)
             return
         job, ownership_epoch = entry
+        from app.kria.media_sources import require_cloud_source_paths  # noqa: PLC0415
+
+        if job.status == _CANCELLED_JOB_STATUS:
+            return
+        candidates = getattr(job, "all_candidates", None) or {}
+        try:
+            require_cloud_source_paths(
+                list(candidates.get("clip_paths") or [])
+                + (
+                    [candidates["voiceover_gcs_path"]]
+                    if candidates.get("voiceover_gcs_path")
+                    else []
+                )
+                + ([job.raw_storage_path] if getattr(job, "raw_storage_path", None) else [])
+            )
+        except ValueError:
+            job.status = "processing_failed"
+            job.error_detail = (
+                "Analysis proxies require on-device rendering; originals were not uploaded."
+            )
+            db.commit()
+            return
         assembly = dict(job.assembly_plan or {})
         from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
 

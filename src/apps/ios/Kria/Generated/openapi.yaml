@@ -46,6 +46,66 @@
         "title": "ActionBody",
         "type": "object"
       },
+      "AnalysisProxyDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "duration_s": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "frame_rate": {
+            "maximum": 30,
+            "minimum": 1,
+            "title": "Frame Rate",
+            "type": "number"
+          },
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 640,
+            "minimum": 0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "orientation_degrees": {
+            "default": 0,
+            "enum": [
+              0
+            ],
+            "title": "Orientation Degrees",
+            "type": "integer"
+          },
+          "original": {
+            "$ref": "#/components/schemas/OriginalMediaDescriptor"
+          },
+          "timing_version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Timing Version",
+            "type": "integer"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "maximum": 640,
+            "minimum": 0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "original",
+          "duration_s",
+          "width",
+          "height",
+          "frame_rate"
+        ],
+        "title": "AnalysisProxyDescriptor",
+        "type": "object"
+      },
       "ApprovalDecisionBody": {
         "additionalProperties": false,
         "properties": {
@@ -916,6 +976,220 @@
           "created_at"
         ],
         "title": "DeltaEvent",
+        "type": "object"
+      },
+      "DeviceExportCompleteBody": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "attempt_id"
+        ],
+        "title": "DeviceExportCompleteBody",
+        "type": "object"
+      },
+      "DeviceExportCompleteOut": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "status": {
+            "default": "published",
+            "enum": [
+              "published"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity"
+        ],
+        "title": "DeviceExportCompleteOut",
+        "type": "object"
+      },
+      "DeviceExportReservationBody": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "file_size_bytes": {
+            "exclusiveMinimum": true,
+            "maximum": 1073741824,
+            "minimum": 0,
+            "title": "File Size Bytes",
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "attempt_id",
+          "file_size_bytes",
+          "sha256"
+        ],
+        "title": "DeviceExportReservationBody",
+        "type": "object"
+      },
+      "DeviceExportReservationOut": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "upload_headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Upload Headers",
+            "type": "object"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "upload_url",
+          "upload_headers",
+          "expires_at"
+        ],
+        "title": "DeviceExportReservationOut",
+        "type": "object"
+      },
+      "DeviceRenderCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "recipe_versions": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Recipe Versions",
+            "type": "array"
+          },
+          "verified_features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Verified Features",
+            "type": "array"
+          }
+        },
+        "title": "DeviceRenderCapabilities",
+        "type": "object"
+      },
+      "DeviceRenderIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "recipe_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Recipe Digest",
+            "type": "string"
+          },
+          "recipe_revision": {
+            "minimum": 1,
+            "title": "Recipe Revision",
+            "type": "integer"
+          },
+          "variant_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Variant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "variant_id",
+          "recipe_revision",
+          "recipe_digest"
+        ],
+        "title": "DeviceRenderIdentity",
+        "type": "object"
+      },
+      "DeviceRenderRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "recipe": {
+            "$ref": "#/components/schemas/EditRecipeV1"
+          }
+        },
+        "required": [
+          "identity",
+          "recipe"
+        ],
+        "title": "DeviceRenderRequest",
+        "type": "object"
+      },
+      "DeviceRenderStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "phase": {
+            "enum": [
+              "awaiting_device",
+              "syncing",
+              "published",
+              "needs_attention"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/DeviceRenderRequest"
+          }
+        },
+        "required": [
+          "phase",
+          "request"
+        ],
+        "title": "DeviceRenderStatus",
         "type": "object"
       },
       "DraftSnapshotOut": {
@@ -2713,6 +2987,27 @@
         "title": "MediaTransform",
         "type": "object"
       },
+      "MediaUploadContract": {
+        "additionalProperties": false,
+        "properties": {
+          "proxy": {
+            "$ref": "#/components/schemas/AnalysisProxyDescriptor",
+            "default": null,
+            "nullable": true
+          },
+          "purpose": {
+            "default": "cloud_render_source",
+            "enum": [
+              "cloud_render_source",
+              "analysis_proxy"
+            ],
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "title": "MediaUploadContract",
+        "type": "object"
+      },
       "MessageBody": {
         "additionalProperties": false,
         "properties": {
@@ -3074,6 +3369,69 @@
           "variant_id"
         ],
         "title": "OpenInEditorResponse",
+        "type": "object"
+      },
+      "OriginalMediaDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_count": {
+            "exclusiveMinimum": true,
+            "maximum": 17179869184,
+            "minimum": 0,
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "duration_s": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "has_audio": {
+            "title": "Has Audio",
+            "type": "boolean"
+          },
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 32768,
+            "minimum": 0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "orientation_degrees": {
+            "default": 0,
+            "enum": [
+              0,
+              90,
+              180,
+              270
+            ],
+            "title": "Orientation Degrees",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "maximum": 32768,
+            "minimum": 0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sha256",
+          "byte_count",
+          "duration_s",
+          "width",
+          "height",
+          "has_audio"
+        ],
+        "title": "OriginalMediaDescriptor",
         "type": "object"
       },
       "PersonaResponse": {
@@ -4319,6 +4677,9 @@
             "minLength": 1,
             "title": "Filename",
             "type": "string"
+          },
+          "upload_contract": {
+            "$ref": "#/components/schemas/MediaUploadContract"
           }
         },
         "required": [
@@ -5505,6 +5866,164 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibraryResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/me/jobs/{job_id}/device-render": {
+      "get": {
+        "operationId": "getDeviceRender",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "variant_id",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRenderStatus"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/me/jobs/{job_id}/device-render/complete": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "completeDeviceExport",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceExportCompleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceExportCompleteOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/me/jobs/{job_id}/device-render/uploads": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reserveDeviceExport",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceExportReservationBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceExportReservationOut"
                 }
               }
             },

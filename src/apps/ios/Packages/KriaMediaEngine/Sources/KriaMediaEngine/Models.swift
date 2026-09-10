@@ -27,17 +27,67 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
-        guard schemaVersion > 0 && schemaVersion <= Self.currentSchemaVersion else { throw RecipeError.unsupportedSchema(schemaVersion) }
-        guard frameRate > 0 && frameRate <= 240 else { throw RecipeError.invalidFrameRate(frameRate) }
-        guard canvas.width > 0 && canvas.height > 0 && !tracks.flatMap(\.clips).isEmpty else { throw RecipeError.invalidTimeline }
-        guard !assets.contains(where: { $0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.relativePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw RecipeError.invalidTimeline }
-        guard !tracks.flatMap(\.clips).contains(where: { $0.timelineStart < 0 || $0.sourceStart < 0 || $0.sourceDuration <= 0 || $0.duration <= 0 || $0.rate <= 0 || $0.volume < 0 }) else { throw RecipeError.invalidTimeline }
-        guard !tracks.flatMap(\.clips).contains(where: { ($0.transition?.duration ?? 0) < 0 || ($0.transition?.duration ?? 0) > $0.duration }) else { throw RecipeError.invalidTimeline }
-        guard !tracks.flatMap(\.clips).compactMap(\.text).contains(where: { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.fontSize <= 0 || $0.colorRGBA.count != 4 || $0.colorRGBA.contains(where: { !$0.isFinite || $0 < 0 || $0 > 1 }) }) else { throw RecipeError.invalidTimeline }
-        guard audio.musicVolume >= 0 && audio.musicVolume <= 2 && audio.originalVolume >= 0 && audio.originalVolume <= 2 && audio.fadeIn >= 0 && audio.fadeOut >= 0 else { throw RecipeError.invalidTimeline }
-        let ids = Set(assets.map(\.id)); guard tracks.flatMap(\.clips).allSatisfy({ ids.contains($0.sourceAssetID) }) else { throw RecipeError.missingAssetReference }
+        guard schemaVersion == Self.currentSchemaVersion else { throw RecipeError.unsupportedSchema(schemaVersion) }
+        guard frameRate.isFinite && frameRate > 0 && frameRate <= 240 else { throw RecipeError.invalidFrameRate(frameRate) }
+        let clips = tracks.flatMap(\.clips)
+        guard (16...7680).contains(canvas.width), (16...7680).contains(canvas.height),
+              !clips.isEmpty, Set(tracks.map(\.id)).count == tracks.count,
+              Set(clips.map(\.id)).count == clips.count,
+              tracks.allSatisfy({ !$0.id.isEmpty }), clips.allSatisfy({ !$0.id.isEmpty }) else {
+            throw RecipeError.invalidTimeline
+        }
+        guard assets.allSatisfy({
+            !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !$0.relativePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            ($0.duration == nil || ($0.duration!.isFinite && $0.duration! > 0))
+        }) else { throw RecipeError.invalidTimeline }
+        let ids = Set(assets.map(\.id))
+        guard clips.allSatisfy({ ids.contains($0.sourceAssetID) }),
+              audio.musicAssetID.map({ ids.contains($0) }) ?? true else { throw RecipeError.missingAssetReference }
         guard ids.count == assets.count else { throw RecipeError.invalidTimeline }
+        for clip in clips {
+            let values = [clip.timelineStart, clip.sourceStart, clip.sourceDuration, clip.rate, clip.volume,
+                          clip.transform.scale, clip.transform.rotationDegrees, clip.transform.positionX, clip.transform.positionY]
+            guard values.allSatisfy(\.isFinite), clip.timelineStart >= 0, clip.sourceStart >= 0,
+                  clip.sourceDuration > 0, clip.sourceDuration <= 1800, clip.rate > 0, clip.rate <= 20,
+                  clip.duration.isFinite, (clip.timelineStart + clip.duration).isFinite,
+                  (0...2).contains(clip.volume), clip.transform.scale > 0, clip.transform.scale <= 20 else {
+                throw RecipeError.invalidTimeline
+            }
+            if let transition = clip.transition {
+                guard transition.duration.isFinite, transition.duration > 0,
+                      transition.duration <= min(10, clip.duration) else { throw RecipeError.invalidTimeline }
+            }
+            if let text = clip.text {
+                guard !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !text.fontName.isEmpty, text.fontSize.isFinite, text.fontSize > 0,
+                      text.fontSize <= 1000, text.colorRGBA.count == 4,
+                      text.colorRGBA.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
+                    throw RecipeError.invalidTimeline
+                }
+            }
+        }
+        let levels = [audio.musicVolume, audio.originalVolume, audio.fadeIn, audio.fadeOut]
+        guard levels.allSatisfy(\.isFinite), (0...2).contains(audio.musicVolume),
+              (0...2).contains(audio.originalVolume), (0...60).contains(audio.fadeIn),
+              (0...60).contains(audio.fadeOut) else { throw RecipeError.invalidTimeline }
     }
+
+    /// Derive requirements from content too: an omitted server capability must not drop an effect.
+    public var effectiveCapabilities: Set<MediaCapability> {
+        var result = requiredCapabilities
+        let clips = tracks.flatMap(\.clips)
+        if !clips.isEmpty { result.formUnion([.basicComposition, .local1080Export]) }
+        if clips.contains(where: { $0.text != nil }) { result.insert(.animatedText) }
+        if clips.contains(where: { $0.rate != 1 }) { result.insert(.variableSpeed) }
+        if clips.contains(where: { $0.transition != nil }) { result.insert(.crossfade) }
+        if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
+        if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
+            result.insert(.audioMix)
+        }
+        return result
+    }
+
 }
 
 public enum RecipeError: Error, Equatable, Sendable { case unsupportedSchema(Int), invalidFrameRate(Double), invalidTimeline, missingAssetReference }
@@ -148,7 +198,20 @@ public struct TextTreatment: Codable, Equatable, Sendable {
                 animation: TextAnimation = .fadeScale) { self.text = text; self.fontName = fontName; self.fontSize = fontSize; self.colorRGBA = colorRGBA; self.anchor = anchor; self.animation = animation }
 }
 public enum TextAnchor: String, Codable, Sendable { case top, center, bottom }
-public enum TextAnimation: String, Codable, Sendable { case none, fade, fadeScale }
+public enum TextAnimation: String, Codable, Sendable {
+    case none, fade
+    case fadeScale = "fade_scale"
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        if value == "fadeScale" { self = .fadeScale; return }
+        guard let animation = Self(rawValue: value) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported text animation: \(value)")
+        }
+        self = animation
+    }
+}
 
 public struct AudioMixRecipe: Codable, Equatable, Sendable {
     public var musicAssetID: String?; public var musicVolume: Double; public var originalVolume: Double
