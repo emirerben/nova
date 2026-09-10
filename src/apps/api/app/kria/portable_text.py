@@ -168,6 +168,26 @@ class DiscreteRevealContent(_TextModel):
     lines: list[DiscreteRevealLine] = Field(min_length=1, max_length=100)
 
 
+class SmoothRevealLine(_TextModel):
+    text: str = Field(max_length=2000)
+    run_index: int | None = Field(default=None, ge=0, le=99)
+    bounds: TextRevealBounds | None = None
+    first_strong_rtl: bool
+
+    @model_validator(mode="after")
+    def valid_geometry(self):
+        if bool(self.text) != (self.run_index is not None) or bool(self.text) != (
+            self.bounds is not None
+        ):
+            raise ValueError("smooth reveal requires geometry for each nonempty line")
+        return self
+
+
+class SmoothRevealContent(_TextModel):
+    text: str = Field(min_length=1, max_length=5000)
+    lines: list[SmoothRevealLine] = Field(min_length=1, max_length=100)
+
+
 class PortableTextLayer(_TextModel):
     id: str = Field(min_length=1, max_length=160)
     start: float = Field(ge=0, le=1800)
@@ -189,14 +209,28 @@ class PortableTextLayer(_TextModel):
         "handwriting",
         "typewriter",
         "stream-in",
+        "smooth-type",
     ] = "static"
     motion: ResolvedTextMotion | None = None
     reveal_bounds: TextRevealBounds | None = None
     handwriting: HandwritingContent | None = None
     discrete_reveal: DiscreteRevealContent | None = None
+    smooth_reveal: SmoothRevealContent | None = None
 
     @model_validator(mode="after")
     def valid_window(self):
+        if (self.effect == "smooth-type") != (self.smooth_reveal is not None):
+            raise ValueError("smooth reveal requires per-line geometry")
+        if self.smooth_reveal:
+            if [line.run_index for line in self.smooth_reveal.lines if line.text] != list(
+                range(len(self.runs))
+            ):
+                raise ValueError("smooth lines must reference each font run in order")
+            for line in self.smooth_reveal.lines:
+                if line.run_index is not None:
+                    run = self.runs[line.run_index]
+                    if line.text != run.text or not run.shaped:
+                        raise ValueError("smooth line requires matching shaped text")
         if (self.effect in {"typewriter", "stream-in"}) != (self.discrete_reveal is not None):
             raise ValueError("discrete reveal requires prefix geometry")
         if self.discrete_reveal:

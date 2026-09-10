@@ -1877,7 +1877,8 @@
       "blur_layers": [],
       "gradient": null
     },
-    "discrete_reveal": null
+    "discrete_reveal": null,
+    "smooth_reveal": null
   },
   "samples": [
     {

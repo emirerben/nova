@@ -67,11 +67,12 @@ def phone_job(monkeypatch):
     return job
 
 
-def save(job, *, generation="first", effect="fade-in"):
+def save(job, *, generation="first", effect="fade-in", motion=None):
     element = {
         **job.assembly_plan["variants"][0]["text_elements"][0],
         "text": "After",
         "effect": effect,
+        "motion": motion,
     }
     return gj.prepare_editor_commit(
         job,
@@ -117,14 +118,16 @@ def test_failed_native_compile_leaves_entire_baseline_untouched(monkeypatch, fai
     assert vars(job) == before
 
 
-@pytest.mark.parametrize("effect", ["typewriter", "stream-in"])
-def test_discrete_reveal_save_stays_on_device(monkeypatch, effect):
+@pytest.mark.parametrize("effect", ["typewriter", "stream-in", "smooth-type"])
+def test_reveal_save_stays_on_device(monkeypatch, effect):
     job = phone_job(monkeypatch)
-    prep = save(job, effect=effect)
+    monkeypatch.setattr(gj.settings, "text_motion_v2_enabled", True)
+    prep = save(job, effect=effect, motion={"version": 2} if effect == "smooth-type" else None)
     request = device_status(job, "guided_story").request
     layer = request.recipe.text_layers[0]
     assert layer.effect == effect
-    assert layer.discrete_reveal.text == "After"
+    content = layer.smooth_reveal if effect == "smooth-type" else layer.discrete_reveal
+    assert content.text == "After"
     assert request.identity.recipe_revision == 2
     with patch("app.tasks.generative_build.regenerate_generative_variant.apply_async") as cloud:
         gj.enqueue_editor_commit_render(str(job.id), "guided_story", prep)

@@ -4259,7 +4259,8 @@
               "ink-reveal",
               "handwriting",
               "typewriter",
-              "stream-in"
+              "stream-in",
+              "smooth-type"
             ],
             "title": "Effect",
             "type": "string"
@@ -4305,6 +4306,11 @@
             "maxItems": 100,
             "title": "Runs",
             "type": "array"
+          },
+          "smooth_reveal": {
+            "$ref": "#/components/schemas/SmoothRevealContent",
+            "default": null,
+            "nullable": true
           },
           "start": {
             "maximum": 1800,
@@ -4722,6 +4728,65 @@
           "reveal_ramp_ms"
         ],
         "title": "ResolvedTextMotion",
+        "type": "object"
+      },
+      "SmoothRevealContent": {
+        "additionalProperties": false,
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/SmoothRevealLine"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Lines",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "lines"
+        ],
+        "title": "SmoothRevealContent",
+        "type": "object"
+      },
+      "SmoothRevealLine": {
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "$ref": "#/components/schemas/TextRevealBounds",
+            "default": null,
+            "nullable": true
+          },
+          "first_strong_rtl": {
+            "title": "First Strong Rtl",
+            "type": "boolean"
+          },
+          "run_index": {
+            "default": null,
+            "maximum": 99,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Run Index",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "first_strong_rtl"
+        ],
+        "title": "SmoothRevealLine",
         "type": "object"
       },
       "SolidBackground": {

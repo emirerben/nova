@@ -370,7 +370,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -717,7 +718,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -1229,7 +1231,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -1576,7 +1579,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -2088,7 +2092,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -2435,7 +2440,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -2947,7 +2953,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -3294,7 +3301,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -3806,7 +3814,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -4153,7 +4162,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -4665,7 +4675,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",
@@ -5012,7 +5023,8 @@
             }
           }
         ]
-      }
+      },
+      "smooth_reveal": null
     },
     "font": {
       "kind": "library",

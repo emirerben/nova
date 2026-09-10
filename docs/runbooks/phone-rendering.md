@@ -1,8 +1,8 @@
 # Phone rendering — KRI-29 work in progress
 
-Phone rendering is **disabled and not integrated into creator flows**. This branch
-contains renderer, source-provenance, recovery, and publication foundations, not a completed KRI-29
-implementation. Do not enable `PHONE_RENDERING_ENABLED` as a rollout: no creator
+Phone rendering is **disabled for rollout**. This branch includes staged guided
+creation, editor-save, recovery, publication, and native-renderer integration.
+It is not a completed KRI-29 implementation. Do not enable `PHONE_RENDERING_ENABLED` as a rollout: no creator
 style has passed the complete parity and physical-device gates.
 
 ## Implemented foundations
@@ -39,16 +39,16 @@ style has passed the complete parity and physical-device gates.
   missing glyphs/font substitution, and caps prepared text bitmaps at 64 MiB.
   The lane accepts shaped text with static, fade, scale, slide, pop, and bounce
   transforms using complete normalized motion parameters. Native whole-layer
-  sampling matches 32 cases captured from the real cloud drawing dispatcher,
+  sampling matches 52 cases per motion version captured from the real cloud drawing dispatcher,
   including exit fades; animated fade runs through preview and H.264 export.
   Ordered colored blur layers provide shadows/glow behind each run; a standard
   shadow probe is visually close to Skia (not a full style-parity gate). Stroke
   width is the full centered width, twice the cloud `stroke_px` value. Reveal
-  effects remain outstanding. Legacy unshaped runs now carry exact
+  effects have staged coverage described below. Legacy unshaped runs now carry exact
   glyph IDs/positions from Skia and validate them against the bound font; the
   phone does not reshape those runs. `portable_text_layout.py` compiles the
   supported base text styles with production wrapping/anchor helpers and exact
-  font assets. It rejects specialized treatments and legacy animation timing;
+  font assets. It rejects unimplemented specialized treatments;
   the full scene planner remains incomplete. Linear gradients use resolved endpoints/stops
   and explicit sRGB colors, clipped to glyphs; a reference probe caught and
   fixed device-RGB conversion adding green to a red/blue gradient. A Latin font probe matched cloud ink bounds and caught/fixed
@@ -89,7 +89,7 @@ style has passed the complete parity and physical-device gates.
   and capabilities explicitly advertised as verified by the server. Sign-out
   cancels its sessions. The status card distinguishes preparation, rendering,
   local availability, syncing, and synced output, with local playback/sharing
-  and sync retry. Editor saves still need integration. Capabilities remain
+  and sync retry. Supported editor saves issue a new device recipe revision. Capabilities remain
   disabled until device verification.
 - Project proxy uploads now carry immutable original fingerprint, duration,
   geometry, orientation, and audio provenance through reservation and recovery.
@@ -230,3 +230,17 @@ One partial bitmap is cached, and settled frames reuse the complete bitmap.
 shaping modes. `DiscreteRevealTests` checks rotated raster frames, memory rejection,
 and text windows through actual native preview and MP4 export. These additions do
 not enable rollout; full style/combinations and physical-device gates still apply.
+
+### Smooth Type parity (staged)
+
+Smooth Type paints shaped text into separate line bitmaps and masks each before
+compositing. The compiler resolves clipping bounds with stroke/shadow/glow bleed,
+blank-line timing, and first-strong Unicode direction. Forward, reverse, and
+center-out masks rotate around the text anchor. The compositor applies the
+versioned entrance blur, translation, opacity, and exit timing; legacy payloads
+without v2 motion settle immediately as shaped text, matching cloud behavior.
+The total bitmap budget includes every retained line plus settled and partial
+composites. `SmoothRevealTests` compares masks to real cloud drawing calls and
+exercises rotated text through native preview and H.264 export in all three
+orders. This remains staged: the remaining effects/styles and physical-device
+performance and visual gates are still required before rollout.

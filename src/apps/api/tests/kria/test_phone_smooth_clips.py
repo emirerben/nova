@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app.pipeline import text_overlay_skia as cloud
 from app.pipeline.canvas import Canvas
+from app.pipeline.portable_text_layout import compile_text_overlay
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/phone_smooth_clips.json"
 
@@ -102,6 +103,25 @@ def reference():
                             ],
                         }
                     )
+                compiled, _ = compile_text_overlay(
+                    {
+                        **overlay,
+                        "text": text,
+                        "start_s": 0,
+                        "end_s": 4,
+                        "effect": "smooth-type",
+                        "motion": {"version": 2, "order": order},
+                    },
+                    layer_id="smooth",
+                    canvas=canvas,
+                )
+                for actual, expected in zip(compiled.smooth_reveal.lines, geometry, strict=True):
+                    if expected is None:
+                        assert actual.text == "" and actual.bounds is None
+                    else:
+                        assert actual.text == expected["text"]
+                        assert actual.first_strong_rtl == expected["rtl"]
+                        assert list(actual.bounds.model_dump().values()) == expected["bounds"]
                 samples = []
                 for progress in [0, 0.01, 0.4, 0.99, 1]:
                     capture = Capture()

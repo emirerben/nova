@@ -106,6 +106,8 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         PortableTextLayer,
         PositionedTextRun,
         ResolvedTextMotion,
+        SmoothRevealContent,
+        SmoothRevealLine,
         TextInk,
         TextRevealBounds,
     )
@@ -127,6 +129,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         "handwriting",
         "typewriter",
         "stream-in",
+        "smooth-type",
     }:
         raise UnsupportedPortableText(f"unsupported text effect: {effect}")
     # These fields invoke specialized drawing or timing outside the base line
@@ -164,7 +167,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
     original_text = text
     if effect in {"typewriter", "stream-in"}:
         text = cloud._normalize_reveal_text(text)
-    shaped = bool(overlay.get("shape_text"))
+    shaped = effect == "smooth-type" or bool(overlay.get("shape_text"))
     resolved = cloud._resolve_typeface_for_overlay(overlay)
     font_asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
     spacing_em = cloud.resolve_letter_spacing_em(overlay.get("letter_spacing"))
@@ -216,6 +219,43 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         if line
     ]
     reveal_bounds = None
+    smooth_reveal = None
+    if effect == "smooth-type":
+        import unicodedata
+
+        shadow = cloud._text_shadow_bleed_px(cloud._text_shadow_style(overlay))
+        glow = 62.0 if cloud._finite_float(overlay.get("glow_strength"), 0) > 0 else 0.0
+        bleed = [max(float(stroke + 2), part, glow) for part in shadow]
+        smooth_lines = []
+        run_index = 0
+        for index, line in enumerate(lines):
+            first = next(
+                (
+                    unicodedata.bidirectional(c)
+                    for c in line
+                    if unicodedata.bidirectional(c) in {"R", "AL", "AN", "L"}
+                ),
+                "L",
+            )
+            left = cloud._anchored_left_x(anchor, cx, block["widths"][index]) if line else 0
+            smooth_lines.append(
+                SmoothRevealLine(
+                    text=line,
+                    run_index=run_index if line else None,
+                    first_strong_rtl=first in {"R", "AL", "AN"},
+                    bounds=TextRevealBounds(
+                        left=left - bleed[0],
+                        top=top + index * block["line_step"] - bleed[1],
+                        right=left + block["widths"][index] + bleed[2],
+                        bottom=top + (index + 1) * block["line_step"] + bleed[3],
+                    )
+                    if line
+                    else None,
+                )
+            )
+            if line:
+                run_index += 1
+        smooth_reveal = SmoothRevealContent(text=original_text, lines=smooth_lines)
     discrete_reveal = None
     if effect in {"typewriter", "stream-in"}:
         cursor_style = motion.cursor_style if motion else "bar"
@@ -286,6 +326,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         motion=motion,
         reveal_bounds=reveal_bounds,
         discrete_reveal=discrete_reveal,
+        smooth_reveal=smooth_reveal,
     ), font_asset
 
 

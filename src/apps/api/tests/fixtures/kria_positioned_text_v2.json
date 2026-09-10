@@ -134,7 +134,8 @@
       "motion": null,
       "reveal_bounds": null,
       "handwriting": null,
-      "discrete_reveal": null
+      "discrete_reveal": null,
+      "smooth_reveal": null
     }
   ]
 }
