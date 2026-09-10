@@ -3,8 +3,12 @@
 
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
+import ui_tests
 
 SUITES = ("web", "api", "ios", "ios_ui")
 
@@ -93,26 +97,43 @@ def affected(path):
     return set(SUITES)
 
 
-def selection(event, base, head):
+def selection_details(event, base, head):
     if event != "pull_request":
-        return set(SUITES), "Full regression run (non-PR event)."
+        return set(SUITES), "Full regression run (non-PR event).", "full"
     try:
         # No rename detection: both old and new paths must influence selection.
         ancestor = git("merge-base", base, head).decode().strip()
         raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
         paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
         if not paths:
-            return set(SUITES), "Empty diff: conservatively running all suites."
+            return set(SUITES), "Empty diff: conservatively running all suites.", "full"
         suites = set()
+        ui_paths = []
         for path in paths:
             if not release_only(path, ancestor, head):
                 suites.update(affected(path))
+                if "ios_ui" in affected(path):
+                    ui_paths.append(path)
+        groups, reason = (
+            ui_tests.select_groups(ui_paths)
+            if ui_paths
+            else ("none", "UI not applicable.")
+        )
         return (
             suites,
-            f"Classified {len(paths)} changed paths against the PR merge base.",
+            f"Classified {len(paths)} changed paths against the PR merge base. {reason}",
+            groups,
         )
     except (subprocess.CalledProcessError, UnicodeError, OSError):
-        return set(SUITES), "Diff unavailable: conservatively running all suites."
+        return (
+            set(SUITES),
+            "Diff unavailable: conservatively running all suites.",
+            "full",
+        )
+
+
+def selection(event, base, head):
+    return selection_details(event, base, head)[:2]
 
 
 def gate(needs, suite, job):
@@ -123,6 +144,9 @@ def gate(needs, suite, job):
     selected = outputs.get(suite)
     if suite == "ios":
         ui = outputs.get("ios_ui")
+        groups = ui_tests.validate_groups(outputs.get("ios_ui_groups"))
+        if (groups == "none") != (ui == "false"):
+            raise ValueError("Inconsistent iOS UI groups")
         if ui not in ("true", "false") or (ui == "true" and selected != "true"):
             raise ValueError("Missing or inconsistent iOS UI selection")
     if suite == "lint":
@@ -146,12 +170,13 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "gate":
         print(gate(json.loads(os.environ.get("CI_NEEDS", "{}")), *sys.argv[2:]))
         return
-    suites, reason = selection(
+    suites, reason, groups = selection_details(
         os.environ.get("CI_EVENT"),
         os.environ.get("CI_BASE", ""),
         os.environ.get("CI_HEAD", ""),
     )
     output = "".join(f"{suite}={str(suite in suites).lower()}\n" for suite in SUITES)
+    output += f"ios_ui_groups={groups}\n"
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
@@ -159,7 +184,7 @@ def main():
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as stream:
             stream.write(
-                f"## CI selection\n\n{reason}\n\n"
+                f"## CI selection\n\n{reason}\n\niOS UI groups: {groups}\n\n"
                 + "\n".join(
                     f"- {s}: {'run' if s in suites else 'not applicable'}"
                     for s in SUITES

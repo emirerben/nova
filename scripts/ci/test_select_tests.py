@@ -145,13 +145,46 @@ class GateTests(unittest.TestCase):
                 {
                     "changes": {
                         "result": "success",
-                        "outputs": {"ios": "true", "ios_ui": ui},
+                        "outputs": {
+                            "ios": "true",
+                            "ios_ui": ui,
+                            "ios_ui_groups": "full" if ui == "true" else "none",
+                        },
                     },
                     "ios-tests": {"result": "success"},
                 },
                 "ios",
                 "ios-tests",
             )
+
+    def test_ios_gate_requires_consistent_group_contract(self):
+        for groups in (None, "", "none", "typo", "editor", "smoke,editor,creation"):
+            needs = {
+                "changes": {
+                    "result": "success",
+                    "outputs": {
+                        "ios": "true",
+                        "ios_ui": "true",
+                        "ios_ui_groups": groups,
+                    },
+                },
+                "ios-tests": {"result": "success"},
+            }
+            with self.subTest(groups=groups), self.assertRaises(ValueError):
+                ci.gate(needs, "ios", "ios-tests")
+        for groups in ("full", *ci.ui_tests.FOCUSED):
+            needs = {
+                "changes": {
+                    "result": "success",
+                    "outputs": {
+                        "ios": "true",
+                        "ios_ui": "true",
+                        "ios_ui_groups": groups,
+                    },
+                },
+                "ios-tests": {"result": "success"},
+            }
+            ci.gate(needs, "ios", "ios-tests")
 
     def test_lint_union(self):
         for web, api in (
@@ -218,6 +251,43 @@ class GitDiffTests(unittest.TestCase):
 
     def selected(self):
         return ci.selection("pull_request", self.base, self.commit())[0]
+
+    def test_focused_and_unit_only_group_outputs(self):
+        self.write("src/apps/ios/Kria/Features/CreationAttachments.swift", "changed")
+        head = self.commit()
+        self.assertEqual(
+            ci.selection_details("pull_request", self.base, head)[2], "smoke,creation"
+        )
+        self.write("src/apps/ios/Kria/Features/NativeEditorView.swift", "changed")
+        head = self.commit()
+        self.assertEqual(
+            ci.selection_details("pull_request", self.base, head)[2], "full"
+        )
+        self.assertEqual(ci.selection_details("push", self.base, head)[2], "full")
+        self.assertEqual(ci.selection_details("pull_request", head, head)[2], "full")
+
+    def test_unit_and_contract_only_keep_ui_omitted(self):
+        for path in (
+            "src/apps/ios/Tests/KriaTests/new.swift",
+            "src/apps/ios/Kria/Generated/openapi.yaml",
+            "src/apps/api/app/schemas/new.py",
+        ):
+            self.write(path, "changed")
+        self.assertEqual(
+            ci.selection_details("pull_request", self.base, self.commit())[2], "none"
+        )
+
+    def test_ui_rename_to_unknown_path_requires_full(self):
+        self.write("src/apps/ios/Kria/Features/NativeEditorView.swift", "changed")
+        self.base = self.commit()
+        self.git(
+            "mv",
+            "src/apps/ios/Kria/Features/NativeEditorView.swift",
+            "src/apps/ios/Kria/Features/Unknown.swift",
+        )
+        self.assertEqual(
+            ci.selection_details("pull_request", self.base, self.commit())[2], "full"
+        )
 
     def test_release_metadata_does_not_wake_suites(self):
         for path in ("package.json", "package-lock.json"):
@@ -287,7 +357,8 @@ class GitDiffTests(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(
-            output.read_text(), "web=false\napi=false\nios=true\nios_ui=true\n"
+            output.read_text(),
+            "web=false\napi=false\nios=true\nios_ui=true\nios_ui_groups=full\n",
         )
         self.assertIn("ios: run", summary.read_text())
 
