@@ -55,7 +55,7 @@ KRI-23 aligns the entire native app with Paper’s **Mobile Flow** page in
 `DesignSystem/DesignTokens.swift` defines semantic Sunlit roles: Sky selection,
 Butter actions, Sage audio/direction, and Lilac/Plum text tools. `BrandComponents.swift`
 contains the approved DynaPuff wordmark and shared outline navigation icons.
-The font and OFL license are bundled; the wordmark must never rely on a system fallback.
+The in-app wordmark is a transparent, tightly cropped vector PDF in `KriaWordmark.imageset`, exported from the approved Paper icon artwork (Main Brand Assets, ETC-0 / ETD-0). It preserves the corrected letter spacing and blue `#9BCAFF` without SwiftUI font metrics or per-letter offsets. The opaque 1024px app icon uses the same artwork on white `#FFFFFF`; iOS supplies the rounded mask. Paper PDF export includes a gray canvas rectangle: remove that export-only background before producing the transparent wordmark. The original DynaPuff font and OFL license remain bundled.
 
 The chat workspace owns the project drawer, Gallery, and account presentation.
 Project actions reuse the authenticated creation-thread PATCH/DELETE contracts,
@@ -72,3 +72,41 @@ for edit/save/export verification.
 
 See the [KRI-23 native design review](../reviews/kri-23/README.md) for screenshot
 comparisons, behavior coverage, and the remaining live-device validation limits.
+
+## Native chat creation (KRI-24)
+
+The capabilities endpoint advertises `formats`, per-role `media` limits,
+`runtime_versions`, and `visuals_enabled`. New native chats select runtime v2
+only when advertised; older responses default to v1. Existing conversations keep
+their runtime: v1 uses messages/actions, v2 uses turns/deltas/approvals. Deploy
+the additive capabilities API before the native release. No new feature flags
+or migrations are required.
+
+Creation attachments keep three roles separate: primary footage uses thread
+media uploads, narration uses the same contract with `kind=audio`, and supporting
+visuals use the existing PlanItem asset-pool reservation/registration routes.
+Visuals are offered when the server advertises the existing autoplace or guided
+edit capability. Voice recording is available for Narrated and requires both
+microphone permission and cloud-upload consent. Legacy upload recovery records
+without a role remain primary clips. Pending records block generation, and failed
+attachments retry without uploading the original again.
+
+The Debug API URL must escape the second slash (`http:/$()/localhost:8000`) in
+xcconfig. `make ios-verify` checks the resolved URL, while allowing a complete
+custom URL in the ignored `Config/Local.xcconfig`.
+
+For deterministic UI verification, launch Debug with `-ui-testing-chat` and
+`KRIA_CHAT_CREATION_FLOW=v1` or `v2`. `KRIA_CHAT_FIXTURE_MEDIA=1` starts format
+selection with a fixture clip already attached so confirmation/render polling can
+be tested without an account. These fixtures intercept HTTP and do not prove a
+live render. Without the flow variable, the transport remains unavailable to
+exercise connection recovery. `CreationFlowTests` covers the native wire
+contracts, built-app posters, and recovery-record compatibility.
+
+Native projections must treat `creator_agent.status` and `state.generation` as
+authoritative before `active_job_id` exists: `executing` stays in preparation
+and `failed` retains the direction and retry. The current Creator phase wins
+over a previous generation receipt. Poll responses use request ordering as
+well as revisions because reconciliation can change a projection without
+appending an event. `testSlowDirectionAndPreJobFailureNeverReturnToUploading`
+exercises the delayed response, pre-job failure, retry and ready transition.

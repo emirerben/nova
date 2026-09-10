@@ -2,6 +2,8 @@ import Foundation
 import UniformTypeIdentifiers
 import Combine
 import KriaMediaEngine
+import AVFoundation
+import UIKit
 
 @MainActor final class BackgroundUploadLifecycle {
     static let shared = BackgroundUploadLifecycle()
@@ -31,6 +33,10 @@ struct UploadRecoveryRecord: Codable, Identifiable, Sendable, Equatable {
     var retentionExpiresAt: Date?
     var taskIdentifier: Int
     var retryCount: Int
+    var mediaRole: CreationMediaRole? = nil
+    var itemID: String? = nil
+    var visualReservationID: String? = nil
+    var role: CreationMediaRole { mediaRole ?? .clip }
 }
 
 enum UploadRecoveryAction: Equatable, Sendable { case retry, keepForManualRetry, chooseFileAgain }
@@ -75,23 +81,29 @@ struct UploadRecoveryPolicy: Sendable {
     }
 
     @discardableResult
-    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose) async -> Bool {
+    func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose, role: CreationMediaRole = .clip, itemID: String? = nil, limit: CreationMediaLimit? = nil) async -> Bool {
+        lastError = nil
+        var recoveryCopy: URL?
+        var accepted = false
+        defer { if !accepted, let recoveryCopy { try? FileManager.default.removeItem(at: recoveryCopy) } }
         do {
             try UploadCoordinator().validate(source: source, purpose: purpose, consentGiven: consentGiven)
-            let preparedURL = try await prepare(fileURL: fileURL, projectID: projectID, purpose: purpose)
+            let preparedURL = role == .clip ? try await prepare(fileURL: fileURL, projectID: projectID, purpose: purpose) : fileURL
             let localURL = try Self.copyIntoRecoveryDirectory(preparedURL)
+            recoveryCopy = localURL
             let values = try localURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
             guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
             let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
-            guard contentType.hasPrefix("video/") else { throw APIError.invalidResponse }
+            guard role.accepts(contentType) else { throw CreationUploadError.unsupportedType }
+            if let limit {
+                guard limit.contentTypes.contains(contentType) else { throw CreationUploadError.unsupportedType }
+                if let maximum = limit.byteLimit(contentType: contentType), Int64(size) > maximum { throw CreationUploadError.tooLarge }
+            }
             let recordID = UUID()
             let clientUploadID = "ios-\(recordID.uuidString)"
-            let reservation = try await api.reserveProjectUpload(
-                threadID: projectID,
-                clientUploadID: clientUploadID,
-                filename: fileURL.lastPathComponent,
-                contentType: contentType,
-                size: Int64(size)
+            let (reservation, visualReservationID) = try await reserve(
+                projectID: projectID, itemID: itemID, role: role, clientUploadID: clientUploadID,
+                filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size)
             )
             try startTask(
                 recordID: recordID,
@@ -102,8 +114,9 @@ struct UploadRecoveryPolicy: Sendable {
                 purpose: purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: 0
+                retryCount: 0, role: role, itemID: itemID, visualReservationID: visualReservationID
             )
+            accepted = true
             return true
         } catch {
             lastError = error.localizedDescription
@@ -115,6 +128,9 @@ struct UploadRecoveryPolicy: Sendable {
         guard let record = records.first(where: { $0.id == recordID }) else { return }
         let tasks = await backgroundSession.allTasks
         tasks.first(where: { $0.taskIdentifier == record.taskIdentifier })?.cancel()
+        if record.role == .visual, let itemID = record.itemID, let reservationID = record.visualReservationID {
+            try? await api.removeVisual(itemID: itemID, assetID: reservationID)
+        }
         if let reservationID = record.reservationID {
             try? await api.cancelUpload(reservationID: reservationID)
         }
@@ -144,6 +160,13 @@ struct UploadRecoveryPolicy: Sendable {
                 continue
             }
         }
+    }
+
+    func retryUpload(recordID: UUID) async {
+        guard let record = records.first(where: { $0.id == recordID }) else { return }
+        let active = await backgroundSession.allTasks
+        guard !active.contains(where: { $0.taskIdentifier == record.taskIdentifier }) else { return }
+        if record.uploadCompleted == true { await attach(record) } else { await retry(record) }
     }
 
     func retryAttachment(recordID: UUID) async {
@@ -195,6 +218,7 @@ struct UploadRecoveryPolicy: Sendable {
     }
 
     private func retry(_ record: UploadRecoveryRecord) async {
+        lastError = nil
         let localURL = URL(fileURLWithPath: record.localFilePath)
         guard FileManager.default.fileExists(atPath: localURL.path) else {
             lastError = "The original file is no longer available. Choose it again."
@@ -206,12 +230,9 @@ struct UploadRecoveryPolicy: Sendable {
             guard let size = values.fileSize else { throw APIError.invalidResponse }
             let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
             let clientUploadID = record.clientUploadID ?? "ios-\(record.id.uuidString)"
-            let reservation = try await api.reserveProjectUpload(
-                threadID: record.projectID,
-                clientUploadID: clientUploadID,
-                filename: record.filename,
-                contentType: contentType,
-                size: Int64(size)
+            let (reservation, visualReservationID) = try await reserve(
+                projectID: record.projectID, itemID: record.itemID, role: record.role,
+                clientUploadID: clientUploadID, filename: record.filename, contentType: contentType, size: Int64(size)
             )
             if let reservationID = record.reservationID {
                 try? await api.cancelUpload(reservationID: reservationID)
@@ -226,7 +247,7 @@ struct UploadRecoveryPolicy: Sendable {
                 purpose: record.purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: record.retryCount + 1
+                retryCount: record.retryCount + 1, role: record.role, itemID: record.itemID, visualReservationID: visualReservationID
             )
         } catch { lastError = error.localizedDescription }
     }
@@ -248,6 +269,18 @@ struct UploadRecoveryPolicy: Sendable {
     }
 
     private func performAttachment(_ record: UploadRecoveryRecord) async {
+        lastError = nil
+        guard records.contains(where: { $0.id == record.id }) else { return }
+        if record.role == .visual {
+            do {
+                guard let itemID = record.itemID, let reservationID = record.visualReservationID,
+                      let path = record.gcsPath, let contentType = record.contentType else { throw APIError.invalidResponse }
+                _ = try await api.registerVisual(itemID: itemID, reservationID: reservationID, gcsPath: path, contentType: contentType, filename: record.filename)
+                attachedThreads[record.projectID] = try await api.project(threadID: record.projectID)
+                remove(record.id, deleteLocalFile: true)
+            } catch { lastError = error.localizedDescription }
+            return
+        }
         guard
             let mediaID = record.mediaID,
             let gcsPath = record.gcsPath,
@@ -271,6 +304,9 @@ struct UploadRecoveryPolicy: Sendable {
                 )
                 // Publish the authoritative media_count before removing the
                 // pending record so clip capacity never briefly reopens.
+                if record.role == .clip {
+                    await CreationMediaPreview.save(localURL: URL(fileURLWithPath: record.localFilePath), mediaID: mediaID)
+                }
                 attachedThreads[record.projectID] = attachedThread
                 remove(record.id, deleteLocalFile: true)
                 return
@@ -281,7 +317,7 @@ struct UploadRecoveryPolicy: Sendable {
         lastError = lastAttachmentError?.localizedDescription ?? "The uploaded footage could not be attached to this project."
     }
 
-    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int) throws {
+    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int, role: CreationMediaRole, itemID: String?, visualReservationID: String?) throws {
         var request = URLRequest(url: reservation.uploadURL)
         request.httpMethod = "PUT"
         request.setValue(reservation.contentType, forHTTPHeaderField: "Content-Type")
@@ -302,11 +338,20 @@ struct UploadRecoveryPolicy: Sendable {
             uploadCompleted: false,
             retentionExpiresAt: nil,
             taskIdentifier: task.taskIdentifier,
-            retryCount: retryCount
+            retryCount: retryCount, mediaRole: role, itemID: itemID, visualReservationID: visualReservationID
         )
         records.append(record)
         persist()
         task.resume()
+    }
+
+    private func reserve(projectID: UUID, itemID: String?, role: CreationMediaRole, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> (ProjectUploadReservation, String?) {
+        if role == .visual {
+            guard let itemID else { throw APIError.invalidResponse }
+            let target = try await api.reserveVisualUpload(itemID: itemID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
+            return (ProjectUploadReservation(mediaID: target.reservationID, uploadURL: target.uploadURL, gcsPath: target.gcsPath, contentType: contentType, uploadHeaders: target.uploadHeaders), target.reservationID)
+        }
+        return (try await api.reserveProjectUpload(threadID: projectID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size), nil)
     }
 
     private func prepare(fileURL: URL, projectID: UUID, purpose: UploadPurpose) async throws -> URL {
@@ -345,5 +390,31 @@ struct UploadRecoveryPolicy: Sendable {
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         try FileManager.default.copyItem(at: source, to: destination)
         return destination
+    }
+}
+
+enum CreationUploadError: LocalizedError {
+    case unsupportedType, tooLarge
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedType: "This file type is not supported here. Choose a different file."
+        case .tooLarge: "This file exceeds the upload limit. Choose a smaller file."
+        }
+    }
+}
+
+@MainActor enum CreationMediaPreview {
+    static func url(mediaID: String) -> URL {
+        let safeID = Data(mediaID.utf8).base64EncodedString().replacingOccurrences(of: "/", with: "_")
+        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: "KriaMediaPreviews/\(safeID).jpg")
+    }
+    static func save(localURL: URL, mediaID: String) async {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: localURL))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 320, height: 320)
+        guard let frame = try? await generator.image(at: .zero), let data = UIImage(cgImage: frame.image).jpegData(compressionQuality: 0.8) else { return }
+        let destination = url(mediaID: mediaID)
+        try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: destination, options: .atomic)
     }
 }

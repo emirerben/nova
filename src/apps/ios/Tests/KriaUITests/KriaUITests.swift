@@ -27,6 +27,7 @@ final class KriaUITests: XCTestCase {
     func testLaunchEntersChatFirstWorkspace() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         // Exercise creation on every run, even when a prior project restores.
         createFreshChat(in: app)
@@ -37,9 +38,7 @@ final class KriaUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Attach footage"].exists)
         XCTAssertFalse(app.buttons["Attach footage"].isEnabled)
         XCTAssertTrue(app.staticTexts["Montage"].waitForExistence(timeout: 3))
-        // The offline UI fixture cannot fetch server capabilities, so the
-        // workspace must stay on its conservative Montage-only fallback.
-        XCTAssertFalse(app.staticTexts["Narrated"].exists)
+        XCTAssertTrue(app.staticTexts["Narrated"].exists)
 
         let toggle = app.buttons["workspace-menu-toggle"]
         let carousel = app.scrollViews["format-carousel"]
@@ -85,6 +84,98 @@ final class KriaUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Your finished videos"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["All"].exists)
         XCTAssertTrue(app.buttons["Ready"].exists)
+    }
+
+    func testEveryCreationFormatOpensTheAttachmentFlow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        for format in ["montage", "narrated", "talking_to_camera"] {
+            createFreshChat(in: app)
+            let card = app.buttons["format-\(format)"]
+            if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+            XCTAssertTrue(card.waitForExistence(timeout: 5))
+            card.tap()
+            XCTAssertTrue(app.buttons["choose-videos"].waitForExistence(timeout: 5))
+            app.buttons["choose-videos"].tap()
+            XCTAssertTrue(app.buttons["Choose from Photos"].waitForExistence(timeout: 3))
+            XCTAssertTrue(app.buttons["Choose from Files or iCloud"].exists)
+            app.buttons["Done"].tap()
+        }
+    }
+
+    func testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes() {
+        for runtime in ["v1", "v2"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-ui-testing-chat"]
+            app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = runtime
+            app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+            app.launch()
+            createFreshChat(in: app)
+            app.buttons["format-montage"].tap()
+            let next = app.buttons["Continue with 1 clip"]
+            XCTAssertTrue(next.waitForExistence(timeout: 5))
+            next.tap()
+            let confirm = app.buttons["Create this video"]
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            confirm.tap()
+            XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+            app.terminate()
+        }
+    }
+
+    func testSlowDirectionAndPreJobFailureNeverReturnToUploading() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_SLOW_CREATION"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Continue with 1 clip"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        next.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["chat-thinking"].waitForExistence(timeout: 3))
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        let retry = app.buttons["Retry generation"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Continue with 1 clip"].exists)
+        XCTAssertTrue(app.staticTexts["Kria couldn’t start the video. Your direction and footage are still saved."].exists)
+        retry.tap()
+        XCTAssertTrue(app.staticTexts["Preparing your footage and edit"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Continue with 1 clip"].exists)
+        XCTAssertFalse(app.buttons["Create this video"].exists)
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+    }
+
+    func testExpiredApprovalCannotStartGeneration() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_EXPIRED_APPROVAL"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Continue with 1 clip"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        next.tap()
+        XCTAssertTrue(app.staticTexts["This approval expired. Send a message to request an updated direction."].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Create this video"].exists)
+    }
+
+    func testUnavailableCapabilitiesShowRetryInsteadOfDeadFormatCards() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launch()
+        createFreshChat(in: app)
+        XCTAssertTrue(app.staticTexts["Kria couldn’t load creation options. Check your connection and retry."].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["format-montage"].exists)
+        XCTAssertTrue(app.buttons["Reconnect"].firstMatch.exists)
     }
 
     func testProjectActionsCanBeCancelledWithoutChangingProject() {

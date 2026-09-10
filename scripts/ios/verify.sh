@@ -21,6 +21,15 @@ assert_api_base_url() {
       -configuration "$configuration" \
       -showBuildSettings 2>/dev/null
   } | awk -F ' = ' '/^[[:space:]]*API_BASE_URL = / { print $2; exit }')"
+  if [[ "$expected" == "valid-url" ]]; then
+    # Local.xcconfig may intentionally point Debug at another development host.
+    # Still reject the truncated `http:` value that made every chat request fail.
+    if [[ ! "$actual" =~ ^https?://[^/[:space:]]+ ]]; then
+      echo "Expected $configuration to resolve a complete HTTP(S) API URL, got ${actual:-<unset>}" >&2
+      exit 1
+    fi
+    return
+  fi
   if [[ "$actual" != "$expected" ]]; then
     echo "Expected $configuration API_BASE_URL=$expected, got ${actual:-<unset>}" >&2
     exit 1
@@ -29,6 +38,7 @@ assert_api_base_url() {
 
 # In xcconfig files, an unescaped // starts a comment and silently truncates
 # https:// URLs to https:. Pin the resolved build setting, not just the source.
+assert_api_base_url Debug "valid-url"
 assert_api_base_url Staging "https://staging.usekria.com"
 assert_api_base_url Release "https://nova-video.fly.dev"
 
