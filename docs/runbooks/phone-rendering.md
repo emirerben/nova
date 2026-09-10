@@ -38,8 +38,10 @@ style has passed the complete parity and physical-device gates.
   Ordered colored blur layers provide shadows/glow behind each run; a standard
   shadow probe is visually close to Skia (not a full style-parity gate). Stroke
   width is the full centered width, twice the cloud `stroke_px` value. Reveal
-  effects, gradients, glyph-by-glyph legacy layout, and the shared
-  overlay-to-recipe compiler remain outstanding. A Latin font probe matched cloud ink bounds and caught/fixed
+  effects, glyph-by-glyph legacy layout, and the shared overlay-to-recipe
+  compiler remain outstanding. Linear gradients use resolved endpoints/stops
+  and explicit sRGB colors, clipped to glyphs; a reference probe caught and
+  fixed device-RGB conversion adding green to a red/blue gradient. A Latin font probe matched cloud ink bounds and caught/fixed
   stroke/fill ordering; this is not full typography parity. The native suite
   verifies the lane's time window in actual preview and H.264 export. The new
   `positionedText` capability remains outside the default supported set.

@@ -4202,6 +4202,11 @@
             "title": "Font Size",
             "type": "number"
           },
+          "gradient": {
+            "$ref": "#/components/schemas/TextGradient",
+            "default": null,
+            "nullable": true
+          },
           "letter_spacing": {
             "maximum": 1000,
             "minimum": -100,
@@ -4783,6 +4788,73 @@
           "background"
         ],
         "title": "TextCardBlock",
+        "type": "object"
+      },
+      "TextGradient": {
+        "additionalProperties": false,
+        "properties": {
+          "end_x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "End X",
+            "type": "number"
+          },
+          "end_y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "End Y",
+            "type": "number"
+          },
+          "start_x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Start X",
+            "type": "number"
+          },
+          "start_y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Start Y",
+            "type": "number"
+          },
+          "stops": {
+            "items": {
+              "$ref": "#/components/schemas/TextGradientStop"
+            },
+            "maxItems": 16,
+            "minItems": 2,
+            "title": "Stops",
+            "type": "array"
+          }
+        },
+        "required": [
+          "start_x",
+          "start_y",
+          "end_x",
+          "end_y",
+          "stops"
+        ],
+        "title": "TextGradient",
+        "type": "object"
+      },
+      "TextGradientStop": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "position": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Position",
+            "type": "number"
+          }
+        },
+        "required": [
+          "position",
+          "color"
+        ],
+        "title": "TextGradientStop",
         "type": "object"
       },
       "TextInk": {

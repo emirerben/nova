@@ -5,14 +5,14 @@ import CoreText
 import CoreImage
 
 private extension TextInk {
-    var cgColor: CGColor { CGColor(red: red, green: green, blue: blue, alpha: alpha) }
+    var cgColor: CGColor { CGColor(colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, components: [red, green, blue, alpha])! }
 }
 
 extension RecipeTextLayer {
     /// Baselines and tracking are authored in output pixels. No device-specific
     /// wrap, auto-shrink, font lookup, or substitution occurs here.
     static func make(_ layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int = 64 * 1024 * 1024) throws -> Self {
-        struct Run { let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint; let blurs: [TextBlurLayer] }
+        struct Run { let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint; let blurs: [TextBlurLayer]; let gradient: TextGradient? }
         let anchor = CGPoint(x: layer.anchorX, y: canvas.height - layer.anchorY)
         let rotation = CGAffineTransform(translationX: -anchor.x, y: -anchor.y)
             .concatenating(CGAffineTransform(rotationAngle: -layer.rotationDegrees * .pi / 180))
@@ -59,7 +59,7 @@ extension RecipeTextLayer {
                 bounds = bounds.union(inkBounds.offsetBy(dx: blur.dx, dy: -blur.dy)
                     .insetBy(dx: -ceil(3 * blur.sigma) - 2, dy: -ceil(3 * blur.sigma) - 2).applying(rotation))
             }
-            runs.append(Run(line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers))
+            runs.append(Run(line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers, gradient: run.gradient))
         }
         // Moving/scaling text can enter the canvas from an offscreen position.
         // Keep its complete bitmap, still subject to the aggregate memory budget.
@@ -107,7 +107,18 @@ extension RecipeTextLayer {
             context.textPosition = run.origin
             if let stroke = run.stroke { CTLineDraw(stroke, context) }
             context.textPosition = run.origin
-            CTLineDraw(run.line, context)
+            if let gradient = run.gradient {
+                context.setTextDrawingMode(.clip)
+                CTLineDraw(run.mask, context)
+                guard let cgGradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+                    colors: gradient.stops.map { $0.color.cgColor } as CFArray, locations: gradient.stops.map { CGFloat($0.position) }) else {
+                    throw MediaEngineError.unsupportedCapability
+                }
+                context.drawLinearGradient(cgGradient,
+                    start: CGPoint(x: gradient.startX, y: canvas.height - gradient.startY),
+                    end: CGPoint(x: gradient.endX, y: canvas.height - gradient.endY),
+                    options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+            } else { CTLineDraw(run.line, context) }
             context.restoreGState()
         }
         guard let image = context.makeImage() else { throw MediaEngineError.exportFailed }

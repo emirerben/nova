@@ -61,6 +61,36 @@ final class PortableTextTests: XCTestCase {
                                                   colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         }
     }
+    func testGradientFillsGlyphsWithResolvedEndpoints() throws {
+        let base = layer(), run = layer().runs[0]
+        let gradient = TextGradient(startX: 30, startY: 100, endX: 117, endY: 100,
+            stops: [TextGradientStop(position: 0, color: TextInk(red: 1, green: 0, blue: 0, alpha: 1)),
+                    TextGradientStop(position: 1, color: TextInk(red: 0, green: 0, blue: 1, alpha: 1))])
+        let gradientRun = PositionedTextRun(text: run.text, fontAssetID: run.fontAssetID, fontSize: run.fontSize,
+            x: run.x, baselineY: run.baselineY, letterSpacing: 0, shaped: true, fill: white, stroke: black,
+            strokeWidth: 2, gradient: gradient)
+        let cue = PortableTextLayer(id: base.id, start: base.start, end: base.end, anchorX: base.anchorX,
+            anchorY: base.anchorY, rotationDegrees: 0, runs: [gradientRun])
+        let painted = try RecipeTextLayer.make(cue, assetURLs: ["font": fontURL()], canvas: CGSize(width: 200, height: 200))
+        let full = painted.image.transformed(by: CGAffineTransform(translationX: painted.frame.minX, y: painted.frame.minY))
+            .composited(over: CIImage(color: .clear).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 200)))
+        var pixels = [UInt8](repeating: 0, count: 200 * 200 * 4)
+        CIContext().render(full, toBitmap: &pixels, rowBytes: 800, bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
+                           format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        let red = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 150 && pixels[$0 + 2] < 100 && pixels[$0 + 3] > 220 }
+        let blue = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0 + 2] > 150 && pixels[$0] < 100 && pixels[$0 + 3] > 220 }
+        XCTAssertGreaterThan(red.count, 100); XCTAssertGreaterThan(blue.count, 100)
+        XCTAssertTrue(stride(from: 0, to: pixels.count, by: 4).allSatisfy { pixels[$0 + 1] <= 1 }) // sRGB red/blue must not acquire green
+        XCTAssertTrue(red.allSatisfy { ($0 / 4) % 200 < 80 })
+        XCTAssertTrue(blue.allSatisfy { ($0 / 4) % 200 > 70 })
+        let colored = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 10 || pixels[$0 + 2] > 10 }.count
+        XCTAssertLessThan(colored, 1500) // gradient must be clipped to glyphs, not the bitmap rectangle
+        if let output = ProcessInfo.processInfo.environment["KRIA_GRADIENT_REFERENCE_OUTPUT"] {
+            try CIContext().writePNGRepresentation(of: full.cropped(to: CGRect(x: 0, y: 0, width: 200, height: 200)),
+                to: URL(fileURLWithPath: output), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        }
+    }
+
     func testShadowHasVisibleBleedAndPreservesFill() throws {
         let base = layer()
         let run = base.runs[0]

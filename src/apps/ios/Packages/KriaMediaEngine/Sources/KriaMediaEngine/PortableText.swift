@@ -42,6 +42,46 @@ public struct TextBlurLayer: Codable, Equatable, Sendable {
     }
 }
 
+public struct TextGradientStop: Codable, Equatable, Sendable {
+    public let position: Double
+    public let color: TextInk
+    public init(position: Double, color: TextInk) { self.position = position; self.color = color }
+    private enum CodingKeys: String, CodingKey { case position, color }
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["position", "color"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        position = try c.decode(Double.self, forKey: .position); color = try c.decode(TextInk.self, forKey: .color)
+    }
+}
+
+public struct TextGradient: Codable, Equatable, Sendable {
+    public let startX: Double
+    public let startY: Double
+    public let endX: Double
+    public let endY: Double
+    public let stops: [TextGradientStop]
+    public init(startX: Double, startY: Double, endX: Double, endY: Double, stops: [TextGradientStop]) {
+        self.startX = startX; self.startY = startY; self.endX = endX; self.endY = endY; self.stops = stops
+    }
+    private enum CodingKeys: String, CodingKey { case startX, startY, endX, endY, stops }
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["startX", "startY", "endX", "endY", "stops"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        startX = try c.decode(Double.self, forKey: .startX); startY = try c.decode(Double.self, forKey: .startY)
+        endX = try c.decode(Double.self, forKey: .endX); endY = try c.decode(Double.self, forKey: .endY)
+        stops = try c.decode([TextGradientStop].self, forKey: .stops)
+    }
+    func validate() throws {
+        guard [startX, startY, endX, endY].allSatisfy({ $0.isFinite && abs($0) <= 10000 }),
+              startX != endX || startY != endY, (2...16).contains(stops.count),
+              stops.map(\.position) == stops.map(\.position).sorted() else { throw RecipeError.invalidTimeline }
+        for stop in stops {
+            try stop.color.validate()
+            guard stop.position.isFinite, (0...1).contains(stop.position) else { throw RecipeError.invalidTimeline }
+        }
+    }
+}
+
 public struct PositionedTextRun: Codable, Equatable, Sendable {
     public let text: String
     public let fontAssetID: String
@@ -54,21 +94,23 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
     public let stroke: TextInk
     public let strokeWidth: Double
     public let blurLayers: [TextBlurLayer]
+    public let gradient: TextGradient?
     private enum CodingKeys: String, CodingKey {
-        case text, fontAssetID = "fontAssetId", fontSize, x, baselineY, letterSpacing, shaped, fill, stroke, strokeWidth, blurLayers
+        case text, fontAssetID = "fontAssetId", fontSize, x, baselineY, letterSpacing, shaped, fill, stroke, strokeWidth, blurLayers, gradient
     }
     public init(text: String, fontAssetID: String, fontSize: Double, x: Double, baselineY: Double,
-                letterSpacing: Double, shaped: Bool, fill: TextInk, stroke: TextInk, strokeWidth: Double, blurLayers: [TextBlurLayer] = []) {
+                letterSpacing: Double, shaped: Bool, fill: TextInk, stroke: TextInk, strokeWidth: Double, blurLayers: [TextBlurLayer] = [], gradient: TextGradient? = nil) {
         self.text = text; self.fontAssetID = fontAssetID; self.fontSize = fontSize; self.x = x; self.baselineY = baselineY
-        self.letterSpacing = letterSpacing; self.shaped = shaped; self.fill = fill; self.stroke = stroke; self.strokeWidth = strokeWidth; self.blurLayers = blurLayers
+        self.letterSpacing = letterSpacing; self.shaped = shaped; self.fill = fill; self.stroke = stroke; self.strokeWidth = strokeWidth; self.blurLayers = blurLayers; self.gradient = gradient
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["text", "fontAssetId", "fontSize", "x", "baselineY", "letterSpacing", "shaped", "fill", "stroke", "strokeWidth", "blurLayers"])
+        try rejectUnknownAssetFields(decoder, allowed: ["text", "fontAssetId", "fontSize", "x", "baselineY", "letterSpacing", "shaped", "fill", "stroke", "strokeWidth", "blurLayers", "gradient"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = try c.decode(String.self, forKey: .text); fontAssetID = try c.decode(String.self, forKey: .fontAssetID)
         fontSize = try c.decode(Double.self, forKey: .fontSize); x = try c.decode(Double.self, forKey: .x)
         baselineY = try c.decode(Double.self, forKey: .baselineY); letterSpacing = try c.decode(Double.self, forKey: .letterSpacing)
         shaped = try c.decode(Bool.self, forKey: .shaped); fill = try c.decode(TextInk.self, forKey: .fill)
+        gradient = try c.decodeIfPresent(TextGradient.self, forKey: .gradient)
         blurLayers = try c.decodeIfPresent([TextBlurLayer].self, forKey: .blurLayers) ?? []
         stroke = try c.decode(TextInk.self, forKey: .stroke); strokeWidth = try c.decode(Double.self, forKey: .strokeWidth)
     }
@@ -80,6 +122,7 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
         try fill.validate(); try stroke.validate()
         guard blurLayers.count <= 8 else { throw RecipeError.invalidTimeline }
         for layer in blurLayers { try layer.validate() }
+        try gradient?.validate()
     }
 }
 

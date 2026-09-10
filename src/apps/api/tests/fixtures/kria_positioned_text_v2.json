@@ -125,7 +125,8 @@
             "alpha": 1.0
           },
           "stroke_width": 0.0,
-          "blur_layers": []
+          "blur_layers": [],
+          "gradient": null
         }
       ],
       "effect": "static",
