@@ -287,6 +287,46 @@ describe("useEditDirector", () => {
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
   });
 
+  // KRI-19 bug 15: "Accepting a suggestion gives no feedback/reaction in the
+  // UI." The local-apply accept path was fully synchronous with no toast, no
+  // pending state — the card just vanished from a list the mobile drawer's
+  // own scroll can carry off-screen.
+  it("notifies on a successful local accept (KRI-19 bug 15)", async () => {
+    const current = snapshot();
+    const first = suggestion();
+    suggestionsMock.mockResolvedValue({
+      suggestions: [first],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+      omni_max_cost_per_second_usd: 0.11,
+    });
+    const applyOpsAtomic = jest.fn(() => appliedResult());
+    const onApplied = jest.fn();
+    const notify = jest.fn();
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic,
+        onApplied,
+        notify,
+      }),
+    );
+
+    await loadInitialReview(result);
+    expect(notify).not.toHaveBeenCalled();
+
+    act(() => result.current.accept(first));
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining(first.title));
+  });
+
   it("treats an empty review as settled until an explicit refresh", async () => {
     const current = snapshot();
     suggestionsMock.mockImplementation(async (_itemId, _variantId, body) => ({

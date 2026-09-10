@@ -9,6 +9,16 @@ All notable changes to this project will be documented in this file.
 - Previewable AI edits remain unsaved until Save/export. Server-only effects and speech processing require confirmation, and stale responses cannot overwrite a changed draft.
 - Direct editor links reopen the owning conversation and selected variant. Editor history retries survive a reload without replaying edits.
 
+## [0.75.1.0] - 2026-09-09
+
+### Fixed
+- **Chatting with Kria on your phone no longer hides your own messages or the live edit.** The chat drawer used to lose most of its height the instant the on-screen keyboard opened, collapsing the message thread to a sliver — so a sent message and the resulting change both looked like they vanished. Applying an edit or accepting a suggestion from chat also no longer switches away from the chat tool mid-turn.
+- **Accepting a suggestion now gives visible feedback.** A toast confirms the change, and accepting an overlay suggestion seeks the preview to it — before, the card just disappeared with no other sign anything happened.
+- **Tapping Stop mid-turn now actually stops the edit.** A response that arrived after Stop was pressed used to still apply silently; now nothing is applied once a turn is abandoned, and a failure while confirming an already-applied edit no longer deletes the message that caused it.
+- **Closing a tool sheet on mobile is a single tap.** Tapping outside the sheet now closes it (it used to only collapse to half-height), the close button is a proper touch target, and a keyboard-open sheet no longer snaps to full height from ordinary scroll/browser-chrome noise.
+- **Switching music tracks on mobile now plays a preview.** Picking a different track used to request no audio at all for most videos, and even when it did, played nothing unless the video happened to already be playing. Now it previews audibly right away.
+- **The mobile editor's header shows which video you're editing** instead of a generic "Edit video" label.
+
 ## [0.74.0.0] — 2026-09-09
 
 ### Added

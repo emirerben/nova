@@ -558,7 +558,10 @@ export function useEditCopilot(
         ? response.outcome === "clarification"
         : response.needs_clarification);
       // Fence cancelled/unmounted and changed drafts BEFORE any application callback.
-      if (abandonedTurnsRef.current.has(turnId)) return;
+      if (abandonedTurnsRef.current.has(turnId)) {
+        abandonedTurnsRef.current.delete(turnId);
+        return;
+      }
       if (!targetIsCurrent()) throw new Error("The draft changed while Kria was working. Review it and send the request again.");
       let applyResult: ApplyCopilotOpsResult = shouldClarify
         ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
@@ -577,11 +580,19 @@ export function useEditCopilot(
           applyResult = { textActions: [], nextSlots: null, applied: [], rejected: [] };
         }
       }
-      const applyMeta = declined ? { assistantText: "I left the video unchanged. No render was started." } : await optsRef.current.onApplied?.(
-        applyResult,
-        response,
-        snapshot,
-      );
+      // Local operations have already changed the draft. Preserve their
+      // conversation if presentation fails, but propagate server dispatch
+      // failures so a render that never started is not reported as applied.
+      let applyMeta: Awaited<ReturnType<NonNullable<typeof optsRef.current.onApplied>>>;
+      try {
+        applyMeta = declined
+          ? { assistantText: "I left the video unchanged. No render was started." }
+          : await optsRef.current.onApplied?.(applyResult, response, snapshot);
+      } catch (onAppliedErr) {
+        if (applyResult.renderRequest) throw onAppliedErr;
+        console.error("[edit-copilot] onApplied threw after ops were applied", onAppliedErr);
+        applyMeta = undefined;
+      }
       const outcome = summaries(applyResult);
       // Server-side capacity checks deliberately stay compact, while the
       // browser preflights the complete runtime timeline. If that atomic

@@ -2256,13 +2256,22 @@ export default function EditorShell({
   // persisted start. Keying this solely to that flag avoids a one-render false
   // positive while a newly loaded variant hydrates its local start offset.
   const musicWindowDirty = !!songWindowState && musicDirty;
+  // Preview-requesting must key off `musicDirty` (any unsaved track pick or
+  // window edit), NOT `musicWindowDirty` — the latter also requires
+  // `songWindowState`, which the backend only populates for two variant ids
+  // (song_text/song_lyrics) or a guided-story revision. For every other
+  // variant, picking a different track set `musicDirty` but never
+  // `musicWindowDirty`, so no preview was ever requested and the swap played
+  // silently (KRI-19 bug 7). `musicDirty` is a strict superset of
+  // `musicWindowDirty` (the latter is defined as `musicDirty &&
+  // !!songWindowState` above), so this only adds cases, never removes one.
   const virtualPreviewRequested =
-    (clipDirty || musicWindowDirty || carouselMomentDirty ||
+    (clipDirty || musicDirty || carouselMomentDirty ||
       (guidedStoryV2 && (sfxDirty || overlaysDirty || visualBlocksDirty || motionScenesDirty || textDirty))) &&
     !virtualFallback &&
     clip.loadState === "ready";
   const musicPreviewRequested =
-    musicWindowDirty || backgroundMusicDirty || virtualPreviewRequested;
+    musicDirty || backgroundMusicDirty || virtualPreviewRequested;
   const effectiveMusicTitle =
     virtualMusicTrack?.title ?? variant?.background_music?.title ?? variant?.track_title ?? "Music";
   // Fallback for tracks the public gallery doesn't list (the matcher considers
@@ -2328,7 +2337,7 @@ export default function EditorShell({
   const virtualPreviewAudio = resolveVirtualPreviewAudio({
     virtualPreviewRequested,
     clipDirty,
-    musicDirty: musicWindowDirty,
+    musicDirty,
     backgroundMusicDirty,
     musicTrackActive: effectiveAudioTrackId != null,
     musicAudioUrl: virtualMusicAudioUrl,
@@ -2492,7 +2501,7 @@ export default function EditorShell({
     ],
   );
   const renderedMusicPreviewActive =
-    (musicWindowDirty || backgroundMusicDirty) && !virtualPreviewActive && !!virtualMusicAudioUrl;
+    (musicDirty || backgroundMusicDirty) && !virtualPreviewActive && !!virtualMusicAudioUrl;
 
   // Music-only edits on variants without an editable clip timeline (notably
   // legacy song_lyrics) preview against the rendered video. The baked mix is
@@ -3097,25 +3106,38 @@ export default function EditorShell({
         setInspectorTab("basic");
         const block = localMotionScenes.find((scene) => scene.id === id);
         if (block) seekPlaybackTo(baseToOutputTimeRef.current(block.start_frame / MOTION_FPS));
-        setActiveTool("visuals");
-        if (layoutMode === "light" && POCKET_UI) {
-          dispatchPocket({ type: "OPEN_INSPECTOR" });
+        // The Kria chat drawer renders only while activeTool === "nova"
+        // (light mode); switching to "visuals" here would silently unmount
+        // it mid-turn, and the inspector Sheet that OPEN_INSPECTOR opens
+        // portals above the whole editor root and would hide it even if it
+        // stayed mounted (KRI-19 bug 11/14). Selecting still seeks + flashes
+        // the target on the canvas — it just doesn't steal the screen from
+        // an open chat.
+        if (!(layoutMode === "light" && activeTool === "nova")) {
+          setActiveTool("visuals");
+          if (layoutMode === "light" && POCKET_UI) {
+            dispatchPocket({ type: "OPEN_INSPECTOR" });
+          }
         }
       } else if (kind === "visual") {
         setInspectorTab("basic");
         const block = localVisualBlocks.find((candidate) => candidate.id === id);
         if (block) seekPlaybackTo(baseToOutputTimeRef.current(block.start_s));
-        setActiveTool("visuals");
-        if (layoutMode === "light" && POCKET_UI) dispatchPocket({ type: "OPEN_INSPECTOR" });
+        if (!(layoutMode === "light" && activeTool === "nova")) {
+          setActiveTool("visuals");
+          if (layoutMode === "light" && POCKET_UI) dispatchPocket({ type: "OPEN_INSPECTOR" });
+        }
       } else if (kind === "carousel") {
         setInspectorTab("basic");
-        setActiveTool("visuals");
         const carouselEntry = virtualPreview.timeline.entries.find(
           (entry) => entry.kind === "carousel",
         );
         if (carouselEntry) seekPlaybackTo(carouselEntry.startS);
-        if (layoutMode === "light" && POCKET_UI) {
-          dispatchPocket({ type: "OPEN_INSPECTOR" });
+        if (!(layoutMode === "light" && activeTool === "nova")) {
+          setActiveTool("visuals");
+          if (layoutMode === "light" && POCKET_UI) {
+            dispatchPocket({ type: "OPEN_INSPECTOR" });
+          }
         }
       }
     },
@@ -3561,6 +3583,17 @@ export default function EditorShell({
     notify,
   ]);
 
+  const togglePlay = useCallback(() => {
+    if (virtualPreviewActive) {
+      toggleVirtualPreview();
+      return;
+    }
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) void v.play();
+    else v.pause();
+  }, [toggleVirtualPreview, virtualPreviewActive]);
+
   const pickMusicTrack = useCallback(
     (trackId: string) => {
       if (readOnly || !variant) return;
@@ -3576,6 +3609,12 @@ export default function EditorShell({
           trackId !== variant.music_track_id ||
             Math.abs(nextStartS - (variant.music_preview_start_s ?? 0)) > 0.005,
         );
+        // Picking a track is a deliberate "let me hear it" gesture — the
+        // preview audio element only plays in sync with the VIDEO's own
+        // play state (see the renderedMusicPreviewActive/virtual-preview
+        // effects), so if playback is paused the swap otherwise produces no
+        // sound at all until the user separately hits play (KRI-19 bug 7).
+        if (!playing) togglePlay();
         return;
       }
       if (trackId === backgroundMusic?.track_id && backgroundMusic?.enabled !== false) return;
@@ -3598,6 +3637,7 @@ export default function EditorShell({
       });
       setBackgroundMusicDirty(true);
       selectElement("music", "background");
+      if (!playing) togglePlay();
     },
     [
       backgroundMusic?.enabled,
@@ -3606,10 +3646,12 @@ export default function EditorShell({
       history,
       musicRemoved,
       musicTracks,
+      playing,
       previewDuration,
       readOnly,
       selectElement,
       selectedMusicTrackId,
+      togglePlay,
       variant,
     ],
   );
@@ -4404,10 +4446,16 @@ export default function EditorShell({
           ? cur
           : [...cur, { id: suggestion.id, overlayId: suggestion.overlay.id }],
       );
-      select("overlay", suggestion.overlay.id);
+      // selectElement (not the raw select() this used to call) is what
+      // actually seeks the playhead to the new overlay's window — without
+      // it, "Accept" removed the card from the list but the canvas showed
+      // no change at all (KRI-19 bug 9). notify() gives the same accept a
+      // toast, same as a director-suggestion accept.
+      selectElement("overlay", suggestion.overlay.id);
       setInspectorTab("basic");
+      notify("Overlay added");
     },
-    [history, overlaysAllowed, readOnly, select, sfxAllowed],
+    [history, notify, overlaysAllowed, readOnly, selectElement, sfxAllowed],
   );
 
   const recordTimelineDrag = useCallback(() => {
@@ -5743,7 +5791,15 @@ export default function EditorShell({
         setCaptionMetaPatch((current) => ({ ...current, ...result.captionMetaPatch }));
         setCaptionMetaDirty(true);
       }
-      if (result.openTool) setActiveTool(result.openTool);
+      // Don't switch tools out from under an open Kria chat in light mode —
+      // the drawer renders only while activeTool === "nova", so this would
+      // silently unmount it mid-turn (and discard any half-typed draft) the
+      // instant an edit lands (KRI-19 bug 11/14). The live change is still
+      // visible via the canvas flash/seek above; the user stays in chat to
+      // see it and the reply.
+      if (result.openTool && !(layoutMode === "light" && activeTool === "nova")) {
+        setActiveTool(result.openTool);
+      }
       setSessionHasCopilotEdits(true);
 
       const feedback = resolveCopilotApplyFeedback({
@@ -5783,12 +5839,14 @@ export default function EditorShell({
       return { undoVersion: version, previewFocus };
     },
     [
+      activeTool,
       applyCarouselMoment,
       clip.state.grid,
       clear,
       flashCopilotTargets,
       history,
       introControlsEditable,
+      layoutMode,
       localOverlays,
       localSfx,
       overlaySuggestions,
@@ -5898,6 +5956,7 @@ export default function EditorShell({
     applyOpsAtomic: applyDirectorDraftOps,
     onApplied: handleCopilotOps,
     onRevealApplied: revealCopilotFocus,
+    notify,
     onGeneratedAssetReady: reloadClipTimeline,
     speechCutRevision: variant?.speech_cut_revision,
     speechCutLastReceipt: variant?.speech_cut_last_receipt,
@@ -6117,17 +6176,6 @@ export default function EditorShell({
     history,
     notify,
   ]);
-
-  const togglePlay = useCallback(() => {
-    if (virtualPreviewActive) {
-      toggleVirtualPreview();
-      return;
-    }
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.paused) void v.play();
-    else v.pause();
-  }, [toggleVirtualPreview, virtualPreviewActive]);
 
   const seekTo = useCallback((sec: number) => {
     seekPlaybackTo(sec);
@@ -7769,6 +7817,7 @@ export default function EditorShell({
           readOnly={readOnly}
           saveState={saveState}
           showCopilotNotice={showCopilotSaveNotice}
+          itemTitle={item?.theme ?? item?.idea ?? null}
           onBack={requestLeave}
           onDismissCopilotNotice={() => {
             setCopilotSaveNoticeDismissed(true);
@@ -8968,6 +9017,7 @@ function LightTopBar({
   readOnly,
   saveState,
   showCopilotNotice,
+  itemTitle,
   onBack,
   onDismissCopilotNotice,
   onSave,
@@ -8978,6 +9028,10 @@ function LightTopBar({
   readOnly: boolean;
   saveState: "idle" | "saving" | "conflict" | "error" | "partial";
   showCopilotNotice: boolean;
+  /** The plan item's own title (theme, falling back to its idea text) — KRI-19
+   *  bug 3: with only a generic "Edit video" label, every item's editor
+   *  looked identical and gave no sense of which video was open. */
+  itemTitle?: string | null;
   onBack: () => void;
   onDismissCopilotNotice: () => void;
   onSave: () => void;
@@ -9014,7 +9068,9 @@ function LightTopBar({
         ) : orientationToggle ? (
           <div className="flex justify-center">{orientationToggle}</div>
         ) : (
-          <span className="text-[13px] font-semibold text-foreground">Edit video</span>
+          <span className="truncate text-[13px] font-semibold text-foreground">
+            {itemTitle || "Edit video"}
+          </span>
         )}
       </div>
       <Button

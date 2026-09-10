@@ -899,6 +899,72 @@ describe("useEditCopilot", () => {
     expect(result.current.messages).toEqual([]);
   });
 
+  // KRI-19 bug 12: Stop used to still apply the response's ops once it
+  // arrived — only the user's own message was removed, so the edit landed
+  // with no visible trace of the request that caused it. The abandon check
+  // must run BEFORE applyOps/onApplied, not after.
+  it("stop prevents the late-arriving response from being applied at all", async () => {
+    const turn = deferred<EditCopilotTurnResponse>();
+    mockEditCopilotTurn.mockReturnValueOnce(turn.promise);
+    const applyOps = jest.fn(() =>
+      appliedResult({ applied: [{ label: "Alignment", from: "left", to: "center" }] }),
+    );
+    const onApplied = jest.fn();
+    const { result } = renderCopilot({ applyOps, onApplied });
+
+    act(() => {
+      void result.current.send("center the text");
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(1));
+
+    act(() => result.current.stop());
+
+    await act(async () => {
+      turn.resolve(
+        response({ reply: "Centered", ops: [{ op: "edit_text", bar_index: 0, text: "x" }] }),
+      );
+      await turn.promise;
+    });
+
+    expect(applyOps).not.toHaveBeenCalled();
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(result.current.messages).toEqual([]);
+  });
+
+  // KRI-19 bug 12: onApplied is the CALLER's UI-side hookup (seek preview,
+  // record undo history) and runs AFTER applyOps has already mutated the
+  // draft. A throw there used to fall into the outer catch, which deleted
+  // the user's message even though the edit had already landed.
+  it.each([false, true])("keeps the user's message when onApplied fails (async: %s)", async (asyncFailure) => {
+    mockEditCopilotTurn.mockResolvedValueOnce(
+      response({ reply: "Centered the text" }),
+    );
+    const applyOps = jest.fn(() =>
+      appliedResult({ applied: [{ label: "Alignment", from: "left", to: "center" }] }),
+    );
+    const onApplied = jest.fn(() => {
+      if (asyncFailure) return Promise.reject(new Error("boom"));
+      throw new Error("boom");
+    });
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = renderCopilot({ applyOps, onApplied });
+
+    await act(async () => {
+      await result.current.send("center the text");
+    });
+
+    expect(applyOps).toHaveBeenCalledTimes(1);
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[0]).toMatchObject({
+      role: "user",
+      text: "center the text",
+    });
+    expect(result.current.messages[1].role).toBe("assistant");
+    expect(result.current.messages[1].applied).toEqual(["Alignment: left, now center"]);
+    consoleError.mockRestore();
+  });
+
   it("clears mirrored storage on explicit clear", async () => {
     mockEditCopilotTurn.mockResolvedValueOnce(response({ reply: "Stored" }));
     const { result } = renderCopilot({ variantId: "variant-clear" });
@@ -1047,6 +1113,21 @@ describe("shared editor conversation", () => {
     expect(result.current.messages.some((message) => message.isRenderTurn)).toBe(false);
     await act(async () => { dispatch.resolve({ isRenderTurn: true, assistantText: "The new version is rendering." }); await sending; });
     expect(result.current.messages.at(-1)?.isRenderTurn).toBe(true);
+  });
+
+  test("a failed server dispatch never claims that the render was applied", async () => {
+    mockEditCopilotTurn.mockResolvedValue(response({ ops: [{ op: "set_intro_layout", layout: "cluster" }] }));
+    const { result } = renderHook(() => useEditCopilot(copilotOptions({
+      persistLocally: false,
+      confirmServerAction: async () => true,
+      onApplied: async () => { throw new Error("Dispatch failed"); },
+      applyOpsAtomic: () => appliedResult({ renderRequest: { kind: "set_intro_layout", layout: "cluster" } }),
+    })));
+    await act(async () => result.current.send("Use the editorial intro"));
+    expect(result.current.error).toBeTruthy();
+    expect(result.current.messages[0]).toMatchObject({ role: "user", pending: false });
+    expect(result.current.messages.some((message) => message.isRenderTurn)).toBe(false);
+    expect(result.current.messages.at(-1)?.applied).toBeUndefined();
   });
 
   test("declining a server action leaves the draft unchanged and never dispatches", async () => {
