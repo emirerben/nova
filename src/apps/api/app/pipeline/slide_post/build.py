@@ -172,6 +172,16 @@ def _edits_filter_fragment(
                 "drawtext="
                 f"fontfile={_escape_drawtext_path(_SLIDE_TEXT_FONT)}:"
                 f"textfile={_escape_drawtext_path(str(text_file))}:"
+                # drawtext expands `%{...}`/strftime-style sequences even
+                # when reading from textfile= — a literal "%" in ordinary
+                # user text (e.g. "50% off") logs "Stray %" and drops the
+                # ENTIRE overlay silently (exit code 0, no exception, no
+                # visible text). expansion=none turns this off; there is no
+                # legitimate use for frame-number/timestamp expansion in a
+                # static per-slide caption. Found via manual local
+                # verification — the automated tests below only asserted
+                # the render didn't raise, not that the text was visible.
+                "expansion=none:"
                 f"fontsize={fontsize}:fontcolor=white:"
                 f"box=1:boxcolor=black@0.45:boxborderw={box_border}:"
                 f"x=(w-text_w)/2:y={_drawtext_y_expr(edits.text.position)}"

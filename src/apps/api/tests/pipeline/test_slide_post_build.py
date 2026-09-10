@@ -106,13 +106,20 @@ class TestNormalizeImageSlide:
         assert plain.read_bytes() != edited.read_bytes()
 
     def test_text_overlay_with_filter_delimiter_characters_does_not_break_ffmpeg(self, tmp_path):
-        """FFmpeg's drawtext `text=` value uses `:`/`'`/`%`/`,` as its own
-        syntax — an unescaped user string containing them would either break
-        the filtergraph or (worse) let user text be interpreted as filter
-        options. Exercises exactly the characters `_escape_drawtext` handles."""
+        """FFmpeg's drawtext `text=`/`textfile=` value uses `:`/`'`/`%`/`,`
+        as its own syntax. Asserts more than "ffmpeg didn't raise": a `%`
+        in ordinary text (e.g. "50% off") previously logged "Stray %" and
+        SILENTLY DROPPED THE ENTIRE OVERLAY — exit code 0, no exception, no
+        visible text, `plain.jpg` byte-identical to the "edited" output.
+        Caught only by manually inspecting rendered pixels locally, not by
+        the exists()/dimensions-only version of this test that shipped
+        first. Pins pixel difference so the same bug can't regress
+        silently again."""
         src = tmp_path / "src.png"
+        plain = tmp_path / "plain.jpg"
         out = tmp_path / "out.jpg"
         _make_image(src, 1920, 1080)
+        normalize_image_slide(str(src), str(plain), canvas=CANVAS)
         normalize_image_slide(
             str(src),
             str(out),
@@ -123,6 +130,9 @@ class TestNormalizeImageSlide:
         )
         assert out.exists()
         assert probe_dimensions(str(out)) == CANVAS
+        assert plain.read_bytes() != out.read_bytes(), (
+            "text overlay produced no visible change — drawtext silently dropped the text"
+        )
 
     def test_text_and_look_preset_edits_compose(self, tmp_path):
         src = tmp_path / "src.png"
