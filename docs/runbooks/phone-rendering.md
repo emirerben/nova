@@ -38,7 +38,7 @@ style has passed the complete parity and physical-device gates.
   Ordered colored blur layers provide shadows/glow behind each run; a standard
   shadow probe is visually close to Skia (not a full style-parity gate). Stroke
   width is the full centered width, twice the cloud `stroke_px` value. Reveal
-  reveal effects remain outstanding. Legacy unshaped runs now carry exact
+  effects remain outstanding. Legacy unshaped runs now carry exact
   glyph IDs/positions from Skia and validate them against the bound font; the
   phone does not reshape those runs. `portable_text_layout.py` compiles the
   supported base text styles with production wrapping/anchor helpers and exact
@@ -85,6 +85,14 @@ style has passed the complete parity and physical-device gates.
   reservation is consumed. The cloud job constructor and worker entry reject
   proxy footage or voiceovers. The picker still uses consented cloud uploads;
   selecting the phone destination remains part of the integration work.
+- `services/phone_sources.py` resolves selected server-owned upload receipts
+  into immutable original bindings, rejects mixed/missing/conflicting sources,
+  and requires each approved moment's media ID, path, and generation to match.
+  `_phone_sources_v1` is private at every public assembly nesting level.
+  `pipeline/phone_guided_plan.py` projects the shared guided execution plan into
+  V2 original assets, exact contiguous video trims, audio level, and supported
+  text layers. Unsupported media treatments, transitions, and editor lanes
+  reject instead of disappearing. These helpers are not yet wired to dispatch.
 
 ## Remaining implementation gates
 

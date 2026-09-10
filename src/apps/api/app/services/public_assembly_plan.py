@@ -156,6 +156,7 @@ def _is_private_key(key: object) -> bool:
         return False
     return (
         key == "_device_render_v1"
+        or key == "_phone_sources_v1"
         or key == SPEECH_CLEANUP_INTERNAL_FIELD
         or key == CREATOR_DIRECTION_SNAPSHOT_FIELD
         or key in _PRIVATE_IDENTITY_FIELDS
