@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.4.0] - 2026-09-10
+
+### Changed
+- fix: prevent guided-story revision compile failures from crashing creation-chat loads (#1013) <!-- release-pr: 1013 -->
+
 ## [0.76.3.0] - 2026-09-10
 
 ### Changed
