@@ -88,8 +88,6 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         and raw_motion.get("version") == 2
     ):
         motion = ResolvedTextMotion(**asdict(normalize_text_motion(effect, raw_motion)))
-    elif effect not in {"static", "none"}:
-        raise UnsupportedPortableText("legacy animation timing requires a separate program")
     text = cloud._overlay_text(overlay)
     if not text.strip():
         raise UnsupportedPortableText("empty text has no layer")

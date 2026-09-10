@@ -138,6 +138,10 @@ def compile_phone_guided_plan(
         audio=AudioMixRecipe(original_volume=plan.editor_audio_level if preserve_audio else 0),
         required_capabilities={"basicComposition", "local1080Export"}
         | ({"positionedText"} if layers else set())
-        | ({"animatedText"} if any(layer.motion for layer in layers) else set())
+        | (
+            {"animatedText"}
+            if any(layer.effect not in {"static", "none"} for layer in layers)
+            else set()
+        )
         | ({"audioMix"} if preserve_audio else set()),
     )

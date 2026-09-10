@@ -96,7 +96,7 @@ extension RecipeTextLayer {
         }
         // Moving/scaling text can enter the canvas from an offscreen position.
         // Keep its complete bitmap, still subject to the aggregate memory budget.
-        if layer.motion == nil && layer.runs.allSatisfy({ $0.blurLayers.isEmpty }) { bounds = bounds.intersection(CGRect(origin: .zero, size: canvas)) }
+        if layer.motion == nil && (layer.effect == .static || layer.effect == .none) && layer.runs.allSatisfy({ $0.blurLayers.isEmpty }) { bounds = bounds.intersection(CGRect(origin: .zero, size: canvas)) }
         bounds = bounds.integral
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0,
               bounds.width * bounds.height * 4 <= Double(maxBitmapBytes),

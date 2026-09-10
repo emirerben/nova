@@ -12,7 +12,7 @@ from app.pipeline.text_overlay_skia import _draw_with_animation
 FIXTURE = Path(__file__).parents[1] / "fixtures/phone_text_transforms_v2.json"
 
 
-def reference_cases():
+def reference_cases(*, legacy=False):
     cases = []
     for effect in [
         "static",
@@ -42,7 +42,9 @@ def reference_cases():
                     },
                 )
             )
-            duration = [0.12, 0.75, 2, 4][index]
+            if legacy:
+                motion = None
+            duration = [0.005, 0.12, 0.25, 2][index] if legacy else [0.12, 0.75, 2, 4][index]
             samples = []
             for time in sorted(
                 set(
@@ -56,7 +58,7 @@ def reference_cases():
                         0.4,
                         0.8,
                         duration / 2,
-                        duration - 1 / 30,
+                        max(0, duration - 1 / 30),
                         duration,
                     ]
                 )
@@ -64,7 +66,11 @@ def reference_cases():
                 with patch("app.pipeline.text_overlay_skia._draw_centered_text") as draw:
                     _draw_with_animation(
                         None,
-                        {"text": "Hello", "effect": effect, "motion": {"version": 2, **motion}},
+                        {
+                            "text": "Hello",
+                            "effect": effect,
+                            "motion": {"version": 2, **motion} if motion else None,
+                        },
                         time,
                         duration,
                     )
@@ -94,5 +100,13 @@ def test_native_transform_reference_is_current():
     assert json.loads(FIXTURE.read_text()) == reference_cases()
 
 
+LEGACY_FIXTURE = FIXTURE.with_name("phone_text_transforms_legacy.json")
+
+
+def test_native_legacy_transform_reference_is_current():
+    assert json.loads(LEGACY_FIXTURE.read_text()) == reference_cases(legacy=True)
+
+
 if __name__ == "__main__" and "--write" in sys.argv:
     FIXTURE.write_text(json.dumps(reference_cases(), indent=2) + "\n")
+    LEGACY_FIXTURE.write_text(json.dumps(reference_cases(legacy=True), indent=2) + "\n")

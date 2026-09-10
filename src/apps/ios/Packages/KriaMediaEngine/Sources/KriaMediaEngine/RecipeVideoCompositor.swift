@@ -116,11 +116,11 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                     frame = opacity(source.transformed(by: layer.transform), alpha).composited(over: frame).cropped(to: instruction.canvas)
                 }
                 for text in instruction.text where time >= text.start && time < text.end {
-                    if let layer = text.portable, let motion = layer.motion {
+                    if let layer = text.portable {
                         do {
                             let state = try TextTransformTiming.sample(effect: PortableTextEffect(rawValue: layer.effect.rawValue)!,
                                 text: layer.runs.map(\.text).joined(separator: "\n"), localTime: time - text.start,
-                                duration: text.end - text.start, motion: motion)
+                                duration: text.end - text.start, motion: layer.motion)
                             // The bitmap already contains rotation. Cloud translation occurs in
                             // the rotated coordinate system; scaling stays centered on its anchor.
                             let angle = -layer.rotationDegrees * .pi / 180

@@ -60,7 +60,6 @@ def test_compiled_runs_match_actual_cloud_layout(shaped, anchor, fixed):
     "extra",
     [
         {"effect": "typewriter"},
-        {"effect": "pop-in"},
         {"emoji_prefix": "🙂"},
         {"behind_subject": True},
         {"theme_transition": {"type": "giant-title-wipe"}},
@@ -91,3 +90,18 @@ def test_normalized_motion_is_preserved_but_static_dispatch_ignores_it():
         {**overlay, "effect": "static"}, layer_id="test", canvas=Canvas(600, 400)
     )
     assert layer.motion is None
+
+
+@pytest.mark.parametrize(
+    "effect", ["fade-in", "scale-up", "slide-up", "slide-down", "pop-in", "bounce"]
+)
+def test_legacy_animation_keeps_its_duration_and_effect(effect):
+    layer, _ = compile_text_overlay(
+        {"text": "Hello", "start_s": 0.2, "end_s": 0.32, "effect": effect},
+        layer_id="legacy",
+        canvas=Canvas(600, 400),
+    )
+    assert layer.effect == effect
+    assert layer.motion is None
+    assert layer.start == 0.2
+    assert layer.end == 0.32

@@ -11,8 +11,9 @@ public struct TextTransformSample: Codable, Equatable, Sendable {
 
 public enum TextTransformTiming {
     public static func sample(effect: PortableTextEffect, text: String, localTime: Double,
-                              duration: Double, motion: TextMotionParameters) throws -> TextTransformSample {
+                              duration: Double, motion: TextMotionParameters?) throws -> TextTransformSample {
         guard duration.isFinite, duration > 0, localTime.isFinite else { throw RecipeError.invalidTimeline }
+        guard let motion else { return try legacySample(effect: effect, localTime: localTime, duration: duration) }
         let time = try TextMotionTiming.authoredTime(effect: effect, text: text, localTime: localTime, motion: motion)
         let base = try TextMotionTiming.settleDuration(effect: effect, text: text, motion: motion) * motion.speed
         var alpha = 1.0, scale = 1.0, x = 0.0, y = 0.0
@@ -53,4 +54,34 @@ public enum TextTransformTiming {
         }
         return TextTransformSample(alpha: alpha, scale: scale, xTranslate: x, yTranslate: y)
     }
+
+    /// Legacy curves use the authored layer duration, including compressed
+    /// pop keyframes and the shorter entrance window on brief slides/bounces.
+    private static func legacySample(effect: PortableTextEffect, localTime time: Double,
+                                     duration: Double) throws -> TextTransformSample {
+        var alpha = 1.0, scale = 1.0, y = 0.0
+        func ease(_ progress: Double) -> Double { TextMotionTiming.ease(progress, .easeOutCubic) }
+        switch effect {
+        case .static, .none: break
+        case .fadeIn: alpha = ease(time / max(min(0.4, duration), 0.01))
+        case .scaleUp: scale = 0.6 + 0.4 * ease(time / max(min(0.6, duration), 0.01))
+        case .slideUp, .slideDown:
+            let distance = 220 * (1 - ease(time / min(0.35, duration * 0.5)))
+            y = effect == .slideUp ? -distance : distance
+        case .popIn:
+            let ratio = min(1, duration / 0.25)
+            let peak = 0.15 * ratio, end = 0.25 * ratio
+            if time <= 0 { scale = 0.30 }
+            else if time < peak { scale = 0.30 + 0.85 * time / peak }
+            else if time < end { scale = 1.15 - 0.15 * (time - peak) / (end - peak) }
+        case .bounce:
+            let p = time / min(0.5, duration * 0.8)
+            if p < 0.36 { scale = 1 + 0.25 * p / 0.36 }
+            else if p < 0.72 { scale = 1.25 - 0.35 * (p - 0.36) / 0.36 }
+            else if p < 1 { scale = 0.90 + 0.10 * (p - 0.72) / 0.28 }
+        default: throw MediaEngineError.unsupportedCapability
+        }
+        return TextTransformSample(alpha: alpha, scale: scale, xTranslate: 0, yTranslate: y)
+    }
+
 }

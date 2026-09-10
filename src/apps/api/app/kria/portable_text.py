@@ -110,8 +110,6 @@ class PortableTextLayer(_TextModel):
 
     @model_validator(mode="after")
     def valid_window(self):
-        if self.effect not in {"static", "none"} and self.motion is None:
-            raise ValueError("animated text requires resolved motion")
         if self.end <= self.start:
             raise ValueError("text layer must have a positive time window")
         if sum(len(run.glyphs or []) for run in self.runs) > 10000:

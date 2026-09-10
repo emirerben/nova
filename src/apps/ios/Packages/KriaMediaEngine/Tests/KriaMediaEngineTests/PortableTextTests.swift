@@ -166,7 +166,10 @@ final class PortableTextTests: XCTestCase {
     @MainActor func testAnimatedFadeUsesCompositionTimeInPreviewAndExport() async throws {
         try await verifyTextWindow(animated: true)
     }
-    @MainActor private func verifyTextWindow(animated: Bool) async throws {
+    @MainActor func testLegacyFadeUsesCompositionTimeInPreviewAndExport() async throws {
+        try await verifyTextWindow(animated: true, legacy: true)
+    }
+    @MainActor private func verifyTextWindow(animated: Bool, legacy: Bool = false) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -184,7 +187,7 @@ final class PortableTextTests: XCTestCase {
         }
         var cue = layer()
         cue = PortableTextLayer(id: cue.id, start: 0.25, end: 0.75, anchorX: cue.anchorX, anchorY: cue.anchorY, rotationDegrees: 0, runs: cue.runs,
-            effect: animated ? .fadeIn : .static, motion: animated ? try motionFixture() : nil)
+            effect: animated ? .fadeIn : .static, motion: animated && !legacy ? try motionFixture() : nil)
         let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 200, height: 200),
             assets: assets, tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "photo", sourceDuration: 1)])],
             assetManifest: RenderAssetManifest(assets: references), textLayers: [cue])

@@ -182,7 +182,6 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
               abs(rotationDegrees) <= 3600, (1...100).contains(runs.count),
               runs.reduce(0, { $0 + $1.text.unicodeScalars.count }) <= 5000,
               runs.reduce(0, { $0 + ($1.glyphs?.count ?? 0) }) <= 10000 else { throw RecipeError.invalidTimeline }
-        if effect != .static && effect != .none && motion == nil { throw RecipeError.invalidTimeline }
         try motion?.validate()
         for run in runs {
             try run.validate()
