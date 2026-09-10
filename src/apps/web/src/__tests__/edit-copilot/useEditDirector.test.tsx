@@ -937,6 +937,55 @@ describe("useEditDirector", () => {
     );
   });
 
+  it.each(["resolve", "reject"] as const)("waits for asynchronous editor acknowledgement: %s", async (outcome) => {
+    const current = snapshot();
+    const recommendation = suggestion();
+    suggestionsMock.mockResolvedValue({
+      suggestions: [recommendation],
+      snapshot_revision: directorSnapshotRevision(current),
+      requested_model: "gemini-3.1-pro-preview",
+      model_used: "gemini-3.1-pro-preview",
+      fallback_reason: null,
+    });
+    let resolve!: (value: { isRenderTurn: boolean }) => void;
+    let reject!: (error: Error) => void;
+    const acknowledgement = new Promise<{ isRenderTurn: boolean }>((yes, no) => {
+      resolve = yes; reject = no;
+    });
+    const { result } = renderHook(() => useEditDirector({
+      enabled: true, omniEnabled: false, itemId: "item-1", variantId: "variant-1",
+      buildSnapshot: () => current,
+      applyOpsAtomic: () => appliedResult(),
+      onApplied: () => acknowledgement,
+    }));
+    await loadInitialReview(result);
+    act(() => result.current.accept(recommendation));
+    expect(result.current.appliedReceipts).toEqual([]);
+    expect(result.current.suggestions).toEqual([recommendation]);
+    expect(feedbackMock).not.toHaveBeenCalledWith("item-1", "variant-1",
+      expect.objectContaining({ action: "accepted" }));
+    await act(async () => {
+      if (outcome === "resolve") resolve({ isRenderTurn: true });
+      else reject(new Error("dispatch unavailable"));
+      await Promise.resolve();
+    });
+    if (outcome === "resolve") {
+      expect(result.current.appliedReceipts).toEqual([expect.objectContaining({
+        suggestionId: recommendation.id, status: "rendering",
+      })]);
+      expect(result.current.suggestions).toEqual([]);
+      expect(result.current.error).toBeNull();
+      expect(feedbackMock).toHaveBeenCalledWith("item-1", "variant-1",
+        expect.objectContaining({ action: "accepted" }));
+    } else {
+      expect(result.current.appliedReceipts).toEqual([]);
+      expect(result.current.suggestions).toEqual([recommendation]);
+      expect(result.current.error).toContain("couldn’t confirm");
+      expect(feedbackMock).not.toHaveBeenCalledWith("item-1", "variant-1",
+        expect.objectContaining({ action: "accepted" }));
+    }
+  });
+
   it("lets a manual refresh replace a visible review", async () => {
     const current = snapshot();
     suggestionsMock

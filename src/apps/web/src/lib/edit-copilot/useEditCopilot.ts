@@ -74,7 +74,16 @@ export interface QueuedCopilotMessage {
   text: string;
 }
 
+export interface CopilotSendContext {
+  requestId: string;
+  turns: EditCopilotTurn[];
+}
+
 export interface UseEditCopilotOptions {
+  /** Shared chat owns durable history; standalone test consumers may retain local storage. */
+  persistLocally?: boolean;
+  getDraftRevision?: () => string;
+  confirmServerAction?: (result: ApplyCopilotOpsResult) => Promise<boolean>;
   itemId: string;
   variantId: string;
   /** Accepts an optional context the hook threads through on every turn:
@@ -95,7 +104,8 @@ export interface UseEditCopilotOptions {
     result: ApplyCopilotOpsResult,
     response: EditCopilotTurnResponse,
     snapshot: CopilotSnapshot,
-  ) => { undoVersion?: number; isRenderTurn?: boolean; assistantText?: string } | void;
+  ) => { undoVersion?: number; isRenderTurn?: boolean; assistantText?: string } | void
+    | Promise<{ undoVersion?: number; isRenderTurn?: boolean; assistantText?: string } | void>;
   /** Called only for a locally applied, undoable turn with durable proposal identity. */
   onReceiptStaged?: (receiptId: string, undoVersion: number) => void;
   /** Last ≤8 humanized render steps for the current job (PR1's status-route
@@ -114,7 +124,7 @@ export interface UseEditCopilotResult {
   unavailable: boolean;
   restoredInput: string;
   suggestions: string[];
-  send: (text: string) => Promise<void>;
+  send: (text: string, context?: CopilotSendContext) => Promise<void>;
   cancelQueued: () => void;
   editQueued: (text: string) => void;
   stop: () => void;
@@ -419,7 +429,7 @@ export function useEditCopilot(
   opts: UseEditCopilotOptions,
 ): UseEditCopilotResult {
   const [messages, setMessages] = useState<CopilotMessage[]>(() =>
-    readThread(opts.itemId, opts.variantId),
+    opts.persistLocally === false ? [] : readThread(opts.itemId, opts.variantId),
   );
   const [sending, setSending] = useState(false);
   const [queued, setQueued] = useState<QueuedCopilotMessage | null>(null);
@@ -449,7 +459,12 @@ export function useEditCopilot(
   queuedRef.current = queued;
 
   useEffect(() => {
-    const restored = readThread(opts.itemId, opts.variantId);
+    const active = activeTurnRef.current;
+    if (active) abandonedTurnsRef.current.add(active.id);
+    activeTurnRef.current = null;
+    setSending(false);
+    sendingRef.current = false;
+    const restored = opts.persistLocally === false ? [] : readThread(opts.itemId, opts.variantId);
     // Prevent the A->B key-change commit from persisting A's still-rendered
     // messages into B's bucket before the restored B thread lands.
     skipNextPersistRef.current = true;
@@ -464,17 +479,17 @@ export function useEditCopilot(
     setUnavailable(false);
     unavailableRef.current = false;
     setRestoredInput("");
-  }, [opts.itemId, opts.variantId]);
+  }, [opts.itemId, opts.variantId, opts.persistLocally]);
 
   useEffect(() => {
     if (skipNextPersistRef.current) {
       skipNextPersistRef.current = false;
       return;
     }
-    writeThread(opts.itemId, opts.variantId, messages);
-  }, [messages, opts.itemId, opts.variantId]);
+    if (opts.persistLocally !== false) writeThread(opts.itemId, opts.variantId, messages);
+  }, [messages, opts.itemId, opts.variantId, opts.persistLocally]);
 
-  const runTurn = useCallback(async (text: string): Promise<void> => {
+  const runTurn = useCallback(async (text: string, context?: CopilotSendContext): Promise<void> => {
     const trimmed = text.trim();
     if (!trimmed) return;
     if (!optsRef.current.itemId || !optsRef.current.variantId) return;
@@ -489,8 +504,14 @@ export function useEditCopilot(
     setError(null);
     setRestoredInput("");
 
-    const priorTurns = messagesToCopilotTurns(messagesRef.current);
-    const userMessageId = nextMessageId("user");
+    const priorTurns = context?.turns ?? messagesToCopilotTurns(messagesRef.current);
+    const userMessageId = context?.requestId ?? nextMessageId("user");
+    const targetItemId = optsRef.current.itemId;
+    const targetVariantId = optsRef.current.variantId;
+    const targetRevision = optsRef.current.getDraftRevision?.();
+    const targetIsCurrent = () => optsRef.current.itemId === targetItemId
+      && optsRef.current.variantId === targetVariantId
+      && (targetRevision === undefined || targetRevision === optsRef.current.getDraftRevision?.());
     const optimisticUserMessage: CopilotMessage = {
       id: userMessageId,
       role: "user",
@@ -536,14 +557,27 @@ export function useEditCopilot(
       const shouldClarify = hasPendingPlan || (response.outcome
         ? response.outcome === "clarification"
         : response.needs_clarification);
-      const applyResult = shouldClarify
+      // Fence cancelled/unmounted and changed drafts BEFORE any application callback.
+      if (abandonedTurnsRef.current.has(turnId)) return;
+      if (!targetIsCurrent()) throw new Error("The draft changed while Kria was working. Review it and send the request again.");
+      let applyResult: ApplyCopilotOpsResult = shouldClarify
         ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
       : (optsRef.current.applyOpsAtomic ?? optsRef.current.applyOps)(response.ops, snapshot);
       if (abandonedTurnsRef.current.has(turnId)) {
         abandonedTurnsRef.current.delete(turnId);
         return;
       }
-      const applyMeta = optsRef.current.onApplied?.(
+      let declined = false;
+      if (applyResult.renderRequest && optsRef.current.confirmServerAction) {
+        const approved = await optsRef.current.confirmServerAction(applyResult);
+        if (abandonedTurnsRef.current.has(turnId)) return;
+        if (!targetIsCurrent()) throw new Error("The draft changed. Confirm a new request against the current edit.");
+        if (!approved) {
+          declined = true;
+          applyResult = { textActions: [], nextSlots: null, applied: [], rejected: [] };
+        }
+      }
+      const applyMeta = declined ? { assistantText: "I left the video unchanged. No render was started." } : await optsRef.current.onApplied?.(
         applyResult,
         response,
         snapshot,
@@ -559,8 +593,8 @@ export function useEditCopilot(
       if (response.receipt_id) {
         receiptReported = true;
         void reportCopilotExecution(
-          optsRef.current.itemId,
-          optsRef.current.variantId,
+          targetItemId,
+          targetVariantId,
           response.receipt_id,
           executionReceiptBody(response, applyResult, snapshot),
         );
@@ -607,8 +641,8 @@ export function useEditCopilot(
         const beforeRevisionHash = failedRevisionHash;
         receiptReported = true;
         void reportCopilotExecution(
-          optsRef.current.itemId,
-          optsRef.current.variantId,
+          targetItemId,
+          targetVariantId,
           receiptResponse.receipt_id,
           {
             client_event_id: newClientEventId(),
@@ -630,9 +664,12 @@ export function useEditCopilot(
         abandonedTurnsRef.current.delete(turnId);
         return;
       }
-      const nextMessages = messagesRef.current.filter(
-        (message) => message.id !== userMessageId,
-      );
+      const nextMessages: CopilotMessage[] = optsRef.current.persistLocally === false
+        ? [
+          ...messagesRef.current.map((message) => message.id === userMessageId ? { ...message, pending: false } : message),
+          { id: nextMessageId("assistant"), role: "assistant", text: copilotErrorMessage(err) },
+        ]
+        : messagesRef.current.filter((message) => message.id !== userMessageId);
       messagesRef.current = nextMessages;
       setMessages(nextMessages);
       if (isFeatureUnavailable(err)) {
@@ -681,7 +718,7 @@ export function useEditCopilot(
   }, [fireQueued]);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, context?: CopilotSendContext) => {
       const trimmed = text.trim();
       if (!trimmed) return;
       if (!optsRef.current.itemId || !optsRef.current.variantId) return;
@@ -694,7 +731,7 @@ export function useEditCopilot(
         setQueued(next);
         return;
       }
-      await runTurn(trimmed);
+      await runTurn(trimmed, context);
     },
     [runTurn],
   );
@@ -724,9 +761,9 @@ export function useEditCopilot(
     if (!active) return;
     abandonedTurnsRef.current.add(active.id);
     activeTurnRef.current = null;
-    const nextMessages = messagesRef.current.filter(
-      (message) => message.id !== active.userMessageId,
-    );
+    const nextMessages: CopilotMessage[] = optsRef.current.persistLocally === false
+      ? [...messagesRef.current, { id: `${active.id}:stopped`, role: "assistant", text: "Stopped. No further changes were applied." }]
+      : messagesRef.current.filter((message) => message.id !== active.userMessageId);
     messagesRef.current = nextMessages;
     setMessages(nextMessages);
     setRestoredInput(active.text);
@@ -746,6 +783,13 @@ export function useEditCopilot(
     setSuggestions([]);
     skipNextPersistRef.current = true;
     removeThread(optsRef.current.itemId, optsRef.current.variantId);
+  }, []);
+
+  useEffect(() => () => {
+    const active = activeTurnRef.current;
+    if (active) abandonedTurnsRef.current.add(active.id);
+    activeTurnRef.current = null;
+    queuedRef.current = null;
   }, []);
 
   const clearRestoredInput = useCallback(() => {

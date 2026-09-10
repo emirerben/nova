@@ -41,7 +41,6 @@ import {
   updatePoolAssetContext,
   type CameraEffect,
   type CarouselMoment,
-  type EditCopilotTurnResponse,
   type MediaOverlay,
   type MediaVisualBlock,
   type OverlaySuggestion,
@@ -127,6 +126,7 @@ import {
   COPILOT_UNAVAILABLE_MESSAGE,
   summarizeAppliedTurn,
   useEditCopilot,
+  type CopilotMessage,
 } from "@/lib/edit-copilot/useEditCopilot";
 import {
   useEditDirector,
@@ -150,7 +150,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import KriaWordmark from "@/components/KriaWordmark";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
@@ -261,6 +260,9 @@ import type {
   CaptionsBusyState,
   CaptionsDrawerControl,
 } from "./CaptionsDrawer";
+import { useEditorChatBridge } from "@/lib/editor-chat/useEditorChatBridge";
+import { useEditorConfirmation } from "@/lib/editor-chat/useEditorConfirmation";
+import type { EditorChatState } from "@/lib/editor-chat/protocol";
 import ToolRail, { type EditorTool } from "./ToolRail";
 import type { SongWindowState } from "./SongWindowSelector";
 import PresetGrid, { presetMatchesFields } from "./PresetGrid";
@@ -333,6 +335,8 @@ const NEW_TEXT_SIZE_PX = 64;
 const COMPOSITION_TEXT_PRESET =
   TEXT_PRESETS.find((preset) => preset.id === "editorial-italic") ?? DEFAULT_TEXT_PRESET;
 const COMPOSITION_Y_FRACS = [0.36, 0.44, 0.52] as const;
+const WORKSPACE_EDITOR_AI_ENABLED = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true"
+  || process.env.NEXT_PUBLIC_EDIT_DIRECTOR_ENABLED === "true";
 const COPILOT_SAVE_NOTICE_KEY = "nova-copilot-save-expectation-dismissed";
 const MEDIA_OVERLAYS_RAW = (process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED ?? "").trim();
 const MEDIA_OVERLAYS_UI_ENABLED =
@@ -729,7 +733,6 @@ export default function EditorShell({
   // Chat steps feed (PR4): server-render turns (set_intro_layout) show a
   // disclosure + live NovaActivityFeed in the drawer instead of a receipt
   // pill. Flag off is byte-identical to today's pill behavior.
-  const stepsFeedEnabled = process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED === "true";
 
   // ── Data ────────────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
@@ -2795,7 +2798,7 @@ export default function EditorShell({
 
   useEffect(() => {
     if (
-      (activeTool !== "sounds" && activeTool !== "nova" && localSfx.length === 0) ||
+      (activeTool !== "sounds" && !WORKSPACE_EDITOR_AI_ENABLED && localSfx.length === 0) ||
       sfxGlossaryEffects.length > 0
     ) {
       return;
@@ -2823,7 +2826,7 @@ export default function EditorShell({
       !!selectedMusicTrackId ||
       !!effectiveBackgroundMusicTrackId ||
       activeTool === "sounds" ||
-      activeTool === "nova" ||
+      WORKSPACE_EDITOR_AI_ENABLED ||
       selection?.kind === "music") &&
     !musicTracksLoaded;
   useEffect(() => {
@@ -2894,10 +2897,10 @@ export default function EditorShell({
   }, [itemId, localSfx, localSfxAudioUrls]);
 
   const overlayPoolShouldLoad =
-    (activeTool === "nova" && capabilities?.copilot_snapshot_max_bytes != null) ||
+    (WORKSPACE_EDITOR_AI_ENABLED && capabilities?.copilot_snapshot_max_bytes != null) ||
     (MEDIA_OVERLAYS_UI_ENABLED &&
       overlaysAllowed &&
-      (activeTool === "nova" || activeTool === "overlays")) ||
+      (WORKSPACE_EDITOR_AI_ENABLED || activeTool === "overlays")) ||
     (VISUAL_BLOCKS_UI_ENABLED &&
       visualBlocksAllowed &&
       activeTool === "visuals");
@@ -2968,7 +2971,7 @@ export default function EditorShell({
     capabilities?.suggestions === true &&
     !readOnly;
   const overlaySuggestionsShouldLoad =
-    overlaySuggestionsEnabled && (activeTool === "nova" || activeTool === "overlays");
+    overlaySuggestionsEnabled && (WORKSPACE_EDITOR_AI_ENABLED || activeTool === "overlays");
   const overlaySuggestions = useEditorOverlaySuggestions({
     itemId,
     variantId: variant?.variant_id ?? variantParam ?? "",
@@ -4369,10 +4372,12 @@ export default function EditorShell({
   // (and sound, when present) joins the working state as ONE undoable command
   // — same record-then-mutate shape as handleOverlayUpload/addSfxFromGlossary.
   // Persistence rides the normal Save (editor-commit accepted_suggestion_ids).
+  const [visualChatMessages, setVisualChatMessages] = useState<CopilotMessage[]>([]);
   const handleAcceptSuggestion = useCallback(
     (suggestion: OverlaySuggestion) => {
-      if (readOnly || !overlaysAllowed) return;
-      history.record();
+      if (readOnly || !overlaysAllowed) throw new Error("Visual overlays are unavailable for this edit.");
+      const undoVersion = history.record();
+      setVisualChatMessages((messages) => [...messages, { id: crypto.randomUUID(), role: "assistant", text: "Staged the suggested visual. Save to render the new video.", applied: [suggestion.reason], undoVersion }]);
       const effectGroupId = suggestion.overlay.effect_group_id ?? suggestion.id;
       setLocalOverlays((cur) => [
         ...cur,
@@ -5499,7 +5504,6 @@ export default function EditorShell({
   );
 
   const flashTimerRef = useRef<number | null>(null);
-  const copilotRenderNavTimerRef = useRef<number | null>(null);
   const flashCopilotTargets = useCallback(
     (targets: {
       textIds?: string[];
@@ -5521,13 +5525,8 @@ export default function EditorShell({
     },
     [],
   );
-  // Chat steps feed (PR4): while a server-render turn (set_intro_layout) is
-  // in flight in THIS mount, poll the same status route the item page's
-  // ProgressTheater uses (`steps` field, PR1) so CopilotDrawer can show a
-  // live compact NovaActivityFeed before navigate-away. Best-effort — the
-  // fixed nav delay below is short, so this often shows 0-1 polls' worth of
-  // steps before the drawer unmounts and the item page's own polling takes
-  // over the narrative (feed continuity, not duplicated polling).
+  // Keep the workspace activity feed current while this editor's server
+  // render is running. On completion, reload the variant in the same editor.
   const [copilotRenderTurnActive, setCopilotRenderTurnActive] = useState(false);
   const [copilotRenderSteps, setCopilotRenderSteps] = useState<NovaStep[] | null>(null);
   const copilotRenderPollTimerRef = useRef<number | null>(null);
@@ -5547,23 +5546,26 @@ export default function EditorShell({
     setCopilotRenderSteps(null);
     const poll = () => {
       getPlanItemJobStatus(jobId)
-        .then((res) => setCopilotRenderSteps(res.steps ?? null))
+        .then((res) => {
+          setCopilotRenderSteps(res.steps ?? null);
+          const current = res.variants?.find((row) => row.variant_id === variant?.variant_id);
+          if (current && current.render_status !== "rendering") {
+            stopCopilotRenderPoll();
+            setCopilotRenderTurnActive(false);
+            setLoadNonce((value) => value + 1);
+          }
+        })
         .catch(() => {
-          // Best-effort — the item page's own poll (post-navigate) is the
-          // authoritative source; a failed chat-side poll just shows the
-          // disclosure copy a little longer.
+          // Keep the current rendering status and retry on the next poll.
         });
     };
     poll();
     copilotRenderPollTimerRef.current = window.setInterval(poll, POLL_INTERVAL_MS);
-  }, [item?.current_job_id, stopCopilotRenderPoll]);
+  }, [item?.current_job_id, variant?.variant_id, stopCopilotRenderPoll]);
 
   useEffect(
     () => () => {
       if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
-      if (copilotRenderNavTimerRef.current !== null) {
-        window.clearTimeout(copilotRenderNavTimerRef.current);
-      }
       stopCopilotRenderPoll();
     },
     [stopCopilotRenderPoll],
@@ -5587,64 +5589,24 @@ export default function EditorShell({
   const handleCopilotOps = useCallback(
     (
       result: ApplyCopilotOpsResult,
-      response?: EditCopilotTurnResponse,
-    ): DirectorApplyPresentation => {
+    ): DirectorApplyPresentation | Promise<DirectorApplyPresentation> => {
       if (result.renderRequest) {
-        // set_intro_layout and apply_custom_effect (PR6) are the two ops that
-        // produce a renderRequest — a discriminated union on `kind` (carousel-
-        // as-a-moment is a staged draft mutation as of Lane D — see
-        // result.nextCarouselMoment below, applied inline like every other
-        // draft field, never through this branch). Both follow the exact same
-        // navigate-back+poll flow: PATCH the dedicated variant endpoint, then
-        // return to the item page after a short beat so the toast/receipt is
-        // readable before the poller takes over.
-        if (!readOnly && variant) {
-          const request = result.renderRequest;
-          const dispatch =
-            request.kind === "set_intro_layout"
-              ? editPlanItemVariant(itemId, variant.variant_id, { intro_layout: request.layout })
-              : applyPlanItemCustomEffect(itemId, variant.variant_id, request.effect);
-          const failureMessage =
-            request.kind === "set_intro_layout"
-              ? "Couldn't update the intro layout."
-              : "Couldn't apply that effect.";
-          void dispatch
-            .then(() => {
-              if (stepsFeedEnabled) startCopilotRenderPoll();
-              if (copilotRenderNavTimerRef.current !== null) {
-                window.clearTimeout(copilotRenderNavTimerRef.current);
-              }
-              copilotRenderNavTimerRef.current = window.setTimeout(() => {
-                copilotRenderNavTimerRef.current = null;
-                stopCopilotRenderPoll();
-                router.push(`/plan/items/${itemId}`);
-              }, 1400);
-            })
-            .catch((err) => {
-              notify(failureMessage);
-            });
+        if (readOnly || !variant || dirty || saving) {
+          throw new Error("Save your draft before starting a server effect or layout change.");
         }
-        // Flag off: byte-identical to today — no isRenderTurn/assistantText
-        // override, so the caller falls back to the outcome-derived
-        // "Staged: Intro layout: ... Save to render the new video." reply and
-        // the lime receipt pill.
-        //
-        // Flag on: the agent's OWN reply is REQUIRED reading here — the
-        // prompt obligates it to carry the feeling-label, the "can't be
-        // undone from chat" disclosure, and "current version stays in
-        // history" on every render-turn reply (set_intro_layout AND
-        // apply_custom_effect). Dropping it in favor of generic copy silently
-        // strips those disclosures from the user. The hardcoded fallback
-        // exists ONLY for the case the model returns an empty/whitespace
-        // reply — never as a routine override.
-        return stepsFeedEnabled
-          ? {
-              isRenderTurn: true,
-              assistantText:
-                response?.reply?.trim() ||
-                "That's a re-render, not an instant edit — starting it now.",
-            }
-          : {};
+        const request = result.renderRequest;
+        const target = { expected_generation: editorCommitBaseGeneration(variant), expected_job_id: item?.current_job_id ?? undefined };
+        const dispatch = request.kind === "set_intro_layout"
+          ? editPlanItemVariant(itemId, variant.variant_id, { intro_layout: request.layout, ...target })
+          : applyPlanItemCustomEffect(itemId, variant.variant_id, request.effect, target);
+        return dispatch.then(() => {
+          startCopilotRenderPoll();
+          setLoadNonce((value) => value + 1);
+          return {
+            isRenderTurn: true,
+            assistantText: "The new video version is rendering. Your previous version remains available.",
+          };
+        });
       }
       // PR7: undo_last_edit has no local draft representation to route
       // through the generic hasAppliedChanges path below — apply-ops.ts
@@ -5831,18 +5793,17 @@ export default function EditorShell({
       localSfx,
       overlaySuggestions,
       readOnly,
+      dirty,
+      saving,
       revealCopilotFocus,
-      router,
       selection,
       slots,
       state.bars,
       itemId,
+      item?.current_job_id,
       variant,
       lyricsOptionalActive,
-      stepsFeedEnabled,
       startCopilotRenderPoll,
-      stopCopilotRenderPoll,
-      notify,
     ],
   );
 
@@ -5900,7 +5861,22 @@ export default function EditorShell({
     [carouselControl, clear],
   );
 
+  const [editorChatInstanceId] = useState(() => crypto.randomUUID());
+  const editorChatRevision = useMemo(() => ({
+    snapshot: buildCopilotDraftSnapshot, saving, readOnly, id: crypto.randomUUID(),
+  }), [buildCopilotDraftSnapshot, saving, readOnly]).id;
+  const editorChatRevisionRef = useRef(editorChatRevision);
+  editorChatRevisionRef.current = editorChatRevision;
+  const editorConfirmation = useEditorConfirmation(editorChatRevision);
+
   const copilot = useEditCopilot({
+    persistLocally: false,
+    getDraftRevision: () => editorChatRevisionRef.current,
+    confirmServerAction: (result) => editorConfirmation.request(
+      result.renderRequest?.kind === "set_intro_layout"
+        ? "Change the intro layout and render a new video version?"
+        : "Apply this effect and render a new video version?",
+    ),
     itemId,
     variantId: variant?.variant_id ?? variantParam ?? "",
     buildSnapshot: buildCopilotDraftSnapshot,
@@ -5929,8 +5905,50 @@ export default function EditorShell({
     serverRenderPending:
       variant?.render_status === "rendering" || Boolean(variant?.speech_cut_in_flight),
     serverOperationsEnabled: !dirty && !saving,
-    onServerRenderStarted: () => router.refresh(),
+    onServerRenderStarted: () => { startCopilotRenderPoll(); setLoadNonce((value) => value + 1); },
     canRestoreOriginalTiming: Boolean(variant?.silence_cut?.removed?.length),
+  });
+
+  const editorChatState = useMemo<EditorChatState>(() => ({
+    target: {
+      itemId, variantId: variant?.variant_id ?? variantParam ?? "",
+      generationId: variant ? editorCommitBaseGeneration(variant) || null : null,
+      instanceId: editorChatInstanceId, revision: editorChatRevision,
+    },
+    messages: [...copilot.messages, ...visualChatMessages], sending: copilot.sending, error: copilot.error,
+    unavailable: copilot.unavailable || process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED !== "true",
+    dirty, saving, readOnly, historyVersion: history.version, canUndo: history.canUndo,
+    confirmation: editorConfirmation.pending,
+    renderActive: copilotRenderTurnActive, renderSteps: copilotRenderSteps,
+    visuals: overlaySuggestionsEnabled ? {
+      phase: overlaySuggestions.phase, rows: overlaySuggestions.rows, wishlist: overlaySuggestions.wishlist,
+      assets: poolAssets.map(({ id, source_filename, subject, display_url }) => ({ id, source_filename, subject, display_url })),
+      staleNotice: overlaySuggestions.staleNotice, stillWorking: overlaySuggestions.stillWorking,
+      unavailable: overlaySuggestions.unavailable, readyAssets: poolAssets.filter((asset) => asset.status === "ready").length,
+    } : undefined,
+    director: EDIT_DIRECTOR_UI_ENABLED ? {
+      suggestions: director.suggestions, appliedReceipts: director.appliedReceipts,
+      reviewed: director.reviewed, reviewVersion: director.reviewVersion, loading: director.loading, error: director.error,
+      unavailable: director.unavailable, reviewBlocked: director.reviewBlocked,
+      modelUsed: director.modelUsed, omniMaxCostPerSecondUsd: director.omniMaxCostPerSecondUsd,
+      generation: director.generation, omniDispatchPending: director.omniDispatchPending,
+      serverRendering: director.serverRendering, canRestoreOriginalTiming: director.canRestoreOriginalTiming,
+    } : null,
+  }), [itemId, variant, variantParam,
+    editorChatInstanceId, editorChatRevision, copilot.messages, copilot.sending, copilot.error,
+    copilot.unavailable, dirty, saving, readOnly, history.version, history.canUndo,
+    editorConfirmation.pending, copilotRenderTurnActive, copilotRenderSteps, director, visualChatMessages, overlaySuggestionsEnabled, overlaySuggestions, poolAssets]);
+  useEditorChatBridge({
+    enabled: Boolean(variant), state: editorChatState, copilot, director,
+    undo: history.undo, confirm: editorConfirmation.request, decide: editorConfirmation.decide,
+    visualAction: (kind, id) => {
+      if (kind === "visuals-start") { overlaySuggestions.start(); return; }
+      const row = overlaySuggestions.rows.find((suggestion) => suggestion.id === id);
+      if (!row) throw new Error("That visual suggestion is no longer available.");
+      if (kind === "visuals-accept") { handleAcceptSuggestion(row); overlaySuggestions.removeRow(row.id, { accepted: true }); }
+      else if (kind === "visuals-dismiss") overlaySuggestions.removeRow(row.id);
+      else seekPlaybackTo(Math.max(0, row.overlay.start_s - 1));
+    },
   });
 
   // Derived after the hook, not folded into toolDisabledReasons: that memo
@@ -7000,6 +7018,7 @@ export default function EditorShell({
   // song_or_lyric_variant) renders NOTHING: no dead chrome in the drawer.
   const overlaySuggestionsNode = overlaySuggestionsEnabled ? (
     <OverlaySuggestions
+      poolOnly
       suggestions={overlaySuggestions}
       assets={poolAssets}
       maxAssets={maxPoolAssets}
@@ -7751,7 +7770,6 @@ export default function EditorShell({
           saveState={saveState}
           showCopilotNotice={showCopilotSaveNotice}
           onBack={requestLeave}
-          onOpenNova={() => setActiveTool("nova")}
           onDismissCopilotNotice={() => {
             setCopilotSaveNoticeDismissed(true);
             try {
@@ -8102,26 +8120,7 @@ export default function EditorShell({
               carouselSelected={selection?.kind === "carousel"}
               onSelectCarousel={selectCarousel}
               layoutMode={layoutMode}
-              copilot={{
-                messages: copilot.messages,
-                sending: copilot.sending,
-                queued: copilot.queued,
-                error: copilot.error,
-                unavailable: copilot.unavailable,
-                restoredInput: copilot.restoredInput,
-                suggestions: copilot.suggestions,
-                historyVersion: history.version,
-                canUndo: history.canUndo,
-                onSend: (text) => void copilot.send(text),
-                onCancelQueued: copilot.cancelQueued,
-                onEditQueued: copilot.editQueued,
-                onStop: copilot.stop,
-                onUndo: history.undo,
-                onClearRestoredInput: copilot.clearRestoredInput,
-                director,
-                renderTurnActive: copilotRenderTurnActive,
-                renderTurnSteps: copilotRenderSteps,
-              }}
+
               onClose={() => setActiveTool(null)}
             />
           ) : (
@@ -8197,40 +8196,7 @@ export default function EditorShell({
             />
           </div>
         )}
-        {layoutMode === "overlay" && activeTool === "nova" && (
-          <div className="absolute bottom-4 left-[108px] right-[272px] z-40">
-            <ToolDrawer
-              tool="nova"
-              sampleWord={sampleWord}
-              appliedPresetId={appliedPresetId}
-              onAddText={() => addTextAtPlayhead()}
-              lyricsToggle={lyricsToggle}
-              onPickPreset={pickPreset}
-              layoutMode={layoutMode}
-              copilot={{
-                messages: copilot.messages,
-                sending: copilot.sending,
-                queued: copilot.queued,
-                error: copilot.error,
-                unavailable: copilot.unavailable,
-                restoredInput: copilot.restoredInput,
-                suggestions: copilot.suggestions,
-                historyVersion: history.version,
-                canUndo: history.canUndo,
-                onSend: (text) => void copilot.send(text),
-                onCancelQueued: copilot.cancelQueued,
-                onEditQueued: copilot.editQueued,
-                onStop: copilot.stop,
-                onUndo: history.undo,
-                onClearRestoredInput: copilot.clearRestoredInput,
-                director,
-                renderTurnActive: copilotRenderTurnActive,
-                renderTurnSteps: copilotRenderSteps,
-              }}
-              onClose={() => setActiveTool(null)}
-            />
-          </div>
-        )}
+
         <div
           data-region="canvas-cell"
           className="flex min-h-0 min-w-0 items-center justify-center overflow-hidden"
@@ -8466,7 +8432,7 @@ export default function EditorShell({
                       : null
                 }
                 disabledTools={railDisabledReasons}
-                novaEnabled={process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true"}
+                novaEnabled={false}
                 onToggleTool={(tool: DockTool) => {
                   if (tool === "nova") {
                     dispatchPocket({ type: "CLOSE_SHEET" });
@@ -8569,38 +8535,7 @@ export default function EditorShell({
         onSave={() => void handleSave()}
       />
 
-      {layoutMode === "light" && activeTool === "nova" && (
-        <ToolDrawer
-          tool="nova"
-          sampleWord={sampleWord}
-          appliedPresetId={appliedPresetId}
-          onAddText={() => addTextAtPlayhead()}
-          lyricsToggle={lyricsToggle}
-          onPickPreset={pickPreset}
-          layoutMode={layoutMode}
-          copilot={{
-            messages: copilot.messages,
-            sending: copilot.sending,
-            queued: copilot.queued,
-            error: copilot.error,
-            unavailable: copilot.unavailable,
-            restoredInput: copilot.restoredInput,
-            suggestions: copilot.suggestions,
-            historyVersion: history.version,
-            canUndo: history.canUndo,
-            onSend: (text) => void copilot.send(text),
-            onCancelQueued: copilot.cancelQueued,
-            onEditQueued: copilot.editQueued,
-            onStop: copilot.stop,
-            onUndo: history.undo,
-            onClearRestoredInput: copilot.clearRestoredInput,
-            director,
-            renderTurnActive: copilotRenderTurnActive,
-            renderTurnSteps: copilotRenderSteps,
-          }}
-          onClose={() => setActiveTool(null)}
-        />
-      )}
+
 
       {/* ── Pocket tool sheet: the whole ToolDrawer hosted in the Sheet
              primitive (presentation="sheet" drops its desktop wrapper). ── */}
@@ -9034,7 +8969,6 @@ function LightTopBar({
   saveState,
   showCopilotNotice,
   onBack,
-  onOpenNova,
   onDismissCopilotNotice,
   onSave,
   orientationToggle,
@@ -9045,12 +8979,10 @@ function LightTopBar({
   saveState: "idle" | "saving" | "conflict" | "error" | "partial";
   showCopilotNotice: boolean;
   onBack: () => void;
-  onOpenNova: () => void;
   onDismissCopilotNotice: () => void;
   onSave: () => void;
   orientationToggle?: React.ReactNode;
 }) {
-  const copilotEnabled = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true";
   return (
     <header className="flex h-14 items-center justify-between gap-2 border-b border-border bg-background px-3">
       <Button
@@ -9085,19 +9017,6 @@ function LightTopBar({
           <span className="text-[13px] font-semibold text-foreground">Edit video</span>
         )}
       </div>
-      {copilotEnabled && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label="Open Kria"
-          disabled={readOnly}
-          onClick={onOpenNova}
-          className="flex items-center justify-start text-[15px]"
-        >
-          <KriaWordmark className="text-[15px] leading-none text-current" />
-        </Button>
-      )}
       <Button
         type="button"
         size="sm"
