@@ -24,17 +24,29 @@ public struct TextTransformSample: Codable, Equatable, Sendable {
 
 public enum TextTransformTiming {
     public static func sample(effect: PortableTextEffect, text: String, localTime: Double,
-                              duration: Double, motion: TextMotionParameters?) throws -> TextTransformSample {
+                              duration: Double, motion: TextMotionParameters?, fade: TextFadeEnvelope? = nil) throws -> TextTransformSample {
+        let state = try baseSample(effect: effect, text: text, localTime: localTime, duration: duration, motion: motion, fade: fade)
+        var tail = 1.0
+        if let fade, fade.kind == .sequence { tail = try fade.alpha(localTime: localTime, duration: duration) }
+        return TextTransformSample(alpha: state.alpha * tail, scale: state.scale, xTranslate: state.xTranslate,
+            yTranslate: state.yTranslate, revealProgress: state.revealProgress, blurPx: state.blurPx)
+    }
+
+    private static func baseSample(effect: PortableTextEffect, text: String, localTime: Double,
+                                   duration: Double, motion: TextMotionParameters?, fade: TextFadeEnvelope?) throws -> TextTransformSample {
         guard duration.isFinite, duration > 0, localTime.isFinite else { throw RecipeError.invalidTimeline }
         // The current cloud renderer treats slide-in as a static hold.
         if effect == .staggeredSlice || effect == .dissolveOut || effect == .slideIn || effect == .karaokeLine { return TextTransformSample(alpha: 1, scale: 1, xTranslate: 0, yTranslate: 0, revealProgress: 1) }
-        guard let motion else { return try legacySample(effect: effect, localTime: localTime, duration: duration) }
+        guard let motion else { return try legacySample(effect: effect, localTime: localTime, duration: duration, fade: fade) }
         let time = try TextMotionTiming.authoredTime(effect: effect, text: text, localTime: localTime, motion: motion)
         let base = try TextMotionTiming.settleDuration(effect: effect, text: text, motion: motion) * motion.speed
         var alpha = 1.0, scale = 1.0, x = 0.0, y = 0.0, reveal = 1.0, blur = 0.0
         func ease(_ value: Double) -> Double { TextMotionTiming.ease(value, motion.easing) }
         switch effect {
         case .static, .none, .typewriter, .streamIn: break
+        case .lyricLine:
+            guard let fade, fade.kind == .lyric else { throw RecipeError.invalidTimeline }
+            alpha = try fade.alpha(localTime: time, duration: duration)
         case .smoothType:
             let state = try TextMotionTiming.smoothType(text: text, localTime: localTime, motion: motion)
             alpha = state.alpha; x = state.xTranslate; y = state.yTranslate
@@ -81,11 +93,14 @@ public enum TextTransformTiming {
     /// Legacy curves use the authored layer duration, including compressed
     /// pop keyframes and the shorter entrance window on brief slides/bounces.
     private static func legacySample(effect: PortableTextEffect, localTime time: Double,
-                                     duration: Double) throws -> TextTransformSample {
+                                     duration: Double, fade: TextFadeEnvelope?) throws -> TextTransformSample {
         var alpha = 1.0, scale = 1.0, y = 0.0, reveal = 1.0
         func ease(_ progress: Double) -> Double { TextMotionTiming.ease(progress, .easeOutCubic) }
         switch effect {
         case .static, .none, .typewriter, .streamIn, .smoothType: break
+        case .lyricLine:
+            guard let fade, fade.kind == .lyric else { throw RecipeError.invalidTimeline }
+            alpha = try fade.alpha(localTime: time, duration: duration)
         case .inkReveal, .handwriting: reveal = inkRevealProgress(time: time, duration: duration)
         case .fadeIn: alpha = ease(time / max(min(0.4, duration), 0.01))
         case .scaleUp: scale = 0.6 + 0.4 * ease(time / max(min(0.6, duration), 0.01))

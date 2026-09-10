@@ -134,6 +134,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         "staggered-slice",
         "dissolve-out",
         "karaoke-line",
+        "lyric-line",
     }:
         raise UnsupportedPortableText(f"unsupported text effect: {effect}")
     if effect == "dissolve-out" and dissolve_seed is None:
@@ -145,8 +146,6 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         "emoji_prefix",
         "pop_animated_suffix",
         "highlight_word",
-        "fade_out_ms",
-        "fade_in_ms",
         "karaoke_words",
         "theme_transition",
         "behind_subject",
@@ -157,10 +156,11 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
             raise UnsupportedPortableText(f"unsupported text treatment: {key}")
     if effect == "karaoke-line":
         return _compile_karaoke_overlay(overlay, layer_id=layer_id, canvas=canvas)
+    fade = _compile_fade_envelope(overlay)
     raw_motion = overlay.get("motion")
     motion = None
     if (
-        effect not in {"static", "none", "slide-in", "dissolve-out"}
+        (effect not in {"static", "none", "slide-in", "dissolve-out"} or fade is not None)
         and isinstance(raw_motion, dict)
         and raw_motion.get("version") == 2
     ):
@@ -335,6 +335,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         effect=effect,
         dissolve_seed=dissolve_seed if effect == "dissolve-out" else None,
         motion=motion,
+        fade=fade,
         reveal_bounds=reveal_bounds,
         discrete_reveal=discrete_reveal,
         smooth_reveal=smooth_reveal,
@@ -406,6 +407,7 @@ def _compile_handwriting_overlay(overlay: dict, *, layer_id: str, canvas, motion
         rotation_degrees=cloud._finite_float(overlay.get("rotation_deg"), 0),
         effect="handwriting",
         motion=motion,
+        fade=_compile_fade_envelope(overlay),
         handwriting=HandwritingContent(
             text=text,
             strokes=strokes,
@@ -589,3 +591,28 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
         effect="karaoke-line",
         karaoke=KaraokeContent(starts=ordered_starts, highlight=highlight),
     ), asset
+
+
+def _compile_fade_envelope(overlay: dict):
+    from app.kria.portable_text import TextFadeEnvelope
+    from app.pipeline import text_overlay_skia as cloud
+
+    curve = "sqrt" if overlay.get("fade_out_curve") == "sqrt" else "square"
+    if overlay.get("effect") == "lyric-line":
+        return TextFadeEnvelope(
+            kind="lyric",
+            in_ms=max(
+                0, int(overlay.get("fade_in_ms") if overlay.get("fade_in_ms") is not None else 150)
+            ),
+            out_ms=max(
+                0,
+                int(overlay.get("fade_out_ms") if overlay.get("fade_out_ms") is not None else 250),
+            ),
+            curve=curve,
+        )
+    if cloud._is_sequence_overlay(overlay) and cloud._sequence_fade_out_ms(overlay) > 0:
+        return TextFadeEnvelope(
+            kind="sequence", in_ms=0, out_ms=cloud._sequence_fade_out_ms(overlay), curve=curve
+        )
+    # Other effects ignore these fields in the production dispatcher.
+    return None

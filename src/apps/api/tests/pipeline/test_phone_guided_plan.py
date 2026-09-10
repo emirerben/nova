@@ -162,3 +162,37 @@ def test_dissolve_seed_follows_cloud_combined_lane_indices():
         )
     recipe = compile_phone_guided_plan(plan, bindings)
     assert [layer.dissolve_seed for layer in recipe.text_layers] == [101, 138, 175]
+
+
+def test_sequence_blocks_draw_above_other_lanes_without_changing_dissolve_seed():
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id="seq1",
+            text="First",
+            role="generative_sequence",
+            effect="fade-in",
+            start_s=0,
+            end_s=2,
+            fade_out_ms=500,
+        ),
+        TextElement(
+            id="seq2",
+            text="Second",
+            role="generative_sequence",
+            effect="static",
+            start_s=1,
+            end_s=3,
+            fade_out_ms=250,
+        ),
+    ]
+    plan.context_label_text_elements = [
+        TextElement(id="context", text="Context", effect="dissolve-out", start_s=0, end_s=3)
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert [layer.id for layer in recipe.text_layers] == ["context-0", "text-0", "text-1"]
+    assert recipe.text_layers[0].dissolve_seed == 101
+    assert [(layer.fade.kind, layer.fade.out_ms) for layer in recipe.text_layers[1:]] == [
+        ("sequence", 500),
+        ("sequence", 250),
+    ]

@@ -1499,6 +1499,7 @@
           }
         ]
       },
+      "fade": null,
       "karaoke": null,
       "dissolve_seed": null
     },
@@ -6023,6 +6024,7 @@
           }
         ]
       },
+      "fade": null,
       "karaoke": null,
       "dissolve_seed": null
     },
@@ -8299,6 +8301,7 @@
           }
         ]
       },
+      "fade": null,
       "karaoke": null,
       "dissolve_seed": null
     },
@@ -12823,6 +12826,7 @@
           }
         ]
       },
+      "fade": null,
       "karaoke": null,
       "dissolve_seed": null
     },
@@ -15099,6 +15103,7 @@
           }
         ]
       },
+      "fade": null,
       "karaoke": null,
       "dissolve_seed": null
     },
@@ -19623,6 +19628,7 @@
           }
         ]
       },
+      "fade": null,
       "karaoke": null,
       "dissolve_seed": null
     },

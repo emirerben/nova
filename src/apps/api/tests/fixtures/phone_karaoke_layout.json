@@ -316,6 +316,7 @@
       "discrete_reveal": null,
       "smooth_reveal": null,
       "staggered": null,
+      "fade": null,
       "karaoke": {
         "starts": [
           0.5,
@@ -1224,6 +1225,7 @@
       "discrete_reveal": null,
       "smooth_reveal": null,
       "staggered": null,
+      "fade": null,
       "karaoke": {
         "starts": [
           0.5,
@@ -2132,6 +2134,7 @@
       "discrete_reveal": null,
       "smooth_reveal": null,
       "staggered": null,
+      "fade": null,
       "karaoke": {
         "starts": [
           0.5,

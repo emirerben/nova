@@ -4295,7 +4295,8 @@
               "smooth-type",
               "staggered-slice",
               "dissolve-out",
-              "karaoke-line"
+              "karaoke-line",
+              "lyric-line"
             ],
             "title": "Effect",
             "type": "string"
@@ -4306,6 +4307,11 @@
             "minimum": 0,
             "title": "End",
             "type": "number"
+          },
+          "fade": {
+            "$ref": "#/components/schemas/TextFadeEnvelope",
+            "default": null,
+            "nullable": true
           },
           "handwriting": {
             "$ref": "#/components/schemas/HandwritingContent",
@@ -5158,6 +5164,47 @@
           "background"
         ],
         "title": "TextCardBlock",
+        "type": "object"
+      },
+      "TextFadeEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "curve": {
+            "enum": [
+              "square",
+              "sqrt"
+            ],
+            "title": "Curve",
+            "type": "string"
+          },
+          "in_ms": {
+            "maximum": 1800000,
+            "minimum": 0,
+            "title": "In Ms",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "lyric",
+              "sequence"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "out_ms": {
+            "maximum": 1800000,
+            "minimum": 0,
+            "title": "Out Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "in_ms",
+          "out_ms",
+          "curve"
+        ],
+        "title": "TextFadeEnvelope",
         "type": "object"
       },
       "TextGradient": {

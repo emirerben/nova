@@ -107,6 +107,7 @@ def compile_phone_guided_plan(
         raise ValueError("phone moments must have unique identities")
     canvas = _story_canvas(plan.output_orientation)
     layers = []
+    ordered_overlays = []
     for lane, elements in (
         ("text", plan.text_elements),
         ("context", plan.context_label_text_elements),
@@ -115,27 +116,34 @@ def compile_phone_guided_plan(
         overlays = build_overlays_from_text_elements(
             elements, video_duration_s=plan.resolved_duration_s, independent_box_alignment=True
         )
-        for index, overlay in enumerate(overlays):
-            if overlay.get("role") == "generative_sequence" and lane == "text":
-                raise UnsupportedPhonePlan("text sequence composition requires a native program")
-            # Guided cloud rendering concatenates the three lanes before assigning
-            # overlay indices; the dissolve noise seed must use that same order.
-            layer, font = compile_text_overlay(
-                overlay,
-                layer_id=f"{lane}-{index}",
-                canvas=canvas,
-                dissolve_seed=101 + len(layers) * 37,
+        ordered_overlays.extend(
+            (f"{lane}-{index}", overlay) for index, overlay in enumerate(overlays)
+        )
+    # Production renders non-sequence inputs first, then the sequence composite.
+    # Keep stable order within each partition, including context/narration lanes.
+    ordered_overlays.sort(key=lambda entry: entry[1].get("role") == "generative_sequence")
+    for index, (layer_id, overlay) in enumerate(ordered_overlays):
+        if overlay.get("role") == "generative_sequence" and overlay.get("effect", "none") not in {
+            "fade-in",
+            "static",
+            "none",
+            "handwriting",
+            "ink-reveal",
+        }:
+            raise UnsupportedPhonePlan("sequence effect needs composite-stream parity")
+        layer, font = compile_text_overlay(
+            overlay, layer_id=layer_id, canvas=canvas, dissolve_seed=101 + index * 37
+        )
+        if font is not None:
+            manifest[font.id] = font
+            assets[font.id] = MediaAsset(
+                id=font.id,
+                relative_path=font.id,
+                fingerprint=AssetFingerprint(
+                    hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
+                ),
             )
-            if font is not None:
-                manifest[font.id] = font
-                assets[font.id] = MediaAsset(
-                    id=font.id,
-                    relative_path=font.id,
-                    fingerprint=AssetFingerprint(
-                        hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
-                    ),
-                )
-            layers.append(layer)
+        layers.append(layer)
     preserve_audio = bool((plan.montage_audio or {}).get("preserve_source_audio"))
     return EditRecipeV2(
         canvas=Canvas(width=canvas.width, height=canvas.height),

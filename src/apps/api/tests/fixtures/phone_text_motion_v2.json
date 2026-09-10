@@ -342,6 +342,63 @@
     ]
   },
   {
+    "effect": "lyric-line",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.0,
+    "renderer_settle_duration": 0.03333333333333333,
+    "total_duration": 1.0,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.016666666666666666,
+        "authored_time": 0.016666666666666666
+      },
+      {
+        "time": 0.03333323333333333,
+        "authored_time": 0.03333323333333333
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 1.0333333333333334,
+        "authored_time": 1.0333333333333334
+      }
+    ]
+  },
+  {
     "effect": "none",
     "text": "Hello\nworld",
     "motion": {

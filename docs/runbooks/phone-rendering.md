@@ -313,3 +313,21 @@ missing, mismatched, or invalid timings.
 `slide-in` currently renders as static text in the production Skia dispatcher.
 The phone preserves that actual behavior, including ignoring motion and exit
 fades. A cloud full-frame comparison and native timing test pin this behavior.
+
+
+### Lyric and sequence fades (rollout disabled)
+
+`TextFadeEnvelope` carries the production lyric head/tail durations and square
+or square-root tail curve. Short windows clamp the head first, then the tail;
+legacy lyric defaults remain 150/250 ms. Sequence envelopes add only a tail on
+top of their entrance and motion exit alpha. A 72-case fixture captures alpha
+from the actual production dispatcher across both curves, short/long windows,
+and legacy/v2 motion; native tests match to 1e-9. Preview/H.264 export tests
+verify both lyric and sequence fade windows. The guided compiler now accepts
+sequence fade-in, static/none, handwriting, and ink-reveal blocks, placing all
+sequence text after other lanes as production does. Other sequence effects
+remain rejected pending composite-stream parity. Unrelated effects continue
+to ignore fade_in_ms/fade_out_ms, matching the dispatcher.
+
+See `docs/reviews/kri-29/coverage.md` for the concrete catalog and combination
+ledger. This is implementation coverage, not rollout or device verification.

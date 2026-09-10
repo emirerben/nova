@@ -225,6 +225,19 @@ class StaggeredContent(_TextModel):
         return self
 
 
+class TextFadeEnvelope(_TextModel):
+    kind: Literal["lyric", "sequence"]
+    in_ms: int = Field(ge=0, le=1800000)
+    out_ms: int = Field(ge=0, le=1800000)
+    curve: Literal["square", "sqrt"]
+
+    @model_validator(mode="after")
+    def valid_head(self):
+        if self.kind == "sequence" and self.in_ms != 0:
+            raise ValueError("sequence envelope only controls its tail")
+        return self
+
+
 class KaraokeContent(_TextModel):
     starts: list[float] = Field(min_length=1, max_length=100)
     highlight: TextInk
@@ -264,6 +277,7 @@ class PortableTextLayer(_TextModel):
         "staggered-slice",
         "dissolve-out",
         "karaoke-line",
+        "lyric-line",
     ] = "static"
     motion: ResolvedTextMotion | None = None
     reveal_bounds: TextRevealBounds | None = None
@@ -272,10 +286,19 @@ class PortableTextLayer(_TextModel):
     smooth_reveal: SmoothRevealContent | None = None
     staggered: StaggeredContent | None = None
     karaoke: KaraokeContent | None = None
+    fade: TextFadeEnvelope | None = None
     dissolve_seed: int | None = Field(default=None, strict=True, ge=0, le=4294967295)
 
     @model_validator(mode="after")
     def valid_window(self):
+        if (self.effect == "lyric-line") != bool(self.fade and self.fade.kind == "lyric"):
+            raise ValueError("lyric line requires its fade envelope")
+        if (
+            self.fade
+            and self.fade.kind == "sequence"
+            and self.effect not in {"static", "none", "fade-in", "handwriting", "ink-reveal"}
+        ):
+            raise ValueError("sequence fade is unsupported for this effect")
         if (self.effect == "karaoke-line") != (self.karaoke is not None):
             raise ValueError("karaoke requires timed word geometry")
         if self.karaoke and (
