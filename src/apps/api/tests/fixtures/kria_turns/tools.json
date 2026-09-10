@@ -1043,7 +1043,7 @@
                 "maximum": 60,
                 "minimum": 3,
                 "title": "Target Duration S",
-                "type": "integer"
+                "type": "number"
               },
               "text_color": {
                 "anyOf": [

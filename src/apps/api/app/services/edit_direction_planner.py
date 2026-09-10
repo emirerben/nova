@@ -199,7 +199,7 @@ def clamp_fast_montage_target_duration_s(
     duration_s: int | float,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
     video_reuse_policy: VideoReusePolicy = "once",
-) -> int:
+) -> int | float:
     """Clamp to one continuous appearance per source unless reuse was requested.
 
     Typed mixed-media holds still apply. Explicit distinct-window requests
@@ -207,11 +207,11 @@ def clamp_fast_montage_target_duration_s(
     exceed the unique footage duration. Saved snapshots are not rewritten.
     """
 
-    requested = max(3, min(60, int(duration_s)))
+    requested = max(3, min(60, duration_s))
     if video_reuse_policy == "allow_repeat":
         return requested
     if video_reuse_policy == "once":
-        capacity = sum(
+        capacities = [
             min(
                 float(ref.duration_s or 0),
                 mixed_media_hold_bounds("video", mixed_media_timing).maximum_s,
@@ -223,10 +223,15 @@ def clamp_fast_montage_target_duration_s(
             if uses_quick_photo_long_video_timing(mixed_media_timing)
             else 1.2
             for ref in media
+        ]
+        # Use the same per-source frame budget as deterministic_fast_cuts.
+        # Whole-second flooring used to discard valid fractional footage.
+        capacity = round(
+            sum(math.floor((value + 0.001) * 30 + 1e-6) for value in capacities) / 30, 6
         )
         if capacity < 3 - 0.001:
             raise ValueError("fast montage has less than the minimum 3s without repeating videos")
-        return min(requested, int(capacity + 0.001))
+        return min(requested, capacity)
     if not uses_quick_photo_long_video_timing(mixed_media_timing):
         return requested
 
@@ -270,7 +275,7 @@ def clamp_fast_montage_target_duration_s(
         raise ValueError(
             "mixed-media fast montage has less than the minimum 3s of usable source capacity"
         )
-    return min(requested, max(3, math.floor(capacity_s)))
+    return min(requested, max(3, math.floor(capacity_s * 30 + 1e-6) / 30))
 
 
 def _context_group(ref: MediaRef) -> str:
@@ -385,7 +390,7 @@ def _group_reservations_by_context(
 
 def deterministic_fast_cuts(
     media: list[MediaRef],
-    duration_s: int,
+    duration_s: int | float,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
     montage_cadence: MontageCadenceConstraint | None = None,
     *,
@@ -682,7 +687,7 @@ def deterministic_fast_cuts(
     return cuts
 
 
-def deterministic_guided_beats(media: list[MediaRef], duration_s: int) -> list[StoryBeat]:
+def deterministic_guided_beats(media: list[MediaRef], duration_s: int | float) -> list[StoryBeat]:
     """Build conservative, metadata-free story structure from renderable owned media."""
 
     eligible = [
@@ -705,7 +710,7 @@ def deterministic_guided_beats(media: list[MediaRef], duration_s: int) -> list[S
         if images:
             ordered.append(images.pop(0))
 
-    target_s = max(3, min(60, int(duration_s)))
+    target_s = max(3, min(60, duration_s))
     source_count = max(
         1,
         min(7, len(ordered), math.floor(target_s / GUIDED_STORY_MIN_MOMENT_S)),
@@ -777,7 +782,7 @@ def plan_direction_snapshot(
     direction: str,
     goal: str,
     pace: str,
-    duration_s: int,
+    duration_s: int | float,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
     montage_audio: MontageAudioPlan | None = None,
     montage_cadence: MontageCadenceConstraint | None = None,
@@ -817,13 +822,13 @@ def plan_direction_snapshot(
         montage_cadence = None
     narrated = source.narration is not None
     planning_duration_s = (
-        max(3, min(60, int(duration_s)))
+        max(3, min(60, duration_s))
         if narrated and direction == "fast_montage"
         else clamp_fast_montage_target_duration_s(
             media, duration_s, mixed_media_timing, video_reuse_policy
         )
         if direction == "fast_montage"
-        else max(3, min(60, int(duration_s)))
+        else max(3, min(60, duration_s))
     )
     output = None
     used_fallback = False

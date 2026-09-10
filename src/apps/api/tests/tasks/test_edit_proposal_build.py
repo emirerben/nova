@@ -794,7 +794,7 @@ def test_feasible_guided_duration_sums_video_and_credits_images() -> None:
 def test_adapt_target_duration_clamps_to_feasible_footage() -> None:
     # 24s brief + 6.77s footage -> adapted target is bounded by the footage.
     adapted = proposal_build.adapt_target_duration_s(24, 6.768333)
-    assert adapted <= 6
+    assert adapted == pytest.approx(6.768333)
     assert adapted >= proposal_build.MIN_GUIDED_DURATION_S
     # Never exceeds the creator's requested duration either.
     assert proposal_build.adapt_target_duration_s(5, 40.0) == 5
@@ -1188,6 +1188,45 @@ def _prepare_terminal_agent_attempt(monkeypatch, *, direction: str = "guided_sto
     return item_id, item
 
 
+def test_initial_draft_preserves_fractional_agent_output_through_approval(monkeypatch) -> None:
+    from app.pipeline.guided_story import validate_proposal_timing
+
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+    proposal = parse_edit_proposal(item.edit_proposal)
+    proposal.brief.duration_s = 6.7
+    item.edit_proposal = proposal.model_dump(mode="json")
+
+    def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+        assert agent_input.target_duration_s == 6.7
+        return agent.parse(
+            json.dumps(
+                {
+                    "title": "The Acropolis",
+                    "duration_s": 6.7,
+                    "story_beats": [
+                        {
+                            "topic": "Architecture",
+                            "thought": "The Acropolis",
+                            "media_ids": [str(_PROD_CLIP_ASSIGNMENT["media_id"])],
+                            "duration_s": 6.7,
+                        }
+                    ],
+                }
+            ),
+            agent_input,
+        )
+
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted.status == "approved"
+    assert persisted.last_approved.snapshot.duration_s == 6.7
+    assert persisted.last_approved.snapshot.story_beats[0].thought == "The Acropolis"
+    validate_proposal_timing(persisted.last_approved.snapshot)
+
+
 def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
     monkeypatch,
 ) -> None:
@@ -1278,7 +1317,7 @@ def test_alternating_matches_acceptance_survives_specialist_worker_and_receipt(
     from app.agents._schemas.creator_agent import CreativeStrategy
     from app.pipeline.guided_story import compile_execution_plan, validate_ready_result
     from app.routes.creator_agent import (
-        _balanced_integer_duration_s,
+        _balanced_duration_s,
         _resolved_cadence_for_turn,
         _seed_guided_specialist_brief,
     )
@@ -1305,7 +1344,7 @@ def test_alternating_matches_acceptance_survives_specialist_worker_and_receipt(
         cut_duration_s=1,
     )
     capacity_s = round_robin_capacity_s(manifest.media, initial_cadence)
-    recommended_s = _balanced_integer_duration_s(limit_s=capacity_s, cycle_s=2)
+    recommended_s = _balanced_duration_s(limit_s=capacity_s, cycle_s=2)
     assert capacity_s == 12
     assert recommended_s == 12
 

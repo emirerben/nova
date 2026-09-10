@@ -1,0 +1,50 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.8.2",
+  "input": {
+    "idea": "Summer in Madrid",
+    "direction": "guided_story",
+    "goal": "Label each clip with its supplied location name",
+    "creator_request": "Make a 12.7-second edit with each video appearing once. Use only the location names from the clip descriptions as the three labels.",
+    "pace": "fast",
+    "target_duration_s": 12.7,
+    "video_reuse_policy": "once",
+    "media_scope": "all",
+    "selected_media_ids": [
+      "clip-0",
+      "clip-1",
+      "clip-2"
+    ],
+    "media": [
+      {
+        "media_id": "clip-0",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.068333,
+        "subject": "Fountain",
+        "description": "Fountain"
+      },
+      {
+        "media_id": "clip-1",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 4.9,
+        "subject": "Royal Palace of Madrid",
+        "description": "Royal Palace of Madrid"
+      },
+      {
+        "media_id": "clip-2",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 3.733333,
+        "subject": "Retiro Park",
+        "description": "Retiro Park"
+      }
+    ]
+  },
+  "raw_text": "{\"title\": \"Summer in Madrid\", \"duration_s\": 12.7, \"story_beats\": [{\"topic\": \"Royal Palace of Madrid\", \"thought\": \"Royal Palace of Madrid\", \"media_ids\": [\"clip-1\"], \"layout\": \"fullscreen\", \"duration_s\": 4.9}, {\"topic\": \"Retiro Park\", \"thought\": \"Retiro Park\", \"media_ids\": [\"clip-2\"], \"layout\": \"fullscreen\", \"duration_s\": 3.73}, {\"topic\": \"Fountain\", \"thought\": \"Fountain\", \"media_ids\": [\"clip-0\"], \"layout\": \"fullscreen\", \"duration_s\": 4.07}]}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Fractional total and reordered chapters retain all three clips without a schema retry"
+  }
+}

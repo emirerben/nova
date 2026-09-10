@@ -467,28 +467,23 @@ def _quantize_quick_mixed_timeline(
 
 
 def _selected_media_ids(snapshot: EditProposalSnapshot) -> list[str]:
-    if snapshot.fast_cuts:
-        selected = list(dict.fromkeys(cut.media_id for cut in snapshot.fast_cuts))
-        required = (
-            [ref.media_id for ref in snapshot.media]
-            if snapshot.media_scope == "all"
-            else snapshot.selected_media_ids
+    selected = list(
+        dict.fromkeys(
+            [cut.media_id for cut in snapshot.fast_cuts]
+            if snapshot.fast_cuts
+            else [media_id for beat in snapshot.story_beats for media_id in beat.media_ids]
         )
-        if required is not None and set(selected) != set(required):
-            raise GuidedStoryError(
-                "guided_story_snapshot_invalid", "The timeline does not cover the selected media."
-            )
-        # Selection is a coverage set; the approved cut sequence owns order.
-        return selected
-    if snapshot.media_scope == "all":
-        return [ref.media_id for ref in snapshot.media]
-    if snapshot.selected_media_ids is not None:
-        return list(snapshot.selected_media_ids)
-    selected: list[str] = []
-    for beat in snapshot.story_beats:
-        for media_id in beat.media_ids:
-            if media_id not in selected:
-                selected.append(media_id)
+    )
+    required = (
+        [ref.media_id for ref in snapshot.media]
+        if snapshot.media_scope == "all"
+        else snapshot.selected_media_ids
+    )
+    if required is not None and set(selected) != set(required):
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid", "The timeline does not cover the selected media."
+        )
+    # Selection is a coverage set; approved cuts or story beats own order.
     return selected
 
 

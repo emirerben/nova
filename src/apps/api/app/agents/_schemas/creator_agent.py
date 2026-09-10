@@ -35,6 +35,7 @@ from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     MontageAudioPlan,
     MontageCadenceConstraint,
+    ProposalDuration,
     VideoReusePolicy,
 )
 
@@ -322,7 +323,7 @@ class CreativeStrategy(_CreatorModel):
         ),
     )
     pacing: CreativePace = "balanced"
-    target_duration_s: int = Field(default=24, ge=3, le=60, exclude_if=lambda value: value == 24)
+    target_duration_s: ProposalDuration = Field(default=24, exclude_if=lambda value: value == 24)
     render_program: RenderProgram = "guided"
     selected_media_ids: list[str] = Field(default_factory=list, max_length=MAX_CREATOR_MEDIA_REFS)
     optional_treatments: list[OptionalTreatment] = Field(default_factory=list, max_length=4)

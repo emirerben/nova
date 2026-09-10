@@ -60,7 +60,7 @@ def snapshot(cuts, *, policy="once"):
         direction="fast_montage",
         title="Summer in Madrid",
         pace="relaxed",
-        duration_s=round(sum(cut.output_duration_s for cut in cuts)),
+        duration_s=sum(cut.output_duration_s for cut in cuts),
         media=media(),
         fast_cuts=cuts,
         video_reuse_policy=policy,
@@ -80,7 +80,7 @@ def test_reported_three_video_case_uses_three_contiguous_cuts_and_compiles():
 
 def test_longer_target_shortens_to_available_unique_footage():
     cuts = planner.deterministic_fast_cuts(media(), 60)
-    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(12)
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(12.7)
     assert len(cuts) == 3
 
 
@@ -88,7 +88,7 @@ def test_single_video_default_has_one_cut_explicit_loop_can_repeat_same_window()
     single = media()[:1]
     once = planner.deterministic_fast_cuts(single, 10)
     assert len(once) == 1
-    assert once[0].output_duration_s == 3
+    assert once[0].output_duration_s == pytest.approx(112 / 30)
     repeated = planner.deterministic_fast_cuts(single, 6, video_reuse_policy="allow_repeat")
     assert len(repeated) > 1
     assert all(cut.source_start_s == 0 for cut in repeated)
@@ -181,7 +181,7 @@ def test_generated_edit_can_opt_into_loops_then_remove_them(monkeypatch):
     removed = replan(kept, "Stop looping the videos")
     assert removed.video_reuse_policy == "once"
     assert len(removed.fast_cuts) == 3
-    assert removed.duration_s == 12
+    assert removed.duration_s == pytest.approx(12.7)
     validate_proposal_timing(removed)
 
 

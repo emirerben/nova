@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.2.0] - 2026-09-10
+
+### Fixed
+- Creation and revision plans accept fractional durations such as 12.7 seconds throughout AI validation, saved proposals, footage capacity checks, and rendering. Cadence and narration targets retain their subsecond timing.
+- Guided stories can use selected clips in story order without failing compilation because that order differs from upload order. Missing selected clips still fail validation.
+
 ## [0.76.1.0] - 2026-09-10
 
 ### Changed

@@ -621,7 +621,7 @@ def test_mixed_media_target_is_clamped_to_image_and_video_capacity() -> None:
         edit_direction_planner.clamp_fast_montage_target_duration_s(
             media, 60, profile, "distinct_windows"
         )
-        == 6
+        == 6.8
     )
     # No profile means the legacy 3–60s target contract remains unchanged.
     assert (
@@ -676,8 +676,8 @@ def test_one_video_one_photo_fallback_succeeds_at_adjacency_aware_clamp(monkeypa
         mixed_media_timing=profile,
     )
 
-    assert planned.duration_s == 6
-    assert sum(cut.output_duration_s for cut in planned.fast_cuts or []) == pytest.approx(6)
+    assert planned.duration_s == 6.8
+    assert sum(cut.output_duration_s for cut in planned.fast_cuts or []) == pytest.approx(6.8)
 
 
 def test_mixed_media_target_rejects_capacity_below_agent_minimum() -> None:
@@ -758,8 +758,8 @@ def test_mixed_media_fallback_uses_clamped_target(monkeypatch) -> None:
         mixed_media_timing=profile,
     )
 
-    assert planned.duration_s == 16
-    assert sum(cut.output_duration_s for cut in planned.fast_cuts or []) == pytest.approx(16)
+    assert planned.duration_s == 16.8
+    assert sum(cut.output_duration_s for cut in planned.fast_cuts or []) == pytest.approx(16.8)
 
 
 def test_real_large_mixed_media_shape_selects_a_timed_subset_without_overlap() -> None:

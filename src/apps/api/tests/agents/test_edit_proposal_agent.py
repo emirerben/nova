@@ -1217,12 +1217,12 @@ def test_fast_montage_rejects_existing_overlapping_source_footage() -> None:
         EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
 
 
-def test_guided_story_fractional_duration_remains_invalid() -> None:
+def test_guided_story_fractional_duration_is_preserved() -> None:
     payload = json.loads(_raw(["media-0", "media-1", "media-2"]))
     payload["duration_s"] = 24.2
 
-    with pytest.raises(SchemaError, match="valid integer"):
-        EditProposalAgent(None).parse(json.dumps(payload), _input(3))  # type: ignore[arg-type]
+    output = EditProposalAgent(None).parse(json.dumps(payload), _input(3))  # type: ignore[arg-type]
+    assert output.duration_s == 24.2
 
 
 def test_accepts_one_intentionally_unused_source_from_six() -> None:

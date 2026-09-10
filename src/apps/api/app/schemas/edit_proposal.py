@@ -15,9 +15,24 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    WithJsonSchema,
+    field_validator,
+    model_validator,
+)
 
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
+
+# Keep existing integer JSON stable for approval hashes while accepting fractions.
+ProposalDuration = Annotated[
+    int | float,
+    Field(ge=3, le=60),
+    WithJsonSchema({"type": "number", "minimum": 3, "maximum": 60}),
+]
 
 ProposalStatus = Literal[
     "briefing",
@@ -184,22 +199,22 @@ def rejects_round_robin_cadence(text: str) -> bool:
     )
 
 
-def recognize_total_duration_s(text: str) -> int | None:
+def recognize_total_duration_s(text: str) -> int | float | None:
     """Recognize an explicit whole-output duration without guessing from cut timing."""
 
     normalized = " ".join(str(text or "").casefold().split())
     patterns = (
-        r"\b(?:for|lasting)\s+(\d{1,2})\s*(?:seconds?|secs?|s)\b",
-        r"\b(?:total|length)\s+(?:of\s+)?(\d{1,2})\s*(?:seconds?|secs?|s)\b",
-        r"\bmake\s+it\s+(\d{1,2})\s*(?:seconds?|secs?|s)\b",
-        r"\bmake\s+(?:a\s+)?(\d{1,2})[-\s]*(?:second|sec|s)\s+(?:edit|video)\b",
-        r"\b(?:want|need|prefer)\s+(?:a\s+)?(\d{1,2})[-\s]*(?:second|sec|s)\s+"
+        r"\b(?:for|lasting)\s+(\d{1,2}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+        r"\b(?:total|length)\s+(?:of\s+)?(\d{1,2}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+        r"\bmake\s+it\s+(\d{1,2}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+        r"\bmake\s+(?:a\s+)?(\d{1,2}(?:\.\d+)?)[-\s]*(?:second|sec|s)\s+(?:edit|video)\b",
+        r"\b(?:want|need|prefer)\s+(?:a\s+)?(\d{1,2}(?:\.\d+)?)[-\s]*(?:second|sec|s)\s+"
         r"(?:edit|video)\b",
     )
     for pattern in patterns:
         match = re.search(pattern, normalized)
         if match is not None:
-            value = int(match.group(1))
+            value = float(match.group(1)) if "." in match.group(1) else int(match.group(1))
             return value if 3 <= value <= 60 else None
     return None
 
@@ -665,7 +680,7 @@ class FastMontageCut(BaseModel):
 class DirectionHypothesis(BaseModel):
     direction: ProposalDirection
     pace: ProposalPace
-    duration_s: int = Field(ge=3, le=60)
+    duration_s: ProposalDuration
     text_density: TextDensity
     audio_role: AudioRole
     rationale: str = Field(min_length=1, max_length=600)
@@ -684,7 +699,7 @@ class EditProposalSnapshot(BaseModel):
     goal: str = Field(default="", max_length=500)
     pace: ProposalPace = "balanced"
     # No artificial floor — see ProposalBrief.duration_s.
-    duration_s: int = Field(ge=3, le=60)
+    duration_s: ProposalDuration
     title: str = Field(min_length=1, max_length=100)
     # Confirmed Main Creator typography is part of the immutable proposal
     # snapshot, so the async worker cannot replace it with generated copy.
@@ -1081,7 +1096,7 @@ class ProposalBrief(BaseModel):
     # No artificial floor: the planner adapts the story length to whatever
     # footage is actually available (draft_edit_proposal clamps this against
     # analyzed media before it reaches the agent). See agents/DECISIONS.md.
-    duration_s: int = Field(default=24, ge=3, le=60)
+    duration_s: ProposalDuration = 24
     creator_request: str = Field(default="", max_length=12000)
     media_scope: MediaScope | None = Field(default=None, exclude_if=lambda value: value is None)
     selected_media_ids: list[str] | None = Field(
