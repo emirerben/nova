@@ -19,7 +19,7 @@ final class NativeDissolveWarp: @unchecked Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let pixel = noise.textMapPixel(x: x, y: y)
-                let offset = ((height - 1 - y) * width + x) * 4
+                let offset = (y * width + x) * 4
                 for channel in 0..<4 { bytes[offset + channel] = UInt8(min(255, max(0, (pixel[channel] * 255).rounded()))) }
             }
         }
@@ -31,11 +31,11 @@ final class NativeDissolveWarp: @unchecked Sendable {
         #include <CoreImage/CoreImage.h>
         using namespace metal;
         extern "C" { namespace coreimage {
-        [[stitchable]] float4 kriaDissolveWarp(sampler source, sampler field, float scale, destination dest) {
-            float2 p = dest.coord();
+        [[stitchable]] float4 kriaDissolveWarp(sampler source, sampler field, float scale, float growth, float2 center, destination dest) {
+            float2 p = (dest.coord() - center) / growth + center;
             float4 d = field.sample(field.transform(p));
             float2 vector = d.a > 0.0 ? d.rg / d.a - 0.5 : float2(-0.5);
-            float2 location = floor(p + vector * scale) + 0.5;
+            float2 location = floor(p + vector * float2(scale, -scale)) + 0.5;
             return source.sample(source.transform(location));
         }
         }}
@@ -44,11 +44,16 @@ final class NativeDissolveWarp: @unchecked Sendable {
         self.kernel = kernel
     }
 
-    func image(source: CIImage, scale: Double) throws -> CIImage {
-        guard scale.isFinite, (0...2000).contains(scale) else { throw RecipeError.invalidTimeline }
+    func image(source: CIImage, scale: Double, growth: Double = 1) throws -> CIImage {
+        guard scale.isFinite, (0...2000).contains(scale), growth.isFinite, (1...1.1).contains(growth) else { throw RecipeError.invalidTimeline }
+        let extent = self.extent
         guard let image = kernel.apply(extent: extent, roiCallback: { index, rect in
-            index == 0 ? rect.insetBy(dx: -scale / 2 - 1, dy: -scale / 2 - 1) : rect
-        }, arguments: [source.cropped(to: extent), map, scale]) else { throw MediaEngineError.unsupportedCapability }
+            let center = CGPoint(x: extent.midX, y: extent.midY)
+            let sampleRect = CGRect(x: (rect.minX - center.x) / growth + center.x,
+                                    y: (rect.minY - center.y) / growth + center.y,
+                                    width: rect.width / growth, height: rect.height / growth)
+            return index == 0 ? sampleRect.insetBy(dx: -scale / 2 - 1, dy: -scale / 2 - 1) : sampleRect.insetBy(dx: -1, dy: -1)
+        }, arguments: [source.cropped(to: extent), map, scale, growth, CIVector(x: extent.midX, y: extent.midY)]) else { throw MediaEngineError.unsupportedCapability }
         return image
     }
 }

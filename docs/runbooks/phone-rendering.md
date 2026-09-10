@@ -279,3 +279,16 @@ displacement through a Metal Core Image kernel. `DissolveWarpTests` compares
 scales, including clipped edges, with exact channel equality. The complete
 text effect still needs its final transform, opacity, and particle composition
 and its preview/export gate. Shader creation failure remains unsupported.
+
+`NativeDissolveRenderer` now composes the canvas-centered growth and seeded
+particle mask. `DissolveCompositionTests` checks all 4,300,800 alpha pixels over
+14 frames, with mean absolute error ≤1 byte and total alpha within 3% of Skia;
+the observed worst full-frame error is 0.48 byte. Diagnostic PNGs confirmed
+orientation and breakup. Unlike its nominal timing helper, the cloud image
+filter does not apply intermediate paint opacity: only the zero-alpha early
+return clears the last frame. Native composition preserves that behavior.
+The map and particle field retain eight bytes per canvas pixel within the
+caller-supplied budget. Portable text-layer integration and preview/export
+verification are still outstanding; this does not enable the effect.
+Generate Python fixtures with `PYTHONPATH=.` so the shared editable environment
+cannot silently import another checkout's renderer.

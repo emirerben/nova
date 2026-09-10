@@ -17,7 +17,7 @@ final class DissolveWarpTests: XCTestCase {
         var source = [UInt8](repeating: 0, count: width * height * 4)
         for y in 0..<height {
             for x in 0..<width {
-                let i = ((height - 1 - y) * width + x) * 4
+                let i = (y * width + x) * 4
                 source[i] = UInt8(x % 251); source[i + 1] = UInt8(y % 251)
                 source[i + 2] = UInt8((x + y) % 251); source[i + 3] = 255
             }
@@ -32,7 +32,7 @@ final class DissolveWarpTests: XCTestCase {
                 var pixels = [UInt8](repeating: 0, count: source.count)
                 context.render(output, toBitmap: &pixels, rowBytes: width * 4, bounds: warp.extent, format: .RGBA8, colorSpace: nil)
                 for pixel in test.pixels {
-                    let offset = ((height - 1 - pixel.y) * width + pixel.x) * 4
+                    let offset = (pixel.y * width + pixel.x) * 4
                     for channel in 0..<4 {
                         XCTAssertEqual(Int(pixels[offset + channel]), pixel.rgba[channel], "seed=\(seed) scale=\(test.scale) pixel=\(pixel.x),\(pixel.y) channel=\(channel)")
                     }
