@@ -14,11 +14,12 @@ xcodebuild -project Kria.xcodeproj -scheme Kria \
 ```
 
 After sign-in, `ChatWorkspaceView` is the app shell: the active creation thread
-fills the screen, project switching and the finished-video gallery live in
-sheets, and the safe-area composer remains available throughout the workflow.
-Format cards use the server-owned `select_format` action; messages, approvals,
-render state, and results are projected from the runtime-v2 thread instead of
-being held as a separate native flow. If an account has no thread, the shell
+fills the screen, the left drawer switches projects and opens Gallery, and the
+safe-area composer remains available throughout the workflow.
+Format cards use the server-owned `select_format` action. New chats select runtime
+v2 only when advertised by the server; existing conversations retain their runtime.
+Messages, approvals, render state, and results are projected from that thread.
+If an account has no thread, the shell
 creates one and restores that active project on the next launch.
 
 `Kria/Core` owns API, auth, secure token storage, SwiftData cache models, upload
@@ -29,16 +30,16 @@ from server capabilities, batches local mutations into one undoable document,
 and submits one atomic renderer commit when the user taps Save. It keeps the
 saved state while the replacement preview renders, then reloads the new
 generation without discarding unrelated server-owned fields.
-`Kria/DesignSystem` owns the paper/ink/lime
-tokens and accessible controls. `Kria/Features` owns the adaptive phone-first
+`Kria/DesignSystem` owns the Sunlit semantic color roles, approved Kria wordmark,
+and accessible controls. `Kria/Features` owns the adaptive phone-first
 shells and flow surfaces. `Packages/KriaMediaEngine` is a local package seam;
 the app does not duplicate its timeline or render rules.
 
 The API adapter follows the existing contracts: `/auth/mobile/exchange` and
 `/auth/mobile/refresh` and `/auth/mobile/revoke` for native sessions, `/me/jobs` and its playback URL for
-the library, and `/creation-threads` plus runtime-v2 turns/delta/draft/approval
-operations for creation. Format choices come from
-`/creation-threads/capabilities`, so disabled archetypes are never offered.
+the library, and `/creation-threads` for creation. Runtime v1 uses messages/actions;
+v2 uses turns/deltas/approvals. Format choices and runtime support come from
+`/creation-threads/capabilities`; unavailable formats explain why they cannot be selected.
 Native editor entry resolves an existing plan item directly or promotes a
 library job through `/me/jobs/{id}/open-in-editor`; variant state comes from
 `/generative-jobs/{id}/status`, and Save posts the full changed-section batch to

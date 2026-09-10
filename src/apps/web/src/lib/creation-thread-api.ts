@@ -21,7 +21,7 @@ export type {
 
 const BASE = "/api/plan/creation-threads";
 
-export type CreationFormat = "montage" | "narrated_planned" | "subtitled";
+export type CreationFormat = "montage" | "narrated_planned" | "subtitled" | "slides";
 export type CreationAction =
   | "select_format"
   | "select_edit_format"
@@ -409,7 +409,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function creationFormat(value: unknown): CreationFormat | null {
-  return value === "montage" || value === "narrated_planned" || value === "subtitled"
+  return value === "montage"
+      || value === "narrated_planned"
+      || value === "subtitled"
+      || value === "slides"
     ? value
     : null;
 }
@@ -417,6 +420,7 @@ export function creationFormat(value: unknown): CreationFormat | null {
 export function creationFormatLabel(value: CreationFormat | null): string {
   if (value === "narrated_planned") return "Narrated";
   if (value === "subtitled") return "Talking to camera";
+  if (value === "slides") return "Photo & video post";
   return "Montage";
 }
 

@@ -9,6 +9,9 @@ import {
   deriveTextLaneRows,
   sortMediaTimelineBars,
   isAiSequenceBar,
+  isCaptionBar,
+  isCaptionUnitBar,
+  isNarrationCaptionBar,
   localCaptionBarPatchFromPatch,
   seedBarsFromVariant,
   smartCaptionPreviewSizePx,
@@ -654,6 +657,121 @@ describe("isAiSequenceBar (PR-B: AI sequence badge)", () => {
     expect(saved.source_params).toEqual(original.source_params);
     expect(saved.role).toBe("generative_sequence");
     expect(isAiSequenceBar(aiSequenceBar)).toBe(true);
+  });
+});
+
+describe("isCaptionUnitBar / isNarrationCaptionBar (KRI-18)", () => {
+  const cueCaptionBar: TextElementBar = {
+    id: "caption-0",
+    text: "we flew to Turkey",
+    start_s: 0,
+    end_s: 1,
+    role: "narrated_caption",
+  };
+  const narrationCaptionBar: TextElementBar = {
+    id: "narration-caption-1",
+    text: "we flew to Turkey",
+    start_s: 0,
+    end_s: 1,
+    role: "generative_sequence",
+    source_params: { source: "caption_cue", key: "0", identity: "pinned-narration-caption-0" },
+  };
+  const sequenceSceneBar: TextElementBar = {
+    id: "sequence-1",
+    text: "edits and I didn't really like CapCut",
+    start_s: 0.3,
+    end_s: 1.8,
+    role: "generative_sequence",
+    source_params: { source: "sequence_scene", key: "0:1" },
+  };
+  const plainIntroBar: TextElementBar = {
+    id: "title-1",
+    text: "Big title",
+    start_s: 0,
+    end_s: 2,
+    role: "generative_intro",
+  };
+
+  it("isCaptionUnitBar is true for a caption_cues-derived bar", () => {
+    expect(isCaptionUnitBar(cueCaptionBar)).toBe(true);
+  });
+
+  it("isCaptionUnitBar is true for a guided-story narration caption (generative_sequence + caption_cue source)", () => {
+    expect(isCaptionUnitBar(narrationCaptionBar)).toBe(true);
+  });
+
+  it("isCaptionUnitBar is false for an AI-sequence bar (sequence_scene provenance, not caption_cue)", () => {
+    expect(isCaptionUnitBar(sequenceSceneBar)).toBe(false);
+  });
+
+  it("isCaptionUnitBar is false for a plain generative_intro bar", () => {
+    expect(isCaptionUnitBar(plainIntroBar)).toBe(false);
+  });
+
+  it("isCaptionUnitBar is false for null/undefined", () => {
+    expect(isCaptionUnitBar(null)).toBe(false);
+    expect(isCaptionUnitBar(undefined)).toBe(false);
+  });
+
+  it("isNarrationCaptionBar is true only for the caption_cue-sourced representation", () => {
+    expect(isNarrationCaptionBar(narrationCaptionBar)).toBe(true);
+    expect(isNarrationCaptionBar(cueCaptionBar)).toBe(false);
+    expect(isNarrationCaptionBar(sequenceSceneBar)).toBe(false);
+    expect(isNarrationCaptionBar(plainIntroBar)).toBe(false);
+  });
+
+  // Anti-drift guard: isCaptionBar is the PERSISTENCE predicate (routes Save
+  // through caption_cues/captionDirty). It must stay narrow to
+  // role === "narrated_caption" — broadening it to match narration captions
+  // would route their save into the caption_cues endpoint, which the
+  // guided-editor commit hard-rejects.
+  it("isCaptionBar (persistence) stays false for a narration caption — the union must not leak into save routing", () => {
+    expect(isCaptionBar(narrationCaptionBar)).toBe(false);
+    expect(isCaptionBar(cueCaptionBar)).toBe(true);
+  });
+
+  it("barsToCaptionCues excludes a narration caption bar", () => {
+    expect(barsToCaptionCues([narrationCaptionBar, cueCaptionBar])).toEqual([
+      expect.objectContaining({ text: cueCaptionBar.text }),
+    ]);
+  });
+
+  it("barsToTextElements keeps a narration caption bar, merging the original's word_timings back on (the bar type doesn't model that field)", () => {
+    const originalWordTimings = [{ text: "we", start_s: 0, end_s: 0.3 }];
+    const original: TextElement = {
+      id: narrationCaptionBar.id,
+      text: narrationCaptionBar.text,
+      start_s: narrationCaptionBar.start_s,
+      end_s: narrationCaptionBar.end_s,
+      role: "generative_sequence",
+      source_params: narrationCaptionBar.source_params,
+      word_timings: originalWordTimings,
+    };
+    const [saved] = barsToTextElements(
+      [narrationCaptionBar],
+      new Map([[original.id, original]]),
+    );
+    expect(saved.id).toBe(narrationCaptionBar.id);
+    expect(saved.source_params).toEqual(narrationCaptionBar.source_params);
+    expect(saved.word_timings).toEqual(originalWordTimings);
+  });
+
+  it("a mixed bar set splits into a single-row caption lane and a compacted text lane, not one stacked lane", () => {
+    const narrationCaptions = Array.from({ length: 6 }, (_, i) => ({
+      ...narrationCaptionBar,
+      id: `narration-caption-${i}`,
+      start_s: i * 0.3,
+      end_s: (i + 1) * 0.3,
+    }));
+    const allBars = [plainIntroBar, ...narrationCaptions];
+    const captionBars = allBars.filter(isCaptionUnitBar);
+    const plainTextBars = allBars.filter((b) => !isCaptionUnitBar(b));
+    expect(captionBars).toHaveLength(6);
+    expect(plainTextBars).toEqual([plainIntroBar]);
+    // The caption lane itself renders every bar at a single row (see
+    // EditorTimelineBody's captions lane — it never calls deriveLaneRows);
+    // this pins that stacking is impossible for the TEXT lane specifically.
+    expect(deriveTextLaneRows(plainTextBars).rowCount).toBe(1);
   });
 });
 

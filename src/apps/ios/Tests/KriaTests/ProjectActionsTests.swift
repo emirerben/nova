@@ -248,6 +248,10 @@ import SwiftData
         var held: ProjectActionDeferredProtocol?
         var requests = 0
         ProjectActionDeferredProtocol.handler = { transport in
+            if transport.request.url?.path == "/creation-threads/capabilities" {
+                transport.finish(200, Data(#"{"formats":[],"runtime_versions":[1]}"#.utf8))
+                return
+            }
             requests += 1; held = transport
             if requests == 1 { started.fulfill() }
             else { transport.finish(200, self.response(PreviewFixtures.projectID)) }
@@ -276,6 +280,10 @@ import SwiftData
         let started = expectation(description: "Project list suspended")
         var held: ProjectActionDeferredProtocol?
         ProjectActionDeferredProtocol.handler = { transport in
+            if transport.request.url?.path == "/creation-threads/capabilities" {
+                transport.finish(200, Data(#"{"formats":[],"runtime_versions":[1]}"#.utf8))
+                return
+            }
             if transport.request.httpMethod == "GET" {
                 held = transport; started.fulfill()
             } else {

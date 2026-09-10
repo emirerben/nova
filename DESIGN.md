@@ -531,3 +531,7 @@ system authentication, pickers, consent, and share interfaces keep platform
 behavior. Navigation uses a branded left drawer with Gallery, recent chats,
 New chat, and account access. Composer input is text and attachments; microphone
 chat input is deferred. See `docs/runbooks/ios-development.md` for review fixtures.
+
+### iOS wordmark asset
+
+The native app uses the approved Main Brand Assets icon artwork (Paper ETC-0): DynaPuff letterforms in `#9BCAFF` on white `#FFFFFF` for the app icon. `KriaWordmark.imageset` preserves the same lettering as a transparent vector PDF, cropped to the artwork bounds and centered within the existing header frame. Do not reconstruct this mark with independent SwiftUI text offsets. This artwork color does not change the semantic Sky selection token.

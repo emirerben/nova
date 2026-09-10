@@ -267,6 +267,7 @@ struct FormatStage: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(isBusy)
+                        .accessibilityIdentifier("format-\(format.serverValue)")
                         .accessibilityHint("Choose \(format.title) as this video's format")
                     }
                 }
@@ -291,6 +292,9 @@ struct FootageStage: View {
     let addFootage: () -> Void
     let continueWithFootage: () -> Void
     let changeFormat: () -> Void
+    var attachedMedia: [CreationAttachedMedia] = []
+    var isBusy = false
+    var removeMedia: (String) -> Void = { _ in }
 
     private var readiness: FootageReadiness {
         FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count)
@@ -336,20 +340,26 @@ struct FootageStage: View {
                         .font(KriaFont.body(12).weight(.medium))
                         .foregroundStyle(KriaColor.zinc)
 
-                    HStack(spacing: 8) {
-                        ForEach(0..<min(readiness.attachedCount, 5), id: \.self) { index in
-                            FootageThumbnail(index: index)
+                    ForEach(attachedMedia) { media in
+                        HStack(spacing: 10) {
+                            CreationAttachmentThumbnail(media: media)
+                            Text(media.filename).font(KriaFont.body(12)).lineLimit(1)
+                            Spacer()
+                            Button { removeMedia(media.id) } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
+                                .accessibilityLabel("Remove \(media.filename)")
+                                .disabled(isBusy || !uploads.isEmpty)
                         }
                     }
                 }
 
                 Button("Continue with \(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips")", action: continueWithFootage)
                     .buttonStyle(CanonicalPrimaryButtonStyle())
+                .disabled(isBusy || !readiness.canContinue)
             }
 
             if readiness.pendingCount > 0 {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Uploading \(readiness.pendingCount) \(readiness.pendingCount == 1 ? "clip" : "clips")…")
+                    Text("Uploading \(readiness.pendingCount) \(readiness.pendingCount == 1 ? "file" : "files")…")
                         .font(KriaFont.body(12).weight(.medium))
                         .foregroundStyle(KriaColor.zinc)
                     if let active = uploads.first {
@@ -378,7 +388,7 @@ struct FootageReadiness: Equatable, Sendable {
         self.pendingCount = max(0, pendingCount)
     }
 
-    var canContinue: Bool { attachedCount > 0 }
+    var canContinue: Bool { attachedCount > 0 && pendingCount == 0 }
 }
 
 private struct FootageThumbnail: View {
@@ -478,6 +488,7 @@ private struct DirectionRow: View {
 }
 
 struct RenderingStage: View {
+    var isPreparing = false
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             AssistantHeading(
@@ -489,7 +500,7 @@ struct RenderingStage: View {
                 RenderStep(
                     icon: nil,
                     isActive: true,
-                    title: "Rendering final video",
+                    title: isPreparing ? "Preparing your footage and edit" : "Rendering final video",
                     detail: "Timing varies with footage length"
                 )
             }
@@ -682,6 +693,7 @@ struct ThinkingRow: View {
         .frame(minHeight: 30)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Kria is thinking")
+        .accessibilityIdentifier("chat-thinking")
     }
 }
 

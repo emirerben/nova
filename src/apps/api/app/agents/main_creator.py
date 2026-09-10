@@ -11,7 +11,7 @@ import json
 import re
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
@@ -29,9 +29,10 @@ from app.schemas.edit_proposal import (
     recognize_mixed_media_timing,
     recognize_round_robin_cadence,
     rejects_round_robin_cadence,
+    resolve_video_reuse_policy,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-07-v18"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-10-v21"
 
 
 class MainCreatorInput(BaseModel):
@@ -95,6 +96,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         )
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
+        self._schema_feedback = ""
         try:
             data = json.loads(raw_text)
             if not isinstance(data, dict):
@@ -139,10 +141,17 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         cut_duration_s=cadence_cut_s,
                         reuse_policy=reuse_policy,
                     )
+                reuse = "once"
+                for message in [request_contract, *user_messages, input.user_message]:
+                    reuse = resolve_video_reuse_policy(message, reuse)
+                reuse = resolve_video_reuse_policy(input.user_message, reuse, cadence)
+                if reuse == "once":
+                    cadence = None
                 strategy = action.strategy.model_copy(
                     update={
                         "mixed_media_timing": timing,
                         "montage_cadence": cadence,
+                        "video_reuse_policy": reuse,
                         "media_scope": _explicit_media_scope_from_request(combined_request),
                     }
                 )
@@ -156,11 +165,24 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     }
                 )
             return MainCreatorOutput(action=action)
+        except ValidationError as exc:
+            # Tell the retry which contract fields failed, without echoing
+            # private field values or the model's full response into logs.
+            self._schema_feedback = "; ".join(
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['type']}"
+                for error in exc.errors(include_input=False, include_context=False)[:8]
+            )[:1000]
+            raise SchemaError(f"main_creator: invalid output: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
 
     def schema_clarification(self) -> str:
-        return "\nReturn only the documented JSON envelope with one valid action object."
+        feedback = getattr(self, "_schema_feedback", "")
+        return (
+            "\nReturn only the documented JSON envelope with one valid action object."
+            + (f"\nCorrect these schema errors: {feedback}." if feedback else "")
+            + " Use only documented fields, exact enum values, and #RRGGBB colors."
+        )
 
 
 def _repair_action_envelope(action: object) -> object:

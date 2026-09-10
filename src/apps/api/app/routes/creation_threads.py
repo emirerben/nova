@@ -153,6 +153,7 @@ _PAPER_FORMATS = {
     "montage": "montage",
     "narrated": "narrated_planned",
     "talking_to_camera": "subtitled",
+    "slides": "slides",
 }
 # Valid neutral context for a new chat project before onboarding has generated
 # a personalized persona. Keep this schema-valid so render dispatch can use the
@@ -260,6 +261,8 @@ class CreationMediaCapabilitiesOut(BaseModel):
 class CreationCapabilitiesOut(BaseModel):
     formats: list[CreationFormatCapabilityOut]
     media: CreationMediaCapabilitiesOut
+    runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
+    visuals_enabled: bool = False
 
 
 class CreateBody(StrictBody):
@@ -556,6 +559,8 @@ def _available_formats() -> dict[str, str]:
         available["narrated"] = "narrated_planned"
     if settings.subtitled_archetype_enabled:
         available["talking_to_camera"] = "subtitled"
+    if settings.slide_posts_enabled:
+        available["slides"] = "slides"
     return available
 
 
@@ -2475,6 +2480,10 @@ async def _agent_message(
 async def capabilities(user: CurrentUser) -> dict[str, Any]:
     _ = user
     return {
+        "runtime_versions": [1, 2] if settings.kria_runtime_v2_enabled else [1],
+        "visuals_enabled": bool(
+            settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
+        ),
         "formats": [
             {
                 "id": key,
@@ -3604,7 +3613,14 @@ async def action_thread(
             # for a bounded retry. Reconcile first, then reopen confirmation
             # so the normal manifest/hash/ownership fences and dispatcher are
             # reused rather than creating a second retry state machine.
-            if (
+            failed_before_dispatch = (
+                body.action == "retry"
+                and current_job is None
+                and session.status == "failed"
+                and (getattr(session, "last_error", None) or {}).get("code") == "execution_failed"
+                and bool((session.active_plan or {}).get("plan_hash"))
+            )
+            if not failed_before_dispatch and (
                 current_job is None
                 or getattr(current_job, "status", None) not in PLAN_ITEM_JOB_TERMINAL
             ):
@@ -3612,7 +3628,7 @@ async def action_thread(
             # A running receipt owns its already-committed replacement Job.
             # Reconciling that Job before the controller resumes can move the
             # session out of its resumable executing/rendering phases.
-            if recovery_receipt_status != "running":
+            if recovery_receipt_status != "running" and not failed_before_dispatch:
                 await reconcile_render_state(db, session)
             if (
                 recovery_receipt_status not in {"running", "succeeded"}

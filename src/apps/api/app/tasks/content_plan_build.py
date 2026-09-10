@@ -1041,12 +1041,11 @@ def _dispatch_item_render(
 
     `item.clip_gcs_paths` must already be set on the session before calling.
 
-    ``bypass_guided_edit_gate``: ONLY for draft_edit_proposal's
-    GUIDED_AUTO_DESIGN_ENABLED clip-only fallback (agent/infeasible-footage
-    failure, zero registered pool assets) — dispatches the legacy clip render
-    even though the proposal is not "approved" (it's "failed"; enforcement
-    would otherwise 409 it here exactly like the Generate route). Every other
-    caller must leave this False.
+    ``bypass_guided_edit_gate``: internal clip-only execution for an explicitly
+    confirmed native Creator plan, runtime-v2 native execution, or
+    draft_edit_proposal's GUIDED_AUTO_DESIGN_ENABLED fallback. These paths have
+    no approved guided proposal. Zero registered pool assets is rechecked under
+    the item lock; ordinary Generate callers must leave this False.
     """
     from app.agents._schemas.edit_format import guided_edit_applicable  # noqa: PLC0415
     from app.config import settings  # noqa: PLC0415

@@ -23,15 +23,26 @@ import json
 import shutil
 import subprocess
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import structlog
+
+from app.pipeline.look_presets import look_preset_filter
+
+if TYPE_CHECKING:
+    from app.schemas.slide_post import SlideEdits
 
 log = structlog.get_logger()
 
 Canvas = tuple[int, int]
+
+# The only font a v1 slide-text overlay uses — matches the product's own UI
+# font (DESIGN.md). No font picker in v1 (plans/024 follow-up eng-review).
+_SLIDE_TEXT_FONT = str(Path(__file__).resolve().parents[3] / "assets" / "fonts" / "Inter-Bold.ttf")
 
 # Default per-image hold in the stitched PREVIEW (the export bundle's own
 # image files are full-resolution stills with no duration concept — this
@@ -110,30 +121,109 @@ def _scale_crop_filter(canvas: Canvas) -> str:
     return f"scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch}"
 
 
-def normalize_image_slide(src_path: str, out_path: str, *, canvas: Canvas) -> None:
+def _drawtext_y_expr(position: str) -> str:
+    if position == "top":
+        return "h*0.08"
+    if position == "bottom":
+        return "h*0.85-text_h"
+    return "(h-text_h)/2"
+
+
+def _escape_drawtext_path(path: str) -> str:
+    """Escape a filesystem path for use as a drawtext option VALUE
+    (`fontfile=`/`textfile=`). Only the filtergraph's own delimiters need
+    escaping here — unlike `text=`, there is no separate FFmpeg-internal
+    quoting layer for these options."""
+    return path.replace("\\", "\\\\").replace(":", "\\:")
+
+
+@contextmanager
+def _edits_filter_fragment(
+    edits: SlideEdits | None, *, canvas: Canvas, out_path: str
+) -> Iterator[str | None]:
+    """Build the FFmpeg `-vf` fragment for one slide's edits, or None.
+
+    Appended after the crop/scale filter and before any fps filter — same
+    ordering `look_presets.py`'s own docstring specifies for every other
+    render path (crop/HDR/recipe hint, then look, then text/overlays).
+
+    Text goes through `textfile=`, not an inline escaped `text=` value.
+    FFmpeg's drawtext has two escaping layers (the filtergraph parser, and
+    drawtext's own single-quote grouping around the text value) that
+    interact badly with a literal apostrophe in the text — `textfile=` reads
+    the file's raw bytes as the message with neither layer applied, which
+    is the standard escape hatch for exactly this class of dynamic text.
+    """
+    if edits is None:
+        yield None
+        return
+    fragments: list[str] = []
+    cw, ch = canvas
+    look_fragment = look_preset_filter(edits.look_preset, width=cw, height=ch)
+    if look_fragment:
+        fragments.append(look_fragment)
+    text_file = Path(f"{out_path}.drawtext.txt") if edits.text is not None else None
+    try:
+        if edits.text is not None and text_file is not None:
+            text_file.write_text(edits.text.content, encoding="utf-8")
+            fontsize = max(24, round(ch * 0.045))
+            box_border = max(12, round(fontsize * 0.3))
+            fragments.append(
+                "drawtext="
+                f"fontfile={_escape_drawtext_path(_SLIDE_TEXT_FONT)}:"
+                f"textfile={_escape_drawtext_path(str(text_file))}:"
+                # drawtext expands `%{...}`/strftime-style sequences even
+                # when reading from textfile= — a literal "%" in ordinary
+                # user text (e.g. "50% off") logs "Stray %" and drops the
+                # ENTIRE overlay silently (exit code 0, no exception, no
+                # visible text). expansion=none turns this off; there is no
+                # legitimate use for frame-number/timestamp expansion in a
+                # static per-slide caption. Found via manual local
+                # verification — the automated tests below only asserted
+                # the render didn't raise, not that the text was visible.
+                "expansion=none:"
+                f"fontsize={fontsize}:fontcolor=white:"
+                f"box=1:boxcolor=black@0.45:boxborderw={box_border}:"
+                f"x=(w-text_w)/2:y={_drawtext_y_expr(edits.text.position)}"
+            )
+        yield ",".join(fragments) if fragments else None
+    finally:
+        if text_file is not None and text_file.exists():
+            text_file.unlink()
+
+
+def normalize_image_slide(
+    src_path: str, out_path: str, *, canvas: Canvas, edits: SlideEdits | None = None
+) -> None:
     """Normalize any image format (incl. HEIC/WebP) to a cover-fit JPEG."""
     if not Path(src_path).exists():
         raise SlideBuildError(f"image slide not found: {src_path}")
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-loglevel",
-        "warning",
-        "-nostats",
-        "-i",
-        src_path,
-        "-vf",
-        _scale_crop_filter(canvas),
-        "-frames:v",
-        "1",
-        "-q:v",
-        "2",
-        out_path,
-    ]
-    _run_ffmpeg(cmd, context="normalize_image_slide")
+    with _edits_filter_fragment(edits, canvas=canvas, out_path=out_path) as edit_fragment:
+        vf = _scale_crop_filter(canvas)
+        if edit_fragment:
+            vf = f"{vf},{edit_fragment}"
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "warning",
+            "-nostats",
+            "-i",
+            src_path,
+            "-vf",
+            vf,
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            out_path,
+        ]
+        _run_ffmpeg(cmd, context="normalize_image_slide")
 
 
-def normalize_video_slide(src_path: str, out_path: str, *, canvas: Canvas) -> None:
+def normalize_video_slide(
+    src_path: str, out_path: str, *, canvas: Canvas, edits: SlideEdits | None = None
+) -> None:
     """Normalize a video slide to the platform canvas, keeping its own audio.
 
     This is the derivative that ships in the export bundle at full length —
@@ -141,33 +231,37 @@ def normalize_video_slide(src_path: str, out_path: str, *, canvas: Canvas) -> No
     """
     if not Path(src_path).exists():
         raise SlideBuildError(f"video slide not found: {src_path}")
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-loglevel",
-        "warning",
-        "-nostats",
-        "-i",
-        src_path,
-        "-vf",
-        f"{_scale_crop_filter(canvas)},fps=30",
-        "-c:v",
-        "libx264",
-        "-preset",
-        _FINAL_PRESET,
-        "-crf",
-        _FINAL_CRF,
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-movflags",
-        "+faststart",
-        out_path,
-    ]
-    _run_ffmpeg(cmd, context="normalize_video_slide")
+    with _edits_filter_fragment(edits, canvas=canvas, out_path=out_path) as edit_fragment:
+        vf = f"{_scale_crop_filter(canvas)},fps=30"
+        if edit_fragment:
+            vf = f"{vf},{edit_fragment}"
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "warning",
+            "-nostats",
+            "-i",
+            src_path,
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
+            "-preset",
+            _FINAL_PRESET,
+            "-crf",
+            _FINAL_CRF,
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            out_path,
+        ]
+        _run_ffmpeg(cmd, context="normalize_video_slide")
 
 
 def render_preview_segment(

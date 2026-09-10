@@ -7,6 +7,48 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **A creation whose video render lost its link no longer looks deleted.** Loading a project used to withhold the whole chat — title, transcript, everything — the moment any part of its render graph drifted, and the client read that as "this project may have been deleted." The chat and title now load with a quiet notice when only the video link is affected, and a transient network or service error shows a retryable state instead of implying loss. Load failures are now typed (missing record, deleted, authorization, or service failure) so the right message and action show up, and an admin can read a project's exact integrity state without guessing.
 
+## [0.76.0.0] - 2026-09-10
+
+### Added
+- **Creators can now start a "Photo & video post" directly from the chat-first "New video" flow.** Choosing it shows a mixed image/video upload zone instead of the video-only clip dropzone, then hands off to the existing slide-post compose screen — closing the gap where the feature had no live creation entry point.
+- **Each photo or video in a slide post can now be edited individually.** A new per-slide editor adds one positioned text overlay and a look preset (Olive Film, Smoky Split-Tone, Golden Hour, Faded Analog) per slide, reusing the same FFmpeg look-preset filters the main editor uses. Both tools apply identically to photos and videos; there is no separate video-only tool set.
+
+### Changed
+- The slide-post panel's export action is now labeled "Download" — it already forced a real file download of every slide plus the post manifest and caption; the label just didn't say so.
+
+### Internal
+- Per-slide edits are deliberately NOT built on the main editor (`EditorShell.tsx`, ~9,300 lines, entirely coupled to a rendered video Job/variant/timeline) — a small, purpose-built single-asset editor was built instead, reusing only the underlying FFmpeg filter primitives. Fixes a real cache-correctness gap found during this work: the slide-render cache key now includes a hash of each slide's edits, so editing a slide's text or look and re-rendering can no longer silently reuse the pre-edit normalized file.
+## [0.75.10.0] - 2026-09-10
+
+### Fixed
+- Creator requests preserve user-authored on-screen text and styling across natural phrasing and languages, with source-grounded intent and planner/compiler fallback protection. Video-only, once-only montage confirmations respect available source duration.
+- New montages use each video once by default. Explicit requests can loop footage during creation or a later revision; longer targets no longer cause automatic source reuse.
+- iPhone creation shows thinking and pre-render preparation, retains failed directions for retry, and ignores late poll responses. Confirmed native Creator plans no longer fail the guided-proposal gate.
+- Native chat creation uses the server's available formats and runtime, supports direction and generation for both conversation versions, and explains unavailable options instead of showing inactive cards.
+- Development iOS builds resolve the complete API URL, fixing the truncated address that prevented requests from reaching the backend.
+- Concurrent iOS upload retries share one attempt; cancellation during reservation no longer resurrects an upload.
+
+### Changed
+- Native app icon and wordmark use the approved white and blue Kria artwork.
+
+### Added
+- iOS creation attachments include supporting visuals and uploaded or recorded voiceover, with separate media limits, removal, background upload recovery, and generation blocked while uploads are pending.
+
+## [0.75.9.0] — 2026-09-10
+
+### Fixed
+- **Talking-to-camera edits no longer add background music you didn't ask for.** A fresh render now keeps your own audio, silently, by default — Kria no longer auto-matches a licensed track underneath your speech. Music still plays when you explicitly pick a track from the item's editor, and it now survives re-renders instead of being replaced or dropped. The result label reflects it too, reading "Original audio + music" (or "Narration + music") whenever a background track is live.
+
+### Internal
+- New kill switch `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` (default on) gates the v2 licensed-music-bed resolver to only ever return a creator-selected treatment, never invent one.
+## [0.75.8.1] — 2026-09-10
+
+### Fixed
+- **Generated voiceover captions now show up as captions, not stray text.** Captions from the latest voiceover flow appear side by side on their own captions track, get the caption editing controls (font, size, color) instead of the generic text panel, and no longer break the editor layout when clicked. Caption text and styling changes save and reflect in the preview; timing stays locked to the narration, with an honest reason shown in the panel.
+- **Clicking a timeline caption no longer collides with the properties panel** in a narrow editor pane (e.g. embedded in chat). Opening a tool no longer docks a panel on top of another one when there isn't room for both.
+
+### Internal
+- Added `CAPTION_CUE_SOURCE`, a shared constant replacing a hand-typed string that classified a caption across five call sites, plus a producer-side contract test pinning it.
 ## [0.75.9.0] - 2026-09-10
 
 ### Changed
@@ -55,6 +97,7 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - The new "slides" render archetype reuses the existing plan-item pipeline end to end: one variant carries a stitched preview alongside the ordered slide list and export bundle, so every existing reader (player, library, TikTok-publish exclusion) keeps working unbranched. Every other editor lane (captions, sound effects, overlays, timeline) is explicitly closed for this archetype at the same choke point every one of those routes already shares. Ships default on, gated by `SLIDE_POSTS_ENABLED` / `NEXT_PUBLIC_SLIDE_POSTS_ENABLED`.
+
 ## [0.75.3.0] - 2026-09-09
 
 ### Changed

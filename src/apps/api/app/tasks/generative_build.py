@@ -2217,6 +2217,7 @@ def _run_generative_job_impl(
             if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
             else None
         )
+        creator_video_reuse_policy = raw_creator_strategy.get("video_reuse_policy")
         raw_pacing = raw_creator_strategy.get("pacing")
         creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
         immutable_job_plan = job.assembly_plan or {}
@@ -3119,6 +3120,7 @@ def _run_generative_job_impl(
                         text_color_override=creator_text_color,
                         creator_target_duration_s=creator_target_duration_s,
                         creator_pacing=creator_pacing,
+                        creator_video_reuse_policy=creator_video_reuse_policy,
                         narrative_order=narrative_order,
                         filming_guide=filming_guide_candidates,
                         allow_sequence=False,
@@ -3147,6 +3149,7 @@ def _run_generative_job_impl(
                         text_color_override=creator_text_color,
                         creator_target_duration_s=creator_target_duration_s,
                         creator_pacing=creator_pacing,
+                        creator_video_reuse_policy=creator_video_reuse_policy,
                         narrative_order=None,
                         filming_guide=None,
                         allow_sequence=False,
@@ -3175,6 +3178,7 @@ def _run_generative_job_impl(
                         text_color_override=creator_text_color,
                         creator_target_duration_s=creator_target_duration_s,
                         creator_pacing=creator_pacing,
+                        creator_video_reuse_policy=creator_video_reuse_policy,
                         narrative_order=narrative_order,
                         filming_guide=(
                             filming_guide_candidates if narrative_shot_count > 0 else None
@@ -4230,6 +4234,7 @@ def _resolve_slide_post_draft_and_assets(
                 "content_fingerprint": asset.content_fingerprint,
                 "duration_s": asset.duration_s,
                 "alt": ref.alt,
+                "edits": ref.edits,
             }
         )
     if not ordered_assets:
@@ -4294,9 +4299,21 @@ def _build_slide_post_result(
                 asset["content_fingerprint"]
                 or hashlib.sha256(asset["gcs_path"].encode("utf-8")).hexdigest()
             )
+            edits = asset.get("edits")
+            # A slide's edits (text overlay, look preset) must be part of the
+            # cache key. Without this, editing a slide and re-rendering would
+            # silently reuse the OLD normalized derivative from before the
+            # edit — the edit would never appear in the export. "noedits" is
+            # a plain literal (not a hash) so the unedited path's key is
+            # unchanged from before this feature existed.
+            edits_digest = (
+                hashlib.sha256(edits.model_dump_json().encode("utf-8")).hexdigest()[:16]
+                if edits is not None
+                else "noedits"
+            )
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
-                f"{fingerprint}_{canvas[0]}x{canvas[1]}.{ext}"
+                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}.{ext}"
             )
             normalized_local = os.path.join(tmpdir, f"norm_{index:02d}.{ext}")
             if storage.object_exists(normalized_key):
@@ -4313,9 +4330,13 @@ def _build_slide_post_result(
                 else:
                     storage.download_to_file(asset["gcs_path"], source_local)
                 if kind == "image":
-                    slide_build.normalize_image_slide(source_local, normalized_local, canvas=canvas)
+                    slide_build.normalize_image_slide(
+                        source_local, normalized_local, canvas=canvas, edits=edits
+                    )
                 else:
-                    slide_build.normalize_video_slide(source_local, normalized_local, canvas=canvas)
+                    slide_build.normalize_video_slide(
+                        source_local, normalized_local, canvas=canvas, edits=edits
+                    )
                 storage.upload_local_file(
                     normalized_local,
                     normalized_key,
@@ -9321,6 +9342,20 @@ def _derive_duration_beats(durations: list[float], beat_grid: list[float]) -> li
 _CONTIGUOUS_SOURCE_EPSILON_S = 0.05
 
 
+def _single_use_video_steps(steps: list) -> list:
+    """Retain the first appearance of each source in automatic native plans."""
+    from dataclasses import replace
+
+    seen: set[str] = set()
+    unique = []
+    for step in steps:
+        if step.clip_id in seen:
+            continue
+        seen.add(step.clip_id)
+        unique.append(replace(step, slot={**step.slot, "position": len(unique) + 1}))
+    return unique
+
+
 def _merge_contiguous_same_source_steps(
     steps: list,
     *,
@@ -11430,6 +11465,7 @@ def _run_regenerate_variant(
             if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
             else None
         )
+        creator_video_reuse_policy = raw_creator_strategy.get("video_reuse_policy")
         raw_pacing = raw_creator_strategy.get("pacing")
         creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
         clip_paths_gcs = (job.all_candidates or {}).get("clip_paths", []) or []
@@ -12332,6 +12368,7 @@ def _run_regenerate_variant(
                 user_style_knobs=existing_user_style_knobs,
                 creator_target_duration_s=creator_target_duration_s,
                 creator_pacing=creator_pacing,
+                creator_video_reuse_policy=creator_video_reuse_policy,
                 narrative_order=narrative_order_regen,
                 filming_guide=(filming_guide_regen if narrative_shot_count_regen > 0 else None),
                 assembly_steps_override=assembly_steps_override,
@@ -14893,6 +14930,7 @@ def _render_generative_variant(
     user_style_knobs: dict | None = None,
     creator_target_duration_s: float | None = None,
     creator_pacing: str | None = None,
+    creator_video_reuse_policy: str | None = None,
     narrative_order: list[str] | None = None,
     filming_guide: list[dict] | None = None,
     assembly_steps_override: list | None = None,
@@ -15523,7 +15561,11 @@ def _render_generative_variant(
             steps = list(assembly_steps_override)
         else:
             try:
-                recipe = consolidate_slots(recipe, clip_metas)
+                recipe = (
+                    consolidate_slots(recipe, clip_metas, single_use_sources=True)
+                    if creator_video_reuse_policy == "once"
+                    else consolidate_slots(recipe, clip_metas)
+                )
                 assembly_plan = match(
                     recipe,
                     clip_metas,
@@ -15540,6 +15582,12 @@ def _render_generative_variant(
             except TemplateMismatchError as exc:
                 raise ValueError(f"{exc.code}: {exc.message}") from exc
             steps = assembly_plan.steps
+            if creator_video_reuse_policy == "once" and not strict_single_hero:
+                # Degraded metadata can make the matcher's final fallback reuse
+                # a clip despite consolidation. Shorten instead of inventing a
+                # second appearance. Exact user-authored timeline overrides
+                # above intentionally bypass this automatic planning policy.
+                steps = _single_use_video_steps(steps)
             # Fresh-match montage only (masonry keeps tiles; the override path
             # above must honor the user's slots verbatim): collapse invisible
             # same-source seams so render and editor timeline agree.
@@ -18586,6 +18634,30 @@ def _smart_music_track_eligible(track: Any) -> bool:
     )
 
 
+def _persisted_music_treatment(*, job_id: str, variant_id: str) -> dict[str, Any] | None:
+    """Read whatever music bed is already persisted on this variant, if any.
+
+    KRI-20: used to tell an explicit, editor-selected bed (persisted via the
+    background-music commit route, `smart_music_treatment`) apart from one this
+    resolver would otherwise invent on its own. Read-only, best-effort — a DB
+    hiccup here must fail open to "no persisted treatment", never crash a render.
+    """
+
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job is None:
+                return None
+            variants = (job.assembly_plan or {}).get("variants") or []
+            existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
+            if existing is None:
+                return None
+            treatment = existing.get("smart_music_treatment")
+            return treatment if isinstance(treatment, dict) else None
+    except Exception:  # noqa: BLE001 — fail open, never block a render on this read
+        return None
+
+
 def _resolve_smart_music_treatment(
     *,
     cues: list[dict[str, Any]],
@@ -18609,6 +18681,24 @@ def _resolve_smart_music_treatment(
         return None, receipt
     if not audio_intents:
         receipt["reason"] = "no_audio_intent"
+        return None, receipt
+    # KRI-20: a bed must never appear on a talking-to-camera edit unless the
+    # creator explicitly asked for one. This resolver no longer INVENTS a
+    # treatment — it only ever returns a treatment the creator already chose
+    # (via the editor's background-music picker), preserved verbatim so a
+    # re-render/reburn can never re-match or silently drop it.
+    if settings.smart_music_bed_requires_request_enabled:
+        existing_treatment = _persisted_music_treatment(job_id=job_id, variant_id=variant_id)
+        if existing_treatment is not None:
+            receipt.update(
+                {
+                    "status": "preserved",
+                    "reason": "user_selected",
+                    "track_id": existing_treatment.get("track_id"),
+                }
+            )
+            return existing_treatment, receipt
+        receipt["reason"] = "not_user_requested"
         return None, receipt
     floor = max(float(intent.get("music_match_min_score") or 7.0) for intent in audio_intents)
     cache_key = f"smart-captions:music-treatment:{job_id}:{variant_id}"

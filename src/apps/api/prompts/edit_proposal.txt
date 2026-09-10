@@ -53,8 +53,9 @@ Editorial rules:
 - A guided_story or text_explainer needs a visible intro plus short thought moments. A fast_montage
   is music-led: emit fast_cuts with exact source windows, a hook first, hard cuts only, and
   minimal generated text. Follow the timing note above: legacy plans use 0.8-1.2s cuts, while an
-  explicit mixed-media timing profile authorizes its per-kind photo/video bounds. Reuse different
-  analyzed strong windows when needed. The sum of output_duration_s must match duration_s within
+  explicit mixed-media timing profile authorizes its per-kind photo/video bounds. With the
+  default once policy, longer continuous video cuts replace the legacy ceiling. Returning
+  to any video source requires explicit permission in VIDEO REUSE POLICY. The sum of output_duration_s must match duration_s within
   0.15s. Prefer a different source on each adjacent cut, use at least the required distinct sources,
   and end on a payoff when there is more than one cut.
 - `thought` is an AI DRAFT for the creator to edit. It may describe a visible quality or suggest
@@ -69,12 +70,12 @@ Editorial rules:
   at most 18 words.
 - Give every chapter 1-12 seconds. Chapter durations must fit inside duration_s; reserve no more
   than 6 seconds outside the chapters for the visible intro.
-- TARGET LENGTH is already adapted to the real footage available — never stretch, slow down, or
-  loop a clip to fill more time than it actually has. A short clip means a short edit; that is
-  correct and expected, not a problem to solve.
+- TARGET LENGTH is already adapted to available footage and VIDEO REUSE POLICY. Never stretch
+  or slow a clip to fill time. Looping source windows is permitted only with allow_repeat.
+  Otherwise a short clip means a short edit; do not manufacture more footage.
 - Creator-written user_context outranks generated analysis. Preserve its meaning without adding facts.
-- Use only the exact short media_id aliases shown above. Do not repeat one source across many beats
-  unless it is necessary.
+- Use only the exact short media_id aliases shown above. Follow VIDEO REUSE POLICY.
+  Never repeat video sources merely to fill the target duration.
 - When a recorded voiceover contract is present, group semantically related visuals around its
   timed words, preserve the full narration duration, and keep every required source in the plan.
 - Mostly use fullscreen sequential moments. Use supporting_card only when it clarifies a topic.
@@ -83,7 +84,7 @@ Editorial rules:
   its source duration (prefer an analyzed best_moment), and output_duration_s must not stretch it.
 - $mixed_timing_rule
 - When SOURCE-AWARE MONTAGE is present, express the creative decision in fast_cuts: choose any
-  valid source order, source reuse, source windows, and cut lengths that serve the request. Do
+  valid source order, source windows, and cut lengths allowed by VIDEO REUSE POLICY. Do
   not follow a fixed pattern unless the creator explicitly asked for one. Use
   montage_text_bindings for persistent text attached to a source, and montage_audio for source
   audio preservation and optional source-bed previews.

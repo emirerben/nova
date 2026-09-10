@@ -35,6 +35,7 @@ from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     MontageAudioPlan,
     MontageCadenceConstraint,
+    VideoReusePolicy,
 )
 
 CREATOR_AGENT_SCHEMA_VERSION = 1
@@ -48,6 +49,7 @@ MAX_CREATOR_REVISION_EVIDENCE_IDS = 8
 MAX_CREATOR_WORKSPACE_MEDIA_IDS = 50
 MAX_CREATOR_CRAFT_COMMANDS = 3
 CREATOR_COLOR_ALIASES: dict[str, str] = {
+    "pastel yellow": "#FFF0A6",
     "yellow": "#FFD24A",
     "gold": "#F4D03F",
     "white": "#FFFFFF",
@@ -87,7 +89,7 @@ def normalize_creator_text_color(value: object) -> str | None:
 
     if not isinstance(value, str):
         return None
-    candidate = value.strip().lower()
+    candidate = " ".join(value.strip().lower().split())
     if candidate in CREATOR_COLOR_ALIASES:
         return CREATOR_COLOR_ALIASES[candidate]
     from app.agents._schemas.text_element import _HEX_COLOR_RE  # noqa: PLC0415
@@ -333,6 +335,10 @@ class CreativeStrategy(_CreatorModel):
     )
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_audio: MontageAudioPlan | None = None
+    video_reuse_policy: VideoReusePolicy | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     montage_cadence: MontageCadenceConstraint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -422,10 +428,21 @@ class AskUser(_CreatorModel):
     options: list[str] = Field(default_factory=list, max_length=8)
 
 
+class CreatorRenderIntentEvidence(_CreatorModel):
+    """Verbatim creator excerpts grounding semantic text/style decisions."""
+
+    opening_title: str | None = Field(default=None, max_length=1200)
+    font_family: str | None = Field(default=None, max_length=1200)
+    text_color: str | None = Field(default=None, max_length=1200)
+
+
 class ProposeStrategy(_CreatorModel):
     kind: Literal["propose_strategy"]
     strategy: CreativeStrategy
     summary: str = Field(default="", max_length=1000)
+    render_intent_evidence: CreatorRenderIntentEvidence | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class ReviewDecision(_CreatorModel):

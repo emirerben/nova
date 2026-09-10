@@ -1607,3 +1607,18 @@ class TestNarrativeOrder:
         placed = {s.clip_id for s in plan.steps}
         for gid in narrative_order:
             assert gid in placed, f"{gid} dropped after consolidate + match"
+
+
+@pytest.mark.parametrize("source_count", [1, 3])
+def test_creator_single_use_consolidates_below_legacy_floor(source_count):
+    """Native beat recipes cannot manufacture more appearances than uploads."""
+    recipe = _make_recipe([_slot(i + 1, 1.0) for i in range(10)])
+    clips = [_make_clip(f"clip-{i}", [_moment(0, 12)]) for i in range(source_count)]
+    consolidated = consolidate_slots(recipe, clips, single_use_sources=True)
+    assert len(consolidated.slots) == source_count
+    assert sum(slot["target_duration_s"] for slot in consolidated.slots) == pytest.approx(10)
+    plan = match(consolidated, clips)
+    assert len(plan.steps) == len({step.clip_id for step in plan.steps}) == source_count
+    # Ordinary template matching keeps its established policy.
+    legacy = consolidate_slots(recipe, clips)
+    assert len(legacy.slots) == max(2, source_count)

@@ -535,6 +535,22 @@
           },
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
+          },
+          "runtime_versions": {
+            "items": {
+              "enum": [
+                1,
+                2
+              ],
+              "type": "integer"
+            },
+            "title": "Runtime Versions",
+            "type": "array"
+          },
+          "visuals_enabled": {
+            "default": false,
+            "title": "Visuals Enabled",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2697,6 +2713,35 @@
         "title": "MediaTransform",
         "type": "object"
       },
+      "MessageBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_event_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Client Event Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "message": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "client_event_id",
+          "expected_revision"
+        ],
+        "title": "MessageBody",
+        "type": "object"
+      },
       "MobileExchangeRequest": {
         "properties": {
           "id_token": {
@@ -3128,6 +3173,320 @@
         "title": "PersonaResponse",
         "type": "object"
       },
+      "PoolAssetOut": {
+        "properties": {
+          "aspect": {
+            "nullable": true,
+            "title": "Aspect",
+            "type": "number"
+          },
+          "brands": {
+            "default": null,
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "title": "Brands",
+            "type": "array"
+          },
+          "deduped": {
+            "default": false,
+            "title": "Deduped",
+            "type": "boolean"
+          },
+          "display_url": {
+            "nullable": true,
+            "title": "Display Url",
+            "type": "string"
+          },
+          "duration_s": {
+            "nullable": true,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "error_code": {
+            "default": null,
+            "nullable": true,
+            "title": "Error Code",
+            "type": "string"
+          },
+          "error_detail": {
+            "default": null,
+            "nullable": true,
+            "title": "Error Detail",
+            "type": "string"
+          },
+          "gcs_path": {
+            "title": "Gcs Path",
+            "type": "string"
+          },
+          "height": {
+            "default": null,
+            "nullable": true,
+            "title": "Height",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_status": {
+            "default": "pending",
+            "title": "Media Status",
+            "type": "string"
+          },
+          "nova_description": {
+            "default": null,
+            "nullable": true,
+            "title": "Nova Description",
+            "type": "string"
+          },
+          "nova_on_screen_text": {
+            "default": null,
+            "nullable": true,
+            "title": "Nova On Screen Text",
+            "type": "string"
+          },
+          "preview_status": {
+            "default": "not_needed",
+            "title": "Preview Status",
+            "type": "string"
+          },
+          "preview_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Preview Url",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "source_clip_index": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Clip Index",
+            "type": "integer"
+          },
+          "source_filename": {
+            "nullable": true,
+            "title": "Source Filename",
+            "type": "string"
+          },
+          "source_timestamp_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Timestamp S",
+            "type": "number"
+          },
+          "source_type": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Type",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "nullable": true,
+            "title": "Subject",
+            "type": "string"
+          },
+          "user_context": {
+            "default": "",
+            "title": "User Context",
+            "type": "string"
+          },
+          "width": {
+            "default": null,
+            "nullable": true,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "source_filename",
+          "duration_s",
+          "aspect",
+          "subject",
+          "display_url",
+          "gcs_path"
+        ],
+        "title": "PoolAssetOut",
+        "type": "object"
+      },
+      "PoolAssetsResponse": {
+        "properties": {
+          "active_reservations": {
+            "items": {
+              "$ref": "#/components/schemas/PoolReservationCapacity"
+            },
+            "title": "Active Reservations",
+            "type": "array"
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/PoolAssetOut"
+            },
+            "title": "Assets",
+            "type": "array"
+          },
+          "max_assets": {
+            "default": 100,
+            "title": "Max Assets",
+            "type": "integer"
+          },
+          "occupied_assets": {
+            "default": 0,
+            "title": "Occupied Assets",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assets"
+        ],
+        "title": "PoolAssetsResponse",
+        "type": "object"
+      },
+      "PoolReservationCapacity": {
+        "properties": {
+          "release_at": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Release At",
+            "type": "string"
+          },
+          "reservation_id": {
+            "title": "Reservation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id"
+        ],
+        "title": "PoolReservationCapacity",
+        "type": "object"
+      },
+      "PoolUploadFile": {
+        "properties": {
+          "client_upload_id": {
+            "default": null,
+            "maxLength": 128,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Client Upload Id",
+            "type": "string"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "file_size_bytes": {
+            "title": "File Size Bytes",
+            "type": "integer"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "content_type",
+          "file_size_bytes"
+        ],
+        "title": "PoolUploadFile",
+        "type": "object"
+      },
+      "PoolUploadTarget": {
+        "properties": {
+          "client_upload_id": {
+            "title": "Client Upload Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "gcs_path": {
+            "title": "Gcs Path",
+            "type": "string"
+          },
+          "reservation_id": {
+            "title": "Reservation Id",
+            "type": "string"
+          },
+          "upload_headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Upload Headers",
+            "type": "object"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id",
+          "client_upload_id",
+          "upload_url",
+          "gcs_path",
+          "expires_at",
+          "upload_headers"
+        ],
+        "title": "PoolUploadTarget",
+        "type": "object"
+      },
+      "PoolUploadUrlsBody": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/PoolUploadFile"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "PoolUploadUrlsBody",
+        "type": "object"
+      },
+      "PoolUploadUrlsResponse": {
+        "properties": {
+          "urls": {
+            "items": {
+              "$ref": "#/components/schemas/PoolUploadTarget"
+            },
+            "title": "Urls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "urls"
+        ],
+        "title": "PoolUploadUrlsResponse",
+        "type": "object"
+      },
       "QuestionnaireBody": {
         "properties": {
           "hobbies": {
@@ -3172,6 +3531,49 @@
           }
         },
         "title": "QuestionnaireBody",
+        "type": "object"
+      },
+      "RegisterAssetBody": {
+        "properties": {
+          "content_hash": {
+            "default": null,
+            "nullable": true,
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "gcs_path": {
+            "title": "Gcs Path",
+            "type": "string"
+          },
+          "reservation_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Reservation Id",
+            "type": "string"
+          },
+          "source_filename": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Filename",
+            "type": "string"
+          },
+          "user_context": {
+            "default": null,
+            "maxLength": 500,
+            "nullable": true,
+            "title": "User Context",
+            "type": "string"
+          }
+        },
+        "required": [
+          "gcs_path",
+          "content_type"
+        ],
+        "title": "RegisterAssetBody",
         "type": "object"
       },
       "SolidBackground": {
@@ -4810,6 +5212,58 @@
         ]
       }
     },
+    "/creation-threads/{thread_id}/messages": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "sendCreationMessage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationThreadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
     "/creation-threads/{thread_id}/turns": {
       "parameters": [
         {
@@ -5268,6 +5722,225 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PersonaResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/assets": {
+      "get": {
+        "operationId": "listCreationVisuals",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolAssetsResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "registerCreationVisual",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterAssetBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolAssetOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/assets/upload-urls": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reserveCreationVisualUploads",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoolUploadUrlsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolUploadUrlsResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/assets/{asset_id}": {
+      "delete": {
+        "operationId": "deleteCreationVisual",
+        "responses": {
+          "200": {
+            "description": "Visual removed"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "asset_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/plan-items/{item_id}/assets/{asset_id}/reanalyze": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "asset_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "retryCreationVisual",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolAssetOut"
                 }
               }
             },

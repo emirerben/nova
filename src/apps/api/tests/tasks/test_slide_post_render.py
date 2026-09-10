@@ -18,7 +18,7 @@ import app.tasks.generative_build as gb
 from app import storage as storage_module
 from app.models import PlanItem
 from app.pipeline.slide_post import build as slide_build_module
-from app.schemas.slide_post import SlidePostDraft, SlideRef
+from app.schemas.slide_post import SlideEdits, SlidePostDraft, SlideRef, TextOverlay
 
 
 def _asset(*, asset_id, gcs_path, kind, plan_item_id, user_id, media_status="ready", **extra):
@@ -306,7 +306,7 @@ def test_run_slide_post_job_reuses_already_normalized_slide(monkeypatch) -> None
         ),
     ]
     monkeypatch.setattr(gb, "_sync_session", lambda: _FakeSession(job, item, assets))
-    existing_key = f"generative-jobs/{job_id}/slides/normalized/{fingerprint}_1080x1920.jpg"
+    existing_key = f"generative-jobs/{job_id}/slides/normalized/{fingerprint}_1080x1920_noedits.jpg"
     _patch_storage_and_ffmpeg(monkeypatch, existing_normalized={existing_key})
 
     normalize_calls: list[str] = []
@@ -323,3 +323,59 @@ def test_run_slide_post_job_reuses_already_normalized_slide(monkeypatch) -> None
     assert normalize_calls == [], (
         "normalize must be skipped when the content-addressed key already exists"
     )
+
+
+def test_run_slide_post_job_edits_bust_the_normalized_cache_key(monkeypatch) -> None:
+    """CRITICAL regression case (plans/024 follow-up eng-review): a slide's
+    cache key must include its edits. Without this, editing a slide's text/
+    look-preset and re-rendering would silently reuse the OLD normalized
+    derivative from before the edit — the edit would never appear in the
+    export. This asserts the render actually happens (cache MISS) when the
+    only thing that changed is the edits, with the unedited key present."""
+    job_id = str(uuid.uuid4())
+    item_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    asset_id = uuid.uuid4()
+
+    job = SimpleNamespace(id=uuid.UUID(job_id), content_plan_item_id=item_id, user_id=user_id)
+    edits = SlideEdits(text=TextOverlay(content="sold out", position="bottom"))
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[SlideRef(id="s0", asset_id=asset_id, kind="image", edits=edits)],
+        cover_index=0,
+    )
+    item = SimpleNamespace(slide_post=draft.model_dump(mode="json"))
+    fingerprint = f"fp-{asset_id}"
+    assets = [
+        _asset(
+            asset_id=asset_id,
+            gcs_path=f"users/{user_id}/plan/{item_id}/pool/a.jpg",
+            kind="image",
+            plan_item_id=item_id,
+            user_id=user_id,
+            content_fingerprint=fingerprint,
+        ),
+    ]
+    monkeypatch.setattr(gb, "_sync_session", lambda: _FakeSession(job, item, assets))
+    # Only the UNEDITED key exists in storage — simulating "this asset was
+    # rendered once before, with no edits, and the user just added one."
+    stale_unedited_key = (
+        f"generative-jobs/{job_id}/slides/normalized/{fingerprint}_1080x1920_noedits.jpg"
+    )
+    _patch_storage_and_ffmpeg(monkeypatch, existing_normalized={stale_unedited_key})
+
+    normalize_calls: list[object] = []
+    monkeypatch.setattr(
+        slide_build_module,
+        "normalize_image_slide",
+        lambda *a, **k: normalize_calls.append(k.get("edits")),
+    )
+    monkeypatch.setattr(gb, "_upsert_variant_entry", lambda _job_id, _result: True)
+    monkeypatch.setattr(gb, "_finalize_job", lambda _job_id, _results: True)
+
+    gb._run_slide_post_job(job_id, render_trace_id="trace-6")
+
+    assert len(normalize_calls) == 1, (
+        "a changed edits digest must miss the stale unedited cache key and re-render"
+    )
+    assert normalize_calls[0] == edits, "the render must receive this slide's actual edits"

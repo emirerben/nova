@@ -147,13 +147,15 @@ async def test_existing_empty_persona_is_repaired_without_replacing_nonempty() -
     assert empty.persona == preserved
 
 
-def test_paper_capabilities_expose_only_three_live_formats(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_paper_capabilities_expose_all_four_live_formats(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "narrated_archetype_enabled", True)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "slide_posts_enabled", True)
     assert _available_formats() == {
         "montage": "montage",
         "narrated": "narrated_planned",
         "talking_to_camera": "subtitled",
+        "slides": "slides",
     }
 
 
@@ -162,7 +164,22 @@ def test_unavailable_format_is_removed_from_capability_manifest(
 ) -> None:
     monkeypatch.setattr(settings, "narrated_archetype_enabled", False)
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", False)
+    monkeypatch.setattr(settings, "slide_posts_enabled", False)
     assert _available_formats() == {"montage": "montage"}
+
+
+def test_slide_posts_disabled_removes_slides_from_capability_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kill-switch: SLIDE_POSTS_ENABLED=false must byte-for-byte match pre-feature capabilities."""
+    monkeypatch.setattr(settings, "slide_posts_enabled", False)
+    assert "slides" not in _available_formats()
+
+
+def test_slide_posts_default_on_is_present_in_capability_manifest() -> None:
+    """Default-on pin: the suite must fail if SLIDE_POSTS_ENABLED's default flips to false."""
+    assert settings.slide_posts_enabled is True
+    assert _available_formats()["slides"] == "slides"
 
 
 def test_chat_format_clip_limits_match_plan_item_setup() -> None:
@@ -3482,12 +3499,14 @@ async def test_confirm_generation_syncs_the_projection_after_controller_commit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed_before_dispatch", [False, True])
 async def test_retry_reopens_terminal_render_with_existing_plan(
     monkeypatch: pytest.MonkeyPatch,
+    failed_before_dispatch: bool,
 ) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     session_id = uuid.uuid4()
-    old_job_id = uuid.uuid4()
+    old_job_id = None if failed_before_dispatch else uuid.uuid4()
     new_job_id = uuid.uuid4()
     thread = SimpleNamespace(
         id=uuid.uuid4(),
@@ -3502,6 +3521,7 @@ async def test_retry_reopens_terminal_render_with_existing_plan(
     session = SimpleNamespace(
         id=session_id,
         status="failed",
+        last_error={"code": "execution_failed"} if failed_before_dispatch else None,
         revision=4,
         render_attempts=1,
         max_render_attempts=2,
@@ -3510,7 +3530,9 @@ async def test_retry_reopens_terminal_render_with_existing_plan(
     old_job = SimpleNamespace(id=old_job_id, status="processing_failed")
     result = SimpleNamespace(id=str(session_id), current_job_id=str(new_job_id))
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, session, old_job])
+    db.get = AsyncMock(
+        side_effect=[session, session] if failed_before_dispatch else [session, session, old_job]
+    )
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     import app.routes.creation_threads as routes
@@ -3924,3 +3946,20 @@ async def test_ready_revision_preparation_clears_pending_intent(
     assert "pending_revision_intent" not in thread.state
     assert thread.state["prepared_revision_job_id"] == str(job_id)
     assert call_order[-3:] == ["commit", "refresh", "response"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_enabled", [False, True])
+@pytest.mark.parametrize("visuals_enabled", [False, True])
+async def test_native_capabilities_reflect_runtime_and_visual_feature_gates(
+    monkeypatch: pytest.MonkeyPatch, runtime_enabled: bool, visuals_enabled: bool
+) -> None:
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", runtime_enabled)
+    monkeypatch.setattr(settings, "overlay_autoplace_enabled", visuals_enabled)
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", False)
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()))
+    assert manifest["runtime_versions"] == ([1, 2] if runtime_enabled else [1])
+    assert manifest["visuals_enabled"] is visuals_enabled
+    assert manifest["media"]["voiceover"]["max"] == 1
+    assert "audio/mp4" in manifest["media"]["voiceover"]["content_types"]
+    assert "image/jpeg" in manifest["media"]["visuals"]["content_types"]
