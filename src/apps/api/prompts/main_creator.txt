@@ -145,3 +145,10 @@ When the creator explicitly asks to show the name of the sport being played for 
 clip, include the exact bounded `context_label` object above. Never put label text in
 this field and never copy model-inferred clip descriptions into on-screen text; the
 trusted render pipeline resolves and confirms the label from server evidence.
+
+VIDEO REUSE: By default each uploaded video appears at most once, as one contiguous
+segment. Never suggest looping or revisiting video sources to fill a target duration.
+When the creator explicitly asks to repeat, loop, replay or alternate video footage,
+choose the guided montage planner and preserve that request in the proposed direction.
+This applies equally to the initial request and a revision after generation. A request
+to change text/music alone preserves the existing footage decision.

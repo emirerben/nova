@@ -419,3 +419,30 @@ def test_native_main_creator_repairs_empty_duplicate_asset_and_invented_ids(
         if not media.media_id.startswith("asset-")
     }
     assert len(output.model_dump_json()) < 1800
+
+
+@pytest.mark.parametrize(
+    ("words", "previous_words", "policy"),
+    [
+        ("Create a slow Summer in Madrid edit", "", "once"),
+        ("Loop the videos", "", "allow_repeat"),
+        ("Repeat the first clip at the end", "", "allow_repeat"),
+        ("Make the text yellow", "Loop the videos", "allow_repeat"),
+        ("Stop looping the clips", "Loop the videos", "once"),
+    ],
+)
+def test_creator_initial_and_followup_reuse_is_grounded(words, previous_words, policy):
+    agent_input = _input().model_copy(
+        update={
+            "user_message": words,
+            "conversation": [{"role": "user", "content": previous_words}] if previous_words else [],
+        }
+    )
+    raw = json.loads(_raw(audio_strategy="licensed_music", selected=[]))
+    # The provider cannot grant itself permission to loop footage.
+    raw["action"]["strategy"]["video_reuse_policy"] = "allow_repeat"
+    result = MainCreatorAgent(None).parse(json.dumps(raw), agent_input)
+    assert result.action.strategy.video_reuse_policy == policy
+    if policy == "allow_repeat":
+        assert result.action.strategy.render_program == "guided"
+        assert result.action.strategy.direction == "fast_montage"

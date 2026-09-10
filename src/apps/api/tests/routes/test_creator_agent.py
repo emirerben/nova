@@ -4206,6 +4206,7 @@ async def test_chat_cleanup_recovery_reaches_dispatch_without_rescheduling_analy
     dispatch.assert_called_once_with(
         str(item_id),
         4,
+        bypass_guided_edit_gate=edit_plan.strategy.render_program == "native",
         creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
         creator_clip_order=None,
         creator_request="Make a clean montage",
@@ -4951,3 +4952,122 @@ async def test_concurrent_render_preserves_direction_and_refunds_attempt(monkeyp
     assert receipt.status == "stale"
     assert receipt.error == {"code": "concurrent_render"}
     append.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "creator_message",
+    [
+        "Add a text saying Summer in Madrid. Make it pastel yellow",
+        'Add text saying "Summer in Madrid". Make the text pastel yellow.',
+        "Text saying Summer in Madrid; text color pastel yellow.",
+    ],
+)
+def test_explicit_text_saying_preserves_literal_copy_and_pastel_yellow(
+    monkeypatch, creator_message
+):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(opening_title="Wrong title", text_color="#FFD24A"),
+        creator_message,
+        manifest=_manifest(monkeypatch),
+    )
+    assert strategy.opening_title == "Summer in Madrid"
+    assert strategy.text_color == "#FFF0A6"
+
+
+def test_negated_text_saying_does_not_add_title(monkeypatch):
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        "Do not add text saying Summer in Madrid.",
+        manifest=_manifest(monkeypatch),
+    )
+    assert strategy.opening_title is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("compile_fails_once", [False, True])
+async def test_route_schema_failure_preserves_madrid_text_and_source_capacity(
+    monkeypatch,
+    compile_fails_once,
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "creator_prompt_fidelity_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=False,
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": duration}
+            for index, duration in enumerate([4.068333, 4.9, 3.733333])
+        ],
+        guided_capability_enabled=True,
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    response = SimpleNamespace(status="awaiting_confirmation")
+
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(side_effect=TerminalError("model truncated output")),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    if compile_fails_once:
+        real_compile = creator_routes.compile_active_plan
+        attempts = 0
+
+        def compile_with_first_failure(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ValueError("Incomplete proposal")
+            return real_compile(*args, **kwargs)
+
+        monkeypatch.setattr(creator_routes, "compile_active_plan", compile_with_first_failure)
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message=("Add a text saying Summer in Madrid. Make it pastel yellow"),
+    )
+
+    assert result is response
+    assert session.status == "awaiting_confirmation"
+    assert "completed" not in session.active_plan["summary"].casefold()
+    strategy = session.active_plan["edit_plan"]["strategy"]
+    assert strategy["opening_title"] == "Summer in Madrid"
+    assert strategy["text_color"] == "#FFF0A6"
+    assert session.active_plan["target_duration_s"] <= 12.701666
+    assert session.active_plan["video_reuse_policy"] == "once"
+    assert len(strategy["selected_media_ids"]) == 3

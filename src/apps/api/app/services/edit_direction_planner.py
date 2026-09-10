@@ -26,9 +26,11 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     MontageCadenceConstraint,
     StoryBeat,
+    VideoReusePolicy,
     canonical_narration_duration_s,
     media_context_group,
     mixed_media_hold_bounds,
+    resolve_video_reuse_policy,
     uses_quick_photo_long_video_timing,
 )
 
@@ -196,16 +198,35 @@ def clamp_fast_montage_target_duration_s(
     media: list[MediaRef],
     duration_s: int | float,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
+    video_reuse_policy: VideoReusePolicy = "once",
 ) -> int:
-    """Bound typed mixed-media targets by source capacity before planning.
+    """Clamp to one continuous appearance per source unless reuse was requested.
 
-    Images can be used once for at most 0.8s. Videos can consume their
-    probed duration, split into 1.5–3s windows when long enough, without
-    stretching source footage. Legacy plans intentionally retain their
-    existing integer 3–60s clamp.
+    Typed mixed-media holds still apply. Explicit distinct-window requests
+    retain their adjacency-aware capacity calculation; explicit loops may
+    exceed the unique footage duration. Saved snapshots are not rewritten.
     """
 
     requested = max(3, min(60, int(duration_s)))
+    if video_reuse_policy == "allow_repeat":
+        return requested
+    if video_reuse_policy == "once":
+        capacity = sum(
+            min(
+                float(ref.duration_s or 0),
+                mixed_media_hold_bounds("video", mixed_media_timing).maximum_s,
+            )
+            if ref.kind == "video" and uses_quick_photo_long_video_timing(mixed_media_timing)
+            else float(ref.duration_s or 0)
+            if ref.kind == "video"
+            else mixed_media_hold_bounds("image", mixed_media_timing).maximum_s
+            if uses_quick_photo_long_video_timing(mixed_media_timing)
+            else 1.2
+            for ref in media
+        )
+        if capacity < 3 - 0.001:
+            raise ValueError("fast montage has less than the minimum 3s without repeating videos")
+        return min(requested, int(capacity + 0.001))
     if not uses_quick_photo_long_video_timing(mixed_media_timing):
         return requested
 
@@ -370,13 +391,15 @@ def deterministic_fast_cuts(
     *,
     narration_duration_s: float | None = None,
     required_media_ids: Sequence[str] | None = None,
+    video_reuse_policy: VideoReusePolicy = "once",
 ) -> list[FastMontageCut]:
     """Build a strict source-aware montage when the semantic planner is invalid.
 
     The model still owns the normal creative path. This deterministic compiler
     prevents arithmetic/schema drift from turning an explicit direction change
-    into a user-visible failure. Every video window is consumed at most once,
-    image sources are used once, and adjacent cuts always use different media.
+    into a user-visible failure. A video appears once by default. Explicit
+    distinct-window requests may revisit a source; explicit loops may reuse
+    its frames. Images remain bounded by their one-shot hold capacity.
     """
 
     if narration_duration_s is not None and (
@@ -410,7 +433,9 @@ def deterministic_fast_cuts(
     target_duration_s = (
         canonical_narration_duration_s(narration_duration_s)
         if narration_duration_s is not None
-        else clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
+        else clamp_fast_montage_target_duration_s(
+            media, duration_s, mixed_media_timing, video_reuse_policy
+        )
     )
     # Render timelines are CFR at 30fps. Allocate in frames rather than
     # milliseconds so fallback source windows are always frame aligned.
@@ -471,6 +496,10 @@ def deterministic_fast_cuts(
     )
     rank = {ref.media_id: index for index, ref in enumerate(ranked)}
     remaining_frames = dict(source_capacity_frames)
+    if video_reuse_policy == "allow_repeat":
+        for ref in ranked:
+            if ref.kind == "video":
+                remaining_frames[ref.media_id] = target_frames
     reservations: list[tuple[MediaRef, int, int]] = []
     used_ids: set[str] = set()
     used_kinds: set[str] = set()
@@ -488,7 +517,8 @@ def deterministic_fast_cuts(
         candidates = [
             ref
             for ref in ranked
-            if ref.media_id != previous_id
+            if (ref.media_id != previous_id or video_reuse_policy == "allow_repeat")
+            and (video_reuse_policy != "once" or ref.media_id not in used_ids)
             and remaining_frames[ref.media_id]
             >= (
                 round(
@@ -562,7 +592,13 @@ def deterministic_fast_cuts(
         else:
             preferred_minimum_frames = int(round(0.8 * fps))
             preferred_maximum_frames = int(round(1.2 * fps))
-        maximum_frames = min(preferred_maximum_frames, remaining_frames[ref.media_id])
+        if video_reuse_policy == "once" and ref.kind == "video" and not quick_mixed_timing:
+            preferred_maximum_frames = source_capacity_frames[ref.media_id]
+        maximum_frames = min(
+            preferred_maximum_frames,
+            remaining_frames[ref.media_id],
+            source_capacity_frames[ref.media_id],
+        )
         minimum_frames = min(maximum_frames, preferred_minimum_frames)
         was_new = ref.media_id not in used_ids
         reservations.append((ref, minimum_frames, maximum_frames))
@@ -618,7 +654,7 @@ def deterministic_fast_cuts(
         extra_frames = min(remaining_target_frames, maximum_frames - minimum_frames)
         duration_frames = minimum_frames + extra_frames
         remaining_target_frames -= extra_frames
-        start_frames = consumed_frames[ref.media_id]
+        start_frames = 0 if video_reuse_policy == "allow_repeat" else consumed_frames[ref.media_id]
         consumed_frames[ref.media_id] += duration_frames
         scheduled.append((ref, duration_frames, start_frames))
     if remaining_target_frames:
@@ -748,6 +784,7 @@ def plan_direction_snapshot(
     idea: str = "",
     theme: str = "",
     job_id: str | None = None,
+    creator_request: str = "",
 ) -> EditProposalSnapshot:
     """Run the canonical proposal planner using the already-analyzed media.
 
@@ -771,11 +808,20 @@ def plan_direction_snapshot(
         )
         for ref in source.media
     ]
+    video_reuse_policy = resolve_video_reuse_policy(
+        creator_request,
+        source.video_reuse_policy,
+        montage_cadence,
+    )
+    if video_reuse_policy == "once":
+        montage_cadence = None
     narrated = source.narration is not None
     planning_duration_s = (
         max(3, min(60, int(duration_s)))
         if narrated and direction == "fast_montage"
-        else clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
+        else clamp_fast_montage_target_duration_s(
+            media, duration_s, mixed_media_timing, video_reuse_policy
+        )
         if direction == "fast_montage"
         else max(3, min(60, int(duration_s)))
     )
@@ -788,6 +834,8 @@ def plan_direction_snapshot(
                 theme=theme[:500],
                 direction=direction,
                 goal=goal[:500],
+                creator_request=creator_request[:12000],
+                video_reuse_policy=video_reuse_policy,
                 pace=pace,
                 target_duration_s=planning_duration_s,
                 media_scope=source.media_scope,
@@ -829,6 +877,7 @@ def plan_direction_snapshot(
             planning_duration_s,
             mixed_media_timing,
             montage_cadence,
+            video_reuse_policy=video_reuse_policy,
             narration_duration_s=source.narration.duration_s if source.narration else None,
             required_media_ids=(
                 [ref.media_id for ref in source.media]
@@ -881,6 +930,7 @@ def plan_direction_snapshot(
                 else montage_audio
             ),
             "montage_cadence": montage_cadence,
+            "video_reuse_policy": video_reuse_policy,
             "narration": source.narration,
             "media_scope": source.media_scope,
             "selected_media_ids": source.selected_media_ids,

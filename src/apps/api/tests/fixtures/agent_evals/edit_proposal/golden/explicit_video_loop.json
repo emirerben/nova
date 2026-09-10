@@ -1,0 +1,26 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.8.1",
+  "input": {
+    "idea": "Summer in Madrid",
+    "direction": "fast_montage",
+    "creator_request": "Loop the video to make a six second edit",
+    "pace": "fast",
+    "target_duration_s": 6,
+    "video_reuse_policy": "allow_repeat",
+    "media": [
+      {
+        "media_id": "clip-0",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 3.733,
+        "subject": "Madrid street"
+      }
+    ]
+  },
+  "raw_text": "{\"title\": \"Madrid on repeat\", \"duration_s\": 6, \"story_beats\": [], \"fast_cuts\": [{\"cut_id\": \"cut-0\", \"media_id\": \"clip-0\", \"source_start_s\": 0, \"source_end_s\": 1, \"output_duration_s\": 1, \"role\": \"hook\"}, {\"cut_id\": \"cut-1\", \"media_id\": \"clip-0\", \"source_start_s\": 0, \"source_end_s\": 1, \"output_duration_s\": 1, \"role\": \"build\"}, {\"cut_id\": \"cut-2\", \"media_id\": \"clip-0\", \"source_start_s\": 0, \"source_end_s\": 1, \"output_duration_s\": 1, \"role\": \"build\"}, {\"cut_id\": \"cut-3\", \"media_id\": \"clip-0\", \"source_start_s\": 0, \"source_end_s\": 1, \"output_duration_s\": 1, \"role\": \"build\"}, {\"cut_id\": \"cut-4\", \"media_id\": \"clip-0\", \"source_start_s\": 0, \"source_end_s\": 1, \"output_duration_s\": 1, \"role\": \"build\"}, {\"cut_id\": \"cut-5\", \"media_id\": \"clip-0\", \"source_start_s\": 0, \"source_end_s\": 1, \"output_duration_s\": 1, \"role\": \"payoff\"}]}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Explicit loop request permits adjacent overlapping windows of one video"
+  }
+}

@@ -29,9 +29,10 @@ from app.schemas.edit_proposal import (
     recognize_mixed_media_timing,
     recognize_round_robin_cadence,
     rejects_round_robin_cadence,
+    resolve_video_reuse_policy,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-07-v18"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-10-v19"
 
 
 class MainCreatorInput(BaseModel):
@@ -139,10 +140,17 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         cut_duration_s=cadence_cut_s,
                         reuse_policy=reuse_policy,
                     )
+                reuse = "once"
+                for message in [request_contract, *user_messages, input.user_message]:
+                    reuse = resolve_video_reuse_policy(message, reuse)
+                reuse = resolve_video_reuse_policy(input.user_message, reuse, cadence)
+                if reuse == "once":
+                    cadence = None
                 strategy = action.strategy.model_copy(
                     update={
                         "mixed_media_timing": timing,
                         "montage_cadence": cadence,
+                        "video_reuse_policy": reuse,
                         "media_scope": _explicit_media_scope_from_request(combined_request),
                     }
                 )

@@ -2217,6 +2217,7 @@ def _run_generative_job_impl(
             if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
             else None
         )
+        creator_video_reuse_policy = raw_creator_strategy.get("video_reuse_policy")
         raw_pacing = raw_creator_strategy.get("pacing")
         creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
         immutable_job_plan = job.assembly_plan or {}
@@ -3119,6 +3120,7 @@ def _run_generative_job_impl(
                         text_color_override=creator_text_color,
                         creator_target_duration_s=creator_target_duration_s,
                         creator_pacing=creator_pacing,
+                        creator_video_reuse_policy=creator_video_reuse_policy,
                         narrative_order=narrative_order,
                         filming_guide=filming_guide_candidates,
                         allow_sequence=False,
@@ -3147,6 +3149,7 @@ def _run_generative_job_impl(
                         text_color_override=creator_text_color,
                         creator_target_duration_s=creator_target_duration_s,
                         creator_pacing=creator_pacing,
+                        creator_video_reuse_policy=creator_video_reuse_policy,
                         narrative_order=None,
                         filming_guide=None,
                         allow_sequence=False,
@@ -3175,6 +3178,7 @@ def _run_generative_job_impl(
                         text_color_override=creator_text_color,
                         creator_target_duration_s=creator_target_duration_s,
                         creator_pacing=creator_pacing,
+                        creator_video_reuse_policy=creator_video_reuse_policy,
                         narrative_order=narrative_order,
                         filming_guide=(
                             filming_guide_candidates if narrative_shot_count > 0 else None
@@ -9321,6 +9325,20 @@ def _derive_duration_beats(durations: list[float], beat_grid: list[float]) -> li
 _CONTIGUOUS_SOURCE_EPSILON_S = 0.05
 
 
+def _single_use_video_steps(steps: list) -> list:
+    """Retain the first appearance of each source in automatic native plans."""
+    from dataclasses import replace
+
+    seen: set[str] = set()
+    unique = []
+    for step in steps:
+        if step.clip_id in seen:
+            continue
+        seen.add(step.clip_id)
+        unique.append(replace(step, slot={**step.slot, "position": len(unique) + 1}))
+    return unique
+
+
 def _merge_contiguous_same_source_steps(
     steps: list,
     *,
@@ -11430,6 +11448,7 @@ def _run_regenerate_variant(
             if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
             else None
         )
+        creator_video_reuse_policy = raw_creator_strategy.get("video_reuse_policy")
         raw_pacing = raw_creator_strategy.get("pacing")
         creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
         clip_paths_gcs = (job.all_candidates or {}).get("clip_paths", []) or []
@@ -12332,6 +12351,7 @@ def _run_regenerate_variant(
                 user_style_knobs=existing_user_style_knobs,
                 creator_target_duration_s=creator_target_duration_s,
                 creator_pacing=creator_pacing,
+                creator_video_reuse_policy=creator_video_reuse_policy,
                 narrative_order=narrative_order_regen,
                 filming_guide=(filming_guide_regen if narrative_shot_count_regen > 0 else None),
                 assembly_steps_override=assembly_steps_override,
@@ -14893,6 +14913,7 @@ def _render_generative_variant(
     user_style_knobs: dict | None = None,
     creator_target_duration_s: float | None = None,
     creator_pacing: str | None = None,
+    creator_video_reuse_policy: str | None = None,
     narrative_order: list[str] | None = None,
     filming_guide: list[dict] | None = None,
     assembly_steps_override: list | None = None,
@@ -15523,7 +15544,11 @@ def _render_generative_variant(
             steps = list(assembly_steps_override)
         else:
             try:
-                recipe = consolidate_slots(recipe, clip_metas)
+                recipe = (
+                    consolidate_slots(recipe, clip_metas, single_use_sources=True)
+                    if creator_video_reuse_policy == "once"
+                    else consolidate_slots(recipe, clip_metas)
+                )
                 assembly_plan = match(
                     recipe,
                     clip_metas,
@@ -15540,6 +15565,12 @@ def _render_generative_variant(
             except TemplateMismatchError as exc:
                 raise ValueError(f"{exc.code}: {exc.message}") from exc
             steps = assembly_plan.steps
+            if creator_video_reuse_policy == "once" and not strict_single_hero:
+                # Degraded metadata can make the matcher's final fallback reuse
+                # a clip despite consolidation. Shorten instead of inventing a
+                # second appearance. Exact user-authored timeline overrides
+                # above intentionally bypass this automatic planning policy.
+                steps = _single_use_video_steps(steps)
             # Fresh-match montage only (masonry keeps tiles; the override path
             # above must honor the user's slots verbatim): collapse invisible
             # same-source seams so render and editor timeline agree.

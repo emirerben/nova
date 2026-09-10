@@ -187,6 +187,7 @@ def test_fast_montage_snapshot_uses_server_requested_duration(monkeypatch) -> No
         source,
         direction="fast_montage",
         goal="Move through the strongest moments",
+        creator_request="Alternate video clips using different portions.",
         pace="fast",
         duration_s=3,
     )
@@ -384,6 +385,7 @@ def test_fast_montage_uses_analyzed_deterministic_fallback_on_terminal_schema(
         source,
         direction="fast_montage",
         goal="Move through the strongest moments",
+        creator_request="Alternate video clips using different portions.",
         pace="fast",
         duration_s=4,
         job_id="job-1",
@@ -430,6 +432,7 @@ def test_mixed_media_fallback_prefers_quick_photos_and_longer_videos() -> None:
         media,
         4,
         MixedMediaTimingProfile(image_hold="very_fast", video_hold="longer", boundary_style="cut"),
+        video_reuse_policy="distinct_windows",
     )
     assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(4)
     assert any(cut.media_id == "photo" and 0.5 <= cut.output_duration_s <= 0.8 for cut in cuts)
@@ -614,9 +617,19 @@ def test_mixed_media_target_is_clamped_to_image_and_video_capacity() -> None:
 
     # One photo can separate only two windows from the same video, so the
     # schedulable capacity is 3s + 0.8s + 3s, not the raw 8.8s source sum.
-    assert edit_direction_planner.clamp_fast_montage_target_duration_s(media, 60, profile) == 6
+    assert (
+        edit_direction_planner.clamp_fast_montage_target_duration_s(
+            media, 60, profile, "distinct_windows"
+        )
+        == 6
+    )
     # No profile means the legacy 3–60s target contract remains unchanged.
-    assert edit_direction_planner.clamp_fast_montage_target_duration_s(media, 24) == 24
+    assert (
+        edit_direction_planner.clamp_fast_montage_target_duration_s(
+            media, 24, video_reuse_policy="distinct_windows"
+        )
+        == 24
+    )
 
 
 def test_one_video_one_photo_fallback_succeeds_at_adjacency_aware_clamp(monkeypatch) -> None:
@@ -657,6 +670,7 @@ def test_one_video_one_photo_fallback_succeeds_at_adjacency_aware_clamp(monkeypa
         source,
         direction="fast_montage",
         goal="Move through the strongest moments",
+        creator_request="Alternate video clips using different portions.",
         pace="fast",
         duration_s=60,
         mixed_media_timing=profile,
@@ -738,6 +752,7 @@ def test_mixed_media_fallback_uses_clamped_target(monkeypatch) -> None:
         source,
         direction="fast_montage",
         goal="Move through the strongest moments",
+        creator_request="Alternate video clips using different portions.",
         pace="fast",
         duration_s=60,
         mixed_media_timing=profile,
@@ -927,6 +942,7 @@ def test_fast_montage_fallback_omits_unneeded_short_source_without_shortening_lo
         source,
         direction="fast_montage",
         goal="Move through the strongest moments",
+        creator_request="Alternate video clips using different portions.",
         pace="fast",
         duration_s=duration_s,
     )
@@ -953,6 +969,7 @@ def test_fast_montage_fallback_fails_when_non_overlapping_capacity_is_insufficie
             _mixed_duration_source(60),
             direction="fast_montage",
             goal="Move through the strongest moments",
+            creator_request="Alternate video clips using different portions.",
             pace="fast",
             duration_s=60,
         )
@@ -1279,6 +1296,7 @@ def test_mixed_media_agent_rejects_sparse_repeated_sources_when_more_fit() -> No
                 }
             ),
             EditProposalAgentInput(
+                video_reuse_policy="distinct_windows",
                 direction="fast_montage",
                 pace="fast",
                 target_duration_s=30,

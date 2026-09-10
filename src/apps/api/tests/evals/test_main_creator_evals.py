@@ -30,3 +30,12 @@ def test_main_creator_eval(
         live_input_normalizer=live_input_normalizer,
     )
     assert result.passed, result.summary()
+
+    if fixture_path.stem == "madrid_pastel_title":
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy["opening_title"] == "Summer in Madrid"
+        assert strategy["text_color"] == "#FFF0A6"
+        assert strategy["target_duration_s"] <= 12
