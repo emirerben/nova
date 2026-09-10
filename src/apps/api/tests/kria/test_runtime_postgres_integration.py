@@ -780,8 +780,14 @@ async def test_draft_retention_prunes_only_old_superseded_bodies() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("request_render", "followup"),
+    [(True, None), (False, "style"), (False, "stale_head"), (False, "speech")],
+)
 async def test_editor_revision_approval_atomically_stages_exact_job_generation(
     monkeypatch: pytest.MonkeyPatch,
+    request_render: bool,
+    followup: str | None,
 ) -> None:
     user_id, thread_id, session_id = _seed_runtime_project()
     job_id = uuid.uuid4()
@@ -843,6 +849,7 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
     )
     editor_plan = adapt_editor_action(
         reply="I prepared a sharper product-first hook.",
+        request_render=request_render,
         ops=[{"op": "edit_text", "bar_index": 0, "text": "Fresh matcha, finally"}],
     )
 
@@ -868,6 +875,125 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
                 body=body,
             )
         result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        if not request_render:
+            assert result["status"] == "completed"
+            with sync_session() as db:
+                turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+                assert (
+                    db.execute(
+                        select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == turn.id)
+                    ).scalar_one_or_none()
+                    is None
+                )
+                draft = db.execute(
+                    select(CreatorEditDraft).where(
+                        CreatorEditDraft.thread_id == thread_id, CreatorEditDraft.is_head.is_(True)
+                    )
+                ).scalar_one()
+                assert (
+                    draft.snapshot_json["editor_payload"]["text_elements"][0]["text"]
+                    == "Fresh matcha, finally"
+                )
+                unchanged = db.get(Job, job_id).assembly_plan["variants"][0]
+                assert unchanged["render_generation_id"] == "generation-1"
+                assert unchanged["render_status"] == "ready"
+                assert unchanged["text_elements"][0]["text"] == "Old matcha hook"
+                first_draft_id = draft.id
+                item_id = draft.item_id
+                first_revision = draft.draft_revision
+                if followup == "stale_head":
+                    # A surviving head from an older render must not become input
+                    # to either the planner or the next committed draft.
+                    draft.base_generation_id = "older-generation"
+                    db.commit()
+
+            from types import SimpleNamespace
+
+            from app.kria.planner import _plan_editor_revision
+
+            observed_snapshots = []
+
+            async def copilot_reply(body, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+                observed_snapshots.append(body.snapshot)
+                return SimpleNamespace(ops=[], outcome="clarification", reply="Which style?")
+
+            monkeypatch.setattr("app.kria.planner.run_copilot_turn", copilot_reply)
+            async with AsyncSessionLocal() as db:
+                item = await db.get(PlanItem, item_id)
+                await _plan_editor_revision(
+                    db, thread_id=thread_id, item=item, user_message="Make that hook red"
+                )
+            expected_text = (
+                "Old matcha hook" if followup == "stale_head" else "Fresh matcha, finally"
+            )
+            assert observed_snapshots[0]["text_bars"][0]["text"] == expected_text
+
+            editor_plan = adapt_editor_action(
+                reply="Apply the next edit.",
+                request_render=followup == "speech",
+                ops=(
+                    [{"op": "apply_speech_cut_candidate", "candidate_id": "reviewed-cut"}]
+                    if followup == "speech"
+                    else [{"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#FF0000"}}]
+                ),
+            )
+            with sync_session() as db:
+                revision = db.get(CreationThread, thread_id).revision
+            async with AsyncSessionLocal() as db:
+                second, _ = await submit_turn(
+                    db,
+                    thread_id=thread_id,
+                    creator_id=user_id,
+                    body=SubmitTurnBody(
+                        message="Apply the next edit",
+                        client_event_id=f"followup-{uuid.uuid4().hex}",
+                        expected_thread_revision=revision,
+                    ),
+                )
+            if followup == "speech":
+                with pytest.raises(RuntimeError, match="Save the current draft before"):
+                    await asyncio.to_thread(run_kria_turn.run, second.turn_id)
+            else:
+                second_result = await asyncio.to_thread(run_kria_turn.run, second.turn_id)
+                assert second_result["status"] == "completed"
+            with sync_session() as db:
+                heads = (
+                    db.execute(
+                        select(CreatorEditDraft).where(
+                            CreatorEditDraft.thread_id == thread_id,
+                            CreatorEditDraft.is_head.is_(True),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert len(heads) == 1
+                head = heads[0]
+                if followup == "speech":
+                    assert head.id == first_draft_id
+                    assert head.draft_revision == first_revision
+                    assert db.get(CreatorAgentTurn, uuid.UUID(second.turn_id)).status == "failed"
+                else:
+                    assert head.id != first_draft_id
+                    assert head.draft_revision == first_revision + 1
+                    assert not db.get(CreatorEditDraft, first_draft_id).is_head
+                    bar = head.snapshot_json["editor_payload"]["text_elements"][0]
+                    assert bar["text"] == expected_text
+                    assert bar["color"] == "#FF0000"
+                    assert head.base_generation_id == "generation-1"
+                assert (
+                    db.execute(
+                        select(CreatorAgentApproval).where(
+                            CreatorAgentApproval.turn_id == uuid.UUID(second.turn_id)
+                        )
+                    ).scalar_one_or_none()
+                    is None
+                )
+                unchanged = db.get(Job, job_id).assembly_plan["variants"][0]
+                assert unchanged["text_elements"][0]["text"] == "Old matcha hook"
+                assert unchanged["render_generation_id"] == "generation-1"
+                assert unchanged["render_status"] == "ready"
+            return
         assert result["status"] == "awaiting_approval"
 
         with sync_session() as db:

@@ -42,16 +42,16 @@ assert_api_base_url Debug "valid-url"
 assert_api_base_url Staging "https://staging.usekria.com"
 assert_api_base_url Release "https://nova-video.fly.dev"
 
-xcodebuild \
-  -project Kria.xcodeproj \
-  -scheme Kria \
-  -skipPackagePluginValidation \
-  -destination "generic/platform=iOS Simulator" \
-  -derivedDataPath "$DERIVED_DATA" \
-  CODE_SIGNING_ALLOWED=NO \
-  build
+COMMON_ARGS=(
+  -project Kria.xcodeproj
+  -scheme Kria
+  -skipPackagePluginValidation
+  -derivedDataPath "$DERIVED_DATA"
+  CODE_SIGNING_ALLOWED=NO
+)
 
 if [[ "${KRIA_SKIP_SIMULATOR_TESTS:-0}" == "1" ]]; then
+  xcodebuild "${COMMON_ARGS[@]}" -destination "generic/platform=iOS Simulator" build
   echo "Skipping simulator tests because KRIA_SKIP_SIMULATOR_TESTS=1"
   exit 0
 fi
@@ -73,11 +73,18 @@ raise SystemExit("No available iPhone simulator found")
 '
 )"
 
-xcodebuild \
-  -project Kria.xcodeproj \
-  -scheme Kria \
-  -skipPackagePluginValidation \
-  -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
-  -derivedDataPath "$DERIVED_DATA" \
-  CODE_SIGNING_ALLOWED=NO \
-  test
+DESTINATION="platform=iOS Simulator,id=$SIMULATOR_ID"
+
+# Boot during compilation instead of paying for startup after the build.
+xcrun simctl bootstatus "$SIMULATOR_ID" -b &
+BOOT_PID=$!
+trap 'kill "$BOOT_PID" 2>/dev/null || true' EXIT
+
+# Compile the app AND test bundles for the same destination exactly once.
+xcodebuild "${COMMON_ARGS[@]}" -destination "$DESTINATION" build-for-testing
+wait "$BOOT_PID"
+trap - EXIT
+
+# Keep UI execution serial: cloned parallel runners can miss drawer controls.
+xcodebuild "${COMMON_ARGS[@]}" -destination "$DESTINATION" \
+  -parallel-testing-enabled NO test-without-building

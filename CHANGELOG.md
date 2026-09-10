@@ -14,6 +14,24 @@ All notable changes to this project will be documented in this file.
 ### Added
 - iOS creation attachments include supporting visuals and uploaded or recorded voiceover, with separate media limits, removal, background upload recovery, and generation blocked while uploads are pending.
 
+## [0.75.8.0] - 2026-09-10
+
+### Changed
+- Pull requests select affected web, API and iOS CI suites, with explicit not-applicable results for unrelated checks. Shared or unknown changes and every push to main retain full regression coverage.
+- Superseded PR CI runs are cancelled; release-version-only changes avoid unrelated test suites.
+
+## [0.75.7.0] - 2026-09-10
+
+### Changed
+- iOS verification builds the app and tests together for one simulator, starts that simulator during compilation, and reuses Xcode build and package caches in CI. All unit, UI, and contract checks remain required.
+
+## [0.75.6.0] - 2026-09-10
+
+### Changed
+- Creation and editing share one Kria conversation. Editor reviews, suggestions, confirmations, progress, and undo now appear in the main chat, including the mobile Chat tab.
+- Previewable AI edits remain unsaved until Save/export. Server-only effects and speech processing require confirmation, and stale responses cannot overwrite a changed draft.
+- Direct editor links reopen the owning conversation and selected variant. Editor history retries survive a reload without replaying edits.
+
 ## [0.75.5.0] - 2026-09-10
 
 ### Changed

@@ -320,9 +320,10 @@ final class KriaUITests: XCTestCase {
         expectation(for: advanced, evaluatedWith: clock)
         waitForExpectations(timeout: 4)
 
-        play.tap()
-        expectation(for: NSPredicate(format: "label == %@", "Play preview"), evaluatedWith: play)
-        waitForExpectations(timeout: 2)
+        // This fixture lasts only 4.7s. XCTest's idle synchronization can
+        // deliver a second toggle after its natural end, starting replay.
+        // Pause is covered synchronously by the session transport test;
+        // natural completion and replay are covered by the next UI test.
     }
 
     func testNativeEditorPlaysTheRenderedAssetThroughItsRealEndAndReplays() {

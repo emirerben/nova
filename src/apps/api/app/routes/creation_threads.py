@@ -280,6 +280,42 @@ class CreateBody(StrictBody):
         return _client_id(value) if value is not None else None
 
 
+class OpenEditorBody(StrictBody):
+    item_id: uuid.UUID
+    variant_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class EditorMessageBody(StrictBody):
+    id: str = Field(min_length=1, max_length=128)
+    role: Literal["user", "assistant"]
+    text: str = Field(min_length=1, max_length=8000)
+    applied: list[str] = Field(default_factory=list, max_length=100)
+    rejected: list[str] = Field(default_factory=list, max_length=100)
+    clarification_context: dict | None = None
+    pending_actions: list[dict] = Field(default_factory=list, max_length=8)
+
+    @field_validator("clarification_context", "pending_actions")
+    @classmethod
+    def bounded_context(cls, value):
+        if len(json.dumps(value, ensure_ascii=False).encode("utf-8")) > 32000:
+            raise ValueError("Editor context must be at most 32000 bytes")
+        return value
+
+    @field_validator("applied", "rejected")
+    @classmethod
+    def bounded_summaries(cls, values: list[str]) -> list[str]:
+        if any(len(value) > 1000 for value in values):
+            raise ValueError("Editor summaries must be at most 1000 characters")
+        return values
+
+
+class EditorEventsBody(StrictBody):
+    item_id: uuid.UUID
+    variant_id: str = Field(min_length=1, max_length=128)
+    generation_id: str | None = Field(default=None, max_length=128)
+    messages: list[EditorMessageBody] = Field(min_length=1, max_length=32)
+
+
 class MessageBody(StrictBody):
     message: str = Field(min_length=1, max_length=4000)
     client_event_id: str = Field(min_length=1, max_length=160)
@@ -2545,6 +2581,145 @@ async def list_threads(
             )
         )
     return summaries
+
+
+@router.post("/for-editor", response_model=CreationThreadOut)
+async def open_editor_thread(
+    body: OpenEditorBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreationThreadOut:
+    """Resolve a direct editor link without creating a second conversation.
+
+    Serialize on the account before lookup so concurrent legacy deep links
+    cannot create duplicate owning threads. No model or render is dispatched.
+    """
+    if await db.get(type(user), user.id, with_for_update=True) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    owned = (
+        await db.execute(
+            select(PlanItem, ContentPlan)
+            .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+            .where(PlanItem.id == body.item_id, ContentPlan.user_id == user.id)
+            .with_for_update()
+        )
+    ).first()
+    if owned is None:
+        raise HTTPException(status_code=404, detail="Plan item not found")
+    item, plan = owned
+    job = await db.get(Job, item.current_job_id) if item.current_job_id else None
+    if (
+        job is None
+        or job.user_id != user.id
+        or job.content_plan_item_id != item.id
+        or (
+            job.content_plan_ownership_epoch is not None
+            and job.content_plan_ownership_epoch != plan.ownership_epoch
+        )
+    ):
+        raise HTTPException(status_code=404, detail="Editor video not found")
+    variants = [
+        row for row in (job.assembly_plan or {}).get("variants", []) if isinstance(row, dict)
+    ]
+    selected = (
+        next((row for row in variants if row.get("variant_id") == body.variant_id), None)
+        if body.variant_id
+        else next((row for row in variants if row.get("render_status") in {"ready", "draft"}), None)
+    )
+    if selected is None:
+        raise HTTPException(status_code=404, detail="Editor variant not found")
+    thread = (
+        await db.execute(
+            select(CreationThread)
+            .where(
+                CreationThread.creator_id == user.id, CreationThread.active_plan_item_id == item.id
+            )
+            .order_by(CreationThread.created_at.asc())
+            .limit(1)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if thread is None:
+        thread = CreationThread(
+            creator_id=user.id,
+            runtime_version=1,
+            content_plan_id=plan.id,
+            active_plan_item_id=item.id,
+            active_job_id=job.id,
+            title=str(item.idea or _DEFAULT_TITLE)[:_MAX_TITLE_LENGTH],
+            state={"edit_format": item.edit_format, "media_count": len(item.clip_gcs_paths or [])},
+        )
+        db.add(thread)
+        await db.flush()
+        await _append(db, thread, event_type="editor_thread_linked")
+    elif thread.active_job_id != job.id:
+        # Never silently move an existing session's authority to another render.
+        raise HTTPException(
+            status_code=409, detail="The project changed. Open it from your projects and try again."
+        )
+    if (thread.state or {}).get("selected_variant_id") != selected["variant_id"]:
+        thread.state = {**(thread.state or {}), "selected_variant_id": selected["variant_id"]}
+        await _append(db, thread, event_type="editor_variant_selected")
+    await db.commit()
+    return await _response(db, thread)
+
+
+@router.post("/{thread_id}/editor-events", response_model=CreationThreadOut)
+async def record_editor_events(
+    thread_id: str,
+    body: EditorEventsBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreationThreadOut:
+    """Append browser-acknowledged conversation receipts, never execute edits.
+
+    This narrow history surface is shared by v1 and v2. Client receipts are
+    explicitly marked as such; they cannot approve a render or update a draft.
+    """
+    thread = await _load(thread_id, user, db, lock=True)
+    if thread.status != "active":
+        raise HTTPException(status_code=409, detail="Creation thread is archived")
+    item, _session, job = await _load_authorized_projection_rows(db, thread)
+    if item is None or item.id != body.item_id or job is None:
+        raise HTTPException(status_code=404, detail="Editor target not found")
+    if not any(
+        isinstance(row, dict) and row.get("variant_id") == body.variant_id
+        for row in (job.assembly_plan or {}).get("variants", [])
+    ):
+        raise HTTPException(status_code=404, detail="Editor target not found")
+    for message in body.messages:
+        event_id = f"editor:{message.id}"
+        payload = {
+            "editor_message_id": message.id,
+            "item_id": str(item.id),
+            "variant_id": body.variant_id,
+            "generation_id": body.generation_id,
+            "source": "editor_client_acknowledgement",
+            "changes": message.applied,
+            "rejected": message.rejected,
+            "clarification_context": message.clarification_context,
+            "pending_actions": message.pending_actions,
+        }
+        duplicate = await _duplicate(db, thread.id, event_id)
+        if duplicate:
+            if (
+                duplicate.content != message.text
+                or duplicate.role != message.role
+                or duplicate.payload != payload
+            ):
+                raise HTTPException(status_code=409, detail="Idempotency key reused")
+            continue
+        await _append(
+            db,
+            thread,
+            event_type=f"editor_{message.role}_message",
+            role=message.role,
+            content=message.text,
+            payload=payload,
+            client_event_id=event_id,
+        )
+    await db.commit()
+    return await _response(db, thread)
 
 
 @router.get("/{thread_id}", response_model=CreationThreadOut | ThreadDeltaOut)

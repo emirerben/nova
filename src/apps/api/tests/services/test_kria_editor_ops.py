@@ -300,3 +300,30 @@ def test_editor_compiler_materializes_remaining_portable_sections() -> None:
     assert compiled.payload.caption_cues[0]["text"] == "Kria"
     assert compiled.payload.caption_cues[0]["smart_emphasis"] is True
     assert compiled.payload.title == "Matcha launch day"
+
+
+def test_consecutive_drafts_preserve_prior_text_and_other_sections() -> None:
+    from app.services.kria_editor_ops import merge_editor_draft, project_editor_draft
+
+    variant = _variant()
+    first = compile_editor_ops(
+        _job(variant),
+        variant,
+        [
+            {"op": "edit_text", "bar_index": 0, "text": "Fresh hook"},
+        ],
+    ).payload.model_dump(mode="json", exclude_none=True)
+    projected = project_editor_draft(variant, first)
+    assert projected["text_elements"][0]["text"] == "Fresh hook"
+    second = compile_editor_ops(
+        _job(variant),
+        projected,
+        [
+            {"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#FF0000"}},
+        ],
+    ).payload.model_dump(mode="json", exclude_none=True)
+    merged = merge_editor_draft(first, second)
+    assert merged["text_elements"][0]["text"] == "Fresh hook"
+    assert merged["text_elements"][0]["color"] == "#FF0000"
+    assert variant["text_elements"][0]["text"] == "Old hook"
+    assert merge_editor_draft({"remove_music": True}, {"remove_music": False})["remove_music"]

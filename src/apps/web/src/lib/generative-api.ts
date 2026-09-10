@@ -721,6 +721,8 @@ export async function setVariantMix(
 /** One instant-edit session commit: text + style + size in a single request →
  * a single re-render. `text` and `remove_text` are mutually exclusive. */
 export interface EditVariantPayload {
+  expected_generation?: string;
+  expected_job_id?: string;
   text?: string;
   remove_text?: boolean;
   style_set_id?: string;

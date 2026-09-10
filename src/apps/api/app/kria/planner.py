@@ -23,13 +23,14 @@ from app.models import (
     CreationThread,
     CreationThreadEvent,
     CreatorAgentSession,
+    CreatorEditDraft,
     Job,
     Persona,
     PlanItem,
 )
 from app.routes._copilot import CopilotTurnBody, run_copilot_turn
 from app.services.creator_sessions import creator_context, resolve_item_creator_context
-from app.services.kria_editor_ops import build_editor_snapshot
+from app.services.kria_editor_ops import build_editor_snapshot, project_editor_draft
 
 
 @dataclass(frozen=True)
@@ -80,28 +81,32 @@ def adapt_creator_action(action: AskUser | ProposeStrategy | ReviewDecision) -> 
     )
 
 
-def adapt_editor_action(*, reply: str, ops: list[dict]) -> KriaTurnPlan:
+def adapt_editor_action(
+    *, reply: str, ops: list[dict], request_render: bool = False
+) -> KriaTurnPlan:
+    """Draft edits are reversible; rendering is a distinct, policy-gated action."""
     if not ops:
         return KriaTurnPlan(mode="respond", turn_value="question", response=reply)
-    return KriaTurnPlan(
-        mode="act",
-        turn_value="action",
-        evidence_ids=["trusted-editor-snapshot"],
-        intents=[
-            {
-                "intent_id": "apply-editor-ops",
-                "tool_name": "draft.apply_editor_ops",
-                "tool_version": 1,
-                "arguments": {"operations": ops, "summary": reply},
-            },
+    intents = [
+        {
+            "intent_id": "apply-editor-ops",
+            "tool_name": "draft.apply_editor_ops",
+            "tool_version": 1,
+            "arguments": {"operations": ops, "summary": reply},
+        },
+    ]
+    if request_render:
+        intents.append(
             {
                 "intent_id": "request-render",
                 "tool_name": "render.request",
                 "tool_version": 1,
                 "arguments": {},
                 "depends_on": ["apply-editor-ops"],
-            },
-        ],
+            }
+        )
+    return KriaTurnPlan(
+        mode="act", turn_value="action", evidence_ids=["trusted-editor-snapshot"], intents=intents
     )
 
 
@@ -135,6 +140,19 @@ async def _plan_editor_revision(
     )
     if variant is None:
         return None
+    head = (
+        await db.execute(
+            select(CreatorEditDraft).where(
+                CreatorEditDraft.item_id == session.plan_item_id,
+                CreatorEditDraft.variant_key == session.target_variant_id,
+                CreatorEditDraft.base_job_id == job.id,
+                CreatorEditDraft.base_generation_id == session.target_generation_id,
+                CreatorEditDraft.is_head.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if head is not None and (head.snapshot_json or {}).get("kind") == "editor":
+        variant = project_editor_draft(variant, head.snapshot_json.get("editor_payload") or {})
     snapshot = build_editor_snapshot(job, variant)
     if not snapshot["allowed_op_families"]:
         return None
@@ -172,7 +190,13 @@ async def _plan_editor_revision(
         job_id=job_id,
     )
     if response.ops:
-        return adapt_editor_action(reply=response.reply, ops=response.ops)
+        return adapt_editor_action(
+            reply=response.reply,
+            ops=response.ops,
+            # This portable operation invokes server speech processing; ordinary
+            # text/timeline/mix edits stay drafts until an explicit Save.
+            request_render=any(op.get("op") == "apply_speech_cut_candidate" for op in response.ops),
+        )
     if response.outcome in {"clarification", "unsupported", "stale", "failed", "no_effect"}:
         return KriaTurnPlan(
             mode="respond",

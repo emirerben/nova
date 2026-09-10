@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
-import ChatCreationWorkspace, { renderPhaseLabel } from "@/app/plan/_components/workspace/ChatCreationWorkspace";
+import ChatCreationWorkspace, { workspaceEditorVariant, renderPhaseLabel } from "@/app/plan/_components/workspace/ChatCreationWorkspace";
 import { POSTER_RECOVERY_DELAYS_MS } from "@/hooks/useLibraryPosterRecovery";
 import {
   applyCreationAction,
@@ -2520,4 +2520,10 @@ describe("ChatCreationWorkspace", () => {
     expect(await screen.findByText(copy)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
   });
+});
+
+test("a selected rendering variant remains the chat target instead of falling back to another cut", () => {
+  const selected = { variant_id: "original_text", render_status: "rendering" };
+  const current = { ...baseThread, state: { selected_variant_id: "original_text" }, job: { id: "job", status: "rendering", variants: [{ variant_id: "song_text", render_status: "ready", output_url: "video.mp4" }, selected] } } as CreationThread;
+  expect(workspaceEditorVariant(current)).toBe(selected);
 });

@@ -24,6 +24,22 @@ make ios-verify    # same gate used by CI
 Set `KRIA_SKIP_SIMULATOR_TESTS=1` only when validating compilation on a host
 without an installed iPhone simulator. CI must run the complete gate.
 
+Verification boots the selected simulator while `build-for-testing` compiles the
+app and test bundles, then runs `test-without-building` on that same destination.
+UI tests run serially for deterministic navigation checks.
+CI caches the actual `src/apps/ios/.derived-data` directory, including Swift
+packages, with keys scoped to the Xcode version, architecture and package/project
+configuration. Source changes still go through Xcode's incremental build checks.
+Changing Xcode or dependency configuration starts a fresh cache.
+
+To check the verification script’s build, boot, and failure handling without
+launching Xcode or a simulator, run the offline orchestration tests from the repo
+root (CI also runs these before the full gate):
+
+```bash
+python3 -m unittest discover -s scripts/ios/tests -v
+```
+
 ## Architecture boundaries
 
 - Creation threads, runtime-v2 drafts, approvals, editor commits, and jobs remain
@@ -110,3 +126,10 @@ over a previous generation receipt. Poll responses use request ordering as
 well as revisions because reconciliation can change a projection without
 appending an event. `testSlowDirectionAndPreJobFailureNeverReturnToUploading`
 exercises the delayed response, pre-job failure, retry and ready transition.
+
+### Change-based CI
+
+The iOS workflow always reports `build-and-test`. The shared
+[CI selector](change-based-ci.md) schedules the macOS build only for affected PRs;
+every push to main runs the full iOS gate. Unrelated PRs report an explicit
+not-applicable result through a small Ubuntu gate without allocating a Mac.
