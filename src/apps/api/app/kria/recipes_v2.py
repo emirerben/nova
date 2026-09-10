@@ -26,6 +26,10 @@ class EditRecipeV2(EditRecipeV1):
 
     @model_validator(mode="after")
     def validate_asset_manifest(self) -> EditRecipeV2:
+        if self.duration > 1800 or any(
+            clip.source_start > 1800 for track in self.tracks for clip in track.clips
+        ):
+            raise ValueError("portable timeline exceeds the device time budget")
         manifest = {asset.id: asset for asset in self.asset_manifest.assets}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")

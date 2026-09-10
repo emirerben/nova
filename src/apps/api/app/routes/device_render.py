@@ -291,8 +291,10 @@ def _verify_export(
             or any(not math.isfinite(value) or value % 360 != 0 for value in rotations)
         ):
             raise ValueError("export video format mismatch")
-        requires_audio = recipe.audio.music_asset_id is not None or any(
-            track.kind == "audio" and track.clips for track in recipe.tracks
+        requires_audio = (
+            recipe.schema_version == 2
+            or recipe.audio.music_asset_id is not None
+            or any(track.kind == "audio" and track.clips for track in recipe.tracks)
         )
         if (
             (requires_audio and not audio)

@@ -94,8 +94,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
             let values = [clip.timelineStart, clip.sourceStart, clip.sourceDuration, clip.rate, clip.volume,
                           clip.transform.scale, clip.transform.rotationDegrees, clip.transform.positionX, clip.transform.positionY]
             guard values.allSatisfy(\.isFinite), clip.timelineStart >= 0, clip.sourceStart >= 0,
+                  clip.timelineStart <= 1800, clip.sourceStart <= 1800,
                   clip.sourceDuration > 0, clip.sourceDuration <= 1800, clip.rate > 0, clip.rate <= 20,
-                  clip.duration.isFinite, (clip.timelineStart + clip.duration).isFinite,
+                  clip.duration.isFinite, clip.timelineStart + clip.duration <= 1800,
                   (0...2).contains(clip.volume), clip.transform.scale > 0, clip.transform.scale <= 20 else {
                 throw RecipeError.invalidTimeline
             }

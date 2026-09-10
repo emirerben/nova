@@ -24,9 +24,15 @@ style has passed the complete parity and physical-device gates.
   downloads through a separate ephemeral session and verifies cache installation.
   Existing renderer fonts ship in the app bundle with their license files and
   enter the same verified cache only when the recipe's filename/hash matches.
-  Shared planning still needs to build these manifests; overlay catalog
-  downloads and chat integration remain outstanding. V1 projects retain their
+  Shared guided planning builds original/font manifests; music/SFX and overlay
+  planning/catalog integration remain outstanding. V1 projects retain their
   original migration and decoding path.
+- The native writer always emits AAC, including bounded silent PCM chunks for
+  edits without source audio. A real export test decodes that AAC to check
+  silence and duration alongside preview/export frame parity. The V2 publish
+  verifier rejects missing audio. Native timelines are capped at 30 minutes
+  before conversion to Core Media time values; V2 server validation shares the
+  duration/source-start budget.
 - V2 `text_layers` carries independent time windows and positioned text runs:
   exact font identity, size, baseline, tracking, fill, outline, and rotation.
   `PortableTextDrawing.swift` draws these through the shared compositor, rejects

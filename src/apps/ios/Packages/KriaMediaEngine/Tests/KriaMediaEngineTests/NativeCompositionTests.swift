@@ -33,6 +33,28 @@ final class NativeCompositionTests: XCTestCase {
         let exported = AVURLAsset(url: output)
         let duration = try await exported.load(.duration)
         XCTAssertEqual(duration.seconds, 1, accuracy: 1 / 30)
+        let audioTracks = try await exported.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(audioTracks.count, 1)
+        let audioTrack = try XCTUnwrap(audioTracks.first)
+        let descriptions = try await audioTrack.load(.formatDescriptions)
+        XCTAssertEqual(CMFormatDescriptionGetMediaSubType(try XCTUnwrap(descriptions.first)), kAudioFormatMPEG4AAC)
+        let audioReader = try AVAssetReader(asset: exported)
+        let pcm = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM,
+            AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsNonInterleaved: false])
+        audioReader.add(pcm)
+        XCTAssertTrue(audioReader.startReading())
+        var decodedBytes = 0
+        while let sample = pcm.copyNextSampleBuffer() {
+            let block = try XCTUnwrap(CMSampleBufferGetDataBuffer(sample))
+            var bytes = Data(count: CMBlockBufferGetDataLength(block))
+            let status = bytes.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: $0.count, destination: $0.baseAddress!) }
+            XCTAssertEqual(status, noErr)
+            let peak = bytes.withUnsafeBytes { $0.bindMemory(to: Int16.self).map { abs(Int($0)) }.max() ?? 0 }
+            XCTAssertLessThanOrEqual(peak, 2)
+            decodedBytes += bytes.count
+        }
+        XCTAssertEqual(audioReader.status, .completed)
+        XCTAssertGreaterThan(decodedBytes, 48_000 * 3)
         let reference = AVAssetImageGenerator(asset: preview.playerItem.asset)
         reference.videoComposition = preview.playerItem.videoComposition
         reference.requestedTimeToleranceBefore = .zero; reference.requestedTimeToleranceAfter = .zero

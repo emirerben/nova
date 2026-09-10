@@ -39,6 +39,12 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertThrowsError(try EditRecipe(frameRate: 0).validate()) { XCTAssertEqual($0 as? RecipeError, .invalidFrameRate(0)) }
         let unsafe = EditRecipe(assets: [MediaAsset(id: "a", relativePath: "a")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "a", sourceDuration: 1, transition: Transition(duration: 2))])])
         XCTAssertThrowsError(try unsafe.validate())
+        for clip in [TimelineClip(id: "c", sourceAssetID: "a", sourceStart: 1e100, sourceDuration: 1),
+                     TimelineClip(id: "c", sourceAssetID: "a", sourceDuration: 1, timelineStart: 1e100),
+                     TimelineClip(id: "c", sourceAssetID: "a", sourceDuration: 1, rate: 1e-100)] {
+            let huge = EditRecipe(assets: [MediaAsset(id: "a", relativePath: "a")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [clip])])
+            XCTAssertThrowsError(try huge.validate())
+        }
         let legacy: [String: Any] = ["width": 1080, "height": 1920, "fps": 30, "clips": [["source_ref": "legacy", "in_s": 1, "duration_s": 2.0]]]
         let migrated = try RecipeMigration.migrate(JSONSerialization.data(withJSONObject: legacy))
         try migrated.validate(); XCTAssertEqual(migrated.schemaVersion, 1); XCTAssertEqual(migrated.tracks.first?.clips.first?.sourceAssetID, "legacy"); XCTAssertEqual(migrated.tracks.first?.clips.first?.sourceStart, 1)
