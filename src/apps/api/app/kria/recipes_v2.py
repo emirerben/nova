@@ -49,7 +49,12 @@ class EditRecipeV2(EditRecipeV1):
         for layer in self.text_layers:
             if layer.end > self.duration:
                 raise ValueError("text layer exceeds the timeline")
-            for run in layer.runs:
+            cursor_runs = (
+                [line.cursor_run for line in layer.discrete_reveal.lines]
+                if layer.discrete_reveal
+                else []
+            )
+            for run in layer.runs + cursor_runs:
                 font = manifest.get(run.font_asset_id)
                 if font is None or font.kind != "library" or font.catalog != "font":
                     raise ValueError("text requires an exact library font")

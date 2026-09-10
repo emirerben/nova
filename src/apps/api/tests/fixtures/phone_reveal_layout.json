@@ -1,0 +1,5156 @@
+[
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 121.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 210,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 996,
+              "x": 9.944375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 689,
+              "x": 30.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 39.801875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 658,
+              "x": 48.34,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 914,
+              "x": 69.51875000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 773,
+              "x": 90.40062500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 111.28250000000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 120.91437500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 140.93687500000004,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 209.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 73,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 24.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 647,
+              "x": 44.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 618,
+              "x": 57.864375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 77.886875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 670,
+              "x": 86.42500000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 107.30687500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 127.32937500000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 136.96125000000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 146.59312500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 167.17812500000005,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 982,
+              "x": 175.71625000000006,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 203.87937500000007,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 224.46437500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 238.45562500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 597,
+              "x": 248.0875000000001,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "typewriter",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              9.944375,
+              30.17,
+              39.801875,
+              48.34,
+              69.51875,
+              90.40062499999999,
+              111.2825,
+              120.91437499999999,
+              140.93687500000001,
+              154.928125
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 121.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 165.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              24.631875,
+              44.17,
+              57.864375,
+              77.88687499999999,
+              86.425,
+              107.30687499999999,
+              127.329375,
+              136.96125,
+              146.59312500000001,
+              167.178125,
+              175.71625,
+              203.879375,
+              224.46437500000002,
+              238.455625,
+              248.0875,
+              269.21937499999996
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 209.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi gün",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 261.28249999999997,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 270.914375,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günle",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 290.936875,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Caf",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café h",
+            "x": 150.0,
+            "baseline_y": 209.0
+          },
+          {
+            "text": " _",
+            "x": 257.306875,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello wor",
+            "x": 150.0,
+            "baseline_y": 209.0
+          },
+          {
+            "text": " _",
+            "x": 388.455625,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 121.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 209.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "typewriter",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              10.904375038146974,
+              31.458125076293946,
+              41.090001068115235,
+              41.08999725341797,
+              70.8068780517578,
+              91.68874450683593,
+              112.57062622070312,
+              122.20249267578124,
+              142.22498413085938,
+              156.21625610351563
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 121.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 165.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              25.591874084472657,
+              45.12999816894531,
+              58.824376068115235,
+              78.15937133789062,
+              78.15937133789062,
+              107.57937713623046,
+              127.60187622070312,
+              137.23374267578126,
+              146.86562438964845,
+              167.45063110351563,
+              167.45063110351563,
+              204.15187927246095,
+              224.29937072753907,
+              238.29062744140626,
+              248.42249389648438,
+              269.5543603515625
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 209.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi gün",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 262.5706262207031,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 272.20249267578123,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günle",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 292.22498413085935,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Caf",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café h",
+            "x": 150.0,
+            "baseline_y": 209.0
+          },
+          {
+            "text": " _",
+            "x": 257.57937713623045,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello wor",
+            "x": 150.0,
+            "baseline_y": 209.0
+          },
+          {
+            "text": " _",
+            "x": 388.29062744140623,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 73.0159375,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 210,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 996,
+              "x": 9.944375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 689,
+              "x": 30.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 39.801875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 658,
+              "x": 48.34,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 914,
+              "x": 69.51875000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 773,
+              "x": 90.40062500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 111.28250000000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 120.91437500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 140.93687500000004,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 15.870312500000011,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 73,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 24.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 647,
+              "x": 44.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 618,
+              "x": 57.864375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 77.886875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 670,
+              "x": 86.42500000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 107.30687500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 127.32937500000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 136.96125000000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 146.59312500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 167.17812500000005,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 982,
+              "x": 175.71625000000006,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 203.87937500000007,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 224.46437500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 238.45562500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 597,
+              "x": 248.0875000000001,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "typewriter",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              9.944375,
+              30.17,
+              39.801875,
+              48.34,
+              69.51875,
+              90.40062499999999,
+              111.2825,
+              120.91437499999999,
+              140.93687500000001,
+              154.928125
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 73.0159375,
+              "baseline_y": 58.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 102.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              24.631875,
+              44.17,
+              57.864375,
+              77.88687499999999,
+              86.425,
+              107.30687499999999,
+              127.329375,
+              136.96125,
+              146.59312500000001,
+              167.178125,
+              175.71625,
+              203.879375,
+              224.46437500000002,
+              238.455625,
+              248.0875,
+              269.21937499999996
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 15.870312500000011,
+              "baseline_y": 146.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi gün",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 184.2984375,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 193.9303125,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günle",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 213.95281250000002,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Caf",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café h",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": 123.1771875,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello wor",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": 254.3259375,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 72.37187194824219,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 15.70281982421875,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "typewriter",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              10.904375038146974,
+              31.458125076293946,
+              41.090001068115235,
+              41.08999725341797,
+              70.8068780517578,
+              91.68874450683593,
+              112.57062622070312,
+              122.20249267578124,
+              142.22498413085938,
+              156.21625610351563
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 72.37187194824219,
+              "baseline_y": 58.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 102.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              25.591874084472657,
+              45.12999816894531,
+              58.824376068115235,
+              78.15937133789062,
+              78.15937133789062,
+              107.57937713623046,
+              127.60187622070312,
+              137.23374267578126,
+              146.86562438964845,
+              167.45063110351563,
+              167.45063110351563,
+              204.15187927246095,
+              224.29937072753907,
+              238.29062744140626,
+              248.42249389648438,
+              269.5543603515625
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 15.70281982421875,
+              "baseline_y": 146.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi gün",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 184.94249816894532,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 194.57436462402345,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günle",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 214.59685607910157,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Caf",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café h",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": 123.28219696044921,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello wor",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": 253.993447265625,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": -3.9681249999999864,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 210,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 996,
+              "x": 9.944375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 689,
+              "x": 30.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 39.801875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 658,
+              "x": 48.34,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 914,
+              "x": 69.51875000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 773,
+              "x": 90.40062500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 111.28250000000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 120.91437500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 140.93687500000004,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": -118.25937499999998,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 73,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 24.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 647,
+              "x": 44.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 618,
+              "x": 57.864375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 77.886875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 670,
+              "x": 86.42500000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 107.30687500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 127.32937500000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 136.96125000000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 146.59312500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 167.17812500000005,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 982,
+              "x": 175.71625000000006,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 203.87937500000007,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 224.46437500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 238.45562500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 597,
+              "x": 248.0875000000001,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "typewriter",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              9.944375,
+              30.17,
+              39.801875,
+              48.34,
+              69.51875,
+              90.40062499999999,
+              111.2825,
+              120.91437499999999,
+              140.93687500000001,
+              154.928125
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": -3.9681249999999864,
+              "baseline_y": 58.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 102.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              24.631875,
+              44.17,
+              57.864375,
+              77.88687499999999,
+              86.425,
+              107.30687499999999,
+              127.329375,
+              136.96125,
+              146.59312500000001,
+              167.178125,
+              175.71625,
+              203.879375,
+              224.46437500000002,
+              238.455625,
+              248.0875,
+              269.21937499999996
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": -118.25937499999998,
+              "baseline_y": 146.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi gün",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 107.31437500000001,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 116.94625,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günle",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 136.96875000000003,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Caf",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café h",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": -10.95249999999998,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello wor",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": 120.19625,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": -5.256256103515625,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": -118.5943603515625,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "typewriter",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              10.904375038146974,
+              31.458125076293946,
+              41.090001068115235,
+              41.08999725341797,
+              70.8068780517578,
+              91.68874450683593,
+              112.57062622070312,
+              122.20249267578124,
+              142.22498413085938,
+              156.21625610351563
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": -5.256256103515625,
+              "baseline_y": 58.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 102.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              25.591874084472657,
+              45.12999816894531,
+              58.824376068115235,
+              78.15937133789062,
+              78.15937133789062,
+              107.57937713623046,
+              127.60187622070312,
+              137.23374267578126,
+              146.86562438964845,
+              167.45063110351563,
+              167.45063110351563,
+              204.15187927246095,
+              224.29937072753907,
+              238.29062744140626,
+              248.42249389648438,
+              269.5543603515625
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": -118.5943603515625,
+              "baseline_y": 146.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi gün",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 107.3143701171875,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 116.94623657226562,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günle",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 136.96872802734376,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Caf",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café h",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": -11.01498321533203,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello wor",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": 119.69626708984374,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 121.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 210,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 996,
+              "x": 9.944375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 689,
+              "x": 30.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 39.801875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 658,
+              "x": 48.34,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 914,
+              "x": 69.51875000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 773,
+              "x": 90.40062500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 111.28250000000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 120.91437500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 140.93687500000004,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 209.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 73,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 24.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 647,
+              "x": 44.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 618,
+              "x": 57.864375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 77.886875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 670,
+              "x": 86.42500000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 107.30687500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 127.32937500000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 136.96125000000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 146.59312500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 167.17812500000005,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 982,
+              "x": 175.71625000000006,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 203.87937500000007,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 224.46437500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 238.45562500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 597,
+              "x": 248.0875000000001,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "stream-in",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              9.944375,
+              30.17,
+              39.801875,
+              48.34,
+              69.51875,
+              90.40062499999999,
+              111.2825,
+              120.91437499999999,
+              140.93687500000001,
+              154.928125
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 121.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 165.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              24.631875,
+              44.17,
+              57.864375,
+              77.88687499999999,
+              86.425,
+              107.30687499999999,
+              127.329375,
+              136.96125,
+              146.59312500000001,
+              167.178125,
+              175.71625,
+              203.879375,
+              224.46437500000002,
+              238.455625,
+              248.0875,
+              269.21937499999996
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 209.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 270.914375,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 270.914375,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Ca",
+            "x": 150.0,
+            "baseline_y": 209.0
+          },
+          {
+            "text": " _",
+            "x": 194.17000000000002,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello w",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 121.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 150.0,
+          "baseline_y": 209.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "stream-in",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              10.904375038146974,
+              31.458125076293946,
+              41.090001068115235,
+              41.08999725341797,
+              70.8068780517578,
+              91.68874450683593,
+              112.57062622070312,
+              122.20249267578124,
+              142.22498413085938,
+              156.21625610351563
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 121.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 165.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              25.591874084472657,
+              45.12999816894531,
+              58.824376068115235,
+              78.15937133789062,
+              78.15937133789062,
+              107.57937713623046,
+              127.60187622070312,
+              137.23374267578126,
+              146.86562438964845,
+              167.45063110351563,
+              167.45063110351563,
+              204.15187927246095,
+              224.29937072753907,
+              238.29062744140626,
+              248.42249389648438,
+              269.5543603515625
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 209.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 272.20249267578123,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": " _",
+            "x": 272.20249267578123,
+            "baseline_y": 121.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Ca",
+            "x": 150.0,
+            "baseline_y": 209.0
+          },
+          {
+            "text": " _",
+            "x": 195.12999816894532,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello w",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 150.0,
+            "baseline_y": 121.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 150.0,
+            "baseline_y": 209.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 73.0159375,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 210,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 996,
+              "x": 9.944375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 689,
+              "x": 30.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 39.801875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 658,
+              "x": 48.34,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 914,
+              "x": 69.51875000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 773,
+              "x": 90.40062500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 111.28250000000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 120.91437500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 140.93687500000004,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 15.870312500000011,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 73,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 24.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 647,
+              "x": 44.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 618,
+              "x": 57.864375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 77.886875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 670,
+              "x": 86.42500000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 107.30687500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 127.32937500000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 136.96125000000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 146.59312500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 167.17812500000005,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 982,
+              "x": 175.71625000000006,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 203.87937500000007,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 224.46437500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 238.45562500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 597,
+              "x": 248.0875000000001,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "stream-in",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              9.944375,
+              30.17,
+              39.801875,
+              48.34,
+              69.51875,
+              90.40062499999999,
+              111.2825,
+              120.91437499999999,
+              140.93687500000001,
+              154.928125
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 73.0159375,
+              "baseline_y": 58.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 102.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              24.631875,
+              44.17,
+              57.864375,
+              77.88687499999999,
+              86.425,
+              107.30687499999999,
+              127.329375,
+              136.96125,
+              146.59312500000001,
+              167.178125,
+              175.71625,
+              203.879375,
+              224.46437500000002,
+              238.455625,
+              248.0875,
+              269.21937499999996
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 15.870312500000011,
+              "baseline_y": 146.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 193.9303125,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 193.9303125,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Ca",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": 60.04031250000001,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello w",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 73.0159375,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.870312500000011,
+            "baseline_y": 146.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 72.37187194824219,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": 15.70281982421875,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "stream-in",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              10.904375038146974,
+              31.458125076293946,
+              41.090001068115235,
+              41.08999725341797,
+              70.8068780517578,
+              91.68874450683593,
+              112.57062622070312,
+              122.20249267578124,
+              142.22498413085938,
+              156.21625610351563
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 72.37187194824219,
+              "baseline_y": 58.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 102.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              25.591874084472657,
+              45.12999816894531,
+              58.824376068115235,
+              78.15937133789062,
+              78.15937133789062,
+              107.57937713623046,
+              127.60187622070312,
+              137.23374267578126,
+              146.86562438964845,
+              167.45063110351563,
+              167.45063110351563,
+              204.15187927246095,
+              224.29937072753907,
+              238.29062744140626,
+              248.42249389648438,
+              269.5543603515625
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 15.70281982421875,
+              "baseline_y": 146.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 194.57436462402345,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 194.57436462402345,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Ca",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": 60.83281799316406,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello w",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": 72.37187194824219,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": 15.70281982421875,
+            "baseline_y": 146.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": -3.9681249999999864,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 210,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 996,
+              "x": 9.944375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 689,
+              "x": 30.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 39.801875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 658,
+              "x": 48.34,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 914,
+              "x": 69.51875000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 773,
+              "x": 90.40062500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 111.28250000000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 120.91437500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 140.93687500000004,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": -118.25937499999998,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 73,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 507,
+              "x": 24.631875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 647,
+              "x": 44.17,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 618,
+              "x": 57.864375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 77.886875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 670,
+              "x": 86.42500000000001,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 614,
+              "x": 107.30687500000002,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 127.32937500000003,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 136.96125000000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 146.59312500000004,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 167.17812500000005,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 982,
+              "x": 175.71625000000006,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 790,
+              "x": 203.87937500000007,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 852,
+              "x": 224.46437500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 736,
+              "x": 238.45562500000008,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 597,
+              "x": 248.0875000000001,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "stream-in",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              9.944375,
+              30.17,
+              39.801875,
+              48.34,
+              69.51875,
+              90.40062499999999,
+              111.2825,
+              120.91437499999999,
+              140.93687500000001,
+              154.928125
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": -3.9681249999999864,
+              "baseline_y": 58.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 102.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              24.631875,
+              44.17,
+              57.864375,
+              77.88687499999999,
+              86.425,
+              107.30687499999999,
+              127.329375,
+              136.96125,
+              146.59312500000001,
+              167.178125,
+              175.71625,
+              203.879375,
+              224.46437500000002,
+              238.455625,
+              248.0875,
+              269.21937499999996
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": -118.25937499999998,
+              "baseline_y": 146.0,
+              "letter_spacing": 0.96,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1541,
+                  "x": 8.538125,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 116.94625,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 116.94625,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Ca",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": -74.08937499999998,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello w",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -3.9681249999999864,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.25937499999998,
+            "baseline_y": 146.0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "layer": {
+      "id": "reveal",
+      "start": 2.0,
+      "end": 6.0,
+      "anchor_x": 150.0,
+      "anchor_y": 90.0,
+      "rotation_degrees": 23.0,
+      "runs": [
+        {
+          "text": "İyi günler",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": -5.256256103515625,
+          "baseline_y": 58.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        },
+        {
+          "text": "Café hello world",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 32.0,
+          "x": -118.5943603515625,
+          "baseline_y": 146.0,
+          "letter_spacing": 0.96,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 0.0,
+          "blur_layers": [],
+          "gradient": null
+        }
+      ],
+      "effect": "stream-in",
+      "motion": {
+        "speed": 1.0,
+        "intensity": 0.8,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "underscore",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "  İyi günler\n\nCafé hello world",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "İyi günler",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              10.904375038146974,
+              31.458125076293946,
+              41.090001068115235,
+              41.08999725341797,
+              70.8068780517578,
+              91.68874450683593,
+              112.57062622070312,
+              122.20249267578124,
+              142.22498413085938,
+              156.21625610351563
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": -5.256256103515625,
+              "baseline_y": 58.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "",
+            "run_index": null,
+            "cursor_offsets": [
+              0.0
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": 150.0,
+              "baseline_y": 102.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          },
+          {
+            "text": "Café hello world",
+            "run_index": 1,
+            "cursor_offsets": [
+              0.0,
+              25.591874084472657,
+              45.12999816894531,
+              58.824376068115235,
+              78.15937133789062,
+              78.15937133789062,
+              107.57937713623046,
+              127.60187622070312,
+              137.23374267578126,
+              146.86562438964845,
+              167.45063110351563,
+              167.45063110351563,
+              204.15187927246095,
+              224.29937072753907,
+              238.29062744140626,
+              248.42249389648438,
+              269.5543603515625
+            ],
+            "cursor_run": {
+              "text": " _",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 32.0,
+              "x": -118.5943603515625,
+              "baseline_y": 146.0,
+              "letter_spacing": 0.96,
+              "shaped": true,
+              "glyphs": null,
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [],
+              "gradient": null
+            }
+          }
+        ]
+      }
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    },
+    "samples": [
+      {
+        "time": 0,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 116.94623657226562,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.1,
+        "runs": [
+          {
+            "text": "İyi günl",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": " _",
+            "x": 116.94623657226562,
+            "baseline_y": 58.0
+          }
+        ]
+      },
+      {
+        "time": 0.3,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Ca",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          },
+          {
+            "text": " _",
+            "x": -73.4643621826172,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 0.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello w",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 0.9,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 1.2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 2,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          }
+        ]
+      },
+      {
+        "time": 3.5,
+        "runs": [
+          {
+            "text": "İyi günler",
+            "x": -5.256256103515625,
+            "baseline_y": 58.0
+          },
+          {
+            "text": "Café hello world",
+            "x": -118.5943603515625,
+            "baseline_y": 146.0
+          }
+        ]
+      }
+    ]
+  }
+]

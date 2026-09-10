@@ -133,7 +133,8 @@
       "effect": "static",
       "motion": null,
       "reveal_bounds": null,
-      "handwriting": null
+      "handwriting": null,
+      "discrete_reveal": null
     }
   ]
 }

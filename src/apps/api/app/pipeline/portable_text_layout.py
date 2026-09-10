@@ -96,11 +96,13 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
     """Resolve a supported cloud overlay into geometry plus its exact font asset.
 
     Reuses the production layout helpers. No image, frame, or encoded media is
-    generated. Specialized reveal/lyric dispatch remains explicitly unsupported.
+    generated. Unimplemented specialized effects remain explicitly unsupported.
     """
     from dataclasses import asdict
 
     from app.kria.portable_text import (
+        DiscreteRevealContent,
+        DiscreteRevealLine,
         PortableTextLayer,
         PositionedTextRun,
         ResolvedTextMotion,
@@ -123,6 +125,8 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         "bounce",
         "ink-reveal",
         "handwriting",
+        "typewriter",
+        "stream-in",
     }:
         raise UnsupportedPortableText(f"unsupported text effect: {effect}")
     # These fields invoke specialized drawing or timing outside the base line
@@ -157,6 +161,9 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         return _compile_handwriting_overlay(
             overlay, layer_id=layer_id, canvas=canvas, motion=motion
         ), None
+    original_text = text
+    if effect in {"typewriter", "stream-in"}:
+        text = cloud._normalize_reveal_text(text)
     shaped = bool(overlay.get("shape_text"))
     resolved = cloud._resolve_typeface_for_overlay(overlay)
     font_asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
@@ -209,6 +216,50 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         if line
     ]
     reveal_bounds = None
+    discrete_reveal = None
+    if effect in {"typewriter", "stream-in"}:
+        cursor_style = motion.cursor_style if motion else "bar"
+        cursor_text = (
+            " ▮" if cursor_style == "block" else " _" if cursor_style == "underscore" else " |"
+        )
+        reveal_lines = []
+        run_index = 0
+        for index, line in enumerate(lines):
+            cursor_run = PositionedTextRun.model_validate(
+                {
+                    **runs[0].model_dump(),
+                    "text": cursor_text,
+                    "x": cloud._anchored_left_x(anchor, cx, block["widths"][index] if line else 0),
+                    "baseline_y": top + block["ascent_offset"] + index * block["line_step"],
+                    "glyphs": None if shaped else resolve_legacy_glyphs(font, cursor_text, spacing),
+                }
+            )
+            reveal_lines.append(
+                DiscreteRevealLine(
+                    text=line,
+                    run_index=run_index if line else None,
+                    cursor_offsets=[
+                        (
+                            cloud._measure_line(font, line[:count], spacing, shape_text=shaped)
+                            + spacing
+                        )
+                        if count
+                        else 0
+                        for count in range(len(line) + 1)
+                    ],
+                    cursor_run=cursor_run,
+                )
+            )
+            if line:
+                run_index += 1
+        raw_schedule = overlay.get("reveal_schedule_s")
+        discrete_reveal = DiscreteRevealContent(
+            text=original_text,
+            schedule=[cloud._finite_float(value, overlay["start_s"]) for value in raw_schedule]
+            if isinstance(raw_schedule, list)
+            else None,
+            lines=reveal_lines,
+        )
     if effect == "ink-reveal":
         shadow_left, shadow_top, shadow_right, shadow_bottom = cloud._text_shadow_bleed_px(
             cloud._text_shadow_style(overlay)
@@ -234,6 +285,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas):
         effect=effect,
         motion=motion,
         reveal_bounds=reveal_bounds,
+        discrete_reveal=discrete_reveal,
     ), font_asset
 
 

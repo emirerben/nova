@@ -11,8 +11,9 @@ extension TextInk {
 extension RecipeTextLayer {
     /// Baselines and tracking are authored in output pixels. No device-specific
     /// wrap, auto-shrink, font lookup, or substitution occurs here.
-    static func make(_ layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int = 64 * 1024 * 1024) throws -> Self {
+    static func make(_ layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int = 64 * 1024 * 1024, fixedBounds: CGRect? = nil) throws -> Self {
         if layer.handwriting != nil { return try makeHandwriting(layer, canvas: canvas, maxBitmapBytes: maxBitmapBytes) }
+        if layer.discreteReveal != nil { return try makeDiscreteReveal(layer, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes) }
         struct Run {
             let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint
             let blurs: [TextBlurLayer]; let gradient: TextGradient?
@@ -98,7 +99,7 @@ extension RecipeTextLayer {
         // Moving/scaling text can enter the canvas from an offscreen position.
         // Keep its complete bitmap, still subject to the aggregate memory budget.
         if layer.motion == nil && (layer.effect == .static || layer.effect == .none) && layer.runs.allSatisfy({ $0.blurLayers.isEmpty }) { bounds = bounds.intersection(CGRect(origin: .zero, size: canvas)) }
-        bounds = bounds.integral
+        bounds = fixedBounds ?? bounds.integral
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0,
               bounds.width * bounds.height * 4 <= Double(maxBitmapBytes),
               let context = CGContext(data: nil, width: Int(bounds.width), height: Int(bounds.height), bitsPerComponent: 8,

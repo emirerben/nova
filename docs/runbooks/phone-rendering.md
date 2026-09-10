@@ -216,3 +216,17 @@ and glowing text, the shared timing fixtures include both motion versions, and
 `PortableTextTests.testInkRevealClipsRotatedTextInPreviewAndExport` verifies the
 partial and settled phases through real preview and H.264/AAC export. This does
 not enable the separate Handwriting stroke effect or any unverified capability.
+
+### Typewriter and Stream In parity (staged)
+
+The phone paints discrete prefixes inside the full text's resolved line geometry.
+Legacy typewriter schedules and scalar slicing, v2 grapheme slicing and intensity,
+word streaming, cursor styles/blinks, and exit fades use cloud-compatible timing.
+The recipe carries cursor offsets for every prefix; blanks retain their layout
+without passing Skia's empty-paragraph sentinel coordinates to the device.
+One partial bitmap is cached, and settled frames reuse the complete bitmap.
+`phone_text_reveal.json` pins 528 real cloud dispatcher samples;
+`phone_reveal_layout.json` pins drawing positions across three anchors and both
+shaping modes. `DiscreteRevealTests` checks rotated raster frames, memory rejection,
+and text windows through actual native preview and MP4 export. These additions do
+not enable rollout; full style/combinations and physical-device gates still apply.

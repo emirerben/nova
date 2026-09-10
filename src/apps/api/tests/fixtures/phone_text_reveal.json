@@ -441,6 +441,81 @@
   },
   {
     "effect": "typewriter",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "H",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "H",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "H",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "He",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hel",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hell",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello b",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave w",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
     "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
     "start": 2,
     "schedule": [
@@ -881,6 +956,81 @@
   },
   {
     "effect": "typewriter",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İy",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi gün",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
     "text": "A\n\nB",
     "start": 2,
     "schedule": [
@@ -1321,6 +1471,81 @@
   },
   {
     "effect": "typewriter",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
     "text": "",
     "start": 2,
     "schedule": [
@@ -1690,6 +1915,81 @@
       "exit_s": 0.0,
       "reveal_ramp_ms": 120.0
     },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
     "samples": [
       {
         "time": 0,
@@ -2201,6 +2501,81 @@
   },
   {
     "effect": "stream-in",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello brave",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
     "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
     "start": 2,
     "schedule": [
@@ -2641,6 +3016,81 @@
   },
   {
     "effect": "stream-in",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
     "text": "A\n\nB",
     "start": 2,
     "schedule": [
@@ -3081,6 +3531,81 @@
   },
   {
     "effect": "stream-in",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
     "text": "",
     "start": 2,
     "schedule": [
@@ -3450,6 +3975,81 @@
       "exit_s": 0.0,
       "reveal_ramp_ms": 120.0
     },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
     "samples": [
       {
         "time": 0,

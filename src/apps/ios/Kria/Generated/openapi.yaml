@@ -1255,6 +1255,79 @@
         "title": "DeviceRenderStatus",
         "type": "object"
       },
+      "DiscreteRevealContent": {
+        "additionalProperties": false,
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/DiscreteRevealLine"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Lines",
+            "type": "array"
+          },
+          "schedule": {
+            "default": null,
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 5000,
+            "nullable": true,
+            "title": "Schedule",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "lines"
+        ],
+        "title": "DiscreteRevealContent",
+        "type": "object"
+      },
+      "DiscreteRevealLine": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor_offsets": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 2001,
+            "minItems": 1,
+            "title": "Cursor Offsets",
+            "type": "array"
+          },
+          "cursor_run": {
+            "$ref": "#/components/schemas/PositionedTextRun"
+          },
+          "run_index": {
+            "default": null,
+            "maximum": 99,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Run Index",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "cursor_offsets",
+          "cursor_run"
+        ],
+        "title": "DiscreteRevealLine",
+        "type": "object"
+      },
       "DraftSnapshotOut": {
         "properties": {
           "base_generation_id": {
@@ -4167,6 +4240,11 @@
             "title": "Anchor Y",
             "type": "number"
           },
+          "discrete_reveal": {
+            "$ref": "#/components/schemas/DiscreteRevealContent",
+            "default": null,
+            "nullable": true
+          },
           "effect": {
             "default": "static",
             "enum": [
@@ -4179,7 +4257,9 @@
               "pop-in",
               "bounce",
               "ink-reveal",
-              "handwriting"
+              "handwriting",
+              "typewriter",
+              "stream-in"
             ],
             "title": "Effect",
             "type": "string"

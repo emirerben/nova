@@ -1,7 +1,7 @@
 import Foundation
 
 /// Whole-layer transforms sampled in output-canvas coordinates (positive y is down).
-/// Reveal effects require separate glyph/mask rendering and are rejected here.
+/// Reveal glyph/mask drawing is applied separately by the native compositor.
 public struct TextTransformSample: Codable, Equatable, Sendable {
     public let alpha: Double
     public let scale: Double
@@ -30,7 +30,7 @@ public enum TextTransformTiming {
         var alpha = 1.0, scale = 1.0, x = 0.0, y = 0.0, reveal = 1.0
         func ease(_ value: Double) -> Double { TextMotionTiming.ease(value, motion.easing) }
         switch effect {
-        case .static, .none: break
+        case .static, .none, .typewriter, .streamIn: break
         case .inkReveal, .handwriting: reveal = ease(inkRevealProgress(time: time, duration: base))
         case .fadeIn: alpha = ease(time / max(base, 0.01))
         case .scaleUp: scale = 0.6 + 0.4 * ease(time / max(base, 0.01))
@@ -75,7 +75,7 @@ public enum TextTransformTiming {
         var alpha = 1.0, scale = 1.0, y = 0.0, reveal = 1.0
         func ease(_ progress: Double) -> Double { TextMotionTiming.ease(progress, .easeOutCubic) }
         switch effect {
-        case .static, .none: break
+        case .static, .none, .typewriter, .streamIn: break
         case .inkReveal, .handwriting: reveal = inkRevealProgress(time: time, duration: duration)
         case .fadeIn: alpha = ease(time / max(min(0.4, duration), 0.01))
         case .scaleUp: scale = 0.6 + 0.4 * ease(time / max(min(0.6, duration), 0.01))

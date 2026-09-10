@@ -25,6 +25,8 @@ def reference_cases(*, legacy=False):
         "bounce",
         "ink-reveal",
         "handwriting",
+        "typewriter",
+        "stream-in",
     ]:
         for index in range(4):
             motion = asdict(

@@ -1876,7 +1876,8 @@
       "outline_width": 0.0,
       "blur_layers": [],
       "gradient": null
-    }
+    },
+    "discrete_reveal": null
   },
   "samples": [
     {

@@ -112,9 +112,23 @@ def test_failed_native_compile_leaves_entire_baseline_untouched(monkeypatch, fai
         job.assembly_plan[PHONE_SOURCES_FIELD][0]["generation"] = "changed"
     before = copy.deepcopy(vars(job))
     with pytest.raises(HTTPException) as error:
-        save(job, effect="typewriter" if failure == "effect" else "fade-in")
+        save(job, effect="dissolve-out" if failure == "effect" else "fade-in")
     assert error.value.status_code == 422
     assert vars(job) == before
+
+
+@pytest.mark.parametrize("effect", ["typewriter", "stream-in"])
+def test_discrete_reveal_save_stays_on_device(monkeypatch, effect):
+    job = phone_job(monkeypatch)
+    prep = save(job, effect=effect)
+    request = device_status(job, "guided_story").request
+    layer = request.recipe.text_layers[0]
+    assert layer.effect == effect
+    assert layer.discrete_reveal.text == "After"
+    assert request.identity.recipe_revision == 2
+    with patch("app.tasks.generative_build.regenerate_generative_variant.apply_async") as cloud:
+        gj.enqueue_editor_commit_render(str(job.id), "guided_story", prep)
+    cloud.assert_not_called()
 
 
 def test_phone_guided_revision_compiles_trimmed_source_window(monkeypatch):

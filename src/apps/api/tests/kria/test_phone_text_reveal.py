@@ -16,10 +16,10 @@ def reference():
     cases = []
     for effect in ["typewriter", "stream-in"]:
         for text in ["Hello brave world", "  İyi   günler\nCafe\u0301 👨‍👩‍👧‍👦!", "A\n\nB", ""]:
-            for index in range(5):
+            for index in range(6):
                 motion = (
                     None
-                    if index == 0
+                    if index in {0, 5}
                     else asdict(
                         normalize_text_motion(
                             effect,

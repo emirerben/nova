@@ -142,6 +142,32 @@ class HandwritingContent(_TextModel):
         return self
 
 
+class DiscreteRevealLine(_TextModel):
+    text: str = Field(max_length=2000)
+    run_index: int | None = Field(default=None, ge=0, le=99)
+    # Cursor positions for each Unicode-scalar prefix, including the empty one.
+    cursor_offsets: list[float] = Field(min_length=1, max_length=2001)
+    cursor_run: PositionedTextRun
+
+    @model_validator(mode="after")
+    def valid_prefixes(self):
+        if len(self.cursor_offsets) != len(self.text) + 1:
+            raise ValueError("cursor offsets must cover every prefix")
+        if any(abs(value) > 10000 for value in self.cursor_offsets):
+            raise ValueError("cursor offset out of bounds")
+        if bool(self.text) != (self.run_index is not None):
+            raise ValueError("nonempty reveal lines require a font run")
+        if self.cursor_run.text not in {" |", " _", " ▮"}:
+            raise ValueError("unsupported reveal cursor")
+        return self
+
+
+class DiscreteRevealContent(_TextModel):
+    text: str = Field(min_length=1, max_length=5000)
+    schedule: list[float] | None = Field(default=None, max_length=5000)
+    lines: list[DiscreteRevealLine] = Field(min_length=1, max_length=100)
+
+
 class PortableTextLayer(_TextModel):
     id: str = Field(min_length=1, max_length=160)
     start: float = Field(ge=0, le=1800)
@@ -161,13 +187,29 @@ class PortableTextLayer(_TextModel):
         "bounce",
         "ink-reveal",
         "handwriting",
+        "typewriter",
+        "stream-in",
     ] = "static"
     motion: ResolvedTextMotion | None = None
     reveal_bounds: TextRevealBounds | None = None
     handwriting: HandwritingContent | None = None
+    discrete_reveal: DiscreteRevealContent | None = None
 
     @model_validator(mode="after")
     def valid_window(self):
+        if (self.effect in {"typewriter", "stream-in"}) != (self.discrete_reveal is not None):
+            raise ValueError("discrete reveal requires prefix geometry")
+        if self.discrete_reveal:
+            indices = [line.run_index for line in self.discrete_reveal.lines if line.text]
+            if indices != list(range(len(self.runs))):
+                raise ValueError("reveal lines must reference each font run in order")
+            for line in self.discrete_reveal.lines:
+                if line.run_index is not None and line.text != self.runs[line.run_index].text:
+                    raise ValueError("reveal line text must match its font run")
+                if line.run_index is not None:
+                    run = self.runs[line.run_index]
+                    if not run.shaped and len(run.glyphs or []) != len(line.text):
+                        raise ValueError("legacy reveal requires one glyph per scalar")
         if self.effect == "handwriting":
             if self.handwriting is None or self.runs:
                 raise ValueError("handwriting requires pen paths instead of font runs")

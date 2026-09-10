@@ -4518,5 +4518,909 @@
         }
       }
     ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0
+        }
+      }
+    ]
   }
 ]

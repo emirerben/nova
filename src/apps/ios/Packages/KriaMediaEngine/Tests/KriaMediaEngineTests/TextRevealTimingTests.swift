@@ -21,7 +21,7 @@ final class TextRevealTimingTests: XCTestCase {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("../../../../../api/tests/fixtures/phone_text_reveal.json").standardizedFileURL
         let cases = try RecipeJSON.decoder().decode([Case].self, from: Data(contentsOf: fixture))
-        XCTAssertEqual(cases.count, 40)
+        XCTAssertEqual(cases.count, 48)
         for test in cases {
             for expected in test.samples {
                 let actual = try TextRevealTiming.sample(effect: test.effect, text: test.text, localTime: expected.time,

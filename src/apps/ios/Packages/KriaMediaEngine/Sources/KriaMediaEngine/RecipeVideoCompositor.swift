@@ -23,6 +23,7 @@ struct RecipeTextLayer: @unchecked Sendable {
     var portable: PortableTextLayer? = nil
     var portableAnchor: CGPoint = .zero
     var handwriting: NativeHandwritingPainter? = nil
+    var discreteReveal: NativeDiscreteRevealPainter? = nil
 
     static func make(_ text: TextTreatment, start: Double, end: Double, canvas: CGSize) throws -> Self {
         guard let font = CGFont(text.fontName as CFString) else { throw MediaEngineError.unsupportedCapability }
@@ -120,7 +121,7 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                     if let layer = text.portable {
                         do {
                             let state = try TextTransformTiming.sample(effect: PortableTextEffect(rawValue: layer.effect.rawValue)!,
-                                text: layer.handwriting?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: time - text.start,
+                                text: layer.discreteReveal?.text ?? layer.handwriting?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: time - text.start,
                                 duration: text.end - text.start, motion: layer.motion)
                             // The bitmap already contains rotation. Cloud translation occurs in
                             // the rotated coordinate system; scaling stays centered on its anchor.
@@ -132,6 +133,7 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                                 .concatenating(CGAffineTransform(scaleX: state.scale, y: state.scale))
                                 .concatenating(CGAffineTransform(translationX: text.portableAnchor.x + dx, y: text.portableAnchor.y + dy))
                             var image = state.revealProgress >= 1 ? text.image : try text.handwriting?.image(progress: state.revealProgress) ?? text.image
+                            if let painter = text.discreteReveal { image = try painter.image(localTime: time - text.start, settled: text.image) }
                             if let bounds = layer.revealBounds, state.revealProgress < 1 {
                                 guard state.revealProgress > 0 else { continue }
                                 let reveal = CGRect(x: bounds.left, y: instruction.canvas.height - bounds.bottom,
