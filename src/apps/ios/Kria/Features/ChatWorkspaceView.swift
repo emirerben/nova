@@ -5,7 +5,8 @@ struct ChatWorkspaceView: View {
     @AppStorage("kria.workspace.last-project-id") private var lastProjectID = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsProjects = false
-    @GestureState private var drawerDrag: CGFloat = 0
+    @State private var drawerDrag: CGFloat = 0
+    @State private var drawerMounted = false
     @State private var showsGallery = false
     @State private var showsAccount = false
 
@@ -15,21 +16,23 @@ struct ChatWorkspaceView: View {
             let drawerOffset = min(drawerWidth, max(0, (showsProjects ? drawerWidth : 0) + drawerDrag))
             let drawerActive = showsProjects || drawerOffset > 0
             ZStack(alignment: .leading) {
-                if drawerActive {
+                if drawerActive || drawerMounted {
                     ProjectsDrawer(
-                        close: { showsProjects = false },
-                        openGallery: { showsProjects = false; showsGallery = true },
-                        openAccount: { showsProjects = false; showsAccount = true }
+                        close: { setDrawerOpen(false) },
+                        openGallery: { setDrawerOpen(false); showsGallery = true },
+                        openAccount: { setDrawerOpen(false); showsAccount = true }
                     )
                     .frame(width: drawerWidth)
                     .offset(x: drawerOffset - drawerWidth)
+                    .accessibilityHidden(!drawerActive)
+                    .allowsHitTesting(drawerActive)
                 }
                 NavigationStack {
                     Group {
                         if let project = model.selectedProject {
                             CreationWorkspaceView(
                                 project: project,
-                                openProjects: { showsProjects.toggle() },
+                                openProjects: { setDrawerOpen(!showsProjects) },
                                 openAccount: { showsAccount = true }
                             )
                             .id(project.id)
@@ -47,7 +50,7 @@ struct ChatWorkspaceView: View {
                             .allowsHitTesting(!showsProjects)
                             .safeAreaInset(edge: .top) {
                                 HStack {
-                                    Button { showsProjects.toggle() } label: {
+                                    Button { setDrawerOpen(!showsProjects) } label: {
                                         KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle())
                                     }
                                     .accessibilityLabel(showsProjects ? "Close projects" : "Open projects")
@@ -70,9 +73,8 @@ struct ChatWorkspaceView: View {
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
             .clipped()
             .background(KriaColor.paper)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: showsProjects)
             .simultaneousGesture(drawerGesture(width: drawerWidth))
-            .accessibilityAction(.escape) { showsProjects = false }
+            .accessibilityAction(.escape) { setDrawerOpen(false) }
         }
         .onChange(of: showsProjects) { _, isOpen in
             if isOpen { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
@@ -82,7 +84,7 @@ struct ChatWorkspaceView: View {
             lastProjectID = identifier?.uuidString ?? ""
         }
         .fullScreenCover(isPresented: $showsGallery) {
-            NavigationStack { GalleryView(openProjects: { showsGallery = false; showsProjects = true }) }
+            NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
                 .environmentObject(model)
         }
         .sheet(isPresented: $showsAccount) {
@@ -90,19 +92,32 @@ struct ChatWorkspaceView: View {
         }
     }
 
+    private func setDrawerOpen(_ isOpen: Bool) {
+        // Commit the destination and release the drag in the same transaction.
+        // GestureState's automatic reset previously replayed the closing offset.
+        drawerMounted = true
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) {
+            showsProjects = isOpen
+            drawerDrag = 0
+        } completion: {
+            if !showsProjects && drawerDrag == 0 { drawerMounted = false }
+        }
+    }
+
     private func drawerGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 20)
-            .updating($drawerDrag) { value, translation, _ in
+            .onChanged { value in
                 // Vertical chat and project-list scrolling retain their normal behavior.
                 guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                translation = value.translation.width
+                drawerDrag = value.translation.width
             }
             .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                let projectedOffset = (showsProjects ? width : 0) + value.predictedEndTranslation.width
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) {
-                    showsProjects = projectedOffset > width / 2
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else {
+                    setDrawerOpen(showsProjects)
+                    return
                 }
+                let projectedOffset = (showsProjects ? width : 0) + value.predictedEndTranslation.width
+                setDrawerOpen(projectedOffset > width / 2)
             }
     }
 }
