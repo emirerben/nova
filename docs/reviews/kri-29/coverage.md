@@ -1,6 +1,8 @@
 # KRI-29 implementation coverage ledger
 
-Rollout: **disabled**. No row is device-verified. The production group baseline
+Rollout: **disabled**. No row has passed its full release gate. An iPhone 13 Pro
+[effect pilot](iphone13pro-effects.md) has passed preview-frame requests and
+six-second exports for 18 text cases. The production group baseline
 is `capability-baseline.json`; this ledger expands the source catalogs at the
 implementation base into concrete work. A native primitive or unit fixture is
 not a completed creator flow. Every row needs initial creation, editor revision,
@@ -21,11 +23,11 @@ and `KriaMediaEngine/PortableTextDrawing.swift`.
 | Additional text treatment | Current boundary | Required next coverage |
 | --- | --- | --- |
 | `lyric-line` | Native fade envelope and positioned text compiled | Full style and language comparisons |
-| `pop_animated_suffix` | Rejected | Static prefix plus individually animated suffix |
+| `pop_animated_suffix` | Compiles exact settled prefix/suffix geometry; invalid suffix retains normal pop. Passed iPhone export pilot | Full lyric sequences, styles and language coverage |
 | `generative_sequence` | Fade-in/static/none/handwriting/ink-reveal compiled with fade tails and stable top-layer ordering | Other sequence effects, long windows, full scene comparisons |
 | `giant-title-wipe` | Rejected | Glyph-centered scale/opacity with every entrance effect |
 | Emoji prefix | Rejected | Licensed local image asset, placement, fallback |
-| Highlighted word / spans | Rejected | Per-span layout and paint semantics |
+| `highlight_word` / spans | Informational highlight metadata accepted without changing pixels, matching cloud; spans rejected | Per-span layout and paint semantics |
 | Long windows | Not fully compared | Cloud frame ceilings, hold paths, seams and overlaps |
 
 ## Source catalogs and creator lanes

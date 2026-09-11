@@ -48,7 +48,8 @@ struct RootView: View {
     var body: some View {
         Group {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }
+            if ProcessInfo.processInfo.arguments.contains("-device-effects") { DeviceEffectsView() }
+            else if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 NativeEditorUITestHost()
             }
