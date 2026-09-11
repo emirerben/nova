@@ -152,3 +152,25 @@ layer through the public model, rather than relying on unchecked model copies.
 A production `_generate_overlay_sequence` spy compares every dissolve source and
 sample with/without the theme and confirms the overlay-index seed is retained.
 The native wire model still rejects a dissolve carrying a giant camera transform.
+
+
+### Expanded device pilot: incomplete
+
+The first 26-case run recorded nine successful exports and then stopped updating.
+A retry of ordinary handwriting plus the six new giant combinations completed
+handwriting (2.66s), giant typewriter (7.18s), smooth reveal (9.39s) and staggered
+slice (11.51s), then stopped updating during giant karaoke export. All four
+successful cases also passed six compositor frame requests, including a backward
+jump. Reports: [26-case partial](iphone13pro-26-partial.json),
+[selected partial](iphone13pro-giant-selected-partial.json).
+
+The test harness now saves the active case, preparation/frame/export phase,
+preparation time, aggregate frame-request time, export progress and application
+lifecycle events. A local debug-only export trace distinguishes recipe preparation,
+writer initialization and completion. `-device-effects-only` accepts a comma-separated
+case list to reproduce an individual failure without rerunning the entire catalog.
+
+The next launch was explicitly refused because the iPhone was locked. The earlier
+stalls are not attributed to that lock without lifecycle evidence. Karaoke, giant
+handwriting glow and themed dissolve still need their physical export checks;
+the expanded catalog is not a passing release gate.

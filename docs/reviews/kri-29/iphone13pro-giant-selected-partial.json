@@ -1,0 +1,61 @@
+{
+  "active_case": "",
+  "date": "2026-09-11T08:06:06Z",
+  "device": "iPhone",
+  "os": "26.6.1",
+  "phase": "finished",
+  "requested_count": 7,
+  "results": [
+    {
+      "duration": 6,
+      "effect": "handwriting",
+      "export_seconds": 2.6560349464416504,
+      "preview_frame_requests_seconds": 0.3723759651184082,
+      "preview_prepare_seconds": 0.9958449602127075,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-typewriter",
+      "export_seconds": 7.17658805847168,
+      "preview_frame_requests_seconds": 0.36814796924591064,
+      "preview_prepare_seconds": 0.04833996295928955,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-smooth",
+      "export_seconds": 9.385311007499695,
+      "preview_frame_requests_seconds": 0.6838010549545288,
+      "preview_prepare_seconds": 0.027224063873291016,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-staggered",
+      "export_seconds": 11.507899045944214,
+      "preview_frame_requests_seconds": 0.7362240552902222,
+      "preview_prepare_seconds": 0.043684959411621094,
+      "status": "exported"
+    },
+    {
+      "effect": "giant-title-karaoke",
+      "error": "Error Domain=AVFoundationErrorDomain Code=-11847 \"Operation Interrupted\" UserInfo={NSLocalizedDescription=Operation Interrupted, NSLocalizedRecoverySuggestion=Stop other operations and try again.}",
+      "status": "failed"
+    },
+    {
+      "effect": "giant-title-handwriting",
+      "error": "Error Domain=AVFoundationErrorDomain Code=-11847 \"Operation Interrupted\" UserInfo={NSLocalizedDescription=Operation Interrupted, NSLocalizedRecoverySuggestion=Stop other operations and try again.}",
+      "status": "failed"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-dissolve",
+      "export_seconds": 10.09566605091095,
+      "preview_frame_requests_seconds": 0.3861520290374756,
+      "preview_prepare_seconds": 8.493640065193176,
+      "status": "exported"
+    }
+  ],
+  "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."
+}

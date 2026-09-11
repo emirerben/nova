@@ -59,6 +59,7 @@ final class RecipeWriter: @unchecked Sendable {
         do {
             try Task.checkCancellation()
             guard writer.startWriting(), reader.startReading() else { throw writer.error ?? reader.error ?? MediaEngineError.exportFailed }
+            traceDeviceExportPhase("started_reading_writing")
             writer.startSession(atSourceTime: .zero)
             var videoDone = false
             var audioDone = false
@@ -103,6 +104,7 @@ final class RecipeWriter: @unchecked Sendable {
             }
             guard reader.status == .completed else { throw reader.error ?? MediaEngineError.exportFailed }
             try Task.checkCancellation()
+            traceDeviceExportPhase("finish_writing")
             await writer.finishWriting()
             try Task.checkCancellation()
             guard writer.status == .completed else { throw writer.error ?? MediaEngineError.exportFailed }

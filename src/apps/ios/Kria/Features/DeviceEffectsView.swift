@@ -44,6 +44,9 @@ struct DeviceEffectsView: View {
                 if !session.busy { Task { await session.previewSelected() } }
             }
             .onDisappear { session.player.pause() }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.recordLifecycle("will_resign_active") }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in session.recordLifecycle("did_enter_background") }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.recordLifecycle("did_become_active") }
         }
     }
 }
@@ -67,6 +70,12 @@ private final class DeviceEffectsSession {
     private var activeCase: String?
     private var phase = "idle"
     private var requestedCount = 0
+    private var exportProgress = 0.0
+    private var lifecycle: [[String: Any]] = []
+    func recordLifecycle(_ event: String) {
+        lifecycle.append(["event": event, "date": ISO8601DateFormatter().string(from: Date())])
+        saveReport()
+    }
     private let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("DeviceEffects", isDirectory: true)
 
@@ -147,10 +156,12 @@ private final class DeviceEffectsSession {
     private func export(_ value: (KriaMediaEngine.EditRecipe, [String: URL]), id: String) async throws {
         let destination = directory.appendingPathComponent("\(id)-\(UUID().uuidString).mp4")
         status = "Exporting \(id)…"
-        phase = "export"; activeCase = id; saveReport()
+        phase = "export"; activeCase = id; exportProgress = 0; saveReport()
         let start = Date()
         _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
-            .export(recipe: value.0, assetURLs: value.1, outputURL: destination)
+            .export(recipe: value.0, assetURLs: value.1, outputURL: destination, progress: { [weak self] value in
+                Task { @MainActor in self?.exportProgress = value; self?.saveReport() }
+            })
         let seconds = Date().timeIntervalSince(start)
         let asset = AVURLAsset(url: destination)
         let duration = try await asset.load(.duration).seconds
@@ -217,6 +228,8 @@ private final class DeviceEffectsSession {
             let report: [String: Any] = ["device": UIDevice.current.model, "os": UIDevice.current.systemVersion,
                                        "date": ISO8601DateFormatter().string(from: Date()), "results": results,
                                        "phase": phase, "active_case": activeCase ?? "", "requested_count": requestedCount,
+                                       "export_progress": exportProgress, "lifecycle": lifecycle,
+                                       "application_state": UIApplication.shared.applicationState.rawValue,
                                        "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."]
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 .write(to: directory.appendingPathComponent("report.json"), options: .atomic)

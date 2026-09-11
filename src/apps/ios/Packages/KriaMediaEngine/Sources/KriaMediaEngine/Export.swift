@@ -45,14 +45,18 @@ public protocol LocalExporting: Sendable {
         var checkpoint = ExportCheckpoint(exportID: exportID, status: .exporting); try stateStore.save(checkpoint); progress?(0)
         let startedAt = Date()
         do {
+            traceDeviceExportPhase("prepare")
             let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: assetURLs)
+            traceDeviceExportPhase("prepared")
             guard preset.videoCodec == "h264", preset.audioCodec == "aac", preset.videoBitrate > 0 else { throw MediaEngineError.unsupportedCapability }
             try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: outputURL.path) { try FileManager.default.removeItem(at: outputURL) }
             let writer = try await RecipeWriter(preview: preview, outputURL: outputURL, bitrate: preset.videoBitrate)
+            traceDeviceExportPhase("writer_initialized")
             let task = Task.detached { try await writer.run(progress: progress) }
             try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
             try Task.checkCancellation()
+            traceDeviceExportPhase("completed")
             checkpoint.status = .completed; checkpoint.progress = 1; checkpoint.outputURL = outputURL; try stateStore.save(checkpoint); progress?(1)
             instrumentation?.record(MetricEvent(name: .exportDuration, value: Date().timeIntervalSince(startedAt)))
             return checkpoint
@@ -63,3 +67,10 @@ public protocol LocalExporting: Sendable {
 #else
 public struct AVFoundationLocalExporter: LocalExporting { public let stateStore: any ExportStatePersisting; public let preset: LocalExportPreset; public let instrumentation: (any MediaInstrumentation)?; public init(stateStore: any ExportStatePersisting, preset: LocalExportPreset = .default, instrumentation: (any MediaInstrumentation)? = nil) { self.stateStore = stateStore; self.preset = preset; self.instrumentation = instrumentation }; public func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String = UUID().uuidString, progress: (@Sendable (Double) -> Void)? = nil) async throws -> ExportCheckpoint { throw MediaEngineError.avFoundationUnavailable } }
 #endif
+
+/// Local account-free device tests only; release builds do not emit these stages.
+func traceDeviceExportPhase(_ phase: String) {
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("-device-effects") { print("KRIA_EXPORT_PHASE \(phase)") }
+    #endif
+}
