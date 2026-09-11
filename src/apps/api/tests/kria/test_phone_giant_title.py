@@ -2,6 +2,7 @@
 
 import json
 import os
+import platform
 import sys
 from itertools import groupby
 from pathlib import Path
@@ -322,8 +323,8 @@ def frame_case(name, overlay, layer, font, canvas):
 
 
 @pytest.mark.skipif(
-    sys.platform != "linux",
-    reason="Canonical Skia font fixtures use Linux/FreeType; verify in the production Docker image",
+    sys.platform != "linux" or platform.machine() not in {"x86_64", "AMD64"},
+    reason="Exact pixels require production Linux/x86_64; ARM uses different SIMD rounding",
 )
 @pytest.mark.timeout(300)
 def test_giant_fixture_matches_actual_cloud():
@@ -331,6 +332,8 @@ def test_giant_fixture_matches_actual_cloud():
 
 
 if __name__ == "__main__" and "--write" in sys.argv:
+    if platform.machine() not in {"x86_64", "AMD64"}:
+        raise RuntimeError("Generate exact pixel references on production Linux/x86_64")
     write_linux_reference(FIXTURE, reference(), compact=True)
 
 

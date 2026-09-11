@@ -321,6 +321,11 @@ must be generated in the production Linux Docker image: macOS Skia uses CoreText
 metrics, while production and CI use FreeType. Their fixture-generation commands
 reject macOS; only the six exact font-reference comparisons skip there. Linux CI
 still runs them, and native tests consume the same committed Linux references.
+The exact giant-title pixel oracle additionally requires `linux/amd64`, matching
+Fly and CI: Skia ARM SIMD paths differ slightly even when font geometry matches.
+Its comparison skips ARM and its writer rejects ARM; generate and verify this
+reference in an x86 Linux container (`--platform linux/amd64`). Pixel tolerances
+are not widened to accommodate a different CPU renderer.
 Numeric comparisons allow `1e-12` floating-point rounding; integer pixel values,
 array ordering, schema keys, and strings remain exact.
 
