@@ -114,6 +114,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -237,6 +238,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -260,6 +262,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -389,6 +392,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -512,6 +516,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -535,6 +540,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -664,6 +670,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -787,6 +794,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -810,6 +818,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -939,6 +948,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -1062,6 +1072,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -1085,6 +1096,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -1214,6 +1226,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -1337,6 +1350,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -1360,6 +1374,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -1489,6 +1504,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -1612,6 +1628,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -1635,6 +1652,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -1764,6 +1782,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -1887,6 +1906,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -1910,6 +1930,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -2039,6 +2060,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -2162,6 +2184,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -2185,6 +2208,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -2314,6 +2338,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -2437,6 +2462,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -2465,6 +2491,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -10616,6 +10643,7 @@
         "outline_width": 4.0,
         "blur_layers": [
           {
+            "alpha_power": 1,
             "color": {
               "red": 0.0,
               "green": 0.0,
@@ -10634,6 +10662,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": null
@@ -10753,6 +10782,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -10876,6 +10906,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -10955,6 +10986,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11027,6 +11059,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11047,6 +11080,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -11176,6 +11210,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -11299,6 +11334,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -11378,6 +11414,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11450,6 +11487,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11470,6 +11508,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -11518,6 +11557,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -11555,6 +11595,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -11604,6 +11645,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -11733,6 +11775,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -11856,6 +11899,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -11912,6 +11956,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11961,6 +12006,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12010,6 +12056,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12059,6 +12106,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12108,6 +12156,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12157,6 +12206,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12206,6 +12256,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12255,6 +12306,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12304,6 +12356,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12353,6 +12406,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12402,6 +12456,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12451,6 +12506,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12500,6 +12556,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12549,6 +12606,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12598,6 +12656,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12647,6 +12706,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12696,6 +12756,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12745,6 +12806,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12794,6 +12856,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12843,6 +12906,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12892,6 +12956,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12941,6 +13006,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12990,6 +13056,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13039,6 +13106,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13088,6 +13156,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13137,6 +13206,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13186,6 +13256,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13235,6 +13306,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13284,6 +13356,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13333,6 +13406,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13382,6 +13456,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13431,6 +13506,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13480,6 +13556,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13500,6 +13577,7 @@
       },
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -13629,6 +13707,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -13752,6 +13831,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -13775,6 +13855,7 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": 138
     },
     "font": {
@@ -13844,6 +13925,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -13902,6 +13984,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -13970,6 +14053,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -14033,6 +14117,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -14126,6 +14211,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -14163,6 +14249,7 @@
         }
       },
       "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -14292,6 +14379,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -14415,6 +14503,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -14443,6 +14532,7 @@
         "out_ms": 250,
         "curve": "square"
       },
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -14572,6 +14662,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -14635,6 +14726,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -14728,6 +14820,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -14751,6 +14844,235 @@
       "staggered": null,
       "karaoke": null,
       "fade": null,
+      "giant_title": null,
+      "dissolve_seed": null
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    }
+  },
+  {
+    "id": "giant-title",
+    "layer": {
+      "id": "giant-title",
+      "start": 0.5,
+      "end": 5.5,
+      "anchor_x": 540.0,
+      "anchor_y": 864.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "GO ON",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 180.0,
+          "x": 243.8525390625,
+          "baseline_y": 929.875,
+          "letter_spacing": 0.0,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 141,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 135.087890625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 273.779296875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 316.40625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 300,
+              "x": 455.09765625,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "alpha_power": 1,
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "fade-in",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": null,
+      "fade": null,
+      "giant_title": {
+        "origin_x": 448.2861328125,
+        "origin_y": 864.396484375
+      },
+      "dissolve_seed": null
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    }
+  },
+  {
+    "id": "giant-title-glow",
+    "layer": {
+      "id": "giant-title-glow",
+      "start": 0.5,
+      "end": 5.5,
+      "anchor_x": 540.0,
+      "anchor_y": 864.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "GO ON",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 180.0,
+          "x": 243.8525390625,
+          "baseline_y": 929.875,
+          "letter_spacing": 0.0,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 141,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 135.087890625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 273.779296875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 316.40625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 300,
+              "x": 455.09765625,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "alpha_power": 2,
+              "color": {
+                "red": 0.611764705882353,
+                "green": 0.25098039215686274,
+                "blue": 1.0,
+                "alpha": 0.32941176470588235
+              },
+              "sigma": 8.0,
+              "dx": 0.0,
+              "dy": 0.0
+            },
+            {
+              "alpha_power": 2,
+              "color": {
+                "red": 0.611764705882353,
+                "green": 0.25098039215686274,
+                "blue": 1.0,
+                "alpha": 0.6039215686274509
+              },
+              "sigma": 20.0,
+              "dx": 0.0,
+              "dy": 0.0
+            },
+            {
+              "alpha_power": 1,
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "fade-in",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": null,
+      "fade": null,
+      "giant_title": {
+        "origin_x": 448.2861328125,
+        "origin_y": 864.396484375
+      },
       "dissolve_seed": null
     },
     "font": {

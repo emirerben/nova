@@ -21,23 +21,25 @@ public struct TextInk: Codable, Equatable, Sendable {
 }
 
 public struct TextBlurLayer: Codable, Equatable, Sendable {
+    public let alphaPower: Int
     public let color: TextInk
     public let sigma: Double
     public let dx: Double
     public let dy: Double
-    private enum CodingKeys: String, CodingKey { case color, sigma, dx, dy }
-    public init(color: TextInk, sigma: Double, dx: Double, dy: Double) {
-        self.color = color; self.sigma = sigma; self.dx = dx; self.dy = dy
+    private enum CodingKeys: String, CodingKey { case color, sigma, dx, dy, alphaPower }
+    public init(color: TextInk, sigma: Double, dx: Double, dy: Double, alphaPower: Int = 1) {
+        self.color = color; self.sigma = sigma; self.dx = dx; self.dy = dy; self.alphaPower = alphaPower
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["color", "sigma", "dx", "dy"])
+        try rejectUnknownAssetFields(decoder, allowed: ["color", "sigma", "dx", "dy", "alphaPower"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         color = try c.decode(TextInk.self, forKey: .color); sigma = try c.decode(Double.self, forKey: .sigma)
         dx = try c.decode(Double.self, forKey: .dx); dy = try c.decode(Double.self, forKey: .dy)
+        alphaPower = try c.decodeIfPresent(Int.self, forKey: .alphaPower) ?? 1
     }
     func validate() throws {
         try color.validate()
-        guard sigma.isFinite, (0...100).contains(sigma), dx.isFinite, dy.isFinite,
+        guard (1...2).contains(alphaPower), sigma.isFinite, (0...100).contains(sigma), dx.isFinite, dy.isFinite,
               abs(dx) <= 1000, abs(dy) <= 1000 else { throw RecipeError.invalidTimeline }
     }
 }
@@ -206,17 +208,18 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
     public let smoothReveal: SmoothRevealContent?
     public let staggered: StaggeredContent?
     public let fade: TextFadeEnvelope?
+    public let giantTitle: GiantTitleTransition?
     public let karaoke: KaraokeContent?
     public let dissolveSeed: UInt32?
     public let effect: Effect
-    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade }
+    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle }
     public init(id: String, start: Double, end: Double, anchorX: Double, anchorY: Double,
-                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil) {
+                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil) {
         self.id = id; self.start = start; self.end = end; self.anchorX = anchorX; self.anchorY = anchorY
-        self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered; self.dissolveSeed = dissolveSeed; self.karaoke = karaoke; self.fade = fade
+        self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered; self.dissolveSeed = dissolveSeed; self.karaoke = karaoke; self.fade = fade; self.giantTitle = giantTitle
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade"])
+        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id); start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end); anchorX = try c.decode(Double.self, forKey: .anchorX)
@@ -228,6 +231,7 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         smoothReveal = try c.decodeIfPresent(SmoothRevealContent.self, forKey: .smoothReveal)
         staggered = try c.decodeIfPresent(StaggeredContent.self, forKey: .staggered)
         fade = try c.decodeIfPresent(TextFadeEnvelope.self, forKey: .fade)
+        giantTitle = try c.decodeIfPresent(GiantTitleTransition.self, forKey: .giantTitle)
         karaoke = try c.decodeIfPresent(KaraokeContent.self, forKey: .karaoke)
         dissolveSeed = try c.decodeIfPresent(UInt32.self, forKey: .dissolveSeed)
         runs = try c.decode([PositionedTextRun].self, forKey: .runs); effect = try c.decode(Effect.self, forKey: .effect)
@@ -246,6 +250,10 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
             guard [.static, .none, .fadeIn, .handwriting, .inkReveal].contains(effect) else { throw RecipeError.invalidTimeline }
         }
         try fade?.validate()
+        try giantTitle?.validate()
+        if giantTitle != nil {
+            guard [.static, .none, .fadeIn, .scaleUp, .slideUp, .slideDown, .slideIn, .popIn, .bounce, .inkReveal, .lyricLine].contains(effect) else { throw RecipeError.invalidTimeline }
+        }
         try handwriting?.validate()
         guard (effect == .typewriter || effect == .streamIn) == (discreteReveal != nil) else { throw RecipeError.invalidTimeline }
         try discreteReveal?.validate(runs: runs)

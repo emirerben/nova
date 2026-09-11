@@ -8,6 +8,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
     private let layer: PortableTextLayer
     private let canvas: CGSize
     private let runs: [Run]
+    private let imageContext = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
     let anchor: CGPoint
     let rotation: CGAffineTransform
     let bounds: CGRect
@@ -16,7 +17,19 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         let blurs: [TextBlurLayer]; let gradient: TextGradient?
         let font: CTFont; let glyphs: [CGGlyph]?; let positions: [CGPoint]
         let fill: CGColor; let strokeColor: CGColor; let strokeWidth: Double
-        func draw(_ context: CGContext, mode: CGTextDrawingMode = .fill, isMask: Bool = false) {
+        let outline: CGPath?
+        func draw(_ context: CGContext, mode: CGTextDrawingMode = .fill, isMask: Bool = false, opacity: Double = 1) {
+            if let outline {
+                context.setFillColor(isMask ? CGColor(gray: 1, alpha: 1) : fill.copy(alpha: floor(fill.alpha * opacity * 255) / 255)!)
+                context.setStrokeColor(strokeColor.copy(alpha: floor(strokeColor.alpha * opacity * 255) / 255)!)
+                context.setLineWidth(strokeWidth)
+                context.setLineJoin(.round)
+                context.addPath(outline)
+                if mode == .clip { context.clip() }
+                else if mode == .stroke { context.strokePath() }
+                else { context.fillPath() }
+                return
+            }
             context.setTextDrawingMode(mode)
             context.textPosition = origin
             if let glyphs {
@@ -32,7 +45,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         }
     }
 
-    init(layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize) throws {
+    init(layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, outlineGlyphs: Bool = false) throws {
         self.layer = layer
         self.canvas = canvas
         anchor = CGPoint(x: layer.anchorX, y: canvas.height - layer.anchorY)
@@ -94,8 +107,31 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                 bounds = bounds.union(inkBounds.offsetBy(dx: blur.dx, dy: -blur.dy)
                     .insetBy(dx: -ceil(3 * blur.sigma) - 2, dy: -ceil(3 * blur.sigma) - 2).applying(rotation))
             }
+            var outline: CGPath?
+            if outlineGlyphs {
+                let path = CGMutablePath()
+                func append(_ ids: [CGGlyph], _ locations: [CGPoint]) {
+                    for (id, point) in zip(ids, locations) {
+                        if let glyphPath = CTFontCreatePathForGlyph(font, id, nil) {
+                            path.addPath(glyphPath, transform: CGAffineTransform(translationX: point.x, y: point.y))
+                        }
+                    }
+                }
+                if let glyphIDs { append(glyphIDs, positions) }
+                else {
+                    for item in CTLineGetGlyphRuns(line) as! [CTRun] {
+                        let count = CTRunGetGlyphCount(item)
+                        var ids = [CGGlyph](repeating: 0, count: count)
+                        var points = [CGPoint](repeating: .zero, count: count)
+                        CTRunGetGlyphs(item, CFRange(location: 0, length: 0), &ids)
+                        CTRunGetPositions(item, CFRange(location: 0, length: 0), &points)
+                        append(ids, points.map { CGPoint(x: $0.x + origin.x, y: $0.y + origin.y) })
+                    }
+                }
+                outline = path
+            }
             runs.append(Run(line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers, gradient: run.gradient, font: font, glyphs: glyphIDs, positions: positions,
-                            fill: run.fill.cgColor, strokeColor: run.stroke.cgColor, strokeWidth: run.strokeWidth))
+                            fill: run.fill.cgColor, strokeColor: run.stroke.cgColor, strokeWidth: run.strokeWidth, outline: outline))
         }
         // Moving/scaling text can enter the canvas from an offscreen position.
         // Keep its complete bitmap, still subject to the aggregate memory budget.
@@ -104,7 +140,45 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         self.runs = runs
     }
 
-    func image(bounds requestedBounds: CGRect? = nil, maxBitmapBytes: Int) throws -> CIImage {
+    private func drawScaledShadow(run: Run, blur: TextBlurLayer, context: CGContext,
+                                  bounds: CGRect, transform: CGAffineTransform, maxBitmapBytes: Int, opacity: Double) throws {
+        // SkBlurMaskFilterImpl::computeXformedSigma caps device-space sigma at 128.
+        // This also bounds the off-canvas source mask needed for visible shadow pixels.
+        let sigma = min(128, blur.sigma * hypot(transform.a, transform.b))
+        // SkDraw::compute_mask_bounds caps the source-mask clip outset at 128.
+        let padding = min(128, ceil(3 * sigma) + 2)
+        let maskBounds = bounds.insetBy(dx: -padding, dy: -padding).integral
+        guard maskBounds.width * maskBounds.height * 4 <= Double(maxBitmapBytes),
+              let mask = CGContext(data: nil, width: Int(maskBounds.width), height: Int(maskBounds.height),
+                  bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw MediaEngineError.unsupportedCapability }
+        mask.translateBy(x: -maskBounds.minX, y: -maskBounds.minY)
+        mask.concatenate(transform)
+        mask.concatenate(rotation)
+        mask.translateBy(x: blur.dx, y: -blur.dy)
+        run.draw(mask, isMask: true)
+        guard let image = mask.makeImage() else { throw MediaEngineError.exportFailed }
+        let tint = TextInk(red: blur.color.red, green: blur.color.green, blue: blur.color.blue,
+            alpha: floor(blur.color.alpha * pow(opacity, Double(blur.alphaPower)) * 255) / 255)
+        var shadow = tint.tint(mask: CIImage(cgImage: image))
+        if sigma >= 2 {
+            // SkMaskBlurFilter uses two equal boxes and an odd-width third.
+            // CIBoxBlur's inputRadius is the full kernel width (measured on a
+            // half-plane), despite its name. Half that value gives narrow tails.
+            let window = max(1, Int(floor(sigma * 3 * sqrt(2 * Double.pi) / 4 + 0.5)))
+            for size in [window, window, window.isMultiple(of: 2) ? window + 1 : window] {
+                shadow = shadow.applyingFilter("CIBoxBlur", parameters: ["inputRadius": Double(size)])
+            }
+        } else if sigma > 0 {
+            shadow = shadow.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": sigma])
+        }
+        let crop = CGRect(x: bounds.minX - maskBounds.minX, y: bounds.minY - maskBounds.minY,
+                          width: bounds.width, height: bounds.height)
+        guard let output = imageContext.createCGImage(shadow, from: crop) else { throw MediaEngineError.exportFailed }
+        context.draw(output, in: bounds)
+    }
+
+    func image(bounds requestedBounds: CGRect? = nil, maxBitmapBytes: Int, transform: CGAffineTransform = .identity, clip: CGPath? = nil, opacity: Double = 1) throws -> CIImage {
         let bounds = requestedBounds ?? self.bounds
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0,
               bounds.width * bounds.height * 4 <= Double(maxBitmapBytes),
@@ -113,14 +187,21 @@ struct PortableTextVectorPainter: @unchecked Sendable {
             throw MediaEngineError.unsupportedCapability
         }
         context.translateBy(x: -bounds.minX, y: -bounds.minY)
-        let imageContext = CIContext(options: [.cacheIntermediates: false])
+        if let clip { context.addPath(clip); context.clip() }
+        let maskBounds = transform.isIdentity ? bounds : self.bounds
+        guard maskBounds.width * maskBounds.height * 4 <= Double(maxBitmapBytes) else { throw MediaEngineError.unsupportedCapability }
         for run in runs {
-            if !run.blurs.isEmpty {
-                guard let maskContext = CGContext(data: nil, width: Int(bounds.width), height: Int(bounds.height), bitsPerComponent: 8,
+            if !run.blurs.isEmpty && run.outline != nil {
+                for blur in run.blurs {
+                    try drawScaledShadow(run: run, blur: blur, context: context, bounds: bounds,
+                                         transform: transform, maxBitmapBytes: maxBitmapBytes, opacity: opacity)
+                }
+            } else if !run.blurs.isEmpty {
+                guard let maskContext = CGContext(data: nil, width: Int(maskBounds.width), height: Int(maskBounds.height), bitsPerComponent: 8,
                     bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
                     throw MediaEngineError.exportFailed
                 }
-                maskContext.translateBy(x: -bounds.minX, y: -bounds.minY)
+                maskContext.translateBy(x: -maskBounds.minX, y: -maskBounds.minY)
                 maskContext.concatenate(rotation)
                 run.draw(maskContext, isMask: true)
                 guard let maskImage = maskContext.makeImage() else { throw MediaEngineError.exportFailed }
@@ -128,14 +209,16 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                     let angle = -layer.rotationDegrees * .pi / 180
                     let dx = blur.dx * cos(angle) + blur.dy * sin(angle)
                     let dy = blur.dx * sin(angle) - blur.dy * cos(angle)
-                    var shadow = CIImage(cgImage: maskImage).applyingFilter("CIColorMatrix", parameters: [
-                        "inputRVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.red * blur.color.alpha),
-                        "inputGVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.green * blur.color.alpha),
-                        "inputBVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.blue * blur.color.alpha),
-                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.alpha)
-                    ])
+                    var shadow = blur.color.tint(mask: CIImage(cgImage: maskImage))
                     if blur.sigma > 0 { shadow = shadow.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": blur.sigma]) }
                     shadow = shadow.transformed(by: CGAffineTransform(translationX: dx, y: dy))
+                    if !transform.isIdentity {
+                        // Blur is continuous under uniform scaling. Keep the soft mask in
+                        // source coordinates while rasterizing foreground glyphs at final scale.
+                        shadow = shadow.transformed(by: CGAffineTransform(translationX: maskBounds.minX, y: maskBounds.minY))
+                            .transformed(by: transform)
+                            .transformed(by: CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY))
+                    }
                     guard let cgShadow = imageContext.createCGImage(shadow, from: CGRect(origin: .zero, size: bounds.size)) else {
                         throw MediaEngineError.exportFailed
                     }
@@ -143,19 +226,21 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                 }
             }
             context.saveGState()
+            context.concatenate(transform)
             context.concatenate(rotation)
-            if run.strokeWidth > 0 { run.draw(context, mode: .stroke) }
+            if run.strokeWidth > 0 { run.draw(context, mode: .stroke, opacity: opacity) }
             if let gradient = run.gradient {
                 run.draw(context, mode: .clip, isMask: true)
                 guard let cgGradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
                     colors: gradient.stops.map { $0.color.cgColor } as CFArray, locations: gradient.stops.map { CGFloat($0.position) }) else {
                     throw MediaEngineError.unsupportedCapability
                 }
+                context.setAlpha(floor(opacity * 255) / 255)
                 context.drawLinearGradient(cgGradient,
                     start: CGPoint(x: gradient.startX, y: canvas.height - gradient.startY),
                     end: CGPoint(x: gradient.endX, y: canvas.height - gradient.endY),
                     options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-            } else { run.draw(context) }
+            } else { run.draw(context, opacity: opacity) }
             context.restoreGState()
         }
         guard let image = context.makeImage() else { throw MediaEngineError.exportFailed }

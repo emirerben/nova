@@ -28,6 +28,7 @@ struct RecipeTextLayer: @unchecked Sendable {
     var staggered: NativeStaggeredPainter? = nil
     var dissolve: NativeDissolveRenderer? = nil
     var karaoke: NativeKaraokePainter? = nil
+    var giantTitle: NativeGiantTitlePainter? = nil
 
     static func make(_ text: TextTreatment, start: Double, end: Double, canvas: CGSize) throws -> Self {
         guard let font = CGFont(text.fontName as CFString) else { throw MediaEngineError.unsupportedCapability }
@@ -124,6 +125,11 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                 for text in instruction.text where time >= text.start && time < text.end {
                     if let layer = text.portable {
                         do {
+                            if let painter = text.giantTitle {
+                                let image = try painter.image(localTime: time - text.start, settled: text.image)
+                                frame = image.composited(over: frame).cropped(to: instruction.canvas)
+                                continue
+                            }
                             let state = try TextTransformTiming.sample(effect: PortableTextEffect(rawValue: layer.effect.rawValue)!,
                                 text: layer.smoothReveal?.text ?? layer.discreteReveal?.text ?? layer.handwriting?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: time - text.start,
                                 duration: text.end - text.start, motion: layer.motion, fade: layer.fade)

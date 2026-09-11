@@ -15,7 +15,7 @@ struct NativeHandwritingPainter: @unchecked Sendable {
     private(set) var bitmapBytes = 0
     // Retain the Metal context across partial frames; recreating it per frame
     // repeatedly compiles the same shadow filters on physical devices.
-    private let imageContext = CIContext(options: [.cacheIntermediates: false])
+    private let imageContext = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
 
     init(layer: PortableTextLayer, canvas: CGSize, maxBitmapBytes: Int, cacheShadows: Bool = true) throws {
         guard let content = layer.handwriting else { throw RecipeError.invalidTimeline }
@@ -98,12 +98,7 @@ struct NativeHandwritingPainter: @unchecked Sendable {
         mask.setStrokeColor(CGColor(gray: 1, alpha: 1)); mask.setLineWidth(content.inkWidth)
         mask.addPath(path); mask.strokePath()
         guard let maskImage = mask.makeImage() else { throw MediaEngineError.exportFailed }
-        var shadow = CIImage(cgImage: maskImage).applyingFilter("CIColorMatrix", parameters: [
-            "inputRVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.red * blur.color.alpha),
-            "inputGVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.green * blur.color.alpha),
-            "inputBVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.blue * blur.color.alpha),
-            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: blur.color.alpha)
-        ])
+        var shadow = blur.color.tint(mask: CIImage(cgImage: maskImage))
         if blur.sigma > 0 { shadow = shadow.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": blur.sigma]) }
         shadow = shadow.cropped(to: CGRect(origin: .zero, size: maskBounds.size))
             .transformed(by: CGAffineTransform(translationX: maskBounds.minX + blur.dx, y: maskBounds.minY - blur.dy))

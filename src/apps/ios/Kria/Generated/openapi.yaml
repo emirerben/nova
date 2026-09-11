@@ -2369,6 +2369,29 @@
         "title": "GenerativeUploadUrlResponse",
         "type": "object"
       },
+      "GiantTitleTransition": {
+        "additionalProperties": false,
+        "properties": {
+          "origin_x": {
+            "maximum": 30000,
+            "minimum": -30000,
+            "title": "Origin X",
+            "type": "number"
+          },
+          "origin_y": {
+            "maximum": 30000,
+            "minimum": -30000,
+            "title": "Origin Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "origin_x",
+          "origin_y"
+        ],
+        "title": "GiantTitleTransition",
+        "type": "object"
+      },
       "GradientBackground": {
         "properties": {
           "angle_deg": {
@@ -4313,6 +4336,11 @@
             "default": null,
             "nullable": true
           },
+          "giant_title": {
+            "$ref": "#/components/schemas/GiantTitleTransition",
+            "default": null,
+            "nullable": true
+          },
           "handwriting": {
             "$ref": "#/components/schemas/HandwritingContent",
             "default": null,
@@ -5014,6 +5042,13 @@
       "TextBlurLayer": {
         "additionalProperties": false,
         "properties": {
+          "alpha_power": {
+            "default": 1,
+            "maximum": 2,
+            "minimum": 1,
+            "title": "Alpha Power",
+            "type": "integer"
+          },
           "color": {
             "$ref": "#/components/schemas/TextInk"
           },

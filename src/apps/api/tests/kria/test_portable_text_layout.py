@@ -62,7 +62,8 @@ def test_compiled_runs_match_actual_cloud_layout(shaped, anchor, fixed):
         {"effect": "dissolve-out"},
         {"emoji_prefix": "🙂"},
         {"behind_subject": True},
-        {"theme_transition": {"type": "giant-title-wipe"}},
+        {"theme_transition": {"type": "unknown"}},
+        {"effect": "handwriting", "theme_transition": {"type": "giant-title-wipe"}},
         {"spans": [{"text": "hello"}]},
     ],
 )

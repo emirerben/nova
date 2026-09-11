@@ -30,6 +30,8 @@ for effect in [
     "karaoke-line",
     "lyric-line",
     "pop-suffix",
+    "giant-title",
+    "giant-title-glow",
 ]:
     overlay = dict(
         text="Make this moment\nworth remembering",
@@ -44,6 +46,11 @@ for effect in [
         max_width_frac=0.85,
         preserve_font_size=True,
     )
+    if effect.startswith("giant-title"):
+        overlay.update(effect="fade-in", text="GO ON", text_size_px=180,
+                       theme_transition={"type": "giant-title-wipe", "target_glyph": "O"})
+        if effect == "giant-title-glow":
+            overlay.update(glow_color="#9C40FF", glow_strength=0.7)
     if effect == "pop-suffix":
         overlay["effect"] = "pop-in"
         overlay["pop_animated_suffix"] = "remembering"
@@ -58,7 +65,7 @@ for effect in [
         canvas=Canvas(1080, 1920),
         dissolve_seed=138 if effect == "dissolve-out" else None,
     )
-    expected_effect = "static" if effect == "pop-suffix" else effect
+    expected_effect = "fade-in" if effect.startswith("giant-title") else "static" if effect == "pop-suffix" else effect
     assert layer.effect == expected_effect, (
         f"{effect} silently fell back to {layer.effect}"
     )

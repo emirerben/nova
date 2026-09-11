@@ -373,8 +373,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -725,8 +726,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -1242,8 +1244,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -1594,8 +1597,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -2111,8 +2115,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -2463,8 +2468,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -2980,8 +2986,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -3332,8 +3339,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -3849,8 +3857,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -4201,8 +4210,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -4718,8 +4728,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -5070,8 +5081,9 @@
       },
       "smooth_reveal": null,
       "staggered": null,
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {

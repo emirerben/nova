@@ -88,6 +88,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -146,6 +147,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -234,6 +236,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -305,6 +308,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -354,6 +358,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -403,6 +408,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -452,6 +458,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -501,6 +508,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -550,6 +558,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -599,6 +608,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -648,6 +658,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -697,6 +708,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -746,6 +758,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -795,6 +808,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -844,6 +858,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -893,6 +908,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -942,6 +958,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -991,6 +1008,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1040,6 +1058,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1089,6 +1108,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1138,6 +1158,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1187,6 +1208,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1236,6 +1258,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1285,6 +1308,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1334,6 +1358,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1383,6 +1408,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1432,6 +1458,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1481,6 +1508,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -1499,8 +1527,9 @@
           }
         ]
       },
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -4628,6 +4657,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -4686,6 +4716,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -4774,6 +4805,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -4830,6 +4862,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -4879,6 +4912,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -4928,6 +4962,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -4977,6 +5012,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5026,6 +5062,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5075,6 +5112,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5124,6 +5162,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5173,6 +5212,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5222,6 +5262,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5271,6 +5312,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5320,6 +5362,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5369,6 +5412,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5418,6 +5462,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5467,6 +5512,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5516,6 +5562,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5565,6 +5612,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5614,6 +5662,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5663,6 +5712,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5712,6 +5762,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5761,6 +5812,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5810,6 +5862,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5859,6 +5912,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5908,6 +5962,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -5957,6 +6012,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -6006,6 +6062,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -6024,8 +6081,9 @@
           }
         ]
       },
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -6890,6 +6948,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -6948,6 +7007,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -7036,6 +7096,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -7107,6 +7168,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7156,6 +7218,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7205,6 +7268,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7254,6 +7318,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7303,6 +7368,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7352,6 +7418,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7401,6 +7468,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7450,6 +7518,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7499,6 +7568,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7548,6 +7618,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7597,6 +7668,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7646,6 +7718,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7695,6 +7768,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7744,6 +7818,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7793,6 +7868,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7842,6 +7918,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7891,6 +7968,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7940,6 +8018,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -7989,6 +8068,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -8038,6 +8118,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -8087,6 +8168,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -8136,6 +8218,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -8185,6 +8268,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -8234,6 +8318,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -8283,6 +8368,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -8301,8 +8387,9 @@
           }
         ]
       },
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -11430,6 +11517,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -11488,6 +11576,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -11576,6 +11665,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -11632,6 +11722,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11681,6 +11772,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11730,6 +11822,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11779,6 +11872,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11828,6 +11922,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11877,6 +11972,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11926,6 +12022,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -11975,6 +12072,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12024,6 +12122,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12073,6 +12172,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12122,6 +12222,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12171,6 +12272,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12220,6 +12322,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12269,6 +12372,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12318,6 +12422,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12367,6 +12472,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12416,6 +12522,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12465,6 +12572,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12514,6 +12622,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12563,6 +12672,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12612,6 +12722,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12661,6 +12772,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12710,6 +12822,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12759,6 +12872,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12808,6 +12922,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -12826,8 +12941,9 @@
           }
         ]
       },
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -13692,6 +13808,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -13750,6 +13867,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -13838,6 +13956,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -13909,6 +14028,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -13958,6 +14078,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14007,6 +14128,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14056,6 +14178,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14105,6 +14228,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14154,6 +14278,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14203,6 +14328,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14252,6 +14378,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14301,6 +14428,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14350,6 +14478,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14399,6 +14528,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14448,6 +14578,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14497,6 +14628,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14546,6 +14678,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14595,6 +14728,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14644,6 +14778,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14693,6 +14828,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14742,6 +14878,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14791,6 +14928,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14840,6 +14978,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14889,6 +15028,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14938,6 +15078,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -14987,6 +15128,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -15036,6 +15178,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -15085,6 +15228,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -15103,8 +15247,9 @@
           }
         ]
       },
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {
@@ -18232,6 +18377,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -18290,6 +18436,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -18378,6 +18525,7 @@
           "stroke_width": 4.0,
           "blur_layers": [
             {
+              "alpha_power": 1,
               "color": {
                 "red": 0.0,
                 "green": 0.0,
@@ -18434,6 +18582,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18483,6 +18632,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18532,6 +18682,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18581,6 +18732,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18630,6 +18782,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18679,6 +18832,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18728,6 +18882,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18777,6 +18932,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18826,6 +18982,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18875,6 +19032,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18924,6 +19082,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -18973,6 +19132,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19022,6 +19182,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19071,6 +19232,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19120,6 +19282,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19169,6 +19332,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19218,6 +19382,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19267,6 +19432,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19316,6 +19482,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19365,6 +19532,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19414,6 +19582,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19463,6 +19632,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19512,6 +19682,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19561,6 +19732,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19610,6 +19782,7 @@
               "stroke_width": 4.0,
               "blur_layers": [
                 {
+                  "alpha_power": 1,
                   "color": {
                     "red": 0.0,
                     "green": 0.0,
@@ -19628,8 +19801,9 @@
           }
         ]
       },
-      "fade": null,
       "karaoke": null,
+      "fade": null,
+      "giant_title": null,
       "dissolve_seed": null
     },
     "font": {

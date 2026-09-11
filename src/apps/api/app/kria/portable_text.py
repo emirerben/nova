@@ -21,6 +21,7 @@ class TextInk(_TextModel):
 
 
 class TextBlurLayer(_TextModel):
+    alpha_power: int = Field(default=1, strict=True, ge=1, le=2)
     color: TextInk
     sigma: float = Field(ge=0, le=100)
     dx: float = Field(ge=-1000, le=1000)
@@ -251,6 +252,11 @@ class KaraokeContent(_TextModel):
         return self
 
 
+class GiantTitleTransition(_TextModel):
+    origin_x: float = Field(ge=-30000, le=30000)
+    origin_y: float = Field(ge=-30000, le=30000)
+
+
 class PortableTextLayer(_TextModel):
     id: str = Field(min_length=1, max_length=160)
     start: float = Field(ge=0, le=1800)
@@ -287,10 +293,25 @@ class PortableTextLayer(_TextModel):
     staggered: StaggeredContent | None = None
     karaoke: KaraokeContent | None = None
     fade: TextFadeEnvelope | None = None
+    giant_title: GiantTitleTransition | None = None
     dissolve_seed: int | None = Field(default=None, strict=True, ge=0, le=4294967295)
 
     @model_validator(mode="after")
     def valid_window(self):
+        if self.giant_title is not None and self.effect not in {
+            "static",
+            "none",
+            "fade-in",
+            "scale-up",
+            "slide-up",
+            "slide-down",
+            "slide-in",
+            "pop-in",
+            "bounce",
+            "ink-reveal",
+            "lyric-line",
+        }:
+            raise ValueError("giant title is unsupported for this text painter")
         if (self.effect == "lyric-line") != bool(self.fade and self.fade.kind == "lyric"):
             raise ValueError("lyric line requires its fade envelope")
         if (

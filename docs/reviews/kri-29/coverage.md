@@ -25,7 +25,7 @@ and `KriaMediaEngine/PortableTextDrawing.swift`.
 | `lyric-line` | Native fade envelope and positioned text compiled | Full style and language comparisons |
 | `pop_animated_suffix` | Compiles exact settled prefix/suffix geometry; invalid suffix retains normal pop. Passed iPhone export pilot | Full lyric sequences, styles and language coverage |
 | `generative_sequence` | Fade-in/static/none/handwriting/ink-reveal compiled with fade tails and stable top-layer ordering | Other sequence effects, long windows, full scene comparisons |
-| `giant-title-wipe` | Rejected | Glyph-centered scale/opacity with every entrance effect |
+| `giant-title-wipe` | Native vector camera/opacity for static, none, fade-in, scale-up, slide-up/down/in, pop-in, bounce, ink-reveal and lyric-line; 192 cloud frames plus preview/export/backward-seek tests pass | Handwriting, discrete/smooth reveals, staggered, karaoke and dissolve combinations; [physical pilot](giant-title.md) has successful exports with intermittent AVFoundation interruptions |
 | Emoji prefix | Rejected | Licensed local image asset, placement, fallback |
 | `highlight_word` / spans | Informational highlight metadata accepted without changing pixels, matching cloud; spans rejected | Per-span layout and paint semantics |
 | Long windows | Not fully compared | Cloud frame ceilings, hold paths, seams and overlaps |

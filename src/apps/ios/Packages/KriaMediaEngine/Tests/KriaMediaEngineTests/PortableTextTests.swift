@@ -7,6 +7,19 @@ import CoreImage
 import ImageIO
 
 final class PortableTextTests: XCTestCase {
+    func testTintPreservesColorAndAppliesCoverageOnlyOnce() {
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+        let context = CIContext(options: [.workingColorSpace: colorSpace, .outputColorSpace: colorSpace])
+        let mask = CIImage(color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.5))
+        let tinted = TextInk(red: 0.8, green: 0.2, blue: 0.4, alpha: 0.7).tint(mask: mask)
+        var pixel = [UInt8](repeating: 0, count: 4)
+        context.render(tinted, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                       format: .RGBA8, colorSpace: colorSpace)
+        for (actual, expected) in zip(pixel, [71, 18, 36, 89]) {
+            XCTAssertEqual(Double(actual), Double(expected), accuracy: 1)
+        }
+    }
+
     func testSharedPositionedTextContractRejectsUnknownTreatments() throws {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("../../../../../api/tests/fixtures/kria_positioned_text_v2.json").standardizedFileURL

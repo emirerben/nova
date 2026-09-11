@@ -56,6 +56,7 @@ def _resolve_paints(overlay: dict, *, width: float, height: float, left: float, 
                         alpha=cloud._clamp_byte(alpha * glow["glow_strength"]) / 255,
                     ),
                     sigma=sigma,
+                    alpha_power=1 if overlay.get("effect") == "handwriting" else 2,
                     dx=0,
                     dy=0,
                 )
@@ -93,6 +94,60 @@ def _resolve_paints(overlay: dict, *, width: float, height: float, left: float, 
 
 
 def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed: int | None = None):
+    from app.kria.portable_text import GiantTitleTransition
+    from app.pipeline import text_overlay_skia as cloud
+
+    theme = overlay.get("theme_transition")
+    if not theme:
+        return _compile_text_overlay(
+            overlay, layer_id=layer_id, canvas=canvas, dissolve_seed=dissolve_seed
+        )
+    if cloud._theme_transition_type(overlay) != "giant-title-wipe":
+        raise UnsupportedPortableText("unsupported theme transition")
+    if overlay.get("effect", "none") not in {
+        "static",
+        "none",
+        "fade-in",
+        "scale-up",
+        "slide-up",
+        "slide-down",
+        "slide-in",
+        "pop-in",
+        "bounce",
+        "ink-reveal",
+        "lyric-line",
+    }:
+        raise UnsupportedPortableText("giant title is unsupported for this text painter")
+    layer, font = _compile_text_overlay(
+        {**overlay, "theme_transition": None},
+        layer_id=layer_id,
+        canvas=canvas,
+        dissolve_seed=dissolve_seed,
+    )
+    x, y = cloud._resolve_anchor(overlay, canvas)
+    dx, dy = cloud._giant_title_wipe_scale_origin(overlay, render_canvas=canvas)
+    updates = {"giant_title": GiantTitleTransition(origin_x=x + dx, origin_y=y + dy)}
+    raw_motion = overlay.get("motion")
+    if (
+        overlay.get("effect", "none") in {"static", "none", "slide-in"}
+        and isinstance(raw_motion, dict)
+        and raw_motion.get("version") == 2
+    ):
+        from dataclasses import asdict
+
+        from app.kria.portable_text import ResolvedTextMotion
+        from app.pipeline.text_motion_v2 import normalize_text_motion
+
+        updates["motion"] = ResolvedTextMotion(
+            **asdict(normalize_text_motion(overlay.get("effect", "none"), raw_motion))
+        )
+    layer = layer.model_copy(update=updates)
+    return layer, font
+
+
+def _compile_text_overlay(
+    overlay: dict, *, layer_id: str, canvas, dissolve_seed: int | None = None
+):
     """Resolve a supported cloud overlay into geometry plus its exact font asset.
 
     Reuses the production layout helpers. No image, frame, or encoded media is

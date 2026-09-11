@@ -1,0 +1,127 @@
+{
+  "date": "2026-09-11T06:34:21Z",
+  "device": "iPhone",
+  "os": "26.6.1",
+  "results": [
+    {
+      "duration": 6,
+      "effect": "static",
+      "export_seconds": 1.3928680419921875,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "fade-in",
+      "export_seconds": 1.283958911895752,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "scale-up",
+      "export_seconds": 1.9669109582901,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-up",
+      "export_seconds": 1.2230559587478638,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-down",
+      "export_seconds": 1.4561179876327515,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-in",
+      "export_seconds": 1.2212209701538086,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "pop-in",
+      "export_seconds": 1.2230169773101807,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "bounce",
+      "export_seconds": 1.1799190044403076,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "ink-reveal",
+      "export_seconds": 1.24537193775177,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "handwriting",
+      "export_seconds": 2.677757978439331,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "typewriter",
+      "export_seconds": 1.713104009628296,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "stream-in",
+      "export_seconds": 1.155237078666687,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "smooth-type",
+      "export_seconds": 1.1175580024719238,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "staggered-slice",
+      "export_seconds": 1.5062419176101685,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "dissolve-out",
+      "export_seconds": 6.527890920639038,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "karaoke-line",
+      "export_seconds": 1.4526320695877075,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "lyric-line",
+      "export_seconds": 1.1103649139404297,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "pop-suffix",
+      "export_seconds": 1.1162269115447998,
+      "status": "exported"
+    },
+    {
+      "effect": "giant-title",
+      "error": "Error Domain=AVFoundationErrorDomain Code=-11847 \"Operation Interrupted\" UserInfo={NSLocalizedRecoverySuggestion=Stop other operations and try again., NSLocalizedDescription=Operation Interrupted, NSUnderlyingError=0x1230a49c0 {Error Domain=NSOSStatusErrorDomain Code=-16121 \"(null)\"}}",
+      "status": "failed"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-glow",
+      "export_seconds": 8.216428995132446,
+      "status": "exported"
+    }
+  ],
+  "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."
+}

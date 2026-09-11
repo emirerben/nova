@@ -1880,8 +1880,9 @@
     "discrete_reveal": null,
     "smooth_reveal": null,
     "staggered": null,
-    "fade": null,
     "karaoke": null,
+    "fade": null,
+    "giant_title": null,
     "dissolve_seed": null
   },
   "samples": [
