@@ -78,7 +78,10 @@ generator command above. Add `-c release` to run the optimized native tests.
 The signed Debug pilot adds `look-golden-hour` (32 cases total). It first prepares
 an exact-canvas H.264 source from the bundled demo locally, recording preparation
 separately, then exercises six-second look preview/export and backward seeking.
-The signed build succeeds. Installation/run is pending the user's phone unlock.
+The signed build succeeds. The [physical pilot](iphone32-pilot.md) subsequently
+completed golden-hour preview requests and a six-second export in 3.078 seconds
+on the iPhone 13 Pro with compiler optimization enabled. Wider release gates
+remain open.
 
 Still required: resize-before-grade parity, full-size graphics/transition
 combinations, more decoder formats/ranges, physical-device throughput/memory, and

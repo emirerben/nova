@@ -9,6 +9,11 @@ not a completed creator flow. Every row needs initial creation, editor revision,
 backward seeking, preview/export parity, interruption/recovery, and physical-device
 measurement. Admin-only templates and disabled experiments remain excluded.
 
+The later [32-case physical pilot](iphone32-pilot.md) completed all staged text,
+transition and golden-hour cases across three runs. Giant-title handwriting took
+106 seconds for a six-second export even with optimization and remains a
+performance concern. Functional pilot success does not enable a capability.
+
 ## Text
 
 All shared editor effect names now have native implementations and compiler paths:

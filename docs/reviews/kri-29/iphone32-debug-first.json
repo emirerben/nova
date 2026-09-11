@@ -1,0 +1,211 @@
+{
+  "active_case": "giant-title-handwriting",
+  "application_state": 0,
+  "date": "2026-09-11T09:18:50Z",
+  "device": "iPhone",
+  "export_progress": 0.7111111111111111,
+  "lifecycle": [
+    {
+      "date": "2026-09-11T09:14:17Z",
+      "event": "did_become_active"
+    }
+  ],
+  "os": "26.6.1",
+  "phase": "export",
+  "requested_count": 32,
+  "results": [
+    {
+      "duration": 6,
+      "effect": "static",
+      "export_seconds": 1.2624239921569824,
+      "preview_frame_requests_seconds": 1.2733319997787476,
+      "preview_prepare_seconds": 0.41336703300476074,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "fade-in",
+      "export_seconds": 1.2353019714355469,
+      "preview_frame_requests_seconds": 0.38859307765960693,
+      "preview_prepare_seconds": 0.04668891429901123,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "scale-up",
+      "export_seconds": 1.2759180068969727,
+      "preview_frame_requests_seconds": 0.44491100311279297,
+      "preview_prepare_seconds": 0.037351012229919434,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-up",
+      "export_seconds": 1.1735029220581055,
+      "preview_frame_requests_seconds": 0.48878002166748047,
+      "preview_prepare_seconds": 0.03788101673126221,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-down",
+      "export_seconds": 1.1705451011657715,
+      "preview_frame_requests_seconds": 0.4754049777984619,
+      "preview_prepare_seconds": 0.03732001781463623,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-in",
+      "export_seconds": 1.165835976600647,
+      "preview_frame_requests_seconds": 0.4511319398880005,
+      "preview_prepare_seconds": 0.03898894786834717,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "pop-in",
+      "export_seconds": 1.1585739850997925,
+      "preview_frame_requests_seconds": 0.36585700511932373,
+      "preview_prepare_seconds": 0.03909802436828613,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "bounce",
+      "export_seconds": 1.1525639295578003,
+      "preview_frame_requests_seconds": 0.3775440454483032,
+      "preview_prepare_seconds": 0.03939807415008545,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "ink-reveal",
+      "export_seconds": 1.149827003479004,
+      "preview_frame_requests_seconds": 0.4340939521789551,
+      "preview_prepare_seconds": 0.03996109962463379,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "handwriting",
+      "export_seconds": 3.0217009782791138,
+      "preview_frame_requests_seconds": 0.38380396366119385,
+      "preview_prepare_seconds": 0.7548410892486572,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "typewriter",
+      "export_seconds": 1.8312100172042847,
+      "preview_frame_requests_seconds": 0.4221240282058716,
+      "preview_prepare_seconds": 0.0716090202331543,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "stream-in",
+      "export_seconds": 1.2502440214157104,
+      "preview_frame_requests_seconds": 0.38494598865509033,
+      "preview_prepare_seconds": 0.07310104370117188,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "smooth-type",
+      "export_seconds": 1.1730960607528687,
+      "preview_frame_requests_seconds": 0.3600280284881592,
+      "preview_prepare_seconds": 0.06116795539855957,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "staggered-slice",
+      "export_seconds": 3.21786892414093,
+      "preview_frame_requests_seconds": 0.48090600967407227,
+      "preview_prepare_seconds": 0.28668105602264404,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "dissolve-out",
+      "export_seconds": 9.957414031028748,
+      "preview_frame_requests_seconds": 0.43333399295806885,
+      "preview_prepare_seconds": 8.004778027534485,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "karaoke-line",
+      "export_seconds": 1.6150659322738647,
+      "preview_frame_requests_seconds": 0.44329798221588135,
+      "preview_prepare_seconds": 0.1164250373840332,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "lyric-line",
+      "export_seconds": 1.1599349975585938,
+      "preview_frame_requests_seconds": 0.35936498641967773,
+      "preview_prepare_seconds": 0.03786599636077881,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "pop-suffix",
+      "export_seconds": 1.157709002494812,
+      "preview_frame_requests_seconds": 0.36103999614715576,
+      "preview_prepare_seconds": 0.04115009307861328,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title",
+      "export_seconds": 4.793294072151184,
+      "preview_frame_requests_seconds": 0.44519495964050293,
+      "preview_prepare_seconds": 0.05748701095581055,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-glow",
+      "export_seconds": 9.270058989524841,
+      "preview_frame_requests_seconds": 0.4977550506591797,
+      "preview_prepare_seconds": 0.06021106243133545,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-typewriter",
+      "export_seconds": 6.486643075942993,
+      "preview_frame_requests_seconds": 0.4989839792251587,
+      "preview_prepare_seconds": 0.04337000846862793,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-smooth",
+      "export_seconds": 7.230723023414612,
+      "preview_frame_requests_seconds": 0.5220209360122681,
+      "preview_prepare_seconds": 0.04521000385284424,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-staggered",
+      "export_seconds": 10.074013948440552,
+      "preview_frame_requests_seconds": 0.6973880529403687,
+      "preview_prepare_seconds": 0.045289039611816406,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-karaoke",
+      "export_seconds": 5.700738906860352,
+      "preview_frame_requests_seconds": 0.49993896484375,
+      "preview_prepare_seconds": 0.03649008274078369,
+      "status": "exported"
+    }
+  ],
+  "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."
+}

@@ -1,0 +1,67 @@
+{
+  "active_case": "look-golden-hour",
+  "application_state": 0,
+  "date": "2026-09-11T09:21:10Z",
+  "device": "iPhone",
+  "export_progress": 0.3,
+  "lifecycle": [
+    {
+      "date": "2026-09-11T09:19:41Z",
+      "event": "did_become_active"
+    }
+  ],
+  "os": "26.6.1",
+  "phase": "export",
+  "requested_count": 7,
+  "results": [
+    {
+      "duration": 6,
+      "effect": "giant-title-dissolve",
+      "export_seconds": 9.640405893325806,
+      "preview_frame_requests_seconds": 0.4048720598220825,
+      "preview_prepare_seconds": 7.93333899974823,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "transition-crossfade",
+      "export_seconds": 1.1221810579299927,
+      "preview_frame_requests_seconds": 0.4732329845428467,
+      "preview_prepare_seconds": 0.026234030723571777,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "transition-fade_black",
+      "export_seconds": 1.8014729022979736,
+      "preview_frame_requests_seconds": 2.1981449127197266,
+      "preview_prepare_seconds": 0.02079606056213379,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "transition-fade_white",
+      "export_seconds": 1.346256971359253,
+      "preview_frame_requests_seconds": 0.36150693893432617,
+      "preview_prepare_seconds": 0.021826982498168945,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "transition-wipe_left",
+      "export_seconds": 1.1379649639129639,
+      "preview_frame_requests_seconds": 0.4082280397415161,
+      "preview_prepare_seconds": 0.021996021270751953,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "transition-wipe_right",
+      "export_seconds": 1.1236709356307983,
+      "preview_frame_requests_seconds": 0.36219096183776855,
+      "preview_prepare_seconds": 0.02010500431060791,
+      "status": "exported"
+    }
+  ],
+  "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."
+}
