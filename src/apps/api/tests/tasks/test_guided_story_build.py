@@ -906,7 +906,7 @@ def test_guided_failure_keeps_job_non_ready_and_persists_machine_code(monkeypatc
     from app.pipeline.guided_story import GuidedStoryError
 
     captured: dict[str, object] = {}
-    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id: _session())
+    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id, **_kwargs: _session())
     monkeypatch.setattr(
         gb,
         "_run_generative_job",
@@ -948,7 +948,7 @@ def test_guided_story_error_persists_a_user_facing_render_failure(monkeypatch) -
 
     persisted: dict[str, object] = {}
     failed: dict[str, object] = {}
-    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id: _session())
+    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id, **_kwargs: _session())
     monkeypatch.setattr(
         gb,
         "_run_generative_job",
@@ -1027,7 +1027,7 @@ def test_editor_save_worker_failure_keeps_last_good_output_retryable(monkeypatch
         def commit(self):
             return None
 
-    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id: nullcontext(True))
+    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id, **_kwargs: nullcontext(True))
     monkeypatch.setattr(gb, "_sync_session", _Session)
     monkeypatch.setattr(gb, "_claim_creator_craft_generation", lambda *a, **k: "legacy")
     monkeypatch.setattr(gb, "_cancelled_job_write_rejected", lambda *a, **k: False)
@@ -1059,7 +1059,7 @@ def test_editor_save_worker_failure_keeps_last_good_output_retryable(monkeypatch
 
 def test_busy_duplicate_delivery_does_not_mark_live_job_finished(monkeypatch) -> None:
     calls: list[str] = []
-    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id: _session())
+    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id, **_kwargs: _session())
     monkeypatch.setattr(
         gb,
         "_run_generative_job",

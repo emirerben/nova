@@ -2330,6 +2330,15 @@ def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bo
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
         )
+    from app.kria.media_sources import require_cloud_render_job  # noqa: PLC0415
+
+    try:
+        require_cloud_render_job(job)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "phone_editor_required"},
+        ) from exc
     _assert_variant_generation_editable_or_409(job, variant_id)
     variant = _find_variant(job, variant_id)
     if variant is None:

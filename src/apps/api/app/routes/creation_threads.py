@@ -2501,9 +2501,7 @@ async def capabilities(user: CurrentUser) -> dict[str, Any]:
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
             recipe_versions=[2] if phone_enabled else [],
-            verified_features=(
-                settings.phone_render_verified_features if phone_enabled else []
-            ),
+            verified_features=(settings.phone_render_verified_features if phone_enabled else []),
         ).model_dump(),
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled

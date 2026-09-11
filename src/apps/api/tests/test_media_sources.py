@@ -67,6 +67,7 @@ def test_old_or_redelivered_proxy_job_never_enters_cloud_pipeline(cancelled, pro
     job = SimpleNamespace(
         id=uuid.uuid4(),
         status="cancelled" if cancelled else "queued",
+        assembly_plan={},
         raw_storage_path="users/a/creation-threads/b/analysis-proxy-a.mp4",
         all_candidates={"clip_paths": ["users/a/creation-threads/b/analysis-proxy-a.mp4"]},
     )

@@ -25,7 +25,7 @@ from tests.tasks.conftest import patch_job_session as _patch_job_session
 
 
 @contextmanager
-def _accepted_owned_job_fence(_job_id):
+def _accepted_owned_job_fence(_job_id, **_kwargs):
     yield True
 
 

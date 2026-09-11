@@ -930,7 +930,7 @@ def _lock_owned_entry_job(db, job_id: str) -> tuple[Job, int | None] | None:  # 
 
 
 @contextmanager
-def _owned_job_task_fence(job_id: str):  # noqa: ANN202
+def _owned_job_task_fence(job_id: str, *, allow_phone_planning: bool = False):  # noqa: ANN202
     """Establish the durable plan epoch before any task-side effect."""
 
     token = _CONTENT_PLAN_FENCE.set(None)
@@ -940,17 +940,26 @@ def _owned_job_task_fence(job_id: str):  # noqa: ANN202
             entry = _lock_owned_entry_job(db, job_id)
             if entry is not None and entry[0].status != _CANCELLED_JOB_STATUS:
                 job, ownership_epoch = entry
-                from app.services.creator_direction_snapshot import (
-                    bind_typed_overrides,
-                    typed_overrides_from_container,
-                )
+                if not allow_phone_planning:
+                    from app.kria.media_sources import require_cloud_render_job
 
-                bind_typed_overrides(
-                    typed_overrides_from_container(getattr(job, "assembly_plan", None))
-                )
-                if ownership_epoch is not None:
-                    _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
-                accepted = True
+                    try:
+                        require_cloud_render_job(job)
+                    except ValueError:
+                        log.info("phone_cloud_task_rejected", job_id=job_id)
+                        entry = None
+                if entry is not None:
+                    from app.services.creator_direction_snapshot import (
+                        bind_typed_overrides,
+                        typed_overrides_from_container,
+                    )
+
+                    bind_typed_overrides(
+                        typed_overrides_from_container(getattr(job, "assembly_plan", None))
+                    )
+                    if ownership_epoch is not None:
+                        _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
+                    accepted = True
         yield accepted
     finally:
         _CONTENT_PLAN_FENCE.reset(token)
@@ -1015,7 +1024,12 @@ def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
     def wrapped(self, job_id: str, *args, **kwargs):  # noqa: ANN001, ANN202
         from app.services.creator_direction_snapshot import renderer_policy_scope
 
-        with renderer_policy_scope(), _owned_job_task_fence(job_id) as accepted:
+        fence = (
+            _owned_job_task_fence(job_id, allow_phone_planning=True)
+            if fn.__name__ == "orchestrate_generative_job"
+            else _owned_job_task_fence(job_id)
+        )
+        with renderer_policy_scope(), fence as accepted:
             if not accepted:
                 log.info("generative_task_entry_rejected", job_id=job_id, task=fn.__name__)
                 return None
@@ -3594,11 +3608,11 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.guided_story import GuidedStoryExecutionPlan  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import compile_phone_guided_plan  # noqa: PLC0415
-    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
         pin_device_request,
     )
+    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
     from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
 
     generation = snapshot.get("creator_generation_id")

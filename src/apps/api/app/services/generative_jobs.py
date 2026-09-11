@@ -310,7 +310,11 @@ def build_generative_job(
     if phone_sources:
         from app.config import settings  # noqa: PLC0415
 
-        if not settings.phone_rendering_for(user_id) or mode != "content_plan" or voiceover_gcs_path:
+        if (
+            not settings.phone_rendering_for(user_id)
+            or mode != "content_plan"
+            or voiceover_gcs_path
+        ):
             raise ValueError("phone planning is unavailable for this job")
         if (
             [source.proxy_path for source in phone_sources] != clip_paths

@@ -43,6 +43,7 @@ from app.kria.recipes import EditRecipeV1, adapt_authoritative_job_snapshot
 from app.models import (
     VIDEO_FEEDBACK_THUMB_SIGNALS,
     ContentPlan,
+    CreationThread,
     CreatorMemoryItem,
     CreatorMemoryOperation,
     CreatorMemoryOutbox,
@@ -1939,6 +1940,7 @@ class OpenInEditorBody(BaseModel):
 class OpenInEditorResponse(BaseModel):
     plan_item_id: str
     variant_id: str
+    creation_thread_id: uuid.UUID | None = None
 
 
 class RetryJobResponse(BaseModel):
@@ -2029,7 +2031,11 @@ async def retry_failed_job(
     return RetryJobResponse(job_id=str(locked_job.id))
 
 
-@router.post("/jobs/{job_id}/open-in-editor", response_model=OpenInEditorResponse)
+@router.post(
+    "/jobs/{job_id}/open-in-editor",
+    response_model=OpenInEditorResponse,
+    response_model_exclude_none=True,
+)
 async def open_job_in_editor(
     job_id: str,
     user: CurrentUser,
@@ -2169,7 +2175,21 @@ async def open_job_in_editor(
             needs_commit = True
         if needs_commit:
             await db.commit()
+        creation_thread_id = None
+        if ready_variant.get("render_destination") == "device":
+            # Local originals are keyed by the creation thread, not the Gallery job.
+            # Resolve only through this caller's already-authorized item and plan.
+            creation_thread_id = (
+                await db.execute(
+                    select(CreationThread.id).where(
+                        CreationThread.creator_id == user.id,
+                        CreationThread.content_plan_id == plan.id,
+                        CreationThread.active_plan_item_id == existing_item.id,
+                    )
+                )
+            ).scalar_one_or_none()
         return OpenInEditorResponse(
+            creation_thread_id=creation_thread_id,
             plan_item_id=str(existing_item.id),
             variant_id=ready_variant["variant_id"],
         )

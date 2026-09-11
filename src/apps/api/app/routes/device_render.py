@@ -393,7 +393,7 @@ async def complete_device_export(
             "render_finished_at": datetime.now(UTC).isoformat(),
             "video_path": attempt["path"],
             "output_url": url,
-            "render_destination": "phone",
+            "render_destination": "device",
             "duration_s": status.request.recipe.duration,
         }
         if v.get("variant_id") == body.identity.variant_id

@@ -1474,6 +1474,8 @@
                 "positionedText",
                 "animatedText",
                 "crossfade",
+                "clipTransitions",
+                "goldenHourLook",
                 "audioMix",
                 "variableSpeed",
                 "alphaOverlay",
@@ -1551,6 +1553,8 @@
                 "positionedText",
                 "animatedText",
                 "crossfade",
+                "clipTransitions",
+                "goldenHourLook",
                 "audioMix",
                 "variableSpeed",
                 "alphaOverlay",
@@ -3744,6 +3748,13 @@
       },
       "OpenInEditorResponse": {
         "properties": {
+          "creation_thread_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Creation Thread Id",
+            "type": "string"
+          },
           "plan_item_id": {
             "title": "Plan Item Id",
             "type": "string"
@@ -5609,6 +5620,15 @@
             "title": "Id",
             "type": "string"
           },
+          "look": {
+            "default": null,
+            "enum": [
+              "golden_hour"
+            ],
+            "nullable": true,
+            "title": "Look",
+            "type": "string"
+          },
           "rate": {
             "exclusiveMinimum": true,
             "maximum": 20,
@@ -5815,7 +5835,11 @@
           "kind": {
             "default": "crossfade",
             "enum": [
-              "crossfade"
+              "crossfade",
+              "fade_black",
+              "fade_white",
+              "wipe_left",
+              "wipe_right"
             ],
             "title": "Kind",
             "type": "string"

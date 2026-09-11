@@ -67,3 +67,25 @@ def is_analysis_proxy_path(path: str) -> bool:
 def require_cloud_source_paths(paths: list[str]) -> None:
     if any(is_analysis_proxy_path(path) for path in paths):
         raise ValueError("analysis proxies cannot be used as cloud render sources")
+
+
+def require_cloud_render_job(job: object) -> None:
+    """Keep phone source receipts and analysis-only bytes outside every cloud renderer."""
+    assembly = getattr(job, "assembly_plan", None) or {}
+    if (
+        "_phone_sources_v1" in assembly
+        or "_device_render_v1" in assembly
+        or any(
+            variant.get("render_destination") in {"device", "phone"}
+            for variant in assembly.get("variants", [])
+        )
+    ):
+        raise ValueError("phone jobs require the device editor and renderer")
+    candidates = getattr(job, "all_candidates", None) or {}
+    paths = list(candidates.get("clip_paths") or [])
+    paths.extend(
+        path
+        for path in (candidates.get("voiceover_gcs_path"), getattr(job, "raw_storage_path", None))
+        if path
+    )
+    require_cloud_source_paths(paths)

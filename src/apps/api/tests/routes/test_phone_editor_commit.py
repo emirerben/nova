@@ -227,3 +227,29 @@ def test_phone_guided_revision_compiles_trimmed_source_window(monkeypatch):
     assert prep["revision_number"] == 2
     assert request.identity.recipe_revision == 2
     assert job.assembly_plan["variants"][0]["duration_s"] == pytest.approx(0.8)
+
+
+@pytest.mark.parametrize("endpoint", ["timeline", "orientation", "text"])
+async def test_legacy_phone_mutations_fail_before_state_or_queue_changes(monkeypatch, endpoint):
+    from unittest.mock import AsyncMock, Mock
+
+    job = phone_job(monkeypatch)
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    before = copy.deepcopy(vars(job))
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: job)
+    cloud = Mock()
+    monkeypatch.setattr("app.tasks.generative_build.regenerate_generative_variant.delay", cloud)
+    with pytest.raises(HTTPException) as error:
+        if endpoint == "timeline":
+            await gj.dispatch_edit_timeline(job, "guided_story", SimpleNamespace(), db=db)
+        elif endpoint == "orientation":
+            await gj.dispatch_set_orientation(db, job, "guided_story", orientation="landscape")
+        else:
+            gj.dispatch_set_text_elements(job, "guided_story", elements=[], render=False)
+    assert error.value.status_code == 422
+    assert error.value.detail == {"code": "phone_editor_required"}
+    assert vars(job) == before
+    db.commit.assert_not_awaited()
+    cloud.assert_not_called()

@@ -115,3 +115,55 @@ def test_builder_requires_gate_and_exact_private_sources(monkeypatch):
     monkeypatch.setattr(gb.settings, "phone_rendering_enabled", False)
     with pytest.raises(ValueError, match="unavailable"):
         build_generative_job(**args, phone_sources=(binding,))
+
+
+@pytest.mark.parametrize("source", ["receipt", "proxy", "destination"])
+@pytest.mark.parametrize(
+    "task_name, extra",
+    [
+        ("regenerate_generative_variant", ["guided_story"]),
+        ("rerender_speech_timing", ["operation"]),
+        ("reburn_narrated_captions", ["guided_story"]),
+        ("rerender_caption_camera_effects", ["guided_story"]),
+        ("reburn_narrated_bed_level", ["guided_story", 0.5]),
+        ("retranscribe_subtitled_captions", ["guided_story", "en"]),
+        ("rebuild_slide_post_variant", []),
+    ],
+)
+def test_phone_jobs_never_enter_cloud_reprocessing_tasks(monkeypatch, source, task_name, extra):
+    job, _, session, _, _ = setup(monkeypatch)
+    if source == "proxy":
+        job.assembly_plan = {}
+        job.all_candidates = {"clip_paths": ["slot-uploads/analysis-proxy-source.mp4"]}
+    elif source == "destination":
+        job.assembly_plan = {"variants": [{"render_destination": "device"}]}
+    before = copy.deepcopy(vars(job))
+    claim = Mock(side_effect=AssertionError("cloud task entered its render body"))
+    trace = Mock(side_effect=AssertionError("cloud task entered its render body"))
+    monkeypatch.setattr(gb, "_claim_creator_craft_generation", claim)
+    monkeypatch.setattr("app.services.pipeline_trace.pipeline_trace_for", trace)
+    getattr(gb, task_name).run(str(job.id), *extra)
+    claim.assert_not_called()
+    trace.assert_not_called()
+    session.commit.assert_not_called()
+    assert vars(job) == before
+
+
+def test_cloud_task_fence_keeps_normal_cloud_jobs_accepted(monkeypatch):
+    job, _, _, _, _ = setup(monkeypatch)
+    job.assembly_plan = {}
+    job.all_candidates = {"clip_paths": ["slot-uploads/source.mp4"]}
+    with gb._owned_job_task_fence(str(job.id)) as accepted:
+        assert accepted
+
+
+def test_initial_orchestrator_still_enters_phone_planning(monkeypatch):
+    from contextlib import nullcontext
+
+    job, _, _, _, cloud = setup(monkeypatch)
+    monkeypatch.setattr("app.services.pipeline_trace.pipeline_trace_for", lambda _: nullcontext())
+    monkeypatch.setattr(gb, "job_heartbeat", lambda _: nullcontext())
+    monkeypatch.setattr(gb, "mark_finished", Mock())
+    gb.orchestrate_generative_job.run(str(job.id))
+    assert device_status(job, "guided_story").phase == "awaiting_device"
+    cloud.assert_not_called()

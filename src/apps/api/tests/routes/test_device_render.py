@@ -350,3 +350,44 @@ def test_library_download_rejects_missing_asset(fixture, monkeypatch):
 def test_library_download_rejects_legacy_recipe(fixture, monkeypatch):
     monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
     assert download_asset(fixture).status_code == 404
+
+
+def test_published_phone_export_edits_pin_next_device_revision(fixture, monkeypatch):
+    from app.routes import generative_jobs as gj
+    from app.services.device_render import device_status
+    from tests.routes.test_phone_editor_commit import phone_job, save
+
+    fixture.job = phone_job(monkeypatch)
+    fixture.user.id = fixture.job.user_id
+    fixture.request = device_status(fixture.job, "guided_story").request
+    attempt = str(uuid.uuid4())
+    record = device_record(fixture.job, "guided_story")
+    record["status"]["phase"] = "syncing"
+    record["attempts"][attempt] = {
+        "path": f"{fixture.user.id}/{fixture.job.id}/device/{attempt}.mp4",
+        "size": 12,
+        "sha256": "a" * 64,
+    }
+    save_device_record(fixture.job, "guided_story", record)
+    mock_storage(fixture, monkeypatch)
+    monkeypatch.setattr(routes, "_verify_export", MagicMock())
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
+    )
+    assert response.status_code == 200, response.text
+    prep = save(fixture.job, generation=attempt)
+    assert device_status(fixture.job, "guided_story").request.identity.recipe_revision == 2
+    assert fixture.job.assembly_plan["variants"][0]["render_status"] == "awaiting_device"
+    cloud = MagicMock()
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant.apply_async", cloud
+    )
+    gj.enqueue_editor_commit_render(str(fixture.job.id), "guided_story", prep)
+    cloud.assert_not_called()
