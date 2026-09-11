@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.6.0] - 2026-09-11
+
+### Changed
+- feat: add account-scoped phone rendering pilot (#1015) <!-- release-pr: 1015 -->
+
 ## [0.76.5.0] - 2026-09-11
 
 ### Changed
