@@ -1,0 +1,110 @@
+{
+  "date" : "2026-09-11T05:25:55Z",
+  "device" : "iPhone",
+  "os" : "26.6.1",
+  "results" : [
+    {
+      "duration" : 6,
+      "effect" : "static",
+      "export_seconds" : 1.1822439432144165,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "fade-in",
+      "export_seconds" : 1.1033639907836914,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "scale-up",
+      "export_seconds" : 1.0973860025405884,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "slide-up",
+      "export_seconds" : 1.0947500467300415,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "slide-down",
+      "export_seconds" : 1.1031980514526367,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "slide-in",
+      "export_seconds" : 1.0976539850234985,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "pop-in",
+      "export_seconds" : 1.0998790264129639,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "bounce",
+      "export_seconds" : 1.1078710556030273,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "ink-reveal",
+      "export_seconds" : 1.1033930778503418,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "handwriting",
+      "export_seconds" : 53.937006950378418,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "typewriter",
+      "export_seconds" : 1.6233420372009277,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "stream-in",
+      "export_seconds" : 1.1283448934555054,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "smooth-type",
+      "export_seconds" : 1.1175600290298462,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "staggered-slice",
+      "export_seconds" : 3.6133970022201538,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "dissolve-out",
+      "export_seconds" : 5.9885879755020142,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "karaoke-line",
+      "export_seconds" : 1.5015839338302612,
+      "status" : "exported"
+    },
+    {
+      "duration" : 6,
+      "effect" : "lyric-line",
+      "export_seconds" : 1.094710111618042,
+      "status" : "exported"
+    }
+  ],
+  "scope" : "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."
+}

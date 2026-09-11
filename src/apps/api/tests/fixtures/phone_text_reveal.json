@@ -1,0 +1,4122 @@
+[
+  {
+    "effect": "typewriter",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": [
+      2.1,
+      2.5,
+      3.0015,
+      2.1
+    ],
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello bra",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello bra",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello bra",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave w",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave w",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.3,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "block",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello brave w",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello brave w",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello brave w",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello brave w",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello brave w",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave w",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave wo",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave wo",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave wo",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave worl",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "block"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.8,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "underscore",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello ",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello bra",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave w",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave w",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 4.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "bar",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "H",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "He",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hell",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello br",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "H",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "H",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "H",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "He",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hel",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hell",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello b",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave w",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": [
+      2.1,
+      2.5,
+      3.0015,
+      2.1
+    ],
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi gün",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi gün",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi gün",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé 👨‍",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.3,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "block",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "block"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.8,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "underscore",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi g",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi g",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi g",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi gü",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi gü",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi gün",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 4.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "bar",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İ",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İy",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi g",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günl",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler\nC",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İy",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi ",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi gün",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCa",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": [
+      2.1,
+      2.5,
+      3.0015,
+      2.1
+    ],
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.3,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "block",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.8,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "underscore",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A\n",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A\n",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A\n",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n\n",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 4.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "bar",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A\n",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\n",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "",
+    "start": 2,
+    "schedule": [
+      2.1,
+      2.5,
+      3.0015,
+      2.1
+    ],
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.3,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "block",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.8,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "underscore",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 4.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "bar",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": [
+      2.1,
+      2.5,
+      3.0015,
+      2.1
+    ],
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello brave",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "none"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.3,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "block",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello brave wo",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello brave wo",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello brave wo",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello brave wo",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello brave wo",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave wo",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave worl",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "block"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.8,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "underscore",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello br",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello br",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello br",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello br",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello brave w",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave w",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 4.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "bar",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello brave",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello brave world",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "Hello",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "Hello brave",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "Hello brave",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "Hello brave world",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": [
+      2.1,
+      2.5,
+      3.0015,
+      2.1
+    ],
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "none"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.3,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "block",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler\nCaf",
+        "show_cursor": true,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé ",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "block"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.8,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "underscore",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi gü",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi gü",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi gü",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi gü",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler\nC",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler\nC",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 4.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "bar",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi günler",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi günler\nCafé",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "  İyi   günler\nCafé 👨‍👩‍👧‍👦!",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "İyi",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "İyi günler",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "İyi günler",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "İyi günler\nCafé 👨‍👩‍👧‍👦!",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": [
+      2.1,
+      2.5,
+      3.0015,
+      2.1
+    ],
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "none"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.3,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "block",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "block"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.8,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "underscore",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A\n",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A\n",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A\n",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n",
+        "show_cursor": true,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 4.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "bar",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "A\n\nB",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "A",
+        "show_cursor": true,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "A\n\nB",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "",
+    "start": 2,
+    "schedule": [
+      2.1,
+      2.5,
+      3.0015,
+      2.1
+    ],
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "none"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.3,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "block",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "block"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.8,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "underscore",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "underscore"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": {
+      "speed": 4.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "bar",
+      "cursor_blink_ms": 173.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "",
+    "start": 2,
+    "schedule": null,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.03333333333333333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.083333,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.1,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.166667,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.25,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 0.9,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 1.002,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 2,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      },
+      {
+        "time": 5,
+        "visible_text": "",
+        "show_cursor": false,
+        "cursor_style": "bar"
+      }
+    ]
+  }
+]

@@ -77,3 +77,9 @@ setup-cofounder.sh
 Makefile
 firebase-debug.log
 openclaw.config.json
+
+# Local native build and verification outputs are never API build inputs.
+src/apps/ios/.derived-data/
+**/.build/
+test-results/
+.overlay-verify/

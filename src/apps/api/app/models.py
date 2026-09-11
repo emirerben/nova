@@ -1307,6 +1307,7 @@ class CreationThreadUploadReservation(Base):
     )
     media_id: Mapped[str] = mapped_column(Text, nullable=False)
     object_path: Mapped[str] = mapped_column(Text, nullable=False)
+    upload_contract: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 

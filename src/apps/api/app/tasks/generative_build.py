@@ -930,7 +930,7 @@ def _lock_owned_entry_job(db, job_id: str) -> tuple[Job, int | None] | None:  # 
 
 
 @contextmanager
-def _owned_job_task_fence(job_id: str):  # noqa: ANN202
+def _owned_job_task_fence(job_id: str, *, allow_phone_planning: bool = False):  # noqa: ANN202
     """Establish the durable plan epoch before any task-side effect."""
 
     token = _CONTENT_PLAN_FENCE.set(None)
@@ -940,17 +940,26 @@ def _owned_job_task_fence(job_id: str):  # noqa: ANN202
             entry = _lock_owned_entry_job(db, job_id)
             if entry is not None and entry[0].status != _CANCELLED_JOB_STATUS:
                 job, ownership_epoch = entry
-                from app.services.creator_direction_snapshot import (
-                    bind_typed_overrides,
-                    typed_overrides_from_container,
-                )
+                if not allow_phone_planning:
+                    from app.kria.media_sources import require_cloud_render_job
 
-                bind_typed_overrides(
-                    typed_overrides_from_container(getattr(job, "assembly_plan", None))
-                )
-                if ownership_epoch is not None:
-                    _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
-                accepted = True
+                    try:
+                        require_cloud_render_job(job)
+                    except ValueError:
+                        log.info("phone_cloud_task_rejected", job_id=job_id)
+                        entry = None
+                if entry is not None:
+                    from app.services.creator_direction_snapshot import (
+                        bind_typed_overrides,
+                        typed_overrides_from_container,
+                    )
+
+                    bind_typed_overrides(
+                        typed_overrides_from_container(getattr(job, "assembly_plan", None))
+                    )
+                    if ownership_epoch is not None:
+                        _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
+                    accepted = True
         yield accepted
     finally:
         _CONTENT_PLAN_FENCE.reset(token)
@@ -1015,7 +1024,12 @@ def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
     def wrapped(self, job_id: str, *args, **kwargs):  # noqa: ANN001, ANN202
         from app.services.creator_direction_snapshot import renderer_policy_scope
 
-        with renderer_policy_scope(), _owned_job_task_fence(job_id) as accepted:
+        fence = (
+            _owned_job_task_fence(job_id, allow_phone_planning=True)
+            if fn.__name__ == "orchestrate_generative_job"
+            else _owned_job_task_fence(job_id)
+        )
+        with renderer_policy_scope(), fence as accepted:
             if not accepted:
                 log.info("generative_task_entry_rejected", job_id=job_id, task=fn.__name__)
                 return None
@@ -2127,6 +2141,39 @@ def _run_generative_job_impl(
             log.error("generative_job_entry_rejected", job_id=job_id)
             return
         job, ownership_epoch = entry
+        from app.kria.media_sources import require_cloud_source_paths  # noqa: PLC0415
+
+        if job.status == _CANCELLED_JOB_STATUS:
+            return
+        candidates = getattr(job, "all_candidates", None) or {}
+        from app.services.phone_sources import PHONE_SOURCES_FIELD  # noqa: PLC0415
+
+        if PHONE_SOURCES_FIELD in (job.assembly_plan or {}):
+            if ownership_epoch is not None:
+                _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
+            phone_snapshot = copy.deepcopy(job.assembly_plan)
+            # Planning uses its own short transactions. Release the entry locks
+            # before invoking it, then recheck the owner/generation at publication.
+            db.commit()
+            _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
+            return
+        try:
+            require_cloud_source_paths(
+                list(candidates.get("clip_paths") or [])
+                + (
+                    [candidates["voiceover_gcs_path"]]
+                    if candidates.get("voiceover_gcs_path")
+                    else []
+                )
+                + ([job.raw_storage_path] if getattr(job, "raw_storage_path", None) else [])
+            )
+        except ValueError:
+            job.status = "processing_failed"
+            job.error_detail = (
+                "Analysis proxies require on-device rendering; originals were not uploaded."
+            )
+            db.commit()
+            return
         assembly = dict(job.assembly_plan or {})
         from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
 
@@ -3554,6 +3601,92 @@ def _run_generative_job_impl(
         job_id,
         speech_cut_rerender=bool(speech_cut_operation_id),
     )
+
+
+def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int | None) -> None:
+    """Use cloud decisions only; never enter a media renderer for proxy sources."""
+    from app.kria.device_render import make_device_request  # noqa: PLC0415
+    from app.pipeline.guided_story import GuidedStoryExecutionPlan  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import compile_phone_guided_plan  # noqa: PLC0415
+    from app.services.device_render import (  # noqa: PLC0415
+        DEVICE_RENDER_FIELD,
+        pin_device_request,
+    )
+    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+
+    generation = snapshot.get("creator_generation_id")
+    guided = snapshot.get("guided_edit")
+    if not isinstance(generation, str) or not generation or not isinstance(guided, dict):
+        raise ValueError("Phone rendering requires an immutable approved guided plan")
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in snapshot[PHONE_SOURCES_FIELD]
+    )
+    if not bindings:
+        raise ValueError("Phone rendering requires original source bindings")
+    existing = (snapshot.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
+    if existing is not None and existing.get("base_generation") == generation:
+        return  # A delivery cannot rewrite an already issued device revision.
+    if not settings.phone_rendering_enabled:
+        raise ValueError(
+            "Phone rendering is currently unavailable; originals remain on the device."
+        )
+    raw_plan, _track = _guided_execution_plan(job_id, guided)
+    recipe = compile_phone_guided_plan(GuidedStoryExecutionPlan.model_validate(raw_plan), bindings)
+    validate_phone_pilot_recipe(recipe)
+    request = make_device_request(
+        job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe
+    )
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
+            return
+        job = entry[0]
+        if not settings.phone_rendering_for(job.user_id):
+            raise ValueError("Phone rendering is unavailable for this account")
+        current = copy.deepcopy(job.assembly_plan or {})
+        if any(
+            current.get(field) != snapshot.get(field)
+            for field in ("creator_generation_id", "guided_edit", PHONE_SOURCES_FIELD)
+        ):
+            return
+        prior = (current.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
+        if prior is not None and prior.get("base_generation") == generation:
+            return
+        if prior is not None:
+            raise ValueError("Phone recipe revision must be advanced by the editor")
+        if current.get("variants"):
+            raise ValueError("Initial phone planning cannot replace existing variants")
+        current["variants"] = [
+            {
+                "variant_id": "guided_story",
+                "rank": 1,
+                "text_mode": "agent_text",
+                "resolved_archetype": "guided_story",
+                "render_generation_id": generation,
+                "render_status": "awaiting_device",
+                "render_destination": "device",
+                "duration_s": raw_plan["resolved_duration_s"],
+                "style_set_id": raw_plan["typography"]["style_id"],
+                "intro_mode": "linear",
+                "intro_layout": "linear",
+                "text_elements": copy.deepcopy(raw_plan["text_elements"]),
+                "context_label_text_elements": copy.deepcopy(
+                    raw_plan.get("context_label_text_elements") or []
+                ),
+                "story_timeline": copy.deepcopy(raw_plan["story_timeline"]),
+                "proposal_version": raw_plan["proposal_version"],
+                "media_digest": raw_plan["media_digest"],
+                "orientation": raw_plan.get("output_orientation", "portrait"),
+                "ok": False,
+            }
+        ]
+        job.assembly_plan = current
+        pin_device_request(job, request, base_generation=generation)
+        job.status = "awaiting_device"
+        job.error_detail = None
+        job.failure_reason = None
+        db.commit()
 
 
 def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, MusicTrack | None]:

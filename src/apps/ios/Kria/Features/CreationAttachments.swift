@@ -45,6 +45,13 @@ struct AttachmentSheet: View {
     private var canRecord: Bool {
         existing + pendingRecords.filter { $0.projectID == projectID && $0.role == .voiceover }.count < maximum
     }
+    private var uploadDestination: ProjectUploadDestination {
+        ProjectUploadDestination.resolve(
+            capabilities: capabilities?.phoneRendering,
+            sourcePurposes: media.map(\.uploadPurpose) + pendingRecords.filter { $0.projectID == projectID }.map { $0.purpose.rawValue },
+            role: role
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -61,9 +68,9 @@ struct AttachmentSheet: View {
                         Text("Photos, screenshots, or short supporting videos.").font(KriaFont.body(14))
                         if pool == nil, error == nil { ProgressView("Loading visuals…") }
                     }
-                    FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, role: role, itemID: itemID, limit: limit)
+                    FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
                         .id(role)
-                    if role == .voiceover {
+                    if role == .voiceover && uploadDestination == .cloud {
                         if recorder.isRecording {
                             Button("Stop recording") { Task { await finishRecording() } }.buttonStyle(CanonicalPrimaryButtonStyle())
                         } else if recorder.hasRecording {

@@ -1,0 +1,6424 @@
+[
+  {
+    "effect": "static",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 0.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 0.578125,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 0.875,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 0.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 0.6232853223593964,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 0.875,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 0.9785665294924555,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 0.9953703703703703,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 0.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 0.3490370370370369,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 0.784,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 0.875,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 0.9359999999999999,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 0.992,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 0.9976296296296296,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 0.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 0.22974537037037046,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 0.578125,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 0.755859375,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 0.875,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 0.947265625,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "scale-up",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.6,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.83125,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.95,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "scale-up",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.6,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.8493141289437586,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.95,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9914266117969822,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9981481481481481,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "scale-up",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.6,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.7396148148148147,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9136,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.95,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9743999999999999,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9968,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9990518518518519,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "scale-up",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.6,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.6630315500685872,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.7685185185185186,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.83125,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.8814814814814815,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.920601851851852,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9851851851851852,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "slide-up",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -220.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "slide-up",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -220.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -19.314128943758575,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "slide-up",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -220.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -86.76148148148151,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -1.7600000000000016,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "slide-up",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -220.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -162.93920742900335,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -80.1749271137026,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -41.049562682215736,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -17.317784256559765,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -5.131195335276971,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "slide-down",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 220.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "slide-down",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 220.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 19.314128943758575,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "slide-down",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 220.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 86.76148148148151,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 1.7600000000000016,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "slide-down",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 220.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 162.93920742900335,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 80.1749271137026,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 41.049562682215736,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 17.317784256559765,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 5.131195335276971,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "pop-in",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.3,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0083333333333333,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "pop-in",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.3,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.6935185185185184,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0083333333333333,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.1041666666666665,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0625,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "pop-in",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.3,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.4888888888888889,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.8666666666666667,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0083333333333333,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.15,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.075,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.05,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "pop-in",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.3,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.4888888888888889,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.8666666666666667,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.15,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.075,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "bounce",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.992361111111111,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "bounce",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.2411265432098766,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.992361111111111,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9652777777777778,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "bounce",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.1157407407407407,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.113888888888889,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.992361111111111,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9107142857142857,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "bounce",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0462962962962963,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.1388888888888888,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.2083333333333333,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.211111111111111,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.113888888888889,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 0.9285714285714286,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704347,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.30793767621195844,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704347,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9382715539079642,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9797645793804689,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.029896603576402937,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.5876232920982463,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704345,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.8558387442624571,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9700677832181691,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9873804846754622,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.004487815157140688,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.02215658929229961,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.12791261904710977,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.5876232920982463,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704345,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9998187127895082,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704347,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.30793767621195844,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704347,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9382715539079642,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9797645793804689,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.029896603576402937,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.5876232920982463,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704345,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.8558387442624571,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9700677832181691,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9873804846754622,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.0,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.004487815157140688,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.02215658929229961,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.12791261904710977,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.5876232920982463,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.7478534372704345,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 0.9998187127895082,
+          "blur_px": 0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "Hello",
+    "duration": 0.005,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.0025,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.005,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "Hello",
+    "duration": 0.12,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.06,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.08666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.12,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "Hello",
+    "duration": 0.25,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.125,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.21666666666666667,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "Hello",
+    "duration": 2,
+    "motion": null,
+    "samples": [
+      {
+        "time": 0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.03333333333333333,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.1,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.15,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.25,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.4,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 0.8,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.0,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 1.9666666666666666,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      },
+      {
+        "time": 2,
+        "state": {
+          "alpha": 1.0,
+          "scale": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "reveal_progress": 1.0,
+          "blur_px": 0.0
+        }
+      }
+    ]
+  }
+]

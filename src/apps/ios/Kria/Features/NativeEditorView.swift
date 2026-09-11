@@ -10,6 +10,7 @@ struct NativeEditorView: View {
     @State private var selectedTool: NativeEditorTool?
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
+    @State private var showsDeviceRender = false
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
@@ -83,6 +84,18 @@ struct NativeEditorView: View {
                 guard selection.kind != .clip else { return }
                 inspector = .selection(selection)
             }
+            .sheet(isPresented: $showsDeviceRender) {
+                if let key = session.deviceRenderKey {
+                    DeviceRenderPanel(key: key, sessions: model.deviceRenders,
+                        retry: { await session.refreshDeviceRender(retry: true) })
+                        .padding(20)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                }
+            }
+            .onChange(of: deviceLocalFile) { _, file in
+                if let file { session.showDeviceOutput(file) }
+            }
             .interactiveDismissDisabled(session.hasUnsavedChanges)
             .confirmationDialog(
                 "Save your changes before leaving?",
@@ -104,6 +117,12 @@ struct NativeEditorView: View {
         VStack(spacing: 0) {
             NativeEditorTopBar(onBack: requestBack)
             NativeEditorSaveBanner(session: session)
+            if session.deviceRenderKey != nil {
+                Button("Rendering on iPhone") { showsDeviceRender = true }
+                    .font(KriaFont.body(12).weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .accessibilityIdentifier("native-editor-device-render")
+            }
 
             NativeVideoPreview(session: session)
                 .frame(width: previewHeight * 9 / 16, height: previewHeight)
@@ -127,15 +146,23 @@ struct NativeEditorView: View {
         }
     }
 
+    private var deviceLocalFile: URL? {
+        guard let key = session.deviceRenderKey else { return nil }
+        return model.deviceRenders.presentations[key]?.localFile
+    }
+
     private func loadEditor() async {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
+        session.useDeviceRendering(model.deviceRenders)
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)
         } else {
             await session.load(project: project, api: model.api)
         }
+        await session.refreshDeviceRender()
+        if let file = deviceLocalFile { session.showDeviceOutput(file) }
     }
 
     private func requestBack() {

@@ -114,7 +114,9 @@ struct NativeEditorSaveBanner: View {
         case .previewPending:
             banner(
                 title: "Saved — preview updating",
-                detail: "Your edit is safe. The cloud preview is rendering now.",
+                detail: session.rendersOnDevice
+                    ? "Your edit is saved. Check rendering progress on this iPhone."
+                    : "Your edit is safe. The cloud preview is rendering now.",
                 systemImage: "checkmark.circle",
                 tint: KriaColor.ink
             )

@@ -2330,6 +2330,15 @@ def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bo
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
         )
+    from app.kria.media_sources import require_cloud_render_job  # noqa: PLC0415
+
+    try:
+        require_cloud_render_job(job)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "phone_editor_required"},
+        ) from exc
     _assert_variant_generation_editable_or_409(job, variant_id)
     variant = _find_variant(job, variant_id)
     if variant is None:
@@ -2363,6 +2372,8 @@ def _require_guided_story_text_ids(variant: dict, elements: list[dict]) -> None:
         return
     receipt = variant.get("render_receipt") or {}
     required = list(receipt.get("approved_text_ids") or receipt.get("expected_text_ids") or [])
+    if variant.get("render_destination") == "device":
+        required = [row["id"] for row in variant.get("text_elements") or [] if row.get("id")]
     try:
         from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
 
@@ -8393,6 +8404,41 @@ def prepare_editor_commit(
     visual_assets: dict[str, dict] | None = None,
     speech_cut_owner: tuple[str, str] | None = None,
 ) -> dict:
+    """Stage native saves through the same validators, then pin a complete recipe."""
+    arguments = dict(
+        user_id=user_id,
+        music_track=music_track,
+        music_track_generation=music_track_generation,
+        background_music_track=background_music_track,
+        plan_item_id=plan_item_id,
+        visual_assets=visual_assets,
+        speech_cut_owner=speech_cut_owner,
+    )
+    variant = _find_variant(job, variant_id)
+    if variant is not None and variant.get("render_destination") == "device":
+        from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
+
+        return prepare_phone_editor_commit(
+            job,
+            variant_id,
+            prepare=lambda staged: _prepare_editor_commit(staged, variant_id, payload, **arguments),
+        )
+    return _prepare_editor_commit(job, variant_id, payload, **arguments)
+
+
+def _prepare_editor_commit(
+    job: Job,
+    variant_id: str,
+    payload: EditorCommitRequest,
+    *,
+    user_id: str | None = None,
+    music_track: MusicTrack | None = None,
+    music_track_generation: str | None = None,
+    background_music_track: MusicTrack | None = None,
+    plan_item_id: str | None = None,
+    visual_assets: dict[str, dict] | None = None,
+    speech_cut_owner: tuple[str, str] | None = None,
+) -> dict:
     """Validate ALL sections, compare the baseline, then stage ONE atomic write.
 
     Deliberately does NOT use `require_editable_variant`: saving during an
@@ -9584,7 +9630,7 @@ def enqueue_editor_commit_render(
     commits. The task carries the freshly-bumped render_gen_id so E1 can discard
     any older in-flight task's terminal write.
     """
-    if not prep["has_render_section"]:
+    if not prep["has_render_section"] or prep.get("render_destination") == "device":
         return
     task_id = (
         task_id

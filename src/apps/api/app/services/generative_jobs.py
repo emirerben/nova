@@ -28,6 +28,7 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
 )
 from app.services.generative_upload_paths import direct_clip_owner
+from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 
 DEFAULT_PLATFORMS = ["tiktok", "instagram", "youtube"]
 CONTENT_PLAN_PRIMARY_VARIANT_POLICY = "content_plan_primary"
@@ -277,6 +278,7 @@ def build_generative_job(
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
+    phone_sources: tuple[PhoneSourceBinding, ...] = (),
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -303,6 +305,27 @@ def build_generative_job(
             or content_plan_ownership_epoch < 0
         ):
             raise ValueError("content_plan mode requires a non-negative ownership epoch")
+    from app.kria.media_sources import require_cloud_source_paths  # noqa: PLC0415
+
+    if phone_sources:
+        from app.config import settings  # noqa: PLC0415
+
+        if (
+            not settings.phone_rendering_for(user_id)
+            or mode != "content_plan"
+            or voiceover_gcs_path
+        ):
+            raise ValueError("phone planning is unavailable for this job")
+        if (
+            [source.proxy_path for source in phone_sources] != clip_paths
+            or len({source.media_id for source in phone_sources}) != len(phone_sources)
+            or len(set(clip_paths)) != len(clip_paths)
+        ):
+            raise ValueError("phone sources must exactly bind the selected clips")
+    else:
+        require_cloud_source_paths(
+            clip_paths + ([voiceover_gcs_path] if voiceover_gcs_path else [])
+        )
     _validate_generative_clip_paths(user_id, clip_paths)
     # Declared edit shape (montage default). The orchestrator's archetype dispatch
     # resolves it against the footage and falls back to montage when unsupported.
@@ -449,4 +472,13 @@ def build_generative_job(
         content_plan_item_id=content_plan_item_id,
         content_plan_ownership_epoch=content_plan_ownership_epoch,
         status="queued",
+        **(
+            {
+                "assembly_plan": {
+                    PHONE_SOURCES_FIELD: [s.model_dump(mode="json") for s in phone_sources]
+                }
+            }
+            if phone_sources
+            else {}
+        ),
     )

@@ -31,7 +31,14 @@ from app.config import settings
 from app.database import get_db
 from app.db_locks import acquire_locked_rows
 from app.kria.api_schemas import KriaProblemOut, ThreadDeltaOut
+from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
+from app.kria.media_sources import (
+    PROXY_MEDIA_PREFIX,
+    AnalysisProxyDescriptor,
+    MediaUploadContract,
+    is_analysis_proxy_path,
+)
 from app.kria.runtime import RuntimeFailure, read_delta
 from app.limiter import limiter
 from app.models import (
@@ -268,6 +275,7 @@ class CreationCapabilitiesOut(BaseModel):
     media: CreationMediaCapabilitiesOut
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
     visuals_enabled: bool = False
+    phone_rendering: DeviceRenderCapabilities = Field(default_factory=DeviceRenderCapabilities)
 
 
 class CreateBody(StrictBody):
@@ -381,6 +389,7 @@ class ActionBody(StrictBody):
 
 
 class UploadFile(StrictBody):
+    upload_contract: MediaUploadContract = Field(default_factory=MediaUploadContract)
     filename: str = Field(min_length=1, max_length=240)
     content_type: str = Field(min_length=1, max_length=100)
     file_size_bytes: int = Field(gt=0, le=_MAX_FILE_BYTES)
@@ -686,6 +695,7 @@ async def _probe_registered_media(
     object_path: str,
     generation: str,
     kind: str,
+    proxy: AnalysisProxyDescriptor | None = None,
 ) -> tuple[float, bool]:
     """Range-probe one verified generation; never persist/log its signed URL."""
 
@@ -701,6 +711,13 @@ async def _probe_registered_media(
             probe = await asyncio.to_thread(probe_video, signed_url)
         except ProbeError as exc:
             raise HTTPException(status_code=422, detail="Video could not be read") from exc
+        if proxy is not None and (
+            probe.width != proxy.width
+            or probe.height != proxy.height
+            or abs(probe.fps - proxy.frame_rate) > 0.01
+            or probe.rotation_degrees != 0
+        ):
+            raise HTTPException(422, "Uploaded proxy geometry differs from its descriptor")
         return float(probe.duration_s), bool(probe.has_audio)
     from app.services.audio_download import (  # noqa: PLC0415
         probe_duration,
@@ -2483,9 +2500,14 @@ async def _agent_message(
 
 @router.get("/capabilities", response_model=CreationCapabilitiesOut)
 async def capabilities(user: CurrentUser) -> dict[str, Any]:
-    _ = user
+    phone_enabled = settings.phone_rendering_for(user.id)
     return {
         "runtime_versions": [1, 2] if settings.kria_runtime_v2_enabled else [1],
+        "phone_rendering": DeviceRenderCapabilities(
+            enabled=phone_enabled,
+            recipe_versions=[2] if phone_enabled else [],
+            verified_features=(settings.phone_render_verified_features if phone_enabled else []),
+        ).model_dump(),
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
         ),
@@ -3970,6 +3992,7 @@ async def upload_urls(
             ),
         )
     target_specs: list[tuple[str, str, int, str]] = []
+    upload_contracts: dict[str, MediaUploadContract] = {}
     for file in body.files:
         content_type = file.content_type.split(";", 1)[0].lower().strip()
         if content_type not in _MEDIA_TYPES:
@@ -3986,7 +4009,23 @@ async def upload_urls(
                 raise HTTPException(status_code=422, detail="Audio files must be 200 MB or smaller")
         elif file.file_size_bytes > _MAX_BYTES_PER_FILE:
             raise HTTPException(status_code=422, detail="Video files must be 4 GB or smaller")
-        media_id = _reserved_media_id(file.client_upload_id, content_type)
+        contract = file.upload_contract
+        if file.client_upload_id.startswith(PROXY_MEDIA_PREFIX):
+            raise HTTPException(422, "Upload identifier uses a reserved prefix")
+        if contract.purpose == "analysis_proxy":
+            if not settings.phone_rendering_for(user.id):
+                raise HTTPException(404, "Phone rendering is unavailable")
+            if len(file.client_upload_id) > 160 - len(PROXY_MEDIA_PREFIX):
+                raise HTTPException(422, "Proxy upload identifier is too long")
+            if content_type != "video/mp4":
+                raise HTTPException(422, "Analysis proxies must be MP4 videos")
+        client_id = (
+            PROXY_MEDIA_PREFIX + file.client_upload_id
+            if contract.purpose == "analysis_proxy"
+            else file.client_upload_id
+        )
+        media_id = _reserved_media_id(client_id, content_type)
+        upload_contracts[media_id] = contract
         path = _media_path(user.id, thread.id, media_id)
         target_specs.append((media_id, content_type, file.file_size_bytes, path))
 
@@ -4018,12 +4057,18 @@ async def upload_urls(
                     creator_id=user.id,
                     media_id=media_id,
                     object_path=path,
+                    upload_contract=upload_contracts[media_id].model_dump(mode="json"),
                     expires_at=expires_at,
                 )
             )
         elif reservation.creator_id != user.id or reservation.object_path != path:
             raise HTTPException(status_code=404, detail="Creation thread not found")
         else:
+            previous_contract = MediaUploadContract.model_validate(
+                getattr(reservation, "upload_contract", None) or {}
+            )
+            if previous_contract != upload_contracts[media_id]:
+                raise HTTPException(409, "Upload identity reused for different source media")
             reservation.expires_at = expires_at
     # Commit the reservation before minting any URL. A later DELETE can now
     # reject the live PUT window or manifest the exact key after it expires.
@@ -4116,6 +4161,33 @@ async def attach_media(
     requested_voiceovers = sum(1 for source in body.media if source.kind == "audio")
     if item.voiceover_gcs_path and requested_voiceovers:
         raise HTTPException(status_code=409, detail="This item already has a voiceover")
+    proxy_contracts: dict[str, MediaUploadContract] = {}
+    proxy_ids = [media.media_id for media in body.media if is_analysis_proxy_path(media.media_id)]
+    if proxy_ids:
+        reservations = (
+            (
+                await db.execute(
+                    select(CreationThreadUploadReservation)
+                    .where(
+                        CreationThreadUploadReservation.thread_id == thread.id,
+                        CreationThreadUploadReservation.creator_id == user.id,
+                        CreationThreadUploadReservation.media_id.in_(proxy_ids),
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for reservation in reservations:
+            contract = MediaUploadContract.model_validate(reservation.upload_contract or {})
+            if contract.purpose != "analysis_proxy" or reservation.object_path != _media_path(
+                user.id, thread.id, reservation.media_id
+            ):
+                raise HTTPException(409, "Proxy reservation does not match its source")
+            proxy_contracts[reservation.media_id] = contract
+        if set(proxy_contracts) != set(proxy_ids):
+            raise HTTPException(409, "Proxy reservation is missing; upload again")
     verified: list[dict[str, Any]] = []
     for media in body.media:
         expected_path = _media_path(user.id, thread.id, media.media_id)
@@ -4137,11 +4209,13 @@ async def attach_media(
         generation = str(getattr(metadata, "generation", "") or "").strip()
         if not generation:
             raise HTTPException(status_code=503, detail="Upload identity is unavailable")
+        contract = proxy_contracts.get(media.media_id)
         try:
             duration_s, has_audio = await _probe_registered_media(
                 object_path=expected_path,
                 generation=generation,
                 kind=media.kind,
+                **({"proxy": contract.proxy} if contract else {}),
             )
         except FileNotFoundError as exc:
             raise HTTPException(
@@ -4152,6 +4226,12 @@ async def attach_media(
             raise
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Media verification unavailable") from exc
+        contract = proxy_contracts.get(media.media_id)
+        if contract is not None:
+            try:
+                contract.proxy.verify_registered(duration_s, has_audio)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
         verified.append(
             {
                 "media_id": _client_id(media.media_id),
@@ -4163,6 +4243,7 @@ async def attach_media(
                 "duration_s": duration_s,
                 "has_audio": has_audio,
                 "_path": expected_path,
+                **({"upload_contract": contract.model_dump(mode="json")} if contract else {}),
             }
         )
     # Paths live only on the authoritative PlanItem.  The thread projection
@@ -4183,6 +4264,11 @@ async def attach_media(
                     "duration_s": source["duration_s"],
                     "has_audio": source["has_audio"],
                     "manifest_identity": source["media_id"],
+                    **(
+                        {"upload_contract": source["upload_contract"]}
+                        if "upload_contract" in source
+                        else {}
+                    ),
                 }
             )
         existing_media.append(

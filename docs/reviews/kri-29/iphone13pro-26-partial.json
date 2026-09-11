@@ -1,0 +1,62 @@
+{
+  "date": "2026-09-11T07:53:09Z",
+  "device": "iPhone",
+  "os": "26.6.1",
+  "results": [
+    {
+      "duration": 6,
+      "effect": "static",
+      "export_seconds": 1.236077070236206,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "fade-in",
+      "export_seconds": 1.1087820529937744,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "scale-up",
+      "export_seconds": 1.1057329177856445,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-up",
+      "export_seconds": 1.1079339981079102,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-down",
+      "export_seconds": 1.0971729755401611,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-in",
+      "export_seconds": 1.0964269638061523,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "pop-in",
+      "export_seconds": 1.1035760641098022,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "bounce",
+      "export_seconds": 1.1174930334091187,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "ink-reveal",
+      "export_seconds": 1.1171119213104248,
+      "status": "exported"
+    }
+  ],
+  "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."
+}

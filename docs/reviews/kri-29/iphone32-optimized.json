@@ -1,0 +1,51 @@
+{
+  "active_case": "",
+  "application_state": 2,
+  "date": "2026-09-11T09:23:56Z",
+  "device": "iPhone",
+  "export_progress": 1,
+  "lifecycle": [
+    {
+      "date": "2026-09-11T09:21:38Z",
+      "event": "did_become_active"
+    },
+    {
+      "date": "2026-09-11T09:22:58Z",
+      "event": "will_resign_active"
+    },
+    {
+      "date": "2026-09-11T09:23:06Z",
+      "event": "did_become_active"
+    },
+    {
+      "date": "2026-09-11T09:23:56Z",
+      "event": "will_resign_active"
+    },
+    {
+      "date": "2026-09-11T09:23:56Z",
+      "event": "did_enter_background"
+    }
+  ],
+  "os": "26.6.1",
+  "phase": "finished",
+  "requested_count": 2,
+  "results": [
+    {
+      "duration": 6,
+      "effect": "giant-title-handwriting",
+      "export_seconds": 106.12832200527191,
+      "preview_frame_requests_seconds": 0.9772030115127563,
+      "preview_prepare_seconds": 0.819504976272583,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "look-golden-hour",
+      "export_seconds": 3.0779569149017334,
+      "preview_frame_requests_seconds": 0.40482497215270996,
+      "preview_prepare_seconds": 0.06563591957092285,
+      "status": "exported"
+    }
+  ],
+  "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."
+}

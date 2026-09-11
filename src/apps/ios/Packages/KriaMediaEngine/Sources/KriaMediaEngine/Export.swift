@@ -31,12 +31,6 @@ public protocol LocalExporting: Sendable {
 }
 
 #if canImport(AVFoundation)
-@MainActor private final class ExportSessionCancellation: @unchecked Sendable {
-    let session: AVAssetExportSession
-    init(_ session: AVAssetExportSession) { self.session = session }
-    func cancel() { session.cancelExport() }
-}
-
 @MainActor public struct AVFoundationLocalExporter: LocalExporting {
     public let stateStore: any ExportStatePersisting
     public let preset: LocalExportPreset
@@ -44,24 +38,39 @@ public protocol LocalExporting: Sendable {
     public init(stateStore: any ExportStatePersisting, preset: LocalExportPreset = .default, instrumentation: (any MediaInstrumentation)? = nil) { self.stateStore = stateStore; self.preset = preset; self.instrumentation = instrumentation }
     public func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String = UUID().uuidString, progress: (@Sendable (Double) -> Void)? = nil) async throws -> ExportCheckpoint {
         try recipe.validate()
+        let resolvedOutput = outputURL.resolvingSymlinksInPath().standardizedFileURL
+        guard outputURL.isFileURL, !assetURLs.values.contains(where: {
+            $0.resolvingSymlinksInPath().standardizedFileURL == resolvedOutput
+        }) else { throw MediaEngineError.unsupportedCapability }
         var checkpoint = ExportCheckpoint(exportID: exportID, status: .exporting); try stateStore.save(checkpoint); progress?(0)
         let startedAt = Date()
         do {
+            traceDeviceExportPhase("prepare")
             let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: assetURLs)
-            guard let session = AVAssetExportSession(asset: preview.playerItem.asset, presetName: AVAssetExportPresetHighestQuality) else { throw MediaEngineError.exportUnavailable }
-            try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true); try? FileManager.default.removeItem(at: outputURL)
-            session.outputURL = outputURL; session.outputFileType = .mp4; session.shouldOptimizeForNetworkUse = true; session.videoComposition = preview.playerItem.videoComposition; session.audioMix = preview.playerItem.audioMix
-            let cancellation = ExportSessionCancellation(session)
-            await withTaskCancellationHandler(operation: { await session.export() }, onCancel: { Task { @MainActor in cancellation.cancel() } })
-            if Task.isCancelled { session.cancelExport(); checkpoint.status = .cancelled; try stateStore.save(checkpoint); throw CancellationError() }
-            guard session.status == .completed else { throw session.error ?? MediaEngineError.exportFailed }
+            traceDeviceExportPhase("prepared")
+            guard preset.videoCodec == "h264", preset.audioCodec == "aac", preset.videoBitrate > 0 else { throw MediaEngineError.unsupportedCapability }
+            try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: outputURL.path) { try FileManager.default.removeItem(at: outputURL) }
+            let writer = try await RecipeWriter(preview: preview, outputURL: outputURL, bitrate: preset.videoBitrate)
+            traceDeviceExportPhase("writer_initialized")
+            let task = Task.detached { try await writer.run(progress: progress) }
+            try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+            try Task.checkCancellation()
+            traceDeviceExportPhase("completed")
             checkpoint.status = .completed; checkpoint.progress = 1; checkpoint.outputURL = outputURL; try stateStore.save(checkpoint); progress?(1)
             instrumentation?.record(MetricEvent(name: .exportDuration, value: Date().timeIntervalSince(startedAt)))
             return checkpoint
-        } catch is CancellationError { checkpoint.status = .cancelled; try? stateStore.save(checkpoint); throw CancellationError() }
-        catch { checkpoint.status = .failed; checkpoint.errorDescription = String(describing: error); try? stateStore.save(checkpoint); throw error }
+        } catch is CancellationError { try? FileManager.default.removeItem(at: outputURL); checkpoint.status = .cancelled; try? stateStore.save(checkpoint); throw CancellationError() }
+        catch { try? FileManager.default.removeItem(at: outputURL); checkpoint.status = .failed; checkpoint.errorDescription = String(describing: error); try? stateStore.save(checkpoint); throw error }
     }
 }
 #else
 public struct AVFoundationLocalExporter: LocalExporting { public let stateStore: any ExportStatePersisting; public let preset: LocalExportPreset; public let instrumentation: (any MediaInstrumentation)?; public init(stateStore: any ExportStatePersisting, preset: LocalExportPreset = .default, instrumentation: (any MediaInstrumentation)? = nil) { self.stateStore = stateStore; self.preset = preset; self.instrumentation = instrumentation }; public func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String = UUID().uuidString, progress: (@Sendable (Double) -> Void)? = nil) async throws -> ExportCheckpoint { throw MediaEngineError.avFoundationUnavailable } }
 #endif
+
+/// Local account-free device tests only; release builds do not emit these stages.
+func traceDeviceExportPhase(_ phase: String) {
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("-device-effects") { print("KRIA_EXPORT_PHASE \(phase)") }
+    #endif
+}

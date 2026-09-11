@@ -2460,7 +2460,8 @@ def test_open_in_editor_creates_unscheduled_item_and_copies_job_metadata() -> No
     db.commit.assert_awaited_once()
 
 
-def test_open_in_editor_is_idempotent_for_existing_link() -> None:
+@pytest.mark.parametrize("phone", [False, True])
+def test_open_in_editor_is_idempotent_for_existing_link(phone: bool) -> None:
     user = _user()
     item = MagicMock()
     item.id = uuid.uuid4()
@@ -2471,6 +2472,10 @@ def test_open_in_editor_is_idempotent_for_existing_link() -> None:
         content_plan_item_id=item.id,
         assembly_plan={"variants": _ready_variants()},
     )
+    thread_id = uuid.uuid4()
+    if phone:
+        for variant in job.assembly_plan["variants"]:
+            variant["render_destination"] = "device"
     plan = _plan(user.id)
     db = _db(
         [
@@ -2481,6 +2486,7 @@ def test_open_in_editor_is_idempotent_for_existing_link() -> None:
             _scalars([item]),
             _scalar(job),
         ]
+        + ([_scalar(thread_id)] if phone else [])
     )
     _override(user, db)
 
@@ -2490,7 +2496,14 @@ def test_open_in_editor_is_idempotent_for_existing_link() -> None:
     assert resp.json() == {
         "plan_item_id": str(item.id),
         "variant_id": "rank-one",
+        **({"creation_thread_id": str(thread_id)} if phone else {}),
     }
+    if phone:
+        query = db.execute.call_args.args[0]
+        assert "creation_threads.creator_id" in str(query)
+        assert "creation_threads.content_plan_id" in str(query)
+        assert "creation_threads.active_plan_item_id" in str(query)
+        assert set(query.compile().params.values()) == {user.id, plan.id, item.id}
     assert item.current_job_id == job.id
     assert job.mode == "content_plan"
     assert job.content_plan_ownership_epoch == plan.ownership_epoch

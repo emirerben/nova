@@ -5,11 +5,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 
 class _RecipeModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, allow_inf_nan=False)
 
 
 class Canvas(_RecipeModel):
@@ -47,7 +54,7 @@ class MediaTransform(_RecipeModel):
 
 
 class Transition(_RecipeModel):
-    kind: Literal["crossfade"] = "crossfade"
+    kind: Literal["crossfade", "fade_black", "fade_white", "wipe_left", "wipe_right"] = "crossfade"
     duration: float = Field(default=0.35, gt=0, le=10)
 
 
@@ -78,7 +85,16 @@ class TimelineClip(_RecipeModel):
     transform: MediaTransform = Field(default_factory=MediaTransform)
     transition: Transition | None = None
     text: TextTreatment | None = None
+    look: Literal["golden_hour"] | None = None
     volume: float = Field(default=1, ge=0, le=2)
+
+    @model_serializer(mode="wrap")
+    def _optional_look(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        result = handler(self)
+        if self.look is None:
+            # Preserve existing persisted recipe digests when adding the field.
+            result.pop("look", None)
+        return result
 
 
 class TimelineTrack(_RecipeModel):
@@ -98,8 +114,11 @@ class AudioMixRecipe(_RecipeModel):
 
 MediaCapability = Literal[
     "basicComposition",
+    "positionedText",
     "animatedText",
     "crossfade",
+    "clipTransitions",
+    "goldenHourLook",
     "audioMix",
     "variableSpeed",
     "alphaOverlay",
@@ -127,6 +146,12 @@ class EditRecipeV1(_RecipeModel):
         if len(ids) != len(self.assets):
             raise ValueError("asset IDs must be unique")
         clips = [clip for track in self.tracks for clip in track.clips]
+        if any(clip.look for clip in clips):
+            self.required_capabilities = self.required_capabilities | {"goldenHourLook"}
+        if any(clip.transition and clip.transition.kind != "crossfade" for clip in clips):
+            # New transition programs must not be offered as legacy crossfade
+            # capability to clients that have not verified this implementation.
+            self.required_capabilities = self.required_capabilities | {"clipTransitions"}
         if any(clip.source_asset_id not in ids for clip in clips):
             raise ValueError("timeline clip references an unknown asset")
         if self.audio.music_asset_id and self.audio.music_asset_id not in ids:

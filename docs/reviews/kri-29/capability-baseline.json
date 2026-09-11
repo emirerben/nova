@@ -1,0 +1,25 @@
+{
+  "implementation_base": "eb6fbcd69def72f012cd135655ebbd9b4658e09e",
+  "observed_at": "2026-09-10",
+  "source": "Read-only settings projection from nova-video api process via Fly SSH",
+  "feature_flags": {
+    "carousel_effects_enabled": true,
+    "custom_effects_enabled": true,
+    "edit_format_day_vlog_enabled": true,
+    "edit_format_single_hero_enabled": true,
+    "edit_format_talking_head_enabled": true,
+    "edit_transitions_enabled": true,
+    "edit_wide_looks_enabled": true,
+    "media_overlays_enabled": true,
+    "motion_scenes_enabled": true,
+    "narrated_archetype_enabled": true,
+    "slide_posts_enabled": true,
+    "sound_effects_enabled": true,
+    "subtitled_archetype_enabled": true,
+    "text_appearance_enabled": true,
+    "text_motion_v2_enabled": true,
+    "visual_blocks_enabled": true
+  },
+  "phone_verified_features": [],
+  "note": "This records enabled groups, not an exhaustive effect/combination parity matrix. Every listed group is in scope."
+}

@@ -32,7 +32,7 @@ def test_orchestrator_enters_job_heartbeat(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(
         gb,
         "_owned_job_task_fence",
-        lambda job_id: contextlib.nullcontext(True),
+        lambda job_id, **_kwargs: contextlib.nullcontext(True),
     )
     monkeypatch.setattr(gb, "_run_generative_job", lambda job_id: None)
 

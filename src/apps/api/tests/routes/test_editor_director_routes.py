@@ -47,6 +47,7 @@ def _owned(user_id: uuid.UUID, *, owner_id: uuid.UUID | None = None):
     job.id = uuid.uuid4()
     job.status = "variants_ready"
     job.all_candidates = {"clip_paths": ["source.mp4"]}
+    job.raw_storage_path = "source.mp4"
     job.assembly_plan = {
         "variants": [
             {

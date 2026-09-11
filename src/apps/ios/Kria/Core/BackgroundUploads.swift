@@ -24,6 +24,7 @@ struct UploadRecoveryRecord: Codable, Identifiable, Sendable, Equatable {
     let filename: String
     let source: UploadSource
     let purpose: UploadPurpose
+    var uploadContract: ProjectMediaUploadContract? = nil
     var reservationID: UUID?
     var clientUploadID: String?
     var mediaID: String?
@@ -91,7 +92,9 @@ struct UploadRecoveryPolicy: Sendable {
         defer { if !accepted, let recoveryCopy { try? FileManager.default.removeItem(at: recoveryCopy) } }
         do {
             try UploadCoordinator().validate(source: source, purpose: purpose, consentGiven: consentGiven)
-            let preparedURL = role == .clip ? try await prepare(fileURL: fileURL, projectID: projectID, purpose: purpose) : fileURL
+            let prepared = role == .clip ? try await prepare(fileURL: fileURL, projectID: projectID, purpose: purpose) : (fileURL, nil, nil)
+            try Self.validateProjectUploadPurpose(purpose, contract: prepared.2)
+            let preparedURL = prepared.0
             let localURL = try Self.copyIntoRecoveryDirectory(preparedURL)
             recoveryCopy = localURL
             let values = try localURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
@@ -106,8 +109,11 @@ struct UploadRecoveryPolicy: Sendable {
             let clientUploadID = "ios-\(recordID.uuidString)"
             let (reservation, visualReservationID) = try await reserve(
                 projectID: projectID, itemID: itemID, role: role, clientUploadID: clientUploadID,
-                filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size)
+                filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), contract: prepared.2
             )
+            if let original = prepared.1 {
+                try SourceAssetStore(project: Self.projectDirectory(projectID)).bind(mediaID: reservation.mediaID, original: original)
+            }
             try startTask(
                 recordID: recordID,
                 localURL: localURL,
@@ -117,7 +123,7 @@ struct UploadRecoveryPolicy: Sendable {
                 purpose: purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: 0, role: role, itemID: itemID, visualReservationID: visualReservationID
+                retryCount: 0, role: role, itemID: itemID, visualReservationID: visualReservationID, uploadContract: prepared.2
             )
             accepted = true
             return true
@@ -219,7 +225,16 @@ struct UploadRecoveryPolicy: Sendable {
         }
     }
 
+    static func validateProjectUploadPurpose(_ purpose: UploadPurpose, contract: ProjectMediaUploadContract? = nil) throws {
+        if purpose == .analysisProxy {
+            guard contract?.purpose == .analysisProxy, contract?.proxy != nil else { throw CreationUploadError.proxyContractUnavailable }
+        } else if contract != nil { throw APIError.invalidResponse }
+    }
+
     private func retry(_ record: UploadRecoveryRecord) async {
+        do { try Self.validateProjectUploadPurpose(record.purpose, contract: record.uploadContract) }
+        catch { lastError = error.localizedDescription; return }
+
         guard records.contains(where: { $0.id == record.id }), !cancellingRecords.contains(record.id), retryingRecords.insert(record.id).inserted else { return }
         defer { retryingRecords.remove(record.id) }
         let active = await backgroundSession.allTasks
@@ -239,7 +254,7 @@ struct UploadRecoveryPolicy: Sendable {
             let clientUploadID = record.clientUploadID ?? "ios-\(record.id.uuidString)"
             let (reservation, visualReservationID) = try await reserve(
                 projectID: record.projectID, itemID: record.itemID, role: record.role,
-                clientUploadID: clientUploadID, filename: record.filename, contentType: contentType, size: Int64(size)
+                clientUploadID: clientUploadID, filename: record.filename, contentType: contentType, size: Int64(size), contract: record.uploadContract
             )
             guard !cancellingRecords.contains(record.id), records.contains(where: { $0.id == record.id }) else { return }
             if let reservationID = record.reservationID {
@@ -256,12 +271,15 @@ struct UploadRecoveryPolicy: Sendable {
                 purpose: record.purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: record.retryCount + 1, role: record.role, itemID: record.itemID, visualReservationID: visualReservationID
+                retryCount: record.retryCount + 1, role: record.role, itemID: record.itemID, visualReservationID: visualReservationID, uploadContract: record.uploadContract
             )
         } catch { lastError = error.localizedDescription }
     }
 
     private func attach(_ record: UploadRecoveryRecord) async {
+        do { try Self.validateProjectUploadPurpose(record.purpose, contract: record.uploadContract) }
+        catch { lastError = error.localizedDescription; return }
+
         let projectID = record.projectID
         let predecessor = attachmentTasks[projectID]?.task
         let token = UUID()
@@ -326,7 +344,7 @@ struct UploadRecoveryPolicy: Sendable {
         lastError = lastAttachmentError?.localizedDescription ?? "The uploaded footage could not be attached to this project."
     }
 
-    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int, role: CreationMediaRole, itemID: String?, visualReservationID: String?) throws {
+    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int, role: CreationMediaRole, itemID: String?, visualReservationID: String?, uploadContract: ProjectMediaUploadContract? = nil) throws {
         var request = URLRequest(url: reservation.uploadURL)
         request.httpMethod = "PUT"
         request.setValue(reservation.contentType, forHTTPHeaderField: "Content-Type")
@@ -339,6 +357,7 @@ struct UploadRecoveryPolicy: Sendable {
             filename: filename,
             source: source,
             purpose: purpose,
+            uploadContract: uploadContract,
             reservationID: nil,
             clientUploadID: clientUploadID,
             mediaID: reservation.mediaID,
@@ -354,7 +373,12 @@ struct UploadRecoveryPolicy: Sendable {
         task.resume()
     }
 
-    private func reserve(projectID: UUID, itemID: String?, role: CreationMediaRole, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> (ProjectUploadReservation, String?) {
+    private func reserve(projectID: UUID, itemID: String?, role: CreationMediaRole, clientUploadID: String, filename: String, contentType: String, size: Int64, contract: ProjectMediaUploadContract? = nil) async throws -> (ProjectUploadReservation, String?) {
+        if let contract {
+            guard role == .clip else { throw APIError.invalidResponse }
+            let target = try await api.reserveProjectProxyUpload(threadID: projectID, clientUploadID: clientUploadID, filename: filename, size: size, contract: contract)
+            return (target, nil)
+        }
         if role == .visual {
             guard let itemID else { throw APIError.invalidResponse }
             let target = try await api.reserveVisualUpload(itemID: itemID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
@@ -363,14 +387,24 @@ struct UploadRecoveryPolicy: Sendable {
         return (try await api.reserveProjectUpload(threadID: projectID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size), nil)
     }
 
-    private func prepare(fileURL: URL, projectID: UUID, purpose: UploadPurpose) async throws -> URL {
+    static func projectDirectory(_ projectID: UUID) -> ProjectDirectory {
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appending(path: "KriaProjects/\(projectID.uuidString)", directoryHint: .isDirectory)
-        let project = ProjectDirectory(root: root)
+        return ProjectDirectory(root: root)
+    }
+
+    private func prepare(fileURL: URL, projectID: UUID, purpose: UploadPurpose) async throws -> (URL, MediaAsset?, ProjectMediaUploadContract?) {
+        let project = Self.projectDirectory(projectID)
         let asset = try await AssetImportCoordinator(project: project).importAsset(from: fileURL)
-        let original = root.appending(path: asset.relativePath)
-        _ = purpose
-        return original
+        let original = project.root.appending(path: asset.relativePath)
+        if purpose == .analysisProxy {
+            let proxy = project.proxies.appendingPathComponent("\(asset.id).mp4")
+            let result = try await AVFoundationProxyGenerator(preset: ProxyPreset(width: 640, height: 360)).makeProxy(for: original, destination: proxy)
+            guard let fingerprint = asset.fingerprint else { throw APIError.invalidResponse }
+            let contract = try await ProjectMediaUploadContract.analysisProxy(original: original, proxy: result, fingerprint: fingerprint)
+            return (result, asset, contract)
+        }
+        return (original, asset, nil)
     }
 
     private func remove(_ id: UUID, deleteLocalFile: Bool) {
@@ -403,10 +437,11 @@ struct UploadRecoveryPolicy: Sendable {
 }
 
 enum CreationUploadError: LocalizedError {
-    case unsupportedType, tooLarge
+    case unsupportedType, tooLarge, proxyContractUnavailable
     var errorDescription: String? {
         switch self {
         case .unsupportedType: "This file type is not supported here. Choose a different file."
+        case .proxyContractUnavailable: "On-device creation is not available yet. Your original stays on this device."
         case .tooLarge: "This file exceeds the upload limit. Choose a smaller file."
         }
     }

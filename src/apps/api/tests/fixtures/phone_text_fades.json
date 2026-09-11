@@ -1,0 +1,4070 @@
+[
+  {
+    "effect": "lyric-line",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 250,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.2581988897471611
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.31622776601683794
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.7071067811865476
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.8944271909999159
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.99498743710662
+      },
+      {
+        "time": 0.15,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 1.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.4310686379569115
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.4593074936568383
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.3301735274672725
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.024185823254105357
+      },
+      {
+        "time": 0.1485,
+        "alpha": 3.2282130065683674e-06
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 250,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.2581988897471611
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.31622776601683794
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.7071067811865476
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.8944271909999159
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.99498743710662
+      },
+      {
+        "time": 0.15,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 1.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.4310686379569115
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.4593074936568383
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.3301735274672725
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.024185823254105357
+      },
+      {
+        "time": 0.1485,
+        "alpha": 3.2282130065683674e-06
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 250,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.2581988897471611
+      },
+      {
+        "time": 0.06,
+        "alpha": 0.6324555320336759
+      },
+      {
+        "time": 0.3,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.7296
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.04742400000000002
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.4315801403454691
+      },
+      {
+        "time": 0.06,
+        "alpha": 0.6223042041301975
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.99972
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.7159684607999998
+      },
+      {
+        "time": 0.594,
+        "alpha": 9.785816390399728e-05
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 250,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.2581988897471611
+      },
+      {
+        "time": 0.06,
+        "alpha": 0.6324555320336759
+      },
+      {
+        "time": 0.3,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.2788897449072021
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.012072877181722452
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.4315801403454691
+      },
+      {
+        "time": 0.06,
+        "alpha": 0.6223042041301975
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.9010050506338834
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.4931495017345987
+      },
+      {
+        "time": 0.594,
+        "alpha": 6.224690331791565e-05
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 250,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.2581988897471611
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.2944000000000001
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.4315801403454691
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.031999999999999695
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 250,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.2581988897471611
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.08348486100883201
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "lyric",
+      "in_ms": 150,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.4315801403454691
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.031999999999999695
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.9955555555555555
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.99
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.75
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.3599999999999999
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.01990000000000003
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.9943756378600823
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.98604
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.375
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.011520000000000006
+      },
+      {
+        "time": 0.1485,
+        "alpha": 7.960000000007973e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.7418011102528389
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.683772233983162
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.2928932188134524
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.10557280900008414
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.005012562893380035
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.7409219385666134
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.6810371450472293
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.1464466094067262
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.0033783298880026955
+      },
+      {
+        "time": 0.1485,
+        "alpha": 2.005025157354019e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.84
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.4224
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.02385599999999999
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.84
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.3142655999999999
+      },
+      {
+        "time": 0.594,
+        "alpha": 2.576447999999927e-06
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3675444679663241
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.12822021129186534
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.006018108816865819
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3675444679663241
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.09539583720114778
+      },
+      {
+        "time": 0.594,
+        "alpha": 6.499557522214904e-07
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.15359999999999996
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.004915199999999952
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.040833695337456066
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.0013066782507985817
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.9955555555555555
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.99
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.75
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.3599999999999999
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.01990000000000003
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.9943756378600823
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.98604
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.375
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.011520000000000006
+      },
+      {
+        "time": 0.1485,
+        "alpha": 7.960000000007973e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.7418011102528389
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.683772233983162
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.2928932188134524
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.10557280900008414
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.005012562893380035
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.7409219385666134
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.6810371450472293
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.1464466094067262
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.0033783298880026955
+      },
+      {
+        "time": 0.1485,
+        "alpha": 2.005025157354019e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.84
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.4224
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.02385599999999999
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.84
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.3142655999999999
+      },
+      {
+        "time": 0.594,
+        "alpha": 2.576447999999927e-06
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3675444679663241
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.12822021129186534
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.006018108816865819
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3675444679663241
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.09539583720114778
+      },
+      {
+        "time": 0.594,
+        "alpha": 6.499557522214904e-07
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.15359999999999996
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.004915199999999952
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.040833695337456066
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.0013066782507985817
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.18613201646090527
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.2682899999999999
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.65625
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.3571199999999999
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.019899980100000027
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.32519621331342935
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.3355378989476863
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.18224746304039613
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.006680815272787051
+      },
+      {
+        "time": 0.1485,
+        "alpha": 5.039157678487952e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.13868933350208626
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.18530227540943683
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.25628156646177086
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.10472822652808347
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.005012557880817141
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.24230783580059023
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.2317489886358343
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.07117206142731644
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.001959201207663313
+      },
+      {
+        "time": 0.1485,
+        "alpha": 1.2693012458834045e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.07314062500000007
+      },
+      {
+        "time": 0.06,
+        "alpha": 0.3858750000000001
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.8268749999999999
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.4224
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.02385599999999999
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.3270355798471276
+      },
+      {
+        "time": 0.06,
+        "alpha": 0.4518213528396482
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.7073894961781869
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.3027653645819412
+      },
+      {
+        "time": 0.594,
+        "alpha": 2.5558452499957426e-06
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.07314062500000007
+      },
+      {
+        "time": 0.06,
+        "alpha": 0.3858750000000001
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3618015856543503
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.12822021129186534
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.006018108816865819
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.3270355798471276
+      },
+      {
+        "time": 0.06,
+        "alpha": 0.4518213528396482
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3095203524021164
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.09190492191892789
+      },
+      {
+        "time": 0.594,
+        "alpha": 6.44758334739437e-07
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.07314062500000007
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.15359999999999996
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.3270355798471276
+      },
+      {
+        "time": 0.4,
+        "alpha": 0.9234240157803896
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.004915199999999952
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.0
+      },
+      {
+        "time": 0,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.07314062500000007
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.040833695337456066
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0,
+        "alpha": 0.30000000000000004
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.3270355798471276
+      },
+      {
+        "time": 0.4,
+        "alpha": 0.9234240157803896
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.0013066782507985817
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.9955555555555555
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.99
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.75
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.3599999999999999
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.01990000000000003
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.9943756378600823
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.98604
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.375
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.011520000000000006
+      },
+      {
+        "time": 0.1485,
+        "alpha": 7.960000000007973e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.7418011102528389
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.683772233983162
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.2928932188134524
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.10557280900008414
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.005012562893380035
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.7409219385666134
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.6810371450472293
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.1464466094067262
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.0033783298880026955
+      },
+      {
+        "time": 0.1485,
+        "alpha": 2.005025157354019e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.84
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.4224
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.02385599999999999
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.84
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.3142655999999999
+      },
+      {
+        "time": 0.594,
+        "alpha": 2.576447999999927e-06
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3675444679663241
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.12822021129186534
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.006018108816865819
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3675444679663241
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.09539583720114778
+      },
+      {
+        "time": 0.594,
+        "alpha": 6.499557522214904e-07
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.15359999999999996
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.004915199999999952
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.040833695337456066
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.0013066782507985817
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.9955555555555555
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.99
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.75
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.3599999999999999
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.01990000000000003
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.9943756378600823
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.98604
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.375
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.011520000000000006
+      },
+      {
+        "time": 0.1485,
+        "alpha": 7.960000000007973e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 0.15,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.7418011102528389
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.683772233983162
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.2928932188134524
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.10557280900008414
+      },
+      {
+        "time": 0.1485,
+        "alpha": 0.005012562893380035
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 0.15,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 0.7409219385666134
+      },
+      {
+        "time": 0.015,
+        "alpha": 0.6810371450472293
+      },
+      {
+        "time": 0.075,
+        "alpha": 0.1464466094067262
+      },
+      {
+        "time": 0.12,
+        "alpha": 0.0033783298880026955
+      },
+      {
+        "time": 0.1485,
+        "alpha": 2.005025157354019e-08
+      },
+      {
+        "time": 0.15,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.25,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.84
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.4224
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.02385599999999999
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.84
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.3142655999999999
+      },
+      {
+        "time": 0.594,
+        "alpha": 2.576447999999927e-06
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 0.6,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3675444679663241
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.12822021129186534
+      },
+      {
+        "time": 0.594,
+        "alpha": 0.006018108816865819
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 0.6,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.06,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.3,
+        "alpha": 0.3675444679663241
+      },
+      {
+        "time": 0.48,
+        "alpha": 0.09539583720114778
+      },
+      {
+        "time": 0.594,
+        "alpha": 6.499557522214904e-07
+      },
+      {
+        "time": 0.6,
+        "alpha": 0.0
+      },
+      {
+        "time": 0.7,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.15359999999999996
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "square"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.004915199999999952
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 4.0,
+    "motion": null,
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.040833695337456066
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "duration": 4.0,
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.2,
+      "reveal_ramp_ms": 120.0
+    },
+    "fade": {
+      "kind": "sequence",
+      "in_ms": 0,
+      "out_ms": 500,
+      "curve": "sqrt"
+    },
+    "samples": [
+      {
+        "time": -0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.01,
+        "alpha": 1.0
+      },
+      {
+        "time": 0.4,
+        "alpha": 1.0
+      },
+      {
+        "time": 2.0,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.2,
+        "alpha": 1.0
+      },
+      {
+        "time": 3.96,
+        "alpha": 0.0013066782507985817
+      },
+      {
+        "time": 4.0,
+        "alpha": 0.0
+      },
+      {
+        "time": 4.1,
+        "alpha": 0.0
+      }
+    ]
+  }
+]

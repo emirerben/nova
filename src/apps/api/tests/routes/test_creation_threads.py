@@ -1847,8 +1847,10 @@ async def test_attach_rejects_tampered_reserved_path(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("use_proxy", [False, True])
 async def test_attach_persists_stable_mixed_media_manifest(
     monkeypatch: pytest.MonkeyPatch,
+    use_proxy: bool,
 ) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     thread = SimpleNamespace(
@@ -1890,7 +1892,34 @@ async def test_attach_persists_stable_mixed_media_manifest(
     db.execute = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
-    media = [MediaInput(media_id="clip-1.mp4", kind="video", filename="clip.mp4")]
+    media_id = "analysis-proxy-clip-1.mp4" if use_proxy else "clip-1.mp4"
+    contract = {
+        "purpose": "analysis_proxy",
+        "proxy": {
+            "original": {
+                "sha256": "a" * 64,
+                "byte_count": 4000,
+                "duration_s": 10,
+                "width": 1080,
+                "height": 1920,
+                "has_audio": True,
+            },
+            "duration_s": 10,
+            "width": 360,
+            "height": 640,
+            "frame_rate": 30,
+        },
+    }
+    if use_proxy:
+        reservation = SimpleNamespace(
+            media_id=media_id,
+            upload_contract=contract,
+            object_path=_media_path(user.id, thread.id, media_id),
+        )
+        result = Mock()
+        result.scalars.return_value.all.return_value = [reservation]
+        db.execute.return_value = result
+    media = [MediaInput(media_id=f" {media_id} ", kind="video", filename="clip.mp4")]
     await attach_media(
         _request(),
         str(thread.id),
@@ -1899,9 +1928,14 @@ async def test_attach_persists_stable_mixed_media_manifest(
         db,
     )
     assert [(entry["media_id"], entry["kind"]) for entry in item.clip_assignments] == [
-        ("clip-1.mp4", "video"),
+        (media_id, "video"),
     ]
-    assert item.clip_gcs_paths == [_media_path(user.id, thread.id, "clip-1.mp4")]
+    assert item.clip_gcs_paths == [_media_path(user.id, thread.id, media_id)]
+    if use_proxy:
+        binding = item.clip_assignments[0]["upload_contract"]
+        assert binding["purpose"] == "analysis_proxy"
+        assert binding["proxy"]["original"]["sha256"] == "a" * 64
+        assert routes._probe_registered_media.await_args.kwargs["proxy"].width == 360
 
 
 @pytest.mark.asyncio
@@ -3994,3 +4028,91 @@ async def test_native_capabilities_reflect_runtime_and_visual_feature_gates(
     assert manifest["media"]["voiceover"]["max"] == 1
     assert "audio/mp4" in manifest["media"]["voiceover"]["content_types"]
     assert "image/jpeg" in manifest["media"]["visuals"]["content_types"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_phone_capabilities_are_explicit_and_rollback_removes_advertising(
+    monkeypatch, enabled
+):
+    monkeypatch.setattr(settings, "phone_rendering_enabled", enabled)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["basicComposition"])
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4()))
+    assert manifest["phone_rendering"] == {
+        "enabled": enabled,
+        "recipe_versions": [2] if enabled else [],
+        "verified_features": ["basicComposition"] if enabled else [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_phone_pilot_is_advertised_only_to_enrolled_account(monkeypatch):
+    enrolled = uuid.uuid4()
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [enrolled])
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["basicComposition"])
+    assert (await capabilities(SimpleNamespace(id=enrolled)))["phone_rendering"]["enabled"]
+    other = (await capabilities(SimpleNamespace(id=uuid.uuid4())))["phone_rendering"]
+    assert other == {"enabled": False, "recipe_versions": [], "verified_features": []}
+
+
+@pytest.mark.asyncio
+async def test_proxy_reservation_pins_original_and_rejects_changed_binding(monkeypatch):
+    import app.routes.creation_threads as routes
+    from app.config import settings
+    from app.kria.media_sources import MediaUploadContract
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(id=uuid.uuid4(), creator_id=user.id, status="active")
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    reservations = Mock()
+    reservations.scalars.return_value.all.return_value = []
+    db = Mock()
+    db.execute = AsyncMock(return_value=reservations)
+    db.commit = AsyncMock()
+    document = {
+        "purpose": "analysis_proxy",
+        "proxy": {
+            "original": {
+                "sha256": "a" * 64,
+                "byte_count": 4000,
+                "duration_s": 2,
+                "width": 1080,
+                "height": 1920,
+                "has_audio": True,
+            },
+            "duration_s": 2,
+            "width": 360,
+            "height": 640,
+            "frame_rate": 30,
+        },
+    }
+    payload = UploadBody(
+        files=[
+            UploadFile(
+                filename="proxy.mp4",
+                content_type="video/mp4",
+                file_size_bytes=100,
+                client_upload_id="clip-1",
+                upload_contract=MediaUploadContract.model_validate(document),
+            )
+        ]
+    )
+
+    def sign(path, *args):
+        db.commit.assert_awaited_once()
+        assert db.add.call_args.args[0].upload_contract["proxy"]["original"]["sha256"] == "a" * 64
+        return "signed:" + path
+
+    monkeypatch.setattr(routes.storage, "signed_put_url", sign)
+    targets = await upload_urls(_request(), str(thread.id), payload, user, db)
+    assert targets[0].media_id == "analysis-proxy-clip-1.mp4"
+    reservation = db.add.call_args.args[0]
+    reservations.scalars.return_value.all.return_value = [reservation]
+    document["proxy"]["original"]["sha256"] = "b" * 64
+    payload.files[0].upload_contract = MediaUploadContract.model_validate(document)
+    with pytest.raises(HTTPException) as failure:
+        await upload_urls(_request(), str(thread.id), payload, user, db)
+    assert failure.value.status_code == 409
+    db.commit.assert_awaited_once()

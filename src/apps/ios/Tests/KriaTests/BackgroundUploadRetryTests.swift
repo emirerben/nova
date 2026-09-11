@@ -4,6 +4,11 @@ import XCTest
 @MainActor final class BackgroundUploadRetryTests: XCTestCase {
     override func tearDown() { UploadRetryProtocol.handler = nil; super.tearDown() }
 
+    func testProxyCannotEnterCloudSourceReservationContract() throws {
+        XCTAssertThrowsError(try BackgroundUploadCoordinator.validateProjectUploadPurpose(.analysisProxy))
+        XCTAssertNoThrow(try BackgroundUploadCoordinator.validateProjectUploadPurpose(.cloudRenderSource))
+    }
+
     func testConcurrentRetryReservesOnlyOneReplacement() async throws {
         let fixture = try makeCoordinator()
         defer { fixture.cleanup() }

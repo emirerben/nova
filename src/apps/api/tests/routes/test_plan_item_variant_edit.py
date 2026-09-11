@@ -46,6 +46,8 @@ def _job(variants: list[dict]) -> MagicMock:
     job = MagicMock()
     job.id = uuid.uuid4()
     job.status = "variants_ready"
+    job.all_candidates = {}
+    job.raw_storage_path = "source.mp4"
     job.assembly_plan = {"variants": variants}
     return job
 
@@ -2659,6 +2661,8 @@ async def test_dispatch_set_narrated_bed_level_takes_a_row_lock() -> None:
 
     job = MagicMock()
     job.id = uuid.uuid4()
+    job.all_candidates = {}
+    job.raw_storage_path = "source.mp4"
     job.assembly_plan = {"variants": [dict(NARRATED_VARIANT)]}
     db = AsyncMock()
     result = MagicMock()

@@ -46,6 +46,66 @@
         "title": "ActionBody",
         "type": "object"
       },
+      "AnalysisProxyDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "duration_s": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "frame_rate": {
+            "maximum": 30,
+            "minimum": 1,
+            "title": "Frame Rate",
+            "type": "number"
+          },
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 640,
+            "minimum": 0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "orientation_degrees": {
+            "default": 0,
+            "enum": [
+              0
+            ],
+            "title": "Orientation Degrees",
+            "type": "integer"
+          },
+          "original": {
+            "$ref": "#/components/schemas/OriginalMediaDescriptor"
+          },
+          "timing_version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Timing Version",
+            "type": "integer"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "maximum": 640,
+            "minimum": 0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "original",
+          "duration_s",
+          "width",
+          "height",
+          "frame_rate"
+        ],
+        "title": "AnalysisProxyDescriptor",
+        "type": "object"
+      },
       "ApprovalDecisionBody": {
         "additionalProperties": false,
         "properties": {
@@ -536,6 +596,9 @@
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
           },
+          "phone_rendering": {
+            "$ref": "#/components/schemas/DeviceRenderCapabilities"
+          },
           "runtime_versions": {
             "items": {
               "enum": [
@@ -918,6 +981,353 @@
         "title": "DeltaEvent",
         "type": "object"
       },
+      "DeviceAssetDownloadBody": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "asset_id"
+        ],
+        "title": "DeviceAssetDownloadBody",
+        "type": "object"
+      },
+      "DeviceAssetDownloadOut": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "download_url": {
+            "title": "Download Url",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "download_url",
+          "expires_at"
+        ],
+        "title": "DeviceAssetDownloadOut",
+        "type": "object"
+      },
+      "DeviceExportCompleteBody": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "attempt_id"
+        ],
+        "title": "DeviceExportCompleteBody",
+        "type": "object"
+      },
+      "DeviceExportCompleteOut": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "status": {
+            "default": "published",
+            "enum": [
+              "published"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity"
+        ],
+        "title": "DeviceExportCompleteOut",
+        "type": "object"
+      },
+      "DeviceExportReservationBody": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "file_size_bytes": {
+            "exclusiveMinimum": true,
+            "maximum": 1073741824,
+            "minimum": 0,
+            "title": "File Size Bytes",
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "attempt_id",
+          "file_size_bytes",
+          "sha256"
+        ],
+        "title": "DeviceExportReservationBody",
+        "type": "object"
+      },
+      "DeviceExportReservationOut": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "upload_headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Upload Headers",
+            "type": "object"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "upload_url",
+          "upload_headers",
+          "expires_at"
+        ],
+        "title": "DeviceExportReservationOut",
+        "type": "object"
+      },
+      "DeviceRenderCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "recipe_versions": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Recipe Versions",
+            "type": "array"
+          },
+          "verified_features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Verified Features",
+            "type": "array"
+          }
+        },
+        "title": "DeviceRenderCapabilities",
+        "type": "object"
+      },
+      "DeviceRenderIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "recipe_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Recipe Digest",
+            "type": "string"
+          },
+          "recipe_revision": {
+            "minimum": 1,
+            "title": "Recipe Revision",
+            "type": "integer"
+          },
+          "variant_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Variant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "variant_id",
+          "recipe_revision",
+          "recipe_digest"
+        ],
+        "title": "DeviceRenderIdentity",
+        "type": "object"
+      },
+      "DeviceRenderRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "recipe": {
+            "discriminator": {
+              "mapping": {
+                "1": "#/components/schemas/EditRecipeV1",
+                "2": "#/components/schemas/EditRecipeV2"
+              },
+              "propertyName": "schema_version"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EditRecipeV1"
+              },
+              {
+                "$ref": "#/components/schemas/EditRecipeV2"
+              }
+            ],
+            "title": "Recipe"
+          }
+        },
+        "required": [
+          "identity",
+          "recipe"
+        ],
+        "title": "DeviceRenderRequest",
+        "type": "object"
+      },
+      "DeviceRenderStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "phase": {
+            "enum": [
+              "awaiting_device",
+              "syncing",
+              "published",
+              "needs_attention"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "reason": {
+            "default": null,
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/DeviceRenderRequest"
+          }
+        },
+        "required": [
+          "phase",
+          "request"
+        ],
+        "title": "DeviceRenderStatus",
+        "type": "object"
+      },
+      "DiscreteRevealContent": {
+        "additionalProperties": false,
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/DiscreteRevealLine"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Lines",
+            "type": "array"
+          },
+          "schedule": {
+            "default": null,
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 5000,
+            "nullable": true,
+            "title": "Schedule",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "lines"
+        ],
+        "title": "DiscreteRevealContent",
+        "type": "object"
+      },
+      "DiscreteRevealLine": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor_offsets": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 2001,
+            "minItems": 1,
+            "title": "Cursor Offsets",
+            "type": "array"
+          },
+          "cursor_run": {
+            "$ref": "#/components/schemas/PositionedTextRun"
+          },
+          "run_index": {
+            "default": null,
+            "maximum": 99,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Run Index",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "cursor_offsets",
+          "cursor_run"
+        ],
+        "title": "DiscreteRevealLine",
+        "type": "object"
+      },
       "DraftSnapshotOut": {
         "properties": {
           "base_generation_id": {
@@ -1061,8 +1471,11 @@
             "items": {
               "enum": [
                 "basicComposition",
+                "positionedText",
                 "animatedText",
                 "crossfade",
+                "clipTransitions",
+                "goldenHourLook",
                 "audioMix",
                 "variableSpeed",
                 "alphaOverlay",
@@ -1094,6 +1507,96 @@
           }
         },
         "title": "EditRecipeV1",
+        "type": "object"
+      },
+      "EditRecipeV2": {
+        "additionalProperties": false,
+        "description": "V2 assets are opaque aliases backed by an immutable source manifest.\n\nRetain the timeline metadata shape for the shared composition engine, but\nprohibit storage paths and require the fingerprint in both projections to\nagree. V1 remains decodable for saved projects; it cannot carry this field.",
+        "properties": {
+          "asset_manifest": {
+            "$ref": "#/components/schemas/RenderAssetManifest"
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/MediaAsset"
+            },
+            "maxItems": 100,
+            "title": "Assets",
+            "type": "array"
+          },
+          "audio": {
+            "$ref": "#/components/schemas/AudioMixRecipe"
+          },
+          "canvas": {
+            "$ref": "#/components/schemas/Canvas"
+          },
+          "frame_rate": {
+            "default": 30,
+            "exclusiveMinimum": true,
+            "maximum": 240,
+            "minimum": 0,
+            "title": "Frame Rate",
+            "type": "number"
+          },
+          "renderer_version": {
+            "default": "kria-ios-2",
+            "enum": [
+              "kria-ios-2"
+            ],
+            "title": "Renderer Version",
+            "type": "string"
+          },
+          "required_capabilities": {
+            "items": {
+              "enum": [
+                "basicComposition",
+                "positionedText",
+                "animatedText",
+                "crossfade",
+                "clipTransitions",
+                "goldenHourLook",
+                "audioMix",
+                "variableSpeed",
+                "alphaOverlay",
+                "hevcDecode",
+                "hdr",
+                "local1080Export"
+              ],
+              "type": "string"
+            },
+            "title": "Required Capabilities",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "schema_version": {
+            "default": 2,
+            "enum": [
+              2
+            ],
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "text_layers": {
+            "items": {
+              "$ref": "#/components/schemas/PortableTextLayer"
+            },
+            "maxItems": 500,
+            "title": "Text Layers",
+            "type": "array"
+          },
+          "tracks": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineTrack"
+            },
+            "maxItems": 20,
+            "title": "Tracks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "asset_manifest"
+        ],
+        "title": "EditRecipeV2",
         "type": "object"
       },
       "EditorCommitBackgroundMusic": {
@@ -1870,6 +2373,29 @@
         "title": "GenerativeUploadUrlResponse",
         "type": "object"
       },
+      "GiantTitleTransition": {
+        "additionalProperties": false,
+        "properties": {
+          "origin_x": {
+            "maximum": 30000,
+            "minimum": -30000,
+            "title": "Origin X",
+            "type": "number"
+          },
+          "origin_y": {
+            "maximum": 30000,
+            "minimum": -30000,
+            "title": "Origin Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "origin_x",
+          "origin_y"
+        ],
+        "title": "GiantTitleTransition",
+        "type": "object"
+      },
       "GradientBackground": {
         "properties": {
           "angle_deg": {
@@ -1901,6 +2427,91 @@
           "to"
         ],
         "title": "GradientBackground",
+        "type": "object"
+      },
+      "HandwritingContent": {
+        "additionalProperties": false,
+        "properties": {
+          "blur_layers": {
+            "items": {
+              "$ref": "#/components/schemas/TextBlurLayer"
+            },
+            "maxItems": 8,
+            "title": "Blur Layers",
+            "type": "array"
+          },
+          "fill": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "gradient": {
+            "$ref": "#/components/schemas/TextGradient",
+            "default": null,
+            "nullable": true
+          },
+          "ink_width": {
+            "exclusiveMinimum": true,
+            "maximum": 1000,
+            "minimum": 0,
+            "title": "Ink Width",
+            "type": "number"
+          },
+          "outline": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "outline_width": {
+            "maximum": 200,
+            "minimum": 0,
+            "title": "Outline Width",
+            "type": "number"
+          },
+          "strokes": {
+            "items": {
+              "$ref": "#/components/schemas/TextPenStroke"
+            },
+            "maxItems": 4000,
+            "minItems": 1,
+            "title": "Strokes",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "strokes",
+          "ink_width",
+          "fill",
+          "outline",
+          "outline_width"
+        ],
+        "title": "HandwritingContent",
+        "type": "object"
+      },
+      "KaraokeContent": {
+        "additionalProperties": false,
+        "properties": {
+          "highlight": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "starts": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Starts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "starts",
+          "highlight"
+        ],
+        "title": "KaraokeContent",
         "type": "object"
       },
       "KriaProblem": {
@@ -2104,6 +2715,62 @@
           "video_url"
         ],
         "title": "LibraryPlaybackResponse",
+        "type": "object"
+      },
+      "LibraryRenderAsset": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog": {
+            "enum": [
+              "music",
+              "sound_effect",
+              "font",
+              "overlay"
+            ],
+            "title": "Catalog",
+            "type": "string"
+          },
+          "catalog_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Catalog Id",
+            "type": "string"
+          },
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "library",
+            "enum": [
+              "library"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "catalog",
+          "catalog_id",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "LibraryRenderAsset",
         "type": "object"
       },
       "LibraryResponse": {
@@ -2713,6 +3380,27 @@
         "title": "MediaTransform",
         "type": "object"
       },
+      "MediaUploadContract": {
+        "additionalProperties": false,
+        "properties": {
+          "proxy": {
+            "$ref": "#/components/schemas/AnalysisProxyDescriptor",
+            "default": null,
+            "nullable": true
+          },
+          "purpose": {
+            "default": "cloud_render_source",
+            "enum": [
+              "cloud_render_source",
+              "analysis_proxy"
+            ],
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "title": "MediaUploadContract",
+        "type": "object"
+      },
       "MessageBody": {
         "additionalProperties": false,
         "properties": {
@@ -3060,6 +3748,13 @@
       },
       "OpenInEditorResponse": {
         "properties": {
+          "creation_thread_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Creation Thread Id",
+            "type": "string"
+          },
           "plan_item_id": {
             "title": "Plan Item Id",
             "type": "string"
@@ -3074,6 +3769,106 @@
           "variant_id"
         ],
         "title": "OpenInEditorResponse",
+        "type": "object"
+      },
+      "OriginalMediaDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_count": {
+            "exclusiveMinimum": true,
+            "maximum": 17179869184,
+            "minimum": 0,
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "duration_s": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "has_audio": {
+            "title": "Has Audio",
+            "type": "boolean"
+          },
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 32768,
+            "minimum": 0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "orientation_degrees": {
+            "default": 0,
+            "enum": [
+              0,
+              90,
+              180,
+              270
+            ],
+            "title": "Orientation Degrees",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "maximum": 32768,
+            "minimum": 0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sha256",
+          "byte_count",
+          "duration_s",
+          "width",
+          "height",
+          "has_audio"
+        ],
+        "title": "OriginalMediaDescriptor",
+        "type": "object"
+      },
+      "OriginalRenderAsset": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "original",
+            "enum": [
+              "original"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "media_id",
+          "fingerprint"
+        ],
+        "title": "OriginalRenderAsset",
         "type": "object"
       },
       "PersonaResponse": {
@@ -3487,6 +4282,270 @@
         "title": "PoolUploadUrlsResponse",
         "type": "object"
       },
+      "PortableTextLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor_x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Anchor X",
+            "type": "number"
+          },
+          "anchor_y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Anchor Y",
+            "type": "number"
+          },
+          "discrete_reveal": {
+            "$ref": "#/components/schemas/DiscreteRevealContent",
+            "default": null,
+            "nullable": true
+          },
+          "dissolve_seed": {
+            "default": null,
+            "maximum": 4294967295,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Dissolve Seed",
+            "type": "integer"
+          },
+          "effect": {
+            "default": "static",
+            "enum": [
+              "static",
+              "none",
+              "fade-in",
+              "scale-up",
+              "slide-up",
+              "slide-down",
+              "slide-in",
+              "pop-in",
+              "bounce",
+              "ink-reveal",
+              "handwriting",
+              "typewriter",
+              "stream-in",
+              "smooth-type",
+              "staggered-slice",
+              "dissolve-out",
+              "karaoke-line",
+              "lyric-line"
+            ],
+            "title": "Effect",
+            "type": "string"
+          },
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "fade": {
+            "$ref": "#/components/schemas/TextFadeEnvelope",
+            "default": null,
+            "nullable": true
+          },
+          "giant_title": {
+            "$ref": "#/components/schemas/GiantTitleTransition",
+            "default": null,
+            "nullable": true
+          },
+          "handwriting": {
+            "$ref": "#/components/schemas/HandwritingContent",
+            "default": null,
+            "nullable": true
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "karaoke": {
+            "$ref": "#/components/schemas/KaraokeContent",
+            "default": null,
+            "nullable": true
+          },
+          "motion": {
+            "$ref": "#/components/schemas/ResolvedTextMotion",
+            "default": null,
+            "nullable": true
+          },
+          "reveal_bounds": {
+            "$ref": "#/components/schemas/TextRevealBounds",
+            "default": null,
+            "nullable": true
+          },
+          "rotation_degrees": {
+            "maximum": 3600,
+            "minimum": -3600,
+            "title": "Rotation Degrees",
+            "type": "number"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/PositionedTextRun"
+            },
+            "maxItems": 100,
+            "title": "Runs",
+            "type": "array"
+          },
+          "smooth_reveal": {
+            "$ref": "#/components/schemas/SmoothRevealContent",
+            "default": null,
+            "nullable": true
+          },
+          "staggered": {
+            "$ref": "#/components/schemas/StaggeredContent",
+            "default": null,
+            "nullable": true
+          },
+          "start": {
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "end",
+          "anchor_x",
+          "anchor_y",
+          "rotation_degrees"
+        ],
+        "title": "PortableTextLayer",
+        "type": "object"
+      },
+      "PositionedGlyph": {
+        "additionalProperties": false,
+        "properties": {
+          "glyph_id": {
+            "maximum": 65535,
+            "minimum": 1,
+            "title": "Glyph Id",
+            "type": "integer"
+          },
+          "x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "glyph_id",
+          "x",
+          "y"
+        ],
+        "title": "PositionedGlyph",
+        "type": "object"
+      },
+      "PositionedTextRun": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Baseline Y",
+            "type": "number"
+          },
+          "blur_layers": {
+            "items": {
+              "$ref": "#/components/schemas/TextBlurLayer"
+            },
+            "maxItems": 8,
+            "title": "Blur Layers",
+            "type": "array"
+          },
+          "fill": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "font_asset_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Font Asset Id",
+            "type": "string"
+          },
+          "font_size": {
+            "exclusiveMinimum": true,
+            "maximum": 1000,
+            "minimum": 0,
+            "title": "Font Size",
+            "type": "number"
+          },
+          "glyphs": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/PositionedGlyph"
+            },
+            "maxItems": 4000,
+            "minItems": 1,
+            "nullable": true,
+            "title": "Glyphs",
+            "type": "array"
+          },
+          "gradient": {
+            "$ref": "#/components/schemas/TextGradient",
+            "default": null,
+            "nullable": true
+          },
+          "letter_spacing": {
+            "maximum": 1000,
+            "minimum": -100,
+            "title": "Letter Spacing",
+            "type": "number"
+          },
+          "shaped": {
+            "title": "Shaped",
+            "type": "boolean"
+          },
+          "stroke": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "stroke_width": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Stroke Width",
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "X",
+            "type": "number"
+          }
+        },
+        "required": [
+          "text",
+          "font_asset_id",
+          "font_size",
+          "x",
+          "baseline_y",
+          "letter_spacing",
+          "shaped",
+          "fill",
+          "stroke",
+          "stroke_width"
+        ],
+        "title": "PositionedTextRun",
+        "type": "object"
+      },
       "QuestionnaireBody": {
         "properties": {
           "hobbies": {
@@ -3576,6 +4635,250 @@
         "title": "RegisterAssetBody",
         "type": "object"
       },
+      "RenderAssetManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "assets": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "library": "#/components/schemas/LibraryRenderAsset",
+                  "original": "#/components/schemas/OriginalRenderAsset"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/OriginalRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/LibraryRenderAsset"
+                }
+              ]
+            },
+            "maxItems": 500,
+            "title": "Assets",
+            "type": "array"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assets"
+        ],
+        "title": "RenderAssetManifest",
+        "type": "object"
+      },
+      "RenderFingerprint": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_count": {
+            "exclusiveMinimum": true,
+            "maximum": 17179869184,
+            "minimum": 0,
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha256",
+          "byte_count"
+        ],
+        "title": "RenderFingerprint",
+        "type": "object"
+      },
+      "ResolvedTextMotion": {
+        "additionalProperties": false,
+        "properties": {
+          "blur_px": {
+            "maximum": 12,
+            "minimum": 0,
+            "title": "Blur Px",
+            "type": "number"
+          },
+          "cursor_blink_ms": {
+            "maximum": 2000,
+            "minimum": 100,
+            "title": "Cursor Blink Ms",
+            "type": "number"
+          },
+          "cursor_style": {
+            "enum": [
+              "none",
+              "bar",
+              "block",
+              "underscore"
+            ],
+            "title": "Cursor Style",
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "none",
+              "up",
+              "down",
+              "left",
+              "right"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "easing": {
+            "enum": [
+              "linear",
+              "ease-out-cubic",
+              "ease-in-out-cubic"
+            ],
+            "title": "Easing",
+            "type": "string"
+          },
+          "exit_s": {
+            "maximum": 2,
+            "minimum": 0,
+            "title": "Exit S",
+            "type": "number"
+          },
+          "hold_s": {
+            "maximum": 3600,
+            "minimum": 0,
+            "title": "Hold S",
+            "type": "number"
+          },
+          "intensity": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Intensity",
+            "type": "number"
+          },
+          "order": {
+            "enum": [
+              "forward",
+              "reverse",
+              "center-out"
+            ],
+            "title": "Order",
+            "type": "string"
+          },
+          "overshoot": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Overshoot",
+            "type": "number"
+          },
+          "reveal_ramp_ms": {
+            "maximum": 400,
+            "minimum": 40,
+            "title": "Reveal Ramp Ms",
+            "type": "number"
+          },
+          "speed": {
+            "maximum": 4,
+            "minimum": 0.25,
+            "title": "Speed",
+            "type": "number"
+          },
+          "stagger_ms": {
+            "maximum": 250,
+            "minimum": 0,
+            "title": "Stagger Ms",
+            "type": "number"
+          },
+          "travel_px": {
+            "maximum": 600,
+            "minimum": 0,
+            "title": "Travel Px",
+            "type": "number"
+          }
+        },
+        "required": [
+          "speed",
+          "intensity",
+          "easing",
+          "stagger_ms",
+          "order",
+          "direction",
+          "travel_px",
+          "overshoot",
+          "blur_px",
+          "cursor_style",
+          "cursor_blink_ms",
+          "hold_s",
+          "exit_s",
+          "reveal_ramp_ms"
+        ],
+        "title": "ResolvedTextMotion",
+        "type": "object"
+      },
+      "SmoothRevealContent": {
+        "additionalProperties": false,
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/SmoothRevealLine"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Lines",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "lines"
+        ],
+        "title": "SmoothRevealContent",
+        "type": "object"
+      },
+      "SmoothRevealLine": {
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "$ref": "#/components/schemas/TextRevealBounds",
+            "default": null,
+            "nullable": true
+          },
+          "first_strong_rtl": {
+            "title": "First Strong Rtl",
+            "type": "boolean"
+          },
+          "run_index": {
+            "default": null,
+            "maximum": 99,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Run Index",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "first_strong_rtl"
+        ],
+        "title": "SmoothRevealLine",
+        "type": "object"
+      },
       "SolidBackground": {
         "properties": {
           "color": {
@@ -3595,6 +4898,73 @@
           "type"
         ],
         "title": "SolidBackground",
+        "type": "object"
+      },
+      "StaggeredContent": {
+        "additionalProperties": false,
+        "properties": {
+          "glyphs": {
+            "items": {
+              "$ref": "#/components/schemas/StaggeredGlyph"
+            },
+            "maxItems": 5000,
+            "minItems": 1,
+            "title": "Glyphs",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "glyphs"
+        ],
+        "title": "StaggeredContent",
+        "type": "object"
+      },
+      "StaggeredGlyph": {
+        "additionalProperties": false,
+        "properties": {
+          "glyph_index": {
+            "maximum": 4999,
+            "minimum": 0,
+            "title": "Glyph Index",
+            "type": "integer"
+          },
+          "logical_line": {
+            "maximum": 99,
+            "minimum": 0,
+            "title": "Logical Line",
+            "type": "integer"
+          },
+          "pivot_x": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Pivot X",
+            "type": "number"
+          },
+          "pivot_y": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Pivot Y",
+            "type": "number"
+          },
+          "run": {
+            "$ref": "#/components/schemas/PositionedTextRun"
+          }
+        },
+        "required": [
+          "logical_line",
+          "glyph_index",
+          "run",
+          "pivot_x",
+          "pivot_y"
+        ],
+        "title": "StaggeredGlyph",
         "type": "object"
       },
       "SubmitTurnBody": {
@@ -3678,6 +5048,47 @@
           "status"
         ],
         "title": "TemporaryUploadCancellationResponse",
+        "type": "object"
+      },
+      "TextBlurLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha_power": {
+            "default": 1,
+            "maximum": 2,
+            "minimum": 1,
+            "title": "Alpha Power",
+            "type": "integer"
+          },
+          "color": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "dx": {
+            "maximum": 1000,
+            "minimum": -1000,
+            "title": "Dx",
+            "type": "number"
+          },
+          "dy": {
+            "maximum": 1000,
+            "minimum": -1000,
+            "title": "Dy",
+            "type": "number"
+          },
+          "sigma": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Sigma",
+            "type": "number"
+          }
+        },
+        "required": [
+          "color",
+          "sigma",
+          "dx",
+          "dy"
+        ],
+        "title": "TextBlurLayer",
         "type": "object"
       },
       "TextCardBlock": {
@@ -3799,6 +5210,245 @@
           "background"
         ],
         "title": "TextCardBlock",
+        "type": "object"
+      },
+      "TextFadeEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "curve": {
+            "enum": [
+              "square",
+              "sqrt"
+            ],
+            "title": "Curve",
+            "type": "string"
+          },
+          "in_ms": {
+            "maximum": 1800000,
+            "minimum": 0,
+            "title": "In Ms",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "lyric",
+              "sequence"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "out_ms": {
+            "maximum": 1800000,
+            "minimum": 0,
+            "title": "Out Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "in_ms",
+          "out_ms",
+          "curve"
+        ],
+        "title": "TextFadeEnvelope",
+        "type": "object"
+      },
+      "TextGradient": {
+        "additionalProperties": false,
+        "properties": {
+          "end_x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "End X",
+            "type": "number"
+          },
+          "end_y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "End Y",
+            "type": "number"
+          },
+          "start_x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Start X",
+            "type": "number"
+          },
+          "start_y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Start Y",
+            "type": "number"
+          },
+          "stops": {
+            "items": {
+              "$ref": "#/components/schemas/TextGradientStop"
+            },
+            "maxItems": 16,
+            "minItems": 2,
+            "title": "Stops",
+            "type": "array"
+          }
+        },
+        "required": [
+          "start_x",
+          "start_y",
+          "end_x",
+          "end_y",
+          "stops"
+        ],
+        "title": "TextGradient",
+        "type": "object"
+      },
+      "TextGradientStop": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "position": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Position",
+            "type": "number"
+          }
+        },
+        "required": [
+          "position",
+          "color"
+        ],
+        "title": "TextGradientStop",
+        "type": "object"
+      },
+      "TextInk": {
+        "additionalProperties": false,
+        "properties": {
+          "alpha": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Alpha",
+            "type": "number"
+          },
+          "blue": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Blue",
+            "type": "number"
+          },
+          "green": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Green",
+            "type": "number"
+          },
+          "red": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Red",
+            "type": "number"
+          }
+        },
+        "required": [
+          "red",
+          "green",
+          "blue",
+          "alpha"
+        ],
+        "title": "TextInk",
+        "type": "object"
+      },
+      "TextPenStroke": {
+        "additionalProperties": false,
+        "properties": {
+          "end_progress": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "End Progress",
+            "type": "number"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/TextStrokePoint"
+            },
+            "maxItems": 2000,
+            "minItems": 2,
+            "title": "Points",
+            "type": "array"
+          },
+          "start_progress": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Start Progress",
+            "type": "number"
+          }
+        },
+        "required": [
+          "points",
+          "start_progress",
+          "end_progress"
+        ],
+        "title": "TextPenStroke",
+        "type": "object"
+      },
+      "TextRevealBounds": {
+        "additionalProperties": false,
+        "properties": {
+          "bottom": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Bottom",
+            "type": "number"
+          },
+          "left": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Left",
+            "type": "number"
+          },
+          "right": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Right",
+            "type": "number"
+          },
+          "top": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "title": "Top",
+            "type": "number"
+          }
+        },
+        "required": [
+          "left",
+          "top",
+          "right",
+          "bottom"
+        ],
+        "title": "TextRevealBounds",
+        "type": "object"
+      },
+      "TextStrokePoint": {
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "TextStrokePoint",
         "type": "object"
       },
       "TextTreatment": {
@@ -3968,6 +5618,15 @@
             "maxLength": 160,
             "minLength": 1,
             "title": "Id",
+            "type": "string"
+          },
+          "look": {
+            "default": null,
+            "enum": [
+              "golden_hour"
+            ],
+            "nullable": true,
+            "title": "Look",
             "type": "string"
           },
           "rate": {
@@ -4176,7 +5835,11 @@
           "kind": {
             "default": "crossfade",
             "enum": [
-              "crossfade"
+              "crossfade",
+              "fade_black",
+              "fade_white",
+              "wipe_left",
+              "wipe_right"
             ],
             "title": "Kind",
             "type": "string"
@@ -4319,6 +5982,9 @@
             "minLength": 1,
             "title": "Filename",
             "type": "string"
+          },
+          "upload_contract": {
+            "$ref": "#/components/schemas/MediaUploadContract"
           }
         },
         "required": [
@@ -5505,6 +7171,216 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibraryResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/me/jobs/{job_id}/device-render": {
+      "get": {
+        "operationId": "getDeviceRender",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "variant_id",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRenderStatus"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/me/jobs/{job_id}/device-render/assets": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "downloadDeviceAsset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceAssetDownloadBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceAssetDownloadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/me/jobs/{job_id}/device-render/complete": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "completeDeviceExport",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceExportCompleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceExportCompleteOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/me/jobs/{job_id}/device-render/uploads": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reserveDeviceExport",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceExportReservationBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceExportReservationOut"
                 }
               }
             },

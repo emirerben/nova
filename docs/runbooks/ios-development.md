@@ -111,6 +111,16 @@ The Debug API URL must escape the second slash (`http:/$()/localhost:8000`) in
 xcconfig. `make ios-verify` checks the resolved URL, while allowing a complete
 custom URL in the ignored `Config/Local.xcconfig`.
 
+On a physical iPhone, `localhost` addresses the phone, not the development Mac.
+An effects-only pilot can pass with this URL because it never calls the API;
+the normal editor will then fail with "could not connect to the server". For a
+user-facing device test against production, pass
+`API_BASE_URL=https://nova-video.fly.dev` to `xcodebuild` and verify the built
+app's `KriaAPIBaseURL` in `Info.plist` before installing. Use a reachable Mac URL
+instead when testing a local backend. Relaunch without `-device-effects` or
+`-ui-testing-*` flags for normal project editing. Preserve the API override when
+rebuilding with `SWIFT_OPTIMIZATION_LEVEL=-O` for physical performance testing.
+
 For deterministic UI verification, launch Debug with `-ui-testing-chat` and
 `KRIA_CHAT_CREATION_FLOW=v1` or `v2`. `KRIA_CHAT_FIXTURE_MEDIA=1` starts format
 selection with a fixture clip already attached so confirmation/render polling can

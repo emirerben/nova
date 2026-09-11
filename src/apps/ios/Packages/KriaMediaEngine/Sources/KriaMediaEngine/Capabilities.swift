@@ -14,10 +14,19 @@ public struct CapabilityNegotiator: Sendable {
     public let provider: any RendererCapabilityProviding
     public init(provider: any RendererCapabilityProviding = DefaultRendererCapabilities()) { self.provider = provider }
     public func decide(for recipe: EditRecipe, freeStorageBytes: Int64? = nil, estimatedTemporaryBytes: Int64? = nil, thermalState: ThermalState = .nominal) -> CapabilityDecision {
-        let missing = recipe.requiredCapabilities.subtracting(provider.capabilities)
+        if recipe.audio.duckOriginalDuringMusic {
+            return CapabilityDecision(route: .cloud, reason: "Audio ducking is not supported by this renderer")
+        }
+        let missing = recipe.effectiveCapabilities.subtracting(provider.capabilities)
         if !missing.isEmpty { return CapabilityDecision(route: .cloud, missingCapabilities: missing, reason: "Renderer does not support required capabilities") }
         if let freeStorageBytes, let estimatedTemporaryBytes, freeStorageBytes < estimatedTemporaryBytes { return CapabilityDecision(route: .cloud, reason: "Insufficient temporary storage") }
         if thermalState == .serious || thermalState == .critical { return CapabilityDecision(route: .cloud, reason: "Device thermal state is \(thermalState.rawValue)") }
+        guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)" else {
+            return CapabilityDecision(route: .cloud, reason: "Unsupported renderer version")
+        }
+        do { try recipe.validate() } catch {
+            return CapabilityDecision(route: .cloud, reason: "Invalid edit recipe")
+        }
         return CapabilityDecision(route: .local)
     }
 }
@@ -27,7 +36,12 @@ public enum ThermalState: String, Sendable { case nominal, fair, serious, critic
 public struct StorageEstimate: Equatable, Sendable {
     public var requiredBytes: Int64
     public init(requiredBytes: Int64) { self.requiredBytes = requiredBytes }
-    public static func forAssetBytes(_ sourceBytes: Int64, projectCount: Int = 1) -> StorageEstimate { let multiplier = max(1, projectCount); return StorageEstimate(requiredBytes: sourceBytes * Int64(2 + multiplier) + 100 * 1024 * 1024) }
+    public static func forAssetBytes(_ sourceBytes: Int64, projectCount: Int = 1) -> StorageEstimate {
+        let (multiplier, multiplierOverflow) = Int64(max(1, projectCount)).addingReportingOverflow(2)
+        let (bytes, productOverflow) = max(0, sourceBytes).multipliedReportingOverflow(by: multiplier)
+        let (total, sumOverflow) = bytes.addingReportingOverflow(100 * 1024 * 1024)
+        return StorageEstimate(requiredBytes: multiplierOverflow || productOverflow || sumOverflow ? .max : total)
+    }
 }
 
 public struct MetricEvent: Codable, Equatable, Sendable {

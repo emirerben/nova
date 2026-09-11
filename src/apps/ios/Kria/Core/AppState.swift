@@ -64,6 +64,7 @@ enum ProjectCollectionState: Equatable, Sendable {
     let api: KriaAPIClient
     let editorOperations: EditorOperations
     let uploads: BackgroundUploadCoordinator
+    let deviceRenders: DeviceRenderSessions
     private let cache: CacheRepository?
     private var deletedProjectIDs: Set<UUID> = []
     private var collectionGeneration = 0
@@ -75,6 +76,7 @@ enum ProjectCollectionState: Equatable, Sendable {
         self.api = api
         self.editorOperations = editorOperations
         self.uploads = BackgroundUploadCoordinator(api: api)
+        self.deviceRenders = DeviceRenderSessions(api: api)
         self.cache = cache
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "kria.onboarding.complete")
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {

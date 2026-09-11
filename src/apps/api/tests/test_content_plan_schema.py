@@ -105,7 +105,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0104"], f"expected a single head 0104, got {heads}"
+    assert heads == ["0105"], f"expected a single head 0105, got {heads}"
 
 
 def test_video_poster_cleanup_sweep_index_matches_query_order() -> None:

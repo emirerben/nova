@@ -1,0 +1,2090 @@
+[
+  {
+    "effect": "bounce",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.15,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.5,
+    "renderer_settle_duration": 0.5,
+    "total_duration": 1.5,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.25,
+        "authored_time": 0.25
+      },
+      {
+        "time": 0.4999999,
+        "authored_time": 0.4999999
+      },
+      {
+        "time": 0.5,
+        "authored_time": 0.5
+      },
+      {
+        "time": 1.5,
+        "authored_time": 1.5
+      }
+    ]
+  },
+  {
+    "effect": "dissolve-out",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 1.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.0,
+    "renderer_settle_duration": 0.03333333333333333,
+    "total_duration": 2.0,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.016666666666666666,
+        "authored_time": 0.016666666666666666
+      },
+      {
+        "time": 0.03333323333333333,
+        "authored_time": 0.03333323333333333
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 1.0333333333333334,
+        "authored_time": 1.0333333333333334
+      }
+    ]
+  },
+  {
+    "effect": "fade-in",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.4,
+    "renderer_settle_duration": 0.4,
+    "total_duration": 1.4,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.2,
+        "authored_time": 0.2
+      },
+      {
+        "time": 0.3999999,
+        "authored_time": 0.3999999
+      },
+      {
+        "time": 0.4,
+        "authored_time": 0.4
+      },
+      {
+        "time": 1.4,
+        "authored_time": 1.4
+      }
+    ]
+  },
+  {
+    "effect": "handwriting",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 2.2,
+    "renderer_settle_duration": 2.2,
+    "total_duration": 3.2,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 1.1,
+        "authored_time": 1.1
+      },
+      {
+        "time": 2.1999999000000003,
+        "authored_time": 2.1999999000000003
+      },
+      {
+        "time": 2.2,
+        "authored_time": 2.2
+      },
+      {
+        "time": 3.2,
+        "authored_time": 3.2
+      }
+    ]
+  },
+  {
+    "effect": "ink-reveal",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 2.2,
+    "renderer_settle_duration": 2.2,
+    "total_duration": 3.2,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 1.1,
+        "authored_time": 1.1
+      },
+      {
+        "time": 2.1999999000000003,
+        "authored_time": 2.1999999000000003
+      },
+      {
+        "time": 2.2,
+        "authored_time": 2.2
+      },
+      {
+        "time": 3.2,
+        "authored_time": 3.2
+      }
+    ]
+  },
+  {
+    "effect": "karaoke-line",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.0,
+    "renderer_settle_duration": 0.03333333333333333,
+    "total_duration": 1.0,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.016666666666666666,
+        "authored_time": 0.016666666666666666
+      },
+      {
+        "time": 0.03333323333333333,
+        "authored_time": 0.03333323333333333
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 1.0333333333333334,
+        "authored_time": 1.0333333333333334
+      }
+    ]
+  },
+  {
+    "effect": "lyric-line",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.0,
+    "renderer_settle_duration": 0.03333333333333333,
+    "total_duration": 1.0,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.016666666666666666,
+        "authored_time": 0.016666666666666666
+      },
+      {
+        "time": 0.03333323333333333,
+        "authored_time": 0.03333323333333333
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 1.0333333333333334,
+        "authored_time": 1.0333333333333334
+      }
+    ]
+  },
+  {
+    "effect": "none",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.0,
+    "renderer_settle_duration": 0.03333333333333333,
+    "total_duration": 1.0,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.016666666666666666,
+        "authored_time": 0.016666666666666666
+      },
+      {
+        "time": 0.03333323333333333,
+        "authored_time": 0.03333323333333333
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 1.0333333333333334,
+        "authored_time": 1.0333333333333334
+      }
+    ]
+  },
+  {
+    "effect": "pop-in",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.15,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.25,
+    "renderer_settle_duration": 0.26666666666666666,
+    "total_duration": 1.25,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03125
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.09375
+      },
+      {
+        "time": 0.13333333333333333,
+        "authored_time": 0.125
+      },
+      {
+        "time": 0.26666656666666666,
+        "authored_time": 0.24999990625
+      },
+      {
+        "time": 0.26666666666666666,
+        "authored_time": 0.25
+      },
+      {
+        "time": 1.2666666666666666,
+        "authored_time": 1.1875
+      }
+    ]
+  },
+  {
+    "effect": "scale-up",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.6,
+    "renderer_settle_duration": 0.6,
+    "total_duration": 1.6,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.3,
+        "authored_time": 0.3
+      },
+      {
+        "time": 0.5999999,
+        "authored_time": 0.5999999
+      },
+      {
+        "time": 0.6,
+        "authored_time": 0.6
+      },
+      {
+        "time": 1.6,
+        "authored_time": 1.6
+      }
+    ]
+  },
+  {
+    "effect": "slide-down",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "down",
+      "travel_px": 220.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.35,
+    "renderer_settle_duration": 0.36666666666666664,
+    "total_duration": 1.35,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03181818181818182
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.09545454545454546
+      },
+      {
+        "time": 0.18333333333333332,
+        "authored_time": 0.175
+      },
+      {
+        "time": 0.36666656666666664,
+        "authored_time": 0.34999990454545454
+      },
+      {
+        "time": 0.36666666666666664,
+        "authored_time": 0.35
+      },
+      {
+        "time": 1.3666666666666667,
+        "authored_time": 1.3045454545454547
+      }
+    ]
+  },
+  {
+    "effect": "slide-in",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.0,
+    "renderer_settle_duration": 0.03333333333333333,
+    "total_duration": 1.0,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.016666666666666666,
+        "authored_time": 0.016666666666666666
+      },
+      {
+        "time": 0.03333323333333333,
+        "authored_time": 0.03333323333333333
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 1.0333333333333334,
+        "authored_time": 1.0333333333333334
+      }
+    ]
+  },
+  {
+    "effect": "slide-up",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "up",
+      "travel_px": 220.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.35,
+    "renderer_settle_duration": 0.36666666666666664,
+    "total_duration": 1.35,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03181818181818182
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.09545454545454546
+      },
+      {
+        "time": 0.18333333333333332,
+        "authored_time": 0.175
+      },
+      {
+        "time": 0.36666656666666664,
+        "authored_time": 0.34999990454545454
+      },
+      {
+        "time": 0.36666666666666664,
+        "authored_time": 0.35
+      },
+      {
+        "time": 1.3666666666666667,
+        "authored_time": 1.3045454545454547
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 0.7,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 45.0,
+      "order": "forward",
+      "direction": "up",
+      "travel_px": 18.0,
+      "overshoot": 0.0,
+      "blur_px": 4.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.57,
+    "renderer_settle_duration": 0.5666666666666667,
+    "total_duration": 1.5699999999999998,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.30000000000000004,
+          "x_translate": 0.0,
+          "y_translate": -12.6,
+          "blur_px": 2.8,
+          "reveal_progress": 0.0,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.30000000000000004,
+          "x_translate": 0.0,
+          "y_translate": -12.6,
+          "blur_px": 2.8,
+          "reveal_progress": 0.0,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.033529411764705884,
+        "smooth": {
+          "alpha": 0.41640545491553027,
+          "x_translate": 0.0,
+          "y_translate": -10.504701811520455,
+          "blur_px": 2.334378180337879,
+          "reveal_progress": 0.056894220805654754,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.12516728577244046,
+          0.0
+        ]
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.10058823529411764,
+        "smooth": {
+          "alpha": 0.60903724811724,
+          "x_translate": 0.0,
+          "y_translate": -7.03732953388968,
+          "blur_px": 1.56385100753104,
+          "reveal_progress": 0.1893775196949651,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.41663054332892324,
+          0.0
+        ]
+      },
+      {
+        "time": 0.2833333333333333,
+        "authored_time": 0.285,
+        "smooth": {
+          "alpha": 0.9125,
+          "x_translate": 0.0,
+          "y_translate": -1.575,
+          "blur_px": 0.35,
+          "reveal_progress": 0.5639204545454545,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.999609375,
+          0.06601562499999984
+        ]
+      },
+      {
+        "time": 0.5666665666666667,
+        "authored_time": 0.5699998994117648,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 0.5666666666666667,
+        "authored_time": 0.57,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "forward",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 1.5666666666666667,
+        "authored_time": 1.5758823529411765,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "forward",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      }
+    ]
+  },
+  {
+    "effect": "staggered-slice",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 1.85,
+    "renderer_settle_duration": 1.8666666666666667,
+    "total_duration": 2.85,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.033035714285714286
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.09910714285714287
+      },
+      {
+        "time": 0.9333333333333333,
+        "authored_time": 0.925
+      },
+      {
+        "time": 1.8666665666666666,
+        "authored_time": 1.8499999008928572
+      },
+      {
+        "time": 1.8666666666666667,
+        "authored_time": 1.85
+      },
+      {
+        "time": 2.8666666666666667,
+        "authored_time": 2.8410714285714285
+      }
+    ]
+  },
+  {
+    "effect": "static",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.0,
+    "renderer_settle_duration": 0.03333333333333333,
+    "total_duration": 1.0,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.016666666666666666,
+        "authored_time": 0.016666666666666666
+      },
+      {
+        "time": 0.03333323333333333,
+        "authored_time": 0.03333323333333333
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 1.0333333333333334,
+        "authored_time": 1.0333333333333334
+      }
+    ]
+  },
+  {
+    "effect": "stream-in",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "bar",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.3333333333333333,
+    "renderer_settle_duration": 0.3333333333333333,
+    "total_duration": 1.3333333333333333,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03333333333333333
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.1
+      },
+      {
+        "time": 0.16666666666666666,
+        "authored_time": 0.16666666666666666
+      },
+      {
+        "time": 0.3333332333333333,
+        "authored_time": 0.3333332333333333
+      },
+      {
+        "time": 0.3333333333333333,
+        "authored_time": 0.3333333333333333
+      },
+      {
+        "time": 1.3333333333333333,
+        "authored_time": 1.3333333333333333
+      }
+    ]
+  },
+  {
+    "effect": "typewriter",
+    "text": "Hello\nworld",
+    "motion": {
+      "speed": 1.0,
+      "intensity": 1.0,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "none",
+      "travel_px": 0.0,
+      "overshoot": 0.0,
+      "blur_px": 0.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 1.0,
+      "exit_s": 0.0,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.9166666666666666,
+    "renderer_settle_duration": 0.9333333333333333,
+    "total_duration": 1.9166666666666665,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.03273809523809523
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.09821428571428571
+      },
+      {
+        "time": 0.4666666666666667,
+        "authored_time": 0.4583333333333333
+      },
+      {
+        "time": 0.9333332333333334,
+        "authored_time": 0.9166665684523809
+      },
+      {
+        "time": 0.9333333333333333,
+        "authored_time": 0.9166666666666666
+      },
+      {
+        "time": 1.9333333333333333,
+        "authored_time": 1.8988095238095237
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "İstanbul\nçok güzel",
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.0,
+      "easing": "linear",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "left",
+      "travel_px": 150.0,
+      "overshoot": 0.0,
+      "blur_px": 4.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 2.5,
+      "exit_s": 0.5,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.48,
+    "renderer_settle_duration": 0.4666666666666667,
+    "total_duration": 3.48,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 0.0,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 0.0,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.00857142857142857,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 0.07142857142857142,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.07142857142857142,
+          0.07142857142857142
+        ]
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.025714285714285714,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 0.2142857142857143,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.2142857142857143,
+          0.2142857142857143
+        ]
+      },
+      {
+        "time": 0.23333333333333334,
+        "authored_time": 0.06,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 0.5,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "time": 0.46666656666666667,
+        "authored_time": 0.11999997428571428,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 0.9999997857142857,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.9999997857142857,
+          0.9999997857142857
+        ]
+      },
+      {
+        "time": 0.4666666666666667,
+        "authored_time": 0.12,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "forward",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 1.4666666666666668,
+        "authored_time": 0.3771428571428571,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "forward",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "مرحبا\nبالعالم",
+    "motion": {
+      "speed": 4.0,
+      "intensity": 0.2,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 250.0,
+      "order": "reverse",
+      "direction": "right",
+      "travel_px": 150.0,
+      "overshoot": 0.0,
+      "blur_px": 4.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 2.5,
+      "exit_s": 0.5,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.78,
+    "renderer_settle_duration": 0.7666666666666667,
+    "total_duration": 3.7800000000000002,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.8,
+          "x_translate": 30.0,
+          "y_translate": 0.0,
+          "blur_px": 0.8,
+          "reveal_progress": 0.0,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.8,
+          "x_translate": 30.0,
+          "y_translate": 0.0,
+          "blur_px": 0.8,
+          "reveal_progress": 0.0,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.13565217391304346,
+        "smooth": {
+          "alpha": 0.8249691789266047,
+          "x_translate": 26.25462316100929,
+          "y_translate": 0.0,
+          "blur_px": 0.7001232842935812,
+          "reveal_progress": 0.07692307692307693,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.14285714285714285
+        ]
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.40695652173913044,
+        "smooth": {
+          "alpha": 0.8684967535136023,
+          "x_translate": 19.725486972959644,
+          "y_translate": 0.0,
+          "blur_px": 0.5260129859455905,
+          "reveal_progress": 0.15384615384615385,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.2857142857142857
+        ]
+      },
+      {
+        "time": 0.38333333333333336,
+        "authored_time": 1.56,
+        "smooth": {
+          "alpha": 0.975,
+          "x_translate": 3.75,
+          "y_translate": 0.0,
+          "blur_px": 0.1,
+          "reveal_progress": 0.5288461538461539,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.9821428571428571
+        ]
+      },
+      {
+        "time": 0.7666665666666668,
+        "authored_time": 3.1199995930434783,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 0.7666666666666667,
+        "authored_time": 3.12,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "reverse",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 1.7666666666666666,
+        "authored_time": 7.189565217391303,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "reverse",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "नमस्ते दुनिया",
+    "motion": {
+      "speed": 0.53,
+      "intensity": 0.4,
+      "easing": "ease-in-out-cubic",
+      "stagger_ms": 33.0,
+      "order": "center-out",
+      "direction": "up",
+      "travel_px": 150.0,
+      "overshoot": 0.0,
+      "blur_px": 4.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 2.5,
+      "exit_s": 0.5,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.6,
+    "renderer_settle_duration": 0.6,
+    "total_duration": 3.6,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.6,
+          "x_translate": 0.0,
+          "y_translate": -60.0,
+          "blur_px": 1.6,
+          "reveal_progress": 0.0,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0
+        ]
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.6,
+          "x_translate": 0.0,
+          "y_translate": -60.0,
+          "blur_px": 1.6,
+          "reveal_progress": 0.0,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0
+        ]
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.017666666666666667,
+        "smooth": {
+          "alpha": 0.6002743484224966,
+          "x_translate": 0.0,
+          "y_translate": -59.958847736625515,
+          "blur_px": 1.5989026063100138,
+          "reveal_progress": 0.0018234004507152659,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0018234004507152659
+        ]
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.053000000000000005,
+        "smooth": {
+          "alpha": 0.6074074074074074,
+          "x_translate": 0.0,
+          "y_translate": -58.88888888888889,
+          "blur_px": 1.5703703703703704,
+          "reveal_progress": 0.051877314814814834,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          0.051877314814814834
+        ]
+      },
+      {
+        "time": 0.3,
+        "authored_time": 0.159,
+        "smooth": {
+          "alpha": 0.8,
+          "x_translate": 0.0,
+          "y_translate": -30.0,
+          "blur_px": 0.8,
+          "reveal_progress": 0.5,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          0.5
+        ]
+      },
+      {
+        "time": 0.5999999,
+        "authored_time": 0.317999947,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0
+        ]
+      },
+      {
+        "time": 0.6,
+        "authored_time": 0.318,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "center-out",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0
+        ]
+      },
+      {
+        "time": 1.6,
+        "authored_time": 0.8480000000000001,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": -0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "center-out",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0
+        ]
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "👩🏽‍🚀 café\né",
+    "motion": {
+      "speed": 0.25,
+      "intensity": 0.6,
+      "easing": "linear",
+      "stagger_ms": 0.0,
+      "order": "forward",
+      "direction": "down",
+      "travel_px": 150.0,
+      "overshoot": 0.0,
+      "blur_px": 4.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 2.5,
+      "exit_s": 0.5,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.48,
+    "renderer_settle_duration": 0.4666666666666667,
+    "total_duration": 3.48,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.4,
+          "x_translate": 0.0,
+          "y_translate": 90.0,
+          "blur_px": 2.4,
+          "reveal_progress": 0.0,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.4,
+          "x_translate": 0.0,
+          "y_translate": 90.0,
+          "blur_px": 2.4,
+          "reveal_progress": 0.0,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.00857142857142857,
+        "smooth": {
+          "alpha": 0.44285714285714284,
+          "x_translate": 0.0,
+          "y_translate": 83.57142857142857,
+          "blur_px": 2.2285714285714286,
+          "reveal_progress": 0.07142857142857142,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.07142857142857142,
+          0.07142857142857142
+        ]
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.025714285714285714,
+        "smooth": {
+          "alpha": 0.5285714285714286,
+          "x_translate": 0.0,
+          "y_translate": 70.71428571428571,
+          "blur_px": 1.8857142857142857,
+          "reveal_progress": 0.2142857142857143,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.2142857142857143,
+          0.2142857142857143
+        ]
+      },
+      {
+        "time": 0.23333333333333334,
+        "authored_time": 0.06,
+        "smooth": {
+          "alpha": 0.7,
+          "x_translate": 0.0,
+          "y_translate": 45.0,
+          "blur_px": 1.2,
+          "reveal_progress": 0.5,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.5,
+          0.5
+        ]
+      },
+      {
+        "time": 0.46666656666666667,
+        "authored_time": 0.11999997428571428,
+        "smooth": {
+          "alpha": 0.9999998714285714,
+          "x_translate": 0.0,
+          "y_translate": 1.9285714285555144e-05,
+          "blur_px": 5.142857142814705e-07,
+          "reveal_progress": 0.9999997857142857,
+          "reveal_origin": "forward",
+          "settled": false
+        },
+        "line_progresses": [
+          0.9999997857142858,
+          0.9999997857142857
+        ]
+      },
+      {
+        "time": 0.4666666666666667,
+        "authored_time": 0.12,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "forward",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 1.4666666666666668,
+        "authored_time": 0.3771428571428571,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "forward",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0
+        ]
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "",
+    "motion": {
+      "speed": 4.0,
+      "intensity": 0.8,
+      "easing": "ease-out-cubic",
+      "stagger_ms": 250.0,
+      "order": "reverse",
+      "direction": "none",
+      "travel_px": 150.0,
+      "overshoot": 0.0,
+      "blur_px": 4.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 2.5,
+      "exit_s": 0.5,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.03,
+    "renderer_settle_duration": 0.03333333333333333,
+    "total_duration": 3.03,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.19999999999999996,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 3.2,
+          "reveal_progress": 0.0,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0
+        ]
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.19999999999999996,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 3.2,
+          "reveal_progress": 0.0,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0
+        ]
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.12,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "reverse",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0
+        ]
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.36000000000000004,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "reverse",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0
+        ]
+      },
+      {
+        "time": 0.016666666666666666,
+        "authored_time": 0.06,
+        "smooth": {
+          "alpha": 0.9,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.4,
+          "reveal_progress": 0.875,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0
+        ]
+      },
+      {
+        "time": 0.03333323333333333,
+        "authored_time": 0.11999963999999999,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "reverse",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0
+        ]
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.12,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "reverse",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0
+        ]
+      },
+      {
+        "time": 1.0333333333333334,
+        "authored_time": 3.7200000000000006,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": 0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "reverse",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0
+        ]
+      }
+    ]
+  },
+  {
+    "effect": "smooth-type",
+    "text": "\n\n",
+    "motion": {
+      "speed": 0.53,
+      "intensity": 1.0,
+      "easing": "ease-in-out-cubic",
+      "stagger_ms": 33.0,
+      "order": "center-out",
+      "direction": "left",
+      "travel_px": 150.0,
+      "overshoot": 0.0,
+      "blur_px": 4.0,
+      "cursor_style": "none",
+      "cursor_blink_ms": 500.0,
+      "hold_s": 2.5,
+      "exit_s": 0.5,
+      "reveal_ramp_ms": 120.0
+    },
+    "settle_duration": 0.28867924528301886,
+    "renderer_settle_duration": 0.3,
+    "total_duration": 3.288679245283019,
+    "samples": [
+      {
+        "time": -0.1,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.0,
+          "x_translate": -150.0,
+          "y_translate": 0.0,
+          "blur_px": 4.0,
+          "reveal_progress": 0.0,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 0,
+        "authored_time": 0.0,
+        "smooth": {
+          "alpha": 0.0,
+          "x_translate": -150.0,
+          "y_translate": 0.0,
+          "blur_px": 4.0,
+          "reveal_progress": 0.0,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 0.03333333333333333,
+        "authored_time": 0.017,
+        "smooth": {
+          "alpha": 0.005486968449931462,
+          "x_translate": -149.17695473251027,
+          "y_translate": 0.0,
+          "blur_px": 3.978052126200274,
+          "reveal_progress": 0.005686342592592595,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 0.1,
+        "authored_time": 0.051000000000000004,
+        "smooth": {
+          "alpha": 0.14814814814814814,
+          "x_translate": -127.77777777777779,
+          "y_translate": 0.0,
+          "blur_px": 3.4074074074074074,
+          "reveal_progress": 0.16028125000000004,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 0.15,
+        "authored_time": 0.0765,
+        "smooth": {
+          "alpha": 0.5,
+          "x_translate": -75.0,
+          "y_translate": 0.0,
+          "blur_px": 2.0,
+          "reveal_progress": 0.5000000000000001,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 0.2999999,
+        "authored_time": 0.152999949,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "center-out",
+          "settled": false
+        },
+        "line_progresses": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 0.3,
+        "authored_time": 0.153,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "center-out",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "time": 1.3,
+        "authored_time": 0.663,
+        "smooth": {
+          "alpha": 1.0,
+          "x_translate": -0.0,
+          "y_translate": 0.0,
+          "blur_px": 0.0,
+          "reveal_progress": 1.0,
+          "reveal_origin": "center-out",
+          "settled": true
+        },
+        "line_progresses": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    ]
+  }
+]

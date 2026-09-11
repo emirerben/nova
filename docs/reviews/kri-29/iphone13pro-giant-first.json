@@ -1,0 +1,127 @@
+{
+  "date": "2026-09-11T06:32:23Z",
+  "device": "iPhone",
+  "os": "26.6.1",
+  "results": [
+    {
+      "effect": "static",
+      "error": "Error Domain=AVFoundationErrorDomain Code=-11847 \"Operation Interrupted\" UserInfo={NSLocalizedDescription=Operation Interrupted, NSLocalizedRecoverySuggestion=Stop other operations and try again.}",
+      "status": "failed"
+    },
+    {
+      "duration": 6,
+      "effect": "fade-in",
+      "export_seconds": 1.1655770540237427,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "scale-up",
+      "export_seconds": 1.25102698802948,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-up",
+      "export_seconds": 1.221121907234192,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-down",
+      "export_seconds": 1.1748920679092407,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "slide-in",
+      "export_seconds": 1.2381080389022827,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "pop-in",
+      "export_seconds": 1.151121973991394,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "bounce",
+      "export_seconds": 1.1710619926452637,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "ink-reveal",
+      "export_seconds": 1.1378179788589478,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "handwriting",
+      "export_seconds": 2.4968318939208984,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "typewriter",
+      "export_seconds": 1.8677810430526733,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "stream-in",
+      "export_seconds": 1.240915060043335,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "smooth-type",
+      "export_seconds": 1.253458023071289,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "staggered-slice",
+      "export_seconds": 1.6147099733352661,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "dissolve-out",
+      "export_seconds": 6.442991018295288,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "karaoke-line",
+      "export_seconds": 1.771412968635559,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "lyric-line",
+      "export_seconds": 1.1794389486312866,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "pop-suffix",
+      "export_seconds": 1.1681469678878784,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title",
+      "export_seconds": 4.510786056518555,
+      "status": "exported"
+    },
+    {
+      "duration": 6,
+      "effect": "giant-title-glow",
+      "export_seconds": 8.380499005317688,
+      "status": "exported"
+    }
+  ],
+  "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."
+}

@@ -10,12 +10,13 @@ struct FootagePickerView: View {
     let role: CreationMediaRole
     let itemID: String?
     let limit: CreationMediaLimit?
+    let destination: ProjectUploadDestination
     @ObservedObject private var uploads: BackgroundUploadCoordinator
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showingPhotosPicker = false
     @State private var showingFileImporter = false
-    @State private var showingCloudConsent = false
-    @State private var consentedSource: UploadSource = .photos
+    @State private var consentSelection: UploadConsentSelection?
+    @State private var consentedPurpose: UploadPurpose = .cloudRenderSource
     @State private var reservedClipCount = 0
     @State private var selectionMessage: String?
 
@@ -26,11 +27,13 @@ struct FootagePickerView: View {
         attachedClipCount: Int = 0,
         role: CreationMediaRole = .clip,
         itemID: String? = nil,
-        limit: CreationMediaLimit? = nil
+        limit: CreationMediaLimit? = nil,
+        destination: ProjectUploadDestination = .cloud
     ) {
         self.role = role
         self.itemID = itemID
         self.limit = limit
+        self.destination = destination
         self.projectID = projectID
         self.uploads = uploads
         self.maximumClipCount = max(0, maximumClipCount)
@@ -53,11 +56,11 @@ struct FootagePickerView: View {
         VStack(alignment: .leading, spacing: 14) {
             KriaSectionLabel(title: "Add \(role.title.lowercased())")
             if role != .voiceover {
-            Button { consentedSource = .photos; showingCloudConsent = true } label: {
+            Button { requestConsent(source: .photos) } label: {
                 Label("Choose from Photos", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 48)
             }
             .buttonStyle(KriaSecondaryButtonStyle())
-            .disabled(selectionCapacity.remaining == 0)
+            .disabled(selectionCapacity.remaining == 0 || !destination.canUpload || reservedClipCount > 0)
             .photosPicker(
                 isPresented: $showingPhotosPicker,
                 selection: $photoItems,
@@ -66,22 +69,26 @@ struct FootagePickerView: View {
             )
             .onChange(of: photoItems) { _, items in Task { await importPhotoItems(items) } }
             }
-            Button { consentedSource = .files; showingCloudConsent = true } label: {
+            Button { requestConsent(source: .files) } label: {
                 Label("Choose from Files or iCloud", systemImage: "folder").frame(maxWidth: .infinity, minHeight: 48)
             }
             .buttonStyle(KriaSecondaryButtonStyle())
-            .disabled(selectionCapacity.remaining == 0)
+            .disabled(selectionCapacity.remaining == 0 || !destination.canUpload || reservedClipCount > 0)
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? [.movie, .image] : [.movie],
                 allowsMultipleSelection: selectionCapacity.remaining > 1,
                 onCompletion: importFiles
             )
-            .sheet(isPresented: $showingCloudConsent) {
-                CloudUploadConsentView {
-                    if consentedSource == .photos { showingPhotosPicker = true }
-                    else { showingFileImporter = true }
+            .sheet(item: $consentSelection) { selection in
+                if selection.purpose == .analysisProxy {
+                    AnalysisUploadConsentView { beginImport(selection) }
+                } else {
+                    CloudUploadConsentView { beginImport(selection) }
                 }
+            }
+            if let message = destination.message {
+                Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
             }
             if selectionCapacity.remaining == 0 {
                 Text("You’ve reached the limit for \(role.title.lowercased()).")
@@ -111,7 +118,17 @@ struct FootagePickerView: View {
             if let error = uploads.lastError { Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
         }.accessibilityElement(children: .contain)
     }
+    private func requestConsent(source: UploadSource) {
+        guard destination.canUpload else { return }
+        consentSelection = UploadConsentSelection(source: source, purpose: destination == .phone ? .analysisProxy : .cloudRenderSource)
+    }
+    private func beginImport(_ selection: UploadConsentSelection) {
+        consentedPurpose = selection.purpose
+        if selection.source == .photos { showingPhotosPicker = true }
+        else { showingFileImporter = true }
+    }
     private func importPhotoItems(_ items: [PhotosPickerItem]) async {
+        let purpose = consentedPurpose
         let acceptedCount = selectionCapacity.acceptedCount(requested: items.count)
         if acceptedCount < items.count {
             selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
@@ -123,7 +140,7 @@ struct FootagePickerView: View {
                 reservedClipCount -= 1
                 continue
             }
-            _ = await uploads.enqueue(fileURL: media.url, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource, role: role, itemID: itemID, limit: limit)
+            _ = await uploads.enqueue(fileURL: media.url, projectID: projectID, source: .photos, consentGiven: true, purpose: purpose, role: role, itemID: itemID, limit: limit)
             // enqueue publishes a live record before returning on success; on
             // failure the reservation is free for another selection.
             reservedClipCount -= 1
@@ -132,6 +149,7 @@ struct FootagePickerView: View {
     }
     private func importFiles(_ result: Result<[URL], any Error>) {
         guard case .success(let urls) = result else { return }
+        let purpose = consentedPurpose
         let acceptedCount = selectionCapacity.acceptedCount(requested: urls.count)
         if acceptedCount < urls.count {
             selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
@@ -139,11 +157,17 @@ struct FootagePickerView: View {
         reservedClipCount += acceptedCount
         Task {
             for url in urls.prefix(acceptedCount) {
-                _ = await uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: role, itemID: itemID, limit: limit)
+                _ = await uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: purpose, role: role, itemID: itemID, limit: limit)
                 reservedClipCount -= 1
             }
         }
     }
+}
+
+private struct UploadConsentSelection: Identifiable {
+    let id = UUID()
+    let source: UploadSource
+    let purpose: UploadPurpose
 }
 
 struct ClipSelectionCapacity: Equatable, Sendable {

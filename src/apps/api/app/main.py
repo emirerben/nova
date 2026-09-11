@@ -39,6 +39,7 @@ from app.routes import (
     creator_agent,
     creator_workspace,
     dev_qa_storage,
+    device_render,
     generative_jobs,
     kria_runtime,
     landing,
@@ -418,6 +419,7 @@ app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-ag
 app.include_router(creator_workspace.router, prefix="/content-plans", tags=["creator-workspace"])
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(me.router, prefix="/me", tags=["me"])
+app.include_router(device_render.router, prefix="/me", tags=["phone-rendering"])
 app.include_router(memory.router, prefix="/me", tags=["memory"])
 app.include_router(memory.direction_router, tags=["direction-overrides"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
