@@ -1053,8 +1053,24 @@ def _delete_thread(*, user_id: uuid.UUID, thread_id: uuid.UUID, **overrides) -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "session_status",
+    [
+        "briefing",
+        "awaiting_confirmation",
+        "awaiting_feedback",
+        "planning",
+        "executing",
+        "rendering",
+        "reviewing",
+        "revising",
+    ],
+)
+@pytest.mark.parametrize("job_status", ["done", "variants_ready_partial"])
 async def test_delete_removes_plan_item_before_jobs_with_append_only_learning_fks(
     monkeypatch: pytest.MonkeyPatch,
+    session_status: str,
+    job_status: str,
 ) -> None:
     """Plan-item cascades must remove learning rows before Job SET NULL runs."""
     import app.routes.creation_threads as routes
@@ -1083,10 +1099,13 @@ async def test_delete_removes_plan_item_before_jobs_with_append_only_learning_fk
         id=job_id,
         user_id=user.id,
         content_plan_item_id=item_id,
-        status="done",
+        status=job_status,
         raw_storage_path=None,
         assembly_plan={},
         all_candidates={},
+    )
+    session = SimpleNamespace(
+        id=uuid.uuid4(), creator_id=user.id, plan_item_id=item_id, status=session_status
     )
     operations: list[tuple[str, object]] = []
     execute_count = 0
@@ -1116,10 +1135,12 @@ async def test_delete_removes_plan_item_before_jobs_with_append_only_learning_fk
         if execute_count == 6:
             return result(rows=[job])
         if execute_count == 7:
-            return result(rows=[])
+            return result(rows=[session.id])
         if execute_count == 8:
+            return result(rows=[session])
+        if execute_count == 9:
             return result(rows=[])
-        if execute_count in {9, 10}:
+        if execute_count in {10, 11}:
             return result(all_rows=[])
         return result()
 
@@ -1133,6 +1154,16 @@ async def test_delete_removes_plan_item_before_jobs_with_append_only_learning_fk
     db.delete = AsyncMock(side_effect=delete_job)
     db.add = Mock()
     db.commit = AsyncMock()
+
+    if session_status in {"planning", "executing", "rendering", "reviewing", "revising"}:
+        with pytest.raises(HTTPException) as exc_info:
+            await routes.delete_thread(
+                _request(), str(thread_id), user, db, expected_revision=thread.revision
+            )
+        assert exc_info.value.detail == "Project has an active creator session"
+        db.commit.assert_not_awaited()
+        db.delete.assert_not_awaited()
+        return
 
     response = await routes.delete_thread(
         _request(), str(thread_id), user, db, expected_revision=thread.revision

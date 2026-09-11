@@ -722,3 +722,11 @@ def test_grader_failure_is_visible_and_fail_open(monkeypatch):
     mark_unavailable.assert_called_once()
     assert mark_unavailable.call_args.kwargs["code"] == "review_failed"
     assert persist_run.call_args.kwargs["outcome"] == "failed"
+
+
+def test_claim_review_after_project_deletion_is_a_noop():
+    _, _, target = _claim_fixture()
+    db = _ClaimDb(None, None)
+    assert cqr.claim_exact_review(db, **target) is None
+    assert not cqr.persist_review_if_current(db, **target, payload={})
+    assert db.commits == 0

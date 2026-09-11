@@ -70,6 +70,15 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
   }),
 }));
 
+let mockCopilotOptions: import("@/lib/edit-copilot/useEditCopilot").UseEditCopilotOptions | null = null;
+jest.mock("@/lib/edit-copilot/useEditCopilot", () => {
+  const actual = jest.requireActual("@/lib/edit-copilot/useEditCopilot");
+  return { ...actual, useEditCopilot: (options: import("@/lib/edit-copilot/useEditCopilot").UseEditCopilotOptions) => {
+    mockCopilotOptions = options;
+    return actual.useEditCopilot(options);
+  } };
+});
+
 let mockDirectorOptions: UseEditDirectorOptions | null = null;
 jest.mock("@/lib/edit-copilot/useEditDirector", () => ({
   useEditDirector: jest.fn((options: UseEditDirectorOptions) => {
@@ -151,6 +160,22 @@ describe("EditorShell — chat stays open through an applied edit (KRI-19 bug 11
   afterEach(() => {
     jest.clearAllMocks();
     window.sessionStorage.clear();
+  });
+
+  it("preserves chat revision across shell rerenders and changes it for an applied edit", async () => {
+    let view!: ReturnType<typeof render>;
+    await act(async () => { view = render(<EditorShell itemId="item-1" variantParam="var-sub" />); });
+    const before = mockCopilotOptions?.getDraftRevision?.();
+    expect(before).toBeTruthy();
+    await act(async () => { view.rerender(<EditorShell itemId="item-1" variantParam="var-sub" />); });
+    expect(mockCopilotOptions?.getDraftRevision?.()).toBe(before);
+    await act(async () => {
+      await mockDirectorOptions?.onApplied(result({
+        nextSfx: [{ id: "accent", sound_effect_id: "effect", src_gcs_path: "sfx/a.mp3", at_s: 0, gain: 0.75 }],
+        applied: [{ label: "Sound", from: "none", to: "accent" }],
+      }));
+    });
+    expect(mockCopilotOptions?.getDraftRevision?.()).not.toBe(before);
   });
 
   it("keeps the editor free of a second chat surface when a shared-chat edit lands", async () => {
