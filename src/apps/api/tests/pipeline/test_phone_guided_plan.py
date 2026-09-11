@@ -81,6 +81,95 @@ def test_shared_timing_and_original_metadata_preserved():
     assert compile_phone_guided_plan(plan, bindings).audio.original_volume == 0.4
 
 
+def transition_fixture(kind="crossfade", duration=0.3):
+    plan, bindings = fixture()
+    first = plan.story_timeline[0]
+    first.transition_after = kind
+    first.transition_duration_s = duration
+    plan.story_timeline.append(
+        first.model_copy(
+            update={
+                "moment_id": "second",
+                "source_start_s": 5,
+                "source_end_s": 8,
+                "output_start_s": 3 - duration,
+                "output_end_s": 6 - duration,
+                "transition_after": "cut",
+            }
+        )
+    )
+    plan.resolved_duration_s = 6 - duration
+    return plan, bindings
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [("crossfade", "crossfade"), ("dip_to_black", "fade_black"), ("flash", "fade_white")],
+)
+def test_guided_transitions_preserve_overlap_and_source_windows(kind, expected):
+    plan, bindings = transition_fixture(kind)
+    recipe = compile_phone_guided_plan(plan, bindings)
+    first, second = recipe.tracks[0].clips
+    assert first.transition is None
+    assert second.transition.kind == expected
+    assert second.transition.duration == 0.3
+    assert (
+        first.source_start,
+        first.source_duration,
+        second.source_start,
+        second.source_duration,
+    ) == (2, 3, 5, 3)
+    assert second.timeline_start == 2.7
+    assert recipe.duration == 5.7
+    assert (
+        "crossfade" if kind == "crossfade" else "clipTransitions"
+    ) in recipe.required_capabilities
+
+
+def test_guided_global_transition_policy_and_explicit_cut():
+    plan, bindings = transition_fixture()
+    plan.story_timeline[0].transition_after = None
+    plan.transition_policy.type = "crossfade"
+    plan.transition_policy.duration_s = 0.3
+    assert (
+        compile_phone_guided_plan(plan, bindings).tracks[0].clips[1].transition.kind == "crossfade"
+    )
+    plan.story_timeline[0].transition_after = "cut"
+    plan.story_timeline[1].output_start_s = 3
+    plan.story_timeline[1].output_end_s = 6
+    plan.resolved_duration_s = 6
+    assert compile_phone_guided_plan(plan, bindings).tracks[0].clips[1].transition is None
+
+
+def test_guided_transition_uses_cloud_short_clip_clamp():
+    plan, bindings = transition_fixture()
+    first, second = plan.story_timeline
+    first.duration_s = 0.5
+    first.source_end_s = 2.5
+    first.output_end_s = 0.5
+    second.duration_s = 0.5
+    second.source_end_s = 5.5
+    second.output_start_s = 0.35
+    second.output_end_s = 0.85
+    plan.resolved_duration_s = 0.85
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert recipe.tracks[0].clips[1].transition.duration == 0.15
+    assert recipe.duration == 0.85
+
+
+@pytest.mark.parametrize("change", ["audio", "missing_overlap", "submillisecond"])
+def test_guided_transition_unverified_audio_or_timing_fails_closed(change):
+    plan, bindings = transition_fixture()
+    if change == "audio":
+        plan.montage_audio = {"preserve_source_audio": True}
+    elif change == "missing_overlap":
+        plan.story_timeline[1].output_start_s = 3
+    else:
+        plan.story_timeline[0].transition_duration_s = 0.2001
+    with pytest.raises(ValueError):
+        compile_phone_guided_plan(plan, bindings)
+
+
 def test_approved_static_text_uses_shared_layout_and_bound_font():
     plan, bindings = fixture()
     plan.text_elements = [

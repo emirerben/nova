@@ -16,6 +16,7 @@ from app.kria.recipes import (
     MediaSize,
     TimelineClip,
     TimelineTrack,
+    Transition,
 )
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
@@ -45,15 +46,28 @@ def compile_phone_guided_plan(
     ):
         if getattr(plan, lane):
             raise UnsupportedPhonePlan(f"unsupported phone lane: {lane}")
-    if plan.transition_policy.type != "none":
-        raise UnsupportedPhonePlan("guided transition parity is not yet verified")
+    transition_names = {
+        "crossfade": "crossfade",
+        "dip_to_black": "fade_black",
+        "flash": "fade_white",
+    }
+    boundaries = [
+        moment.transition_after or plan.transition_policy.type
+        for moment in plan.story_timeline[:-1]
+    ]
+    has_transitions = any(value not in {"none", "cut"} for value in boundaries)
+    preserve_audio = bool((plan.montage_audio or {}).get("preserve_source_audio"))
+    if has_transitions and preserve_audio:
+        raise UnsupportedPhonePlan("source audio across guided transitions is not yet verified")
+    if plan.story_timeline and plan.story_timeline[-1].transition_after not in {None, "cut"}:
+        raise UnsupportedPhonePlan("final phone moment cannot transition to a missing moment")
     if len({binding.media_id for binding in bindings}) != len(bindings):
         raise ValueError("phone bindings must have unique media identities")
     assets = {}
     manifest = {}
     clips = []
     cursor = 0.0
-    for moment in plan.story_timeline:
+    for index, moment in enumerate(plan.story_timeline):
         binding = require_bound_moment(
             bindings,
             media_id=moment.media_id,
@@ -66,12 +80,25 @@ def compile_phone_guided_plan(
             or moment.image_motion is not None
             or moment.look_preset != "none"
             or moment.look_adjustments
-            or moment.transition_after not in {None, "cut"}
         ):
             raise UnsupportedPhonePlan("unsupported phone moment treatment")
         source_duration = moment.source_end_s - moment.source_start_s
+        incoming = None
+        expected_start = cursor
+        if index and boundaries[index - 1] not in {"none", "cut"}:
+            previous = plan.story_timeline[index - 1]
+            requested = previous.transition_duration_s or plan.transition_policy.duration_s or 0.3
+            duration = min(requested, min(previous.duration_s, moment.duration_s) * 0.3)
+            # Cloud emits millisecond xfade durations/offsets. Reject a timing
+            # program that would require a different frame-boundary decision.
+            if not math.isclose(duration, round(duration, 3), abs_tol=1e-9):
+                raise UnsupportedPhonePlan("phone transition timing must match cloud milliseconds")
+            incoming = Transition(kind=transition_names[boundaries[index - 1]], duration=duration)
+            expected_start -= duration
+            if not math.isclose(expected_start, round(expected_start, 3), abs_tol=1e-9):
+                raise UnsupportedPhonePlan("phone transition offset must match cloud milliseconds")
         if (
-            not math.isclose(moment.output_start_s, cursor, abs_tol=1e-6)
+            not math.isclose(moment.output_start_s, expected_start, abs_tol=1e-6)
             or not math.isclose(source_duration, moment.duration_s, abs_tol=1e-6)
             or not math.isclose(
                 moment.output_end_s - moment.output_start_s, moment.duration_s, abs_tol=1e-6
@@ -98,6 +125,7 @@ def compile_phone_guided_plan(
                 source_duration=source_duration,
                 timeline_start=moment.output_start_s,
                 rate=1,
+                transition=incoming,
             )
         )
         cursor = moment.output_end_s
@@ -144,7 +172,6 @@ def compile_phone_guided_plan(
                 ),
             )
         layers.append(layer)
-    preserve_audio = bool((plan.montage_audio or {}).get("preserve_source_audio"))
     return EditRecipeV2(
         canvas=Canvas(width=canvas.width, height=canvas.height),
         assets=list(assets.values()),
@@ -153,6 +180,11 @@ def compile_phone_guided_plan(
         text_layers=layers,
         audio=AudioMixRecipe(original_volume=plan.editor_audio_level if preserve_audio else 0),
         required_capabilities={"basicComposition", "local1080Export"}
+        | (
+            {"crossfade"}
+            if any(clip.transition and clip.transition.kind == "crossfade" for clip in clips)
+            else set()
+        )
         | ({"positionedText"} if layers else set())
         | (
             {"animatedText"}

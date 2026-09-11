@@ -116,7 +116,12 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                             request.finish(with: MediaEngineError.missingAsset(String(trackID)))
                             return
                         }
-                        source = CIImage(cvPixelBuffer: buffer)
+                        // FFmpeg's SDR effects operate on decoded channel values.
+                        // Preserve those values through the sRGB output pipeline;
+                        // otherwise Core Image converts the Rec.709 transfer curve
+                        // again and visibly brightens the source before any effect.
+                        // The buffer's YCbCr matrix still controls YUV decoding.
+                        source = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
                     } else if let image = layer.image {
                         source = image
                     } else { continue }
