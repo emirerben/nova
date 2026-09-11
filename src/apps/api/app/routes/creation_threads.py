@@ -85,6 +85,11 @@ from app.services.job_storage_paths import (
 log = structlog.get_logger()
 
 _MAX_MEDIA = _MAX_CLIPS_PER_ITEM
+# Waiting for creator input is idle, even though the session remains open.
+_DELETION_BLOCKING_AGENT_STATUSES = frozenset(
+    {"planning", "executing", "rendering", "reviewing", "revising"}
+)
+
 _MAX_EVENTS = 200
 _MAX_TITLE_LENGTH = 120
 _DEFAULT_TITLE = "Untitled video"
@@ -4550,7 +4555,7 @@ async def delete_thread(
 
     if any(job.status not in PLAN_ITEM_JOB_TERMINAL for job in jobs):
         raise HTTPException(status_code=409, detail="Project has an active render")
-    if any(session.status in _ACTIVE_AGENT_STATUSES for session in sessions):
+    if any(session.status in _DELETION_BLOCKING_AGENT_STATUSES for session in sessions):
         raise HTTPException(status_code=409, detail="Project has an active creator session")
     if any(
         publication.processing_status in _ACTIVE_PUBLICATION_STATUSES

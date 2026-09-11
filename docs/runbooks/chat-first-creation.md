@@ -48,6 +48,15 @@ replace only the default **Untitled video** title; an explicit rename must never
 change the creative prompt. Retrying a deletion by the same owner succeeds when
 the deletion tombstone exists, while foreign and unknown IDs remain `404`.
 
+An idle creator session (`briefing`, `awaiting_confirmation`, or
+`awaiting_feedback`) permits deletion. Active `planning`, `executing`,
+`rendering`, `reviewing`, and `revising` sessions still block it, as do the
+render, upload, artifact, and publication guards above. The current Job's
+terminal status takes precedence over a stale thread render projection.
+Deletion errors show the server's specific blocker. A revision conflict refreshes
+the project and requires the creator to confirm deletion again; it never retries
+the deletion automatically.
+
 Choose **Rename project** from a project’s overflow menu to edit its name in
 place in the sidebar. Enter or blur saves; Escape cancels. Validation
 and save errors remain beside the field so the creator can correct or retry.
