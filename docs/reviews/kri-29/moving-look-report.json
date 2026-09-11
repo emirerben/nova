@@ -37,37 +37,37 @@
   },
   {
     "mean_rgb_error" : 4.1829210069444445,
-    "passthrough_rgb_error" : 4.2600694444444445,
+    "passthrough_rgb_error" : 4.1352864583333337,
     "stage" : "export",
     "time" : 0
   },
   {
     "mean_rgb_error" : 4.3452690972222223,
-    "passthrough_rgb_error" : 4.455078125,
+    "passthrough_rgb_error" : 4.2485026041666663,
     "stage" : "export",
     "time" : 0.20000000000000001
   },
   {
     "mean_rgb_error" : 4.5492838541666663,
-    "passthrough_rgb_error" : 4.5685980902777779,
+    "passthrough_rgb_error" : 4.4621744791666664,
     "stage" : "export",
     "time" : 0.69999999999999996
   },
   {
     "mean_rgb_error" : 4.9009765625000004,
-    "passthrough_rgb_error" : 5.0687065972222225,
+    "passthrough_rgb_error" : 4.8226128472222225,
     "stage" : "export",
     "time" : 1.2
   },
   {
     "mean_rgb_error" : 5.0672092013888888,
-    "passthrough_rgb_error" : 5.1683593749999996,
+    "passthrough_rgb_error" : 4.9222873263888891,
     "stage" : "export",
     "time" : 1.8
   },
   {
     "mean_rgb_error" : 4.3452690972222223,
-    "passthrough_rgb_error" : 4.455078125,
+    "passthrough_rgb_error" : 4.2485026041666663,
     "stage" : "export",
     "time" : 0.20000000000000001
   }

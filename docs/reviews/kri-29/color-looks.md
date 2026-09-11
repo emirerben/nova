@@ -60,12 +60,27 @@ See [recorded samples](moving-look-report.json). Midpoint cloud/preview PNGs wer
 visually inspected. All 91 native tests, including the previous moving-transition
 checks, pass; 37 focused backend recipe/compiler tests pass.
 
+An additional optimized-build test covers full 1080x1920 moving footage, for
+24 combined small/full preview/export samples. Each export now has a matching
+no-effect encode baseline (using a preview baseline alone incorrectly charged
+the full-size encoder's ~0.8-level difference to the grade). Full-size preview
+maximum is 1.1455 levels and export maximum is below 1.94. The full-size gates
+are tighter: baseline below 2.25, actual below 2.5, and excess over its same-stage
+baseline below 0.5. Both composition tests pass in Release configuration.
+[Full-size samples](moving-look-full-report.json) record the values.
+
+The first optimized two-second full-size export took 0.393 seconds on the Mac;
+the Debug build took 10.834 seconds. These are local diagnostic timings, not
+iPhone release-gate evidence, and demonstrate why the physical throughput run
+must use an optimized build. Small fixtures and full-size fixtures use the same
+generator command above. Add `-c release` to run the optimized native tests.
+
 The signed Debug pilot adds `look-golden-hour` (32 cases total). It first prepares
 an exact-canvas H.264 source from the bundled demo locally, recording preparation
 separately, then exercises six-second look preview/export and backward seeking.
 The signed build succeeds. Installation/run is pending the user's phone unlock.
 
-Still required: resize-before-grade parity, full-size moving/graphics/transition
+Still required: resize-before-grade parity, full-size graphics/transition
 combinations, more decoder formats/ranges, physical-device throughput/memory, and
 all other look presets. The buffer adapter intentionally rejects RGB, full-range
 and higher-bit-depth inputs. Its allocation per frame needs device measurement.
