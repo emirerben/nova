@@ -299,3 +299,29 @@ incremental build, and 6 seconds for unit execution. This is a local serial samp
 not a controlled GitHub-runner benchmark.
 The local `smoke,editor` run also verified all 15 selected tests passed in
 229 seconds (146 seconds / 39% less UI-phase time than the full run).
+
+## Native editor source assets
+
+`GET /generative-jobs/{job_id}/variants/{variant_id}/timeline` exposes additive
+fields for source-based native preview. The existing ownership checks and public
+speech-generation projection still apply.
+
+- `base_generation` binds the response to the variant's current render baseline.
+- Each clip's `native_source` identifies its original media. Cloud originals
+  have a short-lived `source_url`; analysis proxies instead expose a verified
+  original descriptor with `local_required: true`, so the phone resolves its own
+  original. A missing or ambiguous binding produces `native_source: null`.
+- `signed_url` retains the web preview contract, including browser-compatible
+  image derivatives. Native clients must use the separate original source.
+- `native_assets` lists existing SFX, media-overlay, motion-scene, and visual-block
+  resources attached to the public variant. Resources retain their lane IDs;
+  image overlays carry `preserve_alpha` from the renderer's current alpha flag.
+  A signing failure omits that resource instead of returning a stale URL.
+
+Clients must compare generations before installing a composition and surface
+missing resources rather than silently omitting them. This API change does not
+open native rendering capability gates or change cloud render behavior.
+
+Validation: `pytest tests/routes/test_native_timeline_sources.py
+ tests/routes/test_generative_timeline.py tests/routes/test_generative_jobs.py
+ tests/routes/test_editor_commit.py` from `src/apps/api`.

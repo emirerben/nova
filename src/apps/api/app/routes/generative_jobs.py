@@ -30,6 +30,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -50,6 +51,7 @@ from app.agents._schemas.visual_block import VisualBlock
 from app.auth import CurrentUser, CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
+from app.kria.media_sources import OriginalMediaDescriptor
 from app.limiter import limiter
 from app.models import (
     AgentRun,
@@ -988,10 +990,20 @@ class TimelineSlotOut(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class NativeTimelineSourceOut(BaseModel):
+    """An authorized original source; analysis proxies are never playback inputs."""
+
+    media_id: str
+    source_url: str | None = None
+    original: OriginalMediaDescriptor | None = None
+    local_required: bool = False
+
+
 class TimelineClipOut(BaseModel):
     """One entry of the job's full clip pool (including clips not currently used)."""
 
     clip_index: int
+    native_source: NativeTimelineSourceOut | None = None
     signed_url: str | None = None
     duration_s: float | None = None
     used: bool = False
@@ -1002,7 +1014,16 @@ class TimelineClipOut(BaseModel):
     context: dict[str, str] | None = None
 
 
+class NativeEditorAssetOut(BaseModel):
+    id: str
+    kind: Literal["sound_effect", "media_overlay", "motion_scene", "visual_block"]
+    preserve_alpha: bool = False
+    media_id: str
+    source_url: str
+
+
 class TimelineResponse(BaseModel):
+    native_assets: list[NativeEditorAssetOut] = Field(default_factory=list)
     editable: bool
     reason: str | None = None
     beat_grid: list[float]
@@ -6369,17 +6390,187 @@ async def guided_timeline_image_preview_paths(
     }
 
 
+def _timeline_url_signer() -> Callable[[str, int], str]:
+    @cache
+    def sign(path: str, ttl: int) -> str:
+        return signed_get_url(path, ttl)
+
+    return sign
+
+
+def _native_timeline_source(
+    job: Job, path: str, source_id: str, *, sign_url: Callable[[str, int], str] | None = None
+) -> dict | None:
+    sign_url = sign_url or _timeline_url_signer()
+    from app.kria.media_sources import is_analysis_proxy_path
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
+
+    if not isinstance(path, str) or not path.strip():
+        return None
+    if is_analysis_proxy_path(path):
+        bindings = (job.assembly_plan or {}).get(PHONE_SOURCES_FIELD) or []
+        if not isinstance(bindings, list):
+            return None
+        matches = [
+            row for row in bindings if isinstance(row, dict) and row.get("proxy_path") == path
+        ]
+        if len(matches) != 1:
+            return None
+        try:
+            binding = PhoneSourceBinding.model_validate(matches[0])
+        except ValueError:
+            return None
+        return {
+            "media_id": binding.media_id,
+            "original": binding.original.model_dump(),
+            "local_required": True,
+        }
+    try:
+        url = sign_url(path, PLAYBACK_URL_TTL_MIN)
+    except Exception:  # noqa: BLE001 - report an unavailable source without a stale URL
+        return None
+    return {"media_id": source_id, "source_url": url, "local_required": False}
+
+
+def _native_editor_assets(
+    job: Job, variant_id: str, *, sign_url: Callable[[str, int], str] | None = None
+) -> list[dict]:
+    """Resolve only source assets already attached to the owned public variant."""
+    sign_url = sign_url or _timeline_url_signer()
+    import hashlib  # noqa: PLC0415
+
+    from app.agents._schemas.sound_effect import validate_sfx_gcs_path  # noqa: PLC0415
+
+    projection = project_public_assembly_plan_with_metadata(job.assembly_plan).value
+    variants = projection.get("variants", []) if isinstance(projection, dict) else []
+    variants = variants if isinstance(variants, list) else []
+    variant = next(
+        (
+            value
+            for value in variants
+            if isinstance(value, dict) and value.get("variant_id") == variant_id
+        ),
+        {},
+    )
+
+    def rows(value: object) -> list:
+        return value if isinstance(value, list) else []
+
+    assets = []
+    for effect in rows(variant.get("sound_effects")):
+        if not isinstance(effect, dict):
+            continue
+        path = effect.get("src_gcs_path")
+        effect_id = effect.get("id")
+        if not isinstance(path, str) or not isinstance(effect_id, str) or not effect_id:
+            continue
+        try:
+            validate_sfx_gcs_path(path)
+            url = sign_url(path, PLAYBACK_URL_TTL_MIN)
+        except Exception:  # noqa: BLE001 - unavailable assets stay unavailable
+            continue
+        assets.append(
+            {
+                "id": effect_id,
+                "kind": "sound_effect",
+                "media_id": "sfx-" + hashlib.sha256(path.encode()).hexdigest(),
+                "source_url": url,
+            }
+        )
+    from app.agents._schemas.media_overlay import validate_overlay_gcs_path  # noqa: PLC0415
+
+    for card in rows(variant.get("media_overlays")):
+        if not isinstance(card, dict):
+            continue
+        path = card.get("src_gcs_path")
+        card_id = card.get("id")
+        if not isinstance(path, str) or not isinstance(card_id, str) or not card_id:
+            continue
+        try:
+            validate_overlay_gcs_path(path)
+            url = sign_url(path, PLAYBACK_URL_TTL_MIN)
+        except Exception:  # noqa: BLE001
+            continue
+        assets.append(
+            {
+                "id": card_id,
+                "kind": "media_overlay",
+                "media_id": "overlay-" + hashlib.sha256(path.encode()).hexdigest(),
+                "source_url": url,
+                "preserve_alpha": settings.media_overlay_alpha_enabled
+                and card.get("kind") == "image",
+            }
+        )
+    for scene in rows(variant.get("motion_scenes")):
+        if not isinstance(scene, dict):
+            continue
+        params = scene.get("params") or {}
+        if not isinstance(params, dict):
+            continue
+        for reference in rows(params.get("assets")):
+            if not isinstance(reference, dict):
+                continue
+            asset_id, path = reference.get("asset_id"), reference.get("gcs_path")
+            if not isinstance(asset_id, str) or not asset_id or not isinstance(path, str):
+                continue
+            try:
+                validate_overlay_gcs_path(path)
+                url = sign_url(path, PLAYBACK_URL_TTL_MIN)
+            except Exception:  # noqa: BLE001 - only existing readable owned assets
+                continue
+            assets.append(
+                {
+                    "id": asset_id,
+                    "kind": "motion_scene",
+                    "media_id": "motion-" + hashlib.sha256(path.encode()).hexdigest(),
+                    "source_url": url,
+                }
+            )
+    for block in rows(variant.get("visual_blocks")):
+        if not isinstance(block, dict) or not isinstance(block.get("id"), str):
+            continue
+        if block.get("kind") == "montage":
+            shots = rows(block.get("shots"))
+        elif block.get("kind") == "media":
+            shots = [block]
+        else:
+            background = block.get("background") or {}
+            shots = [background.get("shot")] if isinstance(background, dict) else []
+        for shot in shots:
+            if not isinstance(shot, dict):
+                continue
+            path, shot_id = shot.get("src_gcs_path"), shot.get("id")
+            if not isinstance(path, str) or not isinstance(shot_id, str):
+                continue
+            try:
+                validate_overlay_gcs_path(path)
+                url = sign_url(path, PLAYBACK_URL_TTL_MIN)
+            except Exception:  # noqa: BLE001 - only attached readable sources
+                continue
+            assets.append(
+                {
+                    "id": block["id"] + ":" + shot_id,
+                    "kind": "visual_block",
+                    "media_id": "visual-" + hashlib.sha256(path.encode()).hexdigest(),
+                    "source_url": url,
+                }
+            )
+    return assets
+
+
 def dispatch_get_timeline(
     job: Job,
     variant_id: str,
     *,
     image_preview_paths: dict[str, str] | None = None,
+    sign_url: Callable[[str, int], str] | None = None,
 ) -> dict:
     """Effective timeline (user_timeline if present, else ai_timeline) + clip pool.
 
     Read-only and side-effect free; never raises for an ineligible variant — it
     reports `editable=False` + `reason` so the frontend can render the right copy.
     """
+    sign_url = sign_url or _timeline_url_signer()
     projection = project_public_assembly_plan_with_metadata(job.assembly_plan)
     public_plan = projection.value
     public_variants = public_plan.get("variants") if isinstance(public_plan, dict) else None
@@ -6424,6 +6615,7 @@ def dispatch_get_timeline(
                 job,
                 variant,
                 image_preview_paths=image_preview_paths,
+                sign_url=sign_url,
             )
         )
     reason = _timeline_ineligibility(job, variant)
@@ -6524,7 +6716,7 @@ def dispatch_get_timeline(
     clips: list[dict] = []
     for i, path in enumerate(clip_paths):
         try:
-            url: str | None = signed_get_url(path, PLAYBACK_URL_TTL_MIN)
+            url: str | None = sign_url(path, PLAYBACK_URL_TTL_MIN)
         except Exception:  # noqa: BLE001 — one bad sign must not 500 the editor open
             log.warning(
                 "timeline_clip_sign_failed", job_id=str(job.id), clip_index=i, exc_info=True
@@ -6533,6 +6725,7 @@ def dispatch_get_timeline(
         clips.append(
             {
                 "clip_index": i,
+                "native_source": _native_timeline_source(job, path, f"clip-{i}", sign_url=sign_url),
                 "signed_url": url,
                 "duration_s": dur_by_idx.get(i),
                 "used": i in used_indices,
@@ -6844,7 +7037,9 @@ def _guided_v2_timeline_projection(
     variant: dict,
     *,
     image_preview_paths: dict[str, str] | None = None,
+    sign_url: Callable[[str, int], str] | None = None,
 ) -> dict:
+    sign_url = sign_url or _timeline_url_signer()
     revision = _guided_v2_revision(job, variant)
     if revision is None:
         return {
@@ -6918,12 +7113,15 @@ def _guided_v2_timeline_projection(
         preview_path = (image_preview_paths or {}).get(path)
         browser_path = preview_path if source.get("kind") == "image" and preview_path else path
         try:
-            url = signed_get_url(browser_path, PLAYBACK_URL_TTL_MIN)
+            url = sign_url(browser_path, PLAYBACK_URL_TTL_MIN)
         except Exception:  # noqa: BLE001
             url = None
         clips.append(
             {
                 "clip_index": index,
+                "native_source": _native_timeline_source(
+                    job, path, str(source.get("media_id")), sign_url=sign_url
+                ),
                 "signed_url": url,
                 "duration_s": source.get("duration_s"),
                 "used": str(source.get("media_id")) in used_media,
@@ -10650,13 +10848,13 @@ async def get_variant_timeline(
         if variant and variant.get("resolved_archetype") == "guided_story"
         else {}
     )
-    return TimelineResponse(
-        **dispatch_get_timeline(
-            job,
-            variant_id,
-            image_preview_paths=image_preview_paths,
-        )
+    sign_url = _timeline_url_signer()
+    timeline = dispatch_get_timeline(
+        job, variant_id, image_preview_paths=image_preview_paths, sign_url=sign_url
     )
+    timeline["base_generation"] = variant_render_baseline(variant or {})
+    timeline["native_assets"] = _native_editor_assets(job, variant_id, sign_url=sign_url)
+    return TimelineResponse(**timeline)
 
 
 @router.get("/{job_id}/variants/{variant_id}/lyric-seeds", response_model=LyricSeedsResponse)
