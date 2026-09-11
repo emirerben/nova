@@ -130,6 +130,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.rate != 1 }) { result.insert(.variableSpeed) }
         if clips.contains(where: { $0.transition?.kind == .crossfade }) { result.insert(.crossfade) }
         if clips.contains(where: { $0.transition != nil && $0.transition?.kind != .crossfade }) { result.insert(.clipTransitions) }
+        if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
             result.insert(.audioMix)
@@ -222,17 +223,21 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var timelineStart: TimeInterval; public var rate: Double
     public var transform: MediaTransform; public var transition: Transition?
     public var text: TextTreatment?
+    public var look: SourceLook?
     public var volume: Double
     public var duration: TimeInterval { sourceDuration / rate }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
+        self.look = look
     }
 }
+
+public enum SourceLook: String, Codable, Sendable { case goldenHour = "golden_hour" }
 
 public struct MediaTransform: Codable, Equatable, Sendable { public var scale: Double; public var rotationDegrees: Double; public var positionX: Double; public var positionY: Double; public init(scale: Double = 1, rotationDegrees: Double = 0, positionX: Double = 0, positionY: Double = 0) { self.scale = scale; self.rotationDegrees = rotationDegrees; self.positionX = positionX; self.positionY = positionY }; public static let identity = MediaTransform() }
 
@@ -269,7 +274,7 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
     public static let `default` = AudioMixRecipe()
 }
 
-public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable { case basicComposition, positionedText, animatedText, crossfade, clipTransitions, audioMix, variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export }
+public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable { case basicComposition, positionedText, animatedText, crossfade, clipTransitions, goldenHourLook, audioMix, variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
 public struct ThumbnailSample: Codable, Equatable, Sendable { public var time: TimeInterval; public var fileURL: URL; private enum CodingKeys: String, CodingKey { case time, fileURL = "fileUrl" }; public init(time: TimeInterval, fileURL: URL) { self.time = time; self.fileURL = fileURL } }

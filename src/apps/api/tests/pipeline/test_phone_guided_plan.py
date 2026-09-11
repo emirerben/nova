@@ -7,6 +7,21 @@ from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.services.phone_sources import PhoneSourceBinding
 
 
+def test_golden_hour_compiles_only_exact_canvas_and_requires_capability():
+    plan, bindings = fixture()
+    plan.story_timeline[0].look_preset = "golden_hour"
+    with pytest.raises(ValueError, match="exact-canvas"):
+        compile_phone_guided_plan(plan, bindings)
+    bindings[0].original.width = 1080
+    bindings[0].original.height = 1920
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert recipe.tracks[0].clips[0].look == "golden_hour"
+    assert "goldenHourLook" in recipe.required_capabilities
+    bindings[0].original.orientation_degrees = 90
+    with pytest.raises(ValueError, match="exact-canvas"):
+        compile_phone_guided_plan(plan, bindings)
+
+
 def fixture():
     binding = PhoneSourceBinding(
         media_id="source",

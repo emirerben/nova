@@ -30,6 +30,19 @@ def test_generation_and_original_binding_participate_in_recipe_digest():
     assert recipe_digest(EditRecipeV2.model_validate(document)) != before
 
 
+def test_look_requires_capability_and_changes_recipe_digest():
+    document = json.loads(FIXTURE.read_text())
+    before = recipe_digest(EditRecipeV2.model_validate(document))
+    document["tracks"][0]["clips"][0]["look"] = "golden_hour"
+    recipe = EditRecipeV2.model_validate(document)
+    assert "goldenHourLook" in recipe.required_capabilities
+    assert recipe_digest(recipe) != before
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+    document["tracks"][0]["clips"][0]["look"] = "stadium_diffusion"
+    with pytest.raises(ValidationError):
+        EditRecipeV2.model_validate(document)
+
+
 @pytest.mark.parametrize("kind", ["fade_black", "fade_white", "wipe_left", "wipe_right"])
 def test_extended_transition_requires_its_own_capability(kind):
     document = json.loads(FIXTURE.read_text())

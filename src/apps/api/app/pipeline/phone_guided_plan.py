@@ -67,6 +67,7 @@ def compile_phone_guided_plan(
     manifest = {}
     clips = []
     cursor = 0.0
+    canvas = _story_canvas(plan.output_orientation)
     for index, moment in enumerate(plan.story_timeline):
         binding = require_bound_moment(
             bindings,
@@ -78,10 +79,15 @@ def compile_phone_guided_plan(
             moment.kind != "video"
             or moment.layout != "fullscreen"
             or moment.image_motion is not None
-            or moment.look_preset != "none"
+            or moment.look_preset not in {"none", "golden_hour"}
             or moment.look_adjustments
         ):
             raise UnsupportedPhonePlan("unsupported phone moment treatment")
+        if moment.look_preset == "golden_hour" and (
+            (binding.original.width, binding.original.height) != (canvas.width, canvas.height)
+            or binding.original.orientation_degrees != 0
+        ):
+            raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
         source_duration = moment.source_end_s - moment.source_start_s
         incoming = None
         expected_start = cursor
@@ -126,6 +132,7 @@ def compile_phone_guided_plan(
                 timeline_start=moment.output_start_s,
                 rate=1,
                 transition=incoming,
+                look="golden_hour" if moment.look_preset == "golden_hour" else None,
             )
         )
         cursor = moment.output_end_s
@@ -133,7 +140,6 @@ def compile_phone_guided_plan(
         raise ValueError("phone timeline duration differs from approved plan")
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone moments must have unique identities")
-    canvas = _story_canvas(plan.output_orientation)
     layers = []
     ordered_overlays = []
     for lane, elements in (

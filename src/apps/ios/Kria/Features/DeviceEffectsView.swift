@@ -59,6 +59,7 @@ private final class DeviceEffectsSession {
         let layer: PortableTextLayer?
         let font: Font?
         let transition: KriaMediaEngine.Transition.Kind?
+        var look: SourceLook? = nil
     }
     let player = AVPlayer()
     var cases: [Case] = []
@@ -91,16 +92,32 @@ private final class DeviceEffectsSession {
             cases += [KriaMediaEngine.Transition.Kind.crossfade, .fadeBlack, .fadeWhite, .wipeLeft, .wipeRight].map {
                 Case(id: "transition-\($0.rawValue)", layer: nil, font: nil, transition: $0)
             }
+            cases.append(Case(id: "look-golden-hour", layer: nil, font: nil, transition: nil, look: .goldenHour))
             if ProcessInfo.processInfo.arguments.contains("-device-effects-auto") { await testAll() }
             else { await previewSelected() }
         } catch { status = "Catalog failed: \(error)" }
     }
 
-    private func recipe(for item: Case) throws -> (KriaMediaEngine.EditRecipe, [String: URL]) {
+    private func recipe(for item: Case) async throws -> (KriaMediaEngine.EditRecipe, [String: URL]) {
         guard let video = Bundle.main.url(forResource: "montage", withExtension: "mp4") else {
             throw MediaEngineError.missingAsset("montage.mp4")
         }
         var urls = ["footage": video]
+        if item.look != nil {
+            // The first look boundary requires an exact-canvas SDR source. Make
+            // that test input locally from the bundled demo; preparation time
+            // is reported separately from look export time.
+            let normalized = directory.appendingPathComponent("golden-pilot-source-v1.mp4")
+            if !FileManager.default.fileExists(atPath: normalized.path) {
+                let sourceRecipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "footage", relativePath: "footage")],
+                    tracks: [TimelineTrack(id: "video", kind: .video, clips: [
+                        TimelineClip(id: "prepare", sourceAssetID: "footage", sourceDuration: 3)
+                    ])])
+                _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("source-state")))
+                    .export(recipe: sourceRecipe, assetURLs: urls, outputURL: normalized)
+            }
+            urls["footage"] = normalized
+        }
         if let font = item.font {
             guard let url = Bundle.main.url(forResource: font.catalogId, withExtension: nil, subdirectory: "fonts") else {
                 throw MediaEngineError.missingAsset(font.catalogId)
@@ -121,10 +138,10 @@ private final class DeviceEffectsSession {
         let clipDuration = 3 + overlap / 2
         let recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: KriaMediaEngine.Canvas(width: 1080, height: 1920),
             assets: assets, tracks: [TimelineTrack(id: "video", kind: .video, clips: [
-                TimelineClip(id: "clip-a", sourceAssetID: "footage", sourceDuration: clipDuration),
+                TimelineClip(id: "clip-a", sourceAssetID: "footage", sourceDuration: clipDuration, look: item.look),
                 TimelineClip(id: "clip-b", sourceAssetID: "footage", sourceDuration: clipDuration,
                              timelineStart: clipDuration - overlap,
-                             transition: item.transition.map { KriaMediaEngine.Transition(kind: $0, duration: overlap) })
+                             transition: item.transition.map { KriaMediaEngine.Transition(kind: $0, duration: overlap) }, look: item.look)
             ])], assetManifest: RenderAssetManifest(assets: references), textLayers: item.layer.map { [$0] } ?? [])
         try recipe.validate()
         return (recipe, urls)
@@ -139,7 +156,7 @@ private final class DeviceEffectsSession {
         player.pause()
         player.replaceCurrentItem(with: nil)
         do {
-            let value = try recipe(for: item)
+            let value = try await recipe(for: item)
             let preview = try await AVPlayerPreviewComposer().makePreview(recipe: value.0, assetURLs: value.1)
             prepared = value
             player.replaceCurrentItem(with: preview.playerItem)
@@ -203,7 +220,7 @@ private final class DeviceEffectsSession {
                 activeCase = item.id; phase = "preview_prepare"
                 status = "Preparing \(item.id)…"; saveReport()
                 let prepareStart = Date()
-                let value = try recipe(for: item)
+                let value = try await recipe(for: item)
                 // Request real compositor frames, including a backwards jump, before encoding.
                 let preview = try await AVPlayerPreviewComposer().makePreview(recipe: value.0, assetURLs: value.1)
                 let prepareSeconds = Date().timeIntervalSince(prepareStart)

@@ -47,7 +47,8 @@ public struct PreviewComposition: @unchecked Sendable {
         videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
         videoComposition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
         videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
-        videoComposition.customVideoCompositorClass = RecipeVideoCompositor.self
+        videoComposition.customVideoCompositorClass = recipe.tracks.flatMap(\.clips).contains(where: { $0.look != nil })
+            ? RecipeLookVideoCompositor.self : RecipeVideoCompositor.self
         let total = TimelineMath.totalDuration(of: recipe)
         var layers: [RecipeVideoLayer] = []
         var textLayers: [RecipeTextLayer] = []
@@ -70,6 +71,7 @@ public struct PreviewComposition: @unchecked Sendable {
                 guard let url = assetURLs[clip.sourceAssetID] else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
                 let asset = AVURLAsset(url: url)
                 if recipeTrack.kind == .audio {
+                    guard clip.look == nil else { throw MediaEngineError.unsupportedCapability }
                     guard !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
                     try await addAudio(asset: asset, clip: clip, gain: 1)
                     continue
@@ -95,11 +97,34 @@ public struct PreviewComposition: @unchecked Sendable {
                     track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration), toDuration: time(clip.duration))
                     let size = try await source.load(.naturalSize)
                     let preferred = try await source.load(.preferredTransform)
+                    if clip.look != nil {
+                        // Cloud scales/crops before grading. Until native YUV
+                        // resize parity is verified, accept exact-canvas footage
+                        // only; grading at source resolution would change pixels.
+                        guard recipeTrack.kind == .video, size == canvas, preferred.isIdentity,
+                              clip.transform == .identity else { throw MediaEngineError.unsupportedCapability }
+                        let formats = try await source.load(.formatDescriptions)
+                        guard !formats.isEmpty else { throw MediaEngineError.unsupportedCapability }
+                        for format in formats {
+                            let extensions = CMFormatDescriptionGetExtensions(format) as NSDictionary? ?? [:]
+                            let transfer = extensions[kCMFormatDescriptionExtension_TransferFunction] as? String
+                            let primaries = extensions[kCMFormatDescriptionExtension_ColorPrimaries] as? String
+                            let depth = extensions[kCMFormatDescriptionExtension_BitsPerComponent] as? Int
+                            guard CMFormatDescriptionGetMediaSubType(format) == kCMVideoCodecType_H264,
+                                  extensions[kCMFormatDescriptionExtension_FullRangeVideo] as? Bool != true,
+                                  depth == nil || depth == 8,
+                                  transfer == nil || transfer == kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String,
+                                  primaries == nil || primaries == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String else {
+                                throw MediaEngineError.unsupportedCapability
+                            }
+                        }
+                    }
                     layers.append(RecipeVideoLayer(trackID: track.trackID, image: nil,
                         transform: Self.transform(naturalSize: size, preferred: preferred, canvas: canvas, clip: clip),
-                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade))
+                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, look: clip.look))
                     try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1)
                 } else {
+                    guard clip.look == nil else { throw MediaEngineError.unsupportedCapability }
                     guard let imageSource, let image = stillImage else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
                     let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any]
                     let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.int32Value ?? 1

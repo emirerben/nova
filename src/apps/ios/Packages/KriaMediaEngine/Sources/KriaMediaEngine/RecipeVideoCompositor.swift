@@ -13,6 +13,7 @@ struct RecipeVideoLayer: @unchecked Sendable {
     let end: Double
     let fadeIn: Double
     var transitionKind: Transition.Kind = .crossfade
+    var look: SourceLook? = nil
 }
 
 struct RecipeTextLayer: @unchecked Sendable {
@@ -88,10 +89,10 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
 
 /// One deterministic compositor is used by AVPlayer and AVAssetReader/Writer. Text is sampled at
 /// composition time, so seeking and export cannot diverge through a wall-clock animation layer.
-final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
-    let sourcePixelBufferAttributes: [String: any Sendable]? = [
+class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
+    var sourcePixelBufferAttributes: [String: any Sendable]? { [
         kCVPixelBufferPixelFormatTypeKey as String: [kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
-    ]
+    ] }
     let requiredPixelBufferAttributesForRenderContext: [String: any Sendable] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         kCVPixelBufferIOSurfacePropertiesKey as String: [String: String]()
@@ -121,7 +122,13 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                         // otherwise Core Image converts the Rec.709 transfer curve
                         // again and visibly brightens the source before any effect.
                         // The buffer's YCbCr matrix still controls YUV decoding.
-                        source = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
+                        do {
+                            let graded = layer.look == .goldenHour ? try GoldenHourGrade.apply(to: buffer) : buffer
+                            source = CIImage(cvPixelBuffer: graded, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
+                        } catch {
+                            request.finish(with: error)
+                            return
+                        }
                     } else if let image = layer.image {
                         source = image
                     } else { continue }
@@ -214,5 +221,13 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
     private func opacity(_ image: CIImage, _ value: Double) -> CIImage {
         image.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: value)])
     }
+}
+
+/// A look requires original YUV samples, before RGB clipping or resampling.
+/// Leave decoder negotiation for recipes without looks unchanged.
+final class RecipeLookVideoCompositor: RecipeVideoCompositor, @unchecked Sendable {
+    override var sourcePixelBufferAttributes: [String: any Sendable]? { [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+    ] }
 }
 #endif

@@ -23,4 +23,6 @@ print(golden_hour_filter(width=512, height=512))
 PY
 )
 ffmpeg -hide_banner -loglevel error -f rawvideo -pixel_format yuv420p -video_size 512x512 -i /tmp/look-parity/input.yuv -vf "$LOOK" -frames:v 1 -f rawvideo /tmp/look-parity/golden.yuv -y
+ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=160x96:rate=30:duration=2 -c:v libx264 -preset fast -crf 18 -color_primaries bt709 -color_trc bt709 -colorspace bt709 /tmp/look-parity/source.mp4 -y
+ffmpeg -hide_banner -loglevel error -i /tmp/look-parity/source.mp4 -vf "$LOOK" -c:v libx264 -preset fast -crf 18 -color_primaries bt709 -color_trc bt709 -colorspace bt709 /tmp/look-parity/golden.mp4 -y
 tar -C /tmp/look-parity -cf - .
