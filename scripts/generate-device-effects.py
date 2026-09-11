@@ -32,6 +32,12 @@ for effect in [
     "pop-suffix",
     "giant-title",
     "giant-title-glow",
+    "giant-title-typewriter",
+    "giant-title-smooth",
+    "giant-title-staggered",
+    "giant-title-karaoke",
+    "giant-title-handwriting",
+    "giant-title-dissolve",
 ]:
     overlay = dict(
         text="Make this moment\nworth remembering",
@@ -47,9 +53,37 @@ for effect in [
         preserve_font_size=True,
     )
     if effect.startswith("giant-title"):
-        overlay.update(effect="fade-in", text="GO ON", text_size_px=180,
-                       theme_transition={"type": "giant-title-wipe", "target_glyph": "O"})
-        if effect == "giant-title-glow":
+        overlay.update(
+            effect="fade-in",
+            text="GO ON",
+            text_size_px=180,
+            theme_transition={"type": "giant-title-wipe", "target_glyph": "O"},
+        )
+        giant_effect = {
+            "giant-title-typewriter": "typewriter",
+            "giant-title-smooth": "smooth-type",
+            "giant-title-staggered": "staggered-slice",
+            "giant-title-karaoke": "karaoke-line",
+            "giant-title-handwriting": "handwriting",
+            "giant-title-dissolve": "dissolve-out",
+        }.get(effect, "fade-in")
+        overlay["effect"] = giant_effect
+        if effect in {
+            "giant-title-typewriter",
+            "giant-title-smooth",
+            "giant-title-staggered",
+        }:
+            overlay.update(
+                text="GO ON GO ON",
+                text_size_px=110,
+                motion={"version": 2, "speed": 0.25},
+            )
+        if effect == "giant-title-karaoke":
+            overlay["word_timings"] = [
+                dict(text="GO", start_s=0.5, end_s=3.9),
+                dict(text="ON", start_s=3.9, end_s=5.5),
+            ]
+        if effect in {"giant-title-glow", "giant-title-handwriting"}:
             overlay.update(glow_color="#9C40FF", glow_strength=0.7)
     if effect == "pop-suffix":
         overlay["effect"] = "pop-in"
@@ -63,9 +97,9 @@ for effect in [
         overlay,
         layer_id=effect,
         canvas=Canvas(1080, 1920),
-        dissolve_seed=138 if effect == "dissolve-out" else None,
+        dissolve_seed=138 if overlay["effect"] == "dissolve-out" else None,
     )
-    expected_effect = "fade-in" if effect.startswith("giant-title") else "static" if effect == "pop-suffix" else effect
+    expected_effect = "static" if effect == "pop-suffix" else overlay["effect"]
     assert layer.effect == expected_effect, (
         f"{effect} silently fell back to {layer.effect}"
     )

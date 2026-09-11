@@ -29,7 +29,7 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         } else { staggeredVector = nil }
         // Settled image + live foreground. Shadows add a cropped output and one
         // padded source mask, bounded by Skia's 128px source-mask clip outset.
-        let hasShadows = layer.runs.contains { !$0.blurLayers.isEmpty }
+        let hasShadows = layer.runs.contains { !$0.blurLayers.isEmpty } || !(layer.handwriting?.blurLayers.isEmpty ?? true)
         var maxBlur = 0.0
         if let content = layer.smoothReveal, let motion = layer.motion {
             // Blur decreases and camera scale increases. Endpoint products on
@@ -53,7 +53,12 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
 
     var anchor: CGPoint { vector.anchor }
     func settledImage() throws -> CIImage {
-        try vector.image(bounds: CGRect(origin: .zero, size: canvas), maxBitmapBytes: maxBitmapBytes)
+        if let content = layer.handwriting {
+            return try NativeGiantHandwritingPainter.image(content: content, canvas: canvas,
+                bounds: CGRect(origin: .zero, size: canvas), rotation: vector.rotation, transform: .identity,
+                progress: 1, opacity: 1, maxBitmapBytes: maxBitmapBytes, imageContext: imageContext)
+        }
+        return try vector.image(bounds: CGRect(origin: .zero, size: canvas), maxBitmapBytes: maxBitmapBytes)
     }
 
     private func visibleVector(localTime: Double) throws -> (PortableTextVectorPainter, Bool) {
@@ -113,7 +118,7 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         }
         let duration = layer.end - layer.start
         let state = try TextTransformTiming.sample(effect: layer.effect == .slideIn ? .static : PortableTextEffect(rawValue: layer.effect.rawValue)!,
-            text: layer.smoothReveal?.text ?? layer.discreteReveal?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: localTime, duration: duration,
+            text: layer.handwriting?.text ?? layer.smoothReveal?.text ?? layer.discreteReveal?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: localTime, duration: duration,
             motion: layer.motion, fade: layer.fade)
         let wipe = try GiantTitleTiming.sample(localTime: localTime, duration: duration)
         let outputBounds = CGRect(origin: .zero, size: canvas)
@@ -156,9 +161,17 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         let blur = state.blurPx * hypot(transform.a, transform.b)
         let padding = blur > 0.01 ? ceil(blur * 3) + 2 : 0
         let drawingBounds = outputBounds.insetBy(dx: -padding, dy: -padding)
-        var image = try visible.image(bounds: drawingBounds, maxBitmapBytes: maxBitmapBytes, transform: transform,
-            clip: clip, runClips: runClips, runTransforms: runTransforms, runGroupAlphas: runGroupAlphas, opacity: state.alpha)
-            .transformed(by: CGAffineTransform(translationX: drawingBounds.minX, y: drawingBounds.minY))
+        var image: CIImage
+        if let content = layer.handwriting {
+            image = try NativeGiantHandwritingPainter.image(content: content, canvas: canvas,
+                bounds: drawingBounds, rotation: vector.rotation, transform: transform,
+                progress: state.revealProgress, opacity: state.alpha,
+                maxBitmapBytes: maxBitmapBytes, imageContext: imageContext)
+        } else {
+            image = try visible.image(bounds: drawingBounds, maxBitmapBytes: maxBitmapBytes, transform: transform,
+                clip: clip, runClips: runClips, runTransforms: runTransforms, runGroupAlphas: runGroupAlphas, opacity: state.alpha)
+        }
+        image = image.transformed(by: CGAffineTransform(translationX: drawingBounds.minX, y: drawingBounds.minY))
         if blur > 0.01 {
             image = image.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": blur])
             // Blur in the renderer's sRGB space before handing the layer to a

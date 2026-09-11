@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import skia
 
+from app.kria.portable_text import PortableTextLayer
 from app.pipeline import text_overlay_skia as cloud
 from app.pipeline.canvas import Canvas
 from app.pipeline.portable_text_layout import compile_text_overlay
@@ -210,6 +211,40 @@ def reference():
         overlay = {**base_overlay, "effect": "staggered-slice", **values}
         layer, font = compile_text_overlay(overlay, layer_id=name, canvas=canvas)
         cases.append(frame_case(name, overlay, layer, font, canvas))
+    for name, values in [
+        ("handwriting-legacy", {}),
+        (
+            "handwriting-glow",
+            {
+                "glow": True,
+                "glow_color": "#40FF80",
+                "glow_strength": 0.8,
+                "shadow_enabled": True,
+                "outline_px": 2,
+                "rotation_deg": 23,
+            },
+        ),
+        (
+            "handwriting-fading-glow",
+            {
+                "glow": True,
+                "glow_color": "#C040FF",
+                "glow_strength": 0.8,
+                "motion": {"version": 2, "speed": 0.25, "exit_s": 1.2},
+            },
+        ),
+        (
+            "handwriting-gradient",
+            {
+                "text_gradient": {"colors": ["#FF0000", "#0000FF"], "angle_deg": 135},
+                "rotation_deg": -18,
+                "motion": {"version": 2, "speed": 0.25},
+            },
+        ),
+    ]:
+        overlay = {**base_overlay, "effect": "handwriting", **values}
+        layer, font = compile_text_overlay(overlay, layer_id=name, canvas=canvas)
+        cases.append(frame_case(name, overlay, layer, font, canvas))
     samples = []
     for duration in [0.02, 0.2, 1, 4, 17]:
         for fraction in [
@@ -245,6 +280,7 @@ def reference():
 
 
 def frame_case(name, overlay, layer, font, canvas):
+    assert PortableTextLayer.model_validate(layer.model_dump()) == layer
     frames = []
     for time in [0, 0.08, 0.2, 1, 2.72, 2.9, 3.05, 3.15, 3.3, 3.6, 3.8, 3.95]:
         image = cloud._draw_frame(overlay, time, 4, render_canvas=canvas)
@@ -279,7 +315,7 @@ def frame_case(name, overlay, layer, font, canvas):
     return dict(
         id=name,
         layer=layer.model_dump(mode="json"),
-        font=font.model_dump(mode="json"),
+        font=font.model_dump(mode="json") if font else None,
         frames=frames,
     )
 
@@ -307,3 +343,47 @@ def test_giant_origin_rejects_unknown_fields():
 
     with pytest.raises(ValueError):
         GiantTitleTransition(origin_x=0, origin_y=0, zoom=60)
+
+
+def test_dissolve_theme_matches_production_static_source(monkeypatch, tmp_path):
+    import numpy as np
+
+    canvas = Canvas(300, 200)
+    overlay = dict(
+        text="GO ON",
+        effect="dissolve-out",
+        start_s=0,
+        end_s=4,
+        font_family="Inter",
+        text_size_px=62,
+        preserve_font_size=True,
+        shadow_enabled=False,
+        outline_px=0,
+    )
+    captured = []
+
+    def capture(source, time, duration, **kwargs):
+        captured.append((time, duration, kwargs, source.toarray().copy()))
+        return source
+
+    monkeypatch.setattr(cloud, "render_dissolve_skia_image", capture)
+    monkeypatch.setattr(cloud, "_write_png_pillow", lambda *args: None)
+    results = []
+    layers = []
+    for theme in (None, {"type": "giant-title-wipe", "target_glyph": "O"}):
+        candidate = {**overlay, "theme_transition": theme}
+        captured.clear()
+        cloud._generate_overlay_sequence(candidate, str(tmp_path), 1, render_canvas=canvas)
+        results.append(sorted(captured, key=lambda row: row[0]))
+        layers.append(
+            compile_text_overlay(candidate, layer_id="dissolve", canvas=canvas, dissolve_seed=138)[
+                0
+            ]
+        )
+    assert len(results[0]) > 100
+    for plain, themed in zip(*results, strict=True):
+        assert plain[:3] == themed[:3]
+        assert plain[2] == {"seed": 138, "cap_to_webkit": True}
+        np.testing.assert_array_equal(plain[3], themed[3])
+    assert layers[0] == layers[1]
+    assert layers[1].giant_title is None

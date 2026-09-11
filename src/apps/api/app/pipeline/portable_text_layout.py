@@ -56,7 +56,7 @@ def _resolve_paints(overlay: dict, *, width: float, height: float, left: float, 
                         alpha=cloud._clamp_byte(alpha * glow["glow_strength"]) / 255,
                     ),
                     sigma=sigma,
-                    alpha_power=1 if overlay.get("effect") == "handwriting" else 2,
+                    alpha_power=2,
                     dx=0,
                     dy=0,
                 )
@@ -104,6 +104,15 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         )
     if cloud._theme_transition_type(overlay) != "giant-title-wipe":
         raise UnsupportedPortableText("unsupported theme transition")
+    if overlay.get("effect") == "dissolve-out":
+        # Production dissolves a static opening frame; it never samples the
+        # later giant-title camera transform (see _generate_overlay_sequence).
+        return _compile_text_overlay(
+            {**overlay, "theme_transition": None},
+            layer_id=layer_id,
+            canvas=canvas,
+            dissolve_seed=dissolve_seed,
+        )
     if overlay.get("effect", "none") not in {
         "static",
         "none",
@@ -121,6 +130,7 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         "karaoke-line",
         "smooth-type",
         "staggered-slice",
+        "handwriting",
     }:
         raise UnsupportedPortableText("giant title is unsupported for this text painter")
     layer, font = _compile_text_overlay(

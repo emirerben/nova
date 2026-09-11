@@ -15086,5 +15086,2835 @@
         "byte_count": 326468
       }
     }
+  },
+  {
+    "id": "giant-title-typewriter",
+    "layer": {
+      "id": "giant-title-typewriter",
+      "start": 0.5,
+      "end": 5.5,
+      "anchor_x": 540.0,
+      "anchor_y": 864.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "GO ON GO ON",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 110.0,
+          "x": 165.01708984375,
+          "baseline_y": 904.0625,
+          "letter_spacing": 0.0,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 141,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 82.5537109375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 167.3095703125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 193.359375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 300,
+              "x": 278.115234375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 361.9580078125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 141,
+              "x": 388.0078125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 470.5615234375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 555.3173828125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 581.3671875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 300,
+              "x": 666.123046875,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "alpha_power": 1,
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "typewriter",
+      "motion": {
+        "speed": 0.25,
+        "intensity": 1.0,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "none",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": {
+        "text": "GO ON GO ON",
+        "schedule": null,
+        "lines": [
+          {
+            "text": "GO ON GO ON",
+            "run_index": 0,
+            "cursor_offsets": [
+              0.0,
+              82.5537109375,
+              167.3095703125,
+              193.359375,
+              278.115234375,
+              361.9580078125,
+              388.0078125,
+              470.5615234375,
+              555.3173828125,
+              581.3671875,
+              666.123046875,
+              749.9658203125
+            ],
+            "cursor_run": {
+              "text": " |",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 165.01708984375,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 1454,
+                  "x": 26.0498046875,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            }
+          }
+        ]
+      },
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": null,
+      "fade": null,
+      "giant_title": {
+        "origin_x": 289.94873046875,
+        "origin_y": 864.0478515625
+      },
+      "dissolve_seed": null
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    }
+  },
+  {
+    "id": "giant-title-smooth",
+    "layer": {
+      "id": "giant-title-smooth",
+      "start": 0.5,
+      "end": 5.5,
+      "anchor_x": 540.0,
+      "anchor_y": 864.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "GO ON GO ON",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 110.0,
+          "x": 165.01708984375,
+          "baseline_y": 904.0625,
+          "letter_spacing": 0.0,
+          "shaped": true,
+          "glyphs": null,
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "alpha_power": 1,
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "smooth-type",
+      "motion": {
+        "speed": 0.25,
+        "intensity": 0.7,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 45.0,
+        "order": "forward",
+        "direction": "up",
+        "travel_px": 18.0,
+        "overshoot": 0.0,
+        "blur_px": 4.0,
+        "cursor_style": "none",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": {
+        "text": "GO ON GO ON",
+        "lines": [
+          {
+            "text": "GO ON GO ON",
+            "run_index": 0,
+            "bounds": {
+              "left": 129.01708984375,
+              "top": 761.5,
+              "right": 950.98291015625,
+              "bottom": 992.5
+            },
+            "first_strong_rtl": false
+          }
+        ]
+      },
+      "staggered": null,
+      "karaoke": null,
+      "fade": null,
+      "giant_title": {
+        "origin_x": 289.94873046875,
+        "origin_y": 864.0478515625
+      },
+      "dissolve_seed": null
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    }
+  },
+  {
+    "id": "giant-title-staggered",
+    "layer": {
+      "id": "giant-title-staggered",
+      "start": 0.5,
+      "end": 5.5,
+      "anchor_x": 540.0,
+      "anchor_y": 864.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "GO ON GO ON",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 110.0,
+          "x": 165.01708984375,
+          "baseline_y": 904.0625,
+          "letter_spacing": 0.0,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 141,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 82.5537109375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 167.3095703125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 193.359375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 300,
+              "x": 278.115234375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 361.9580078125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 141,
+              "x": 388.0078125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 470.5615234375,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 555.3173828125,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 581.3671875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 300,
+              "x": 666.123046875,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "alpha_power": 1,
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "staggered-slice",
+      "motion": {
+        "speed": 0.25,
+        "intensity": 1.0,
+        "easing": "ease-out-cubic",
+        "stagger_ms": 0.0,
+        "order": "forward",
+        "direction": "none",
+        "travel_px": 0.0,
+        "overshoot": 0.0,
+        "blur_px": 0.0,
+        "cursor_style": "none",
+        "cursor_blink_ms": 500.0,
+        "hold_s": 1.0,
+        "exit_s": 0.0,
+        "reveal_ramp_ms": 120.0
+      },
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": {
+        "text": "GO ON GO ON",
+        "glyphs": [
+          {
+            "logical_line": 0,
+            "glyph_index": 0,
+            "run": {
+              "text": "G",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 165.01708984375,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 141,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 206.2939453125,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 1,
+            "run": {
+              "text": "O",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 247.57080078125,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 321,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 289.94873046875,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 2,
+            "run": {
+              "text": " ",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 332.32666015625,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 345.3515625,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 3,
+            "run": {
+              "text": "O",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 358.37646484375,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 321,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 400.75439453125,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 4,
+            "run": {
+              "text": "N",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 443.13232421875,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 300,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 485.0537109375,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 5,
+            "run": {
+              "text": " ",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 526.97509765625,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 540.0,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 6,
+            "run": {
+              "text": "G",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 553.02490234375,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 141,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 594.3017578125,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 7,
+            "run": {
+              "text": "O",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 635.57861328125,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 321,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 677.95654296875,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 8,
+            "run": {
+              "text": " ",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 720.33447265625,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 1747,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 733.359375,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 9,
+            "run": {
+              "text": "O",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 746.38427734375,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 321,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 788.76220703125,
+            "pivot_y": 860.0625
+          },
+          {
+            "logical_line": 0,
+            "glyph_index": 10,
+            "run": {
+              "text": "N",
+              "font_asset_id": "font-Inter-Bold.ttf",
+              "font_size": 110.0,
+              "x": 831.14013671875,
+              "baseline_y": 904.0625,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 300,
+                  "x": 0.0,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 4.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            },
+            "pivot_x": 873.0615234375,
+            "pivot_y": 860.0625
+          }
+        ]
+      },
+      "karaoke": null,
+      "fade": null,
+      "giant_title": {
+        "origin_x": 289.94873046875,
+        "origin_y": 864.0478515625
+      },
+      "dissolve_seed": null
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    }
+  },
+  {
+    "id": "giant-title-karaoke",
+    "layer": {
+      "id": "giant-title-karaoke",
+      "start": 0.5,
+      "end": 5.5,
+      "anchor_x": 540.0,
+      "anchor_y": 864.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "GO",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 180.0,
+          "x": 243.8525390625,
+          "baseline_y": 929.875,
+          "letter_spacing": 0.0,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 141,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 135.087890625,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "alpha_power": 1,
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        },
+        {
+          "text": "ON",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 180.0,
+          "x": 560.2587890625,
+          "baseline_y": 929.875,
+          "letter_spacing": 0.0,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 321,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 300,
+              "x": 138.69140625,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "alpha_power": 1,
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "karaoke-line",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": {
+        "starts": [
+          0.5,
+          3.9
+        ],
+        "highlight": {
+          "red": 1.0,
+          "green": 0.8235294117647058,
+          "blue": 0.2901960784313726,
+          "alpha": 1.0
+        }
+      },
+      "fade": null,
+      "giant_title": {
+        "origin_x": 448.2861328125,
+        "origin_y": 864.396484375
+      },
+      "dissolve_seed": null
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    }
+  },
+  {
+    "id": "giant-title-handwriting",
+    "layer": {
+      "id": "giant-title-handwriting",
+      "start": 0.5,
+      "end": 5.5,
+      "anchor_x": 540.0,
+      "anchor_y": 864.0,
+      "rotation_degrees": 0.0,
+      "runs": [],
+      "effect": "handwriting",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": {
+        "text": "GO ON",
+        "strokes": [
+          {
+            "points": [
+              {
+                "x": 332.415,
+                "y": 855.2115
+              },
+              {
+                "x": 331.0092,
+                "y": 882.6327
+              },
+              {
+                "x": 333.1188,
+                "y": 893.1807
+              }
+            ],
+            "start_progress": 0.0,
+            "end_progress": 0.026305289745037423
+          },
+          {
+            "points": [
+              {
+                "x": 390.0708,
+                "y": 822.8673
+              },
+              {
+                "x": 385.8516,
+                "y": 820.0539
+              },
+              {
+                "x": 375.3054,
+                "y": 817.9461
+              },
+              {
+                "x": 362.6496,
+                "y": 819.3519
+              },
+              {
+                "x": 358.4304,
+                "y": 821.4615
+              }
+            ],
+            "start_progress": 0.026305289745037423,
+            "end_progress": 0.04921190846561854
+          },
+          {
+            "points": [
+              {
+                "x": 387.9612,
+                "y": 881.2269
+              },
+              {
+                "x": 389.3688,
+                "y": 891.0711
+              },
+              {
+                "x": 388.665,
+                "y": 911.4615
+              }
+            ],
+            "start_progress": 0.04921190846561854,
+            "end_progress": 0.0701016609474483
+          },
+          {
+            "points": [
+              {
+                "x": 332.415,
+                "y": 855.9135
+              },
+              {
+                "x": 333.1188,
+                "y": 854.5077
+              }
+            ],
+            "start_progress": 0.0701016609474483,
+            "end_progress": 0.07567742559550987
+          },
+          {
+            "points": [
+              {
+                "x": 333.1188,
+                "y": 854.5077
+              },
+              {
+                "x": 334.5246,
+                "y": 849.5865
+              }
+            ],
+            "start_progress": 0.07567742559550987,
+            "end_progress": 0.08125319024357146
+          },
+          {
+            "points": [
+              {
+                "x": 333.8208,
+                "y": 893.8827
+              },
+              {
+                "x": 335.2284,
+                "y": 899.5077
+              }
+            ],
+            "start_progress": 0.08125319024357146,
+            "end_progress": 0.08682895489163305
+          },
+          {
+            "points": [
+              {
+                "x": 335.2284,
+                "y": 847.4769
+              },
+              {
+                "x": 335.9304,
+                "y": 846.0711
+              }
+            ],
+            "start_progress": 0.08682895489163305,
+            "end_progress": 0.09240471953969462
+          },
+          {
+            "points": [
+              {
+                "x": 335.9304,
+                "y": 846.0711
+              },
+              {
+                "x": 339.4458,
+                "y": 839.0385
+              }
+            ],
+            "start_progress": 0.09240471953969462,
+            "end_progress": 0.0979804841877562
+          },
+          {
+            "points": [
+              {
+                "x": 335.9304,
+                "y": 900.2115
+              },
+              {
+                "x": 340.1496,
+                "y": 908.6481
+              }
+            ],
+            "start_progress": 0.0979804841877562,
+            "end_progress": 0.10447370860781909
+          },
+          {
+            "points": [
+              {
+                "x": 340.1496,
+                "y": 838.3365
+              },
+              {
+                "x": 340.8516,
+                "y": 836.9307
+              }
+            ],
+            "start_progress": 0.10447370860781909,
+            "end_progress": 0.11004947325588067
+          },
+          {
+            "points": [
+              {
+                "x": 340.8516,
+                "y": 909.3519
+              },
+              {
+                "x": 341.5554,
+                "y": 910.7577
+              }
+            ],
+            "start_progress": 0.11004947325588067,
+            "end_progress": 0.11562523790394225
+          },
+          {
+            "points": [
+              {
+                "x": 341.5554,
+                "y": 836.2269
+              },
+              {
+                "x": 342.2592,
+                "y": 834.8211
+              }
+            ],
+            "start_progress": 0.11562523790394225,
+            "end_progress": 0.12120100255200383
+          },
+          {
+            "points": [
+              {
+                "x": 342.9612,
+                "y": 912.1635
+              },
+              {
+                "x": 343.665,
+                "y": 913.5711
+              }
+            ],
+            "start_progress": 0.12120100255200383,
+            "end_progress": 0.1267767672000654
+          },
+          {
+            "points": [
+              {
+                "x": 344.3688,
+                "y": 832.0077
+              },
+              {
+                "x": 345.7746,
+                "y": 830.6019
+              }
+            ],
+            "start_progress": 0.1267767672000654,
+            "end_progress": 0.13235253184812698
+          },
+          {
+            "points": [
+              {
+                "x": 345.0708,
+                "y": 831.3039
+              },
+              {
+                "x": 345.7746,
+                "y": 829.8981
+              }
+            ],
+            "start_progress": 0.13235253184812698,
+            "end_progress": 0.13792829649618854
+          },
+          {
+            "points": [
+              {
+                "x": 345.0708,
+                "y": 830.6019
+              },
+              {
+                "x": 346.4784,
+                "y": 829.8981
+              }
+            ],
+            "start_progress": 0.13792829649618854,
+            "end_progress": 0.1435040611442501
+          },
+          {
+            "points": [
+              {
+                "x": 345.7746,
+                "y": 830.6019
+              },
+              {
+                "x": 346.4784,
+                "y": 829.1961
+              }
+            ],
+            "start_progress": 0.1435040611442501,
+            "end_progress": 0.1490798257923117
+          },
+          {
+            "points": [
+              {
+                "x": 345.7746,
+                "y": 829.8981
+              },
+              {
+                "x": 347.1804,
+                "y": 829.1961
+              }
+            ],
+            "start_progress": 0.1490798257923117,
+            "end_progress": 0.15465559044037325
+          },
+          {
+            "points": [
+              {
+                "x": 345.7746,
+                "y": 916.3827
+              },
+              {
+                "x": 349.29,
+                "y": 918.4923
+              }
+            ],
+            "start_progress": 0.15465559044037325,
+            "end_progress": 0.1602313550884348
+          },
+          {
+            "points": [
+              {
+                "x": 346.4784,
+                "y": 829.8981
+              },
+              {
+                "x": 347.1804,
+                "y": 828.4923
+              }
+            ],
+            "start_progress": 0.1602313550884348,
+            "end_progress": 0.1658071197364964
+          },
+          {
+            "points": [
+              {
+                "x": 346.4784,
+                "y": 829.1961
+              },
+              {
+                "x": 347.8842,
+                "y": 828.4923
+              }
+            ],
+            "start_progress": 0.1658071197364964,
+            "end_progress": 0.17138288438455795
+          },
+          {
+            "points": [
+              {
+                "x": 347.1804,
+                "y": 829.1961
+              },
+              {
+                "x": 347.8842,
+                "y": 827.7885
+              }
+            ],
+            "start_progress": 0.17138288438455795,
+            "end_progress": 0.17695864903261954
+          },
+          {
+            "points": [
+              {
+                "x": 347.1804,
+                "y": 828.4923
+              },
+              {
+                "x": 348.5862,
+                "y": 827.7885
+              }
+            ],
+            "start_progress": 0.17695864903261954,
+            "end_progress": 0.1825344136806811
+          },
+          {
+            "points": [
+              {
+                "x": 347.8842,
+                "y": 828.4923
+              },
+              {
+                "x": 348.5862,
+                "y": 827.0865
+              }
+            ],
+            "start_progress": 0.1825344136806811,
+            "end_progress": 0.18811017832874266
+          },
+          {
+            "points": [
+              {
+                "x": 347.8842,
+                "y": 827.7885
+              },
+              {
+                "x": 349.29,
+                "y": 827.0865
+              }
+            ],
+            "start_progress": 0.18811017832874266,
+            "end_progress": 0.19368594297680425
+          },
+          {
+            "points": [
+              {
+                "x": 350.6958,
+                "y": 919.1961
+              },
+              {
+                "x": 352.1016,
+                "y": 919.8981
+              }
+            ],
+            "start_progress": 0.19368594297680425,
+            "end_progress": 0.1992617076248658
+          },
+          {
+            "points": [
+              {
+                "x": 351.3996,
+                "y": 825.6807
+              },
+              {
+                "x": 352.8054,
+                "y": 824.2731
+              }
+            ],
+            "start_progress": 0.1992617076248658,
+            "end_progress": 0.20483747227292737
+          },
+          {
+            "points": [
+              {
+                "x": 352.1016,
+                "y": 919.8981
+              },
+              {
+                "x": 364.0554,
+                "y": 921.3039
+              },
+              {
+                "x": 373.8996,
+                "y": 918.4923
+              }
+            ],
+            "start_progress": 0.20483747227292737,
+            "end_progress": 0.22017014986964825
+          },
+          {
+            "points": [
+              {
+                "x": 353.5092,
+                "y": 824.2731
+              },
+              {
+                "x": 357.0246,
+                "y": 822.1635
+              }
+            ],
+            "start_progress": 0.22017014986964825,
+            "end_progress": 0.22574591451770984
+          },
+          {
+            "points": [
+              {
+                "x": 370.3842,
+                "y": 870.6807
+              },
+              {
+                "x": 379.5246,
+                "y": 872.7885
+              }
+            ],
+            "start_progress": 0.22574591451770984,
+            "end_progress": 0.23220298333568415
+          },
+          {
+            "points": [
+              {
+                "x": 374.6016,
+                "y": 918.4923
+              },
+              {
+                "x": 385.1496,
+                "y": 914.2731
+              }
+            ],
+            "start_progress": 0.23220298333568415,
+            "end_progress": 0.2400231954119442
+          },
+          {
+            "points": [
+              {
+                "x": 380.2284,
+                "y": 873.4923
+              },
+              {
+                "x": 382.3362,
+                "y": 874.1961
+              }
+            ],
+            "start_progress": 0.2400231954119442,
+            "end_progress": 0.24559896006000576
+          },
+          {
+            "points": [
+              {
+                "x": 383.04,
+                "y": 874.8981
+              },
+              {
+                "x": 387.2592,
+                "y": 880.5231
+              }
+            ],
+            "start_progress": 0.24559896006000576,
+            "end_progress": 0.25117472470806734
+          },
+          {
+            "points": [
+              {
+                "x": 385.8516,
+                "y": 914.2731
+              },
+              {
+                "x": 387.9612,
+                "y": 912.8673
+              }
+            ],
+            "start_progress": 0.25117472470806734,
+            "end_progress": 0.25675048935612893
+          },
+          {
+            "points": [
+              {
+                "x": 390.0708,
+                "y": 919.8981
+              },
+              {
+                "x": 390.0708,
+                "y": 914.9769
+              },
+              {
+                "x": 387.9612,
+                "y": 912.8673
+              }
+            ],
+            "start_progress": 0.25675048935612893,
+            "end_progress": 0.2623262540041905
+          },
+          {
+            "points": [
+              {
+                "x": 391.4784,
+                "y": 823.5711
+              },
+              {
+                "x": 390.0708,
+                "y": 822.8673
+              }
+            ],
+            "start_progress": 0.2623262540041905,
+            "end_progress": 0.26790201865225205
+          },
+          {
+            "points": [
+              {
+                "x": 392.1804,
+                "y": 824.2731
+              },
+              {
+                "x": 390.7746,
+                "y": 822.8673
+              }
+            ],
+            "start_progress": 0.26790201865225205,
+            "end_progress": 0.27347778330031364
+          },
+          {
+            "points": [
+              {
+                "x": 424.4076,
+                "y": 881.9307
+              },
+              {
+                "x": 422.298,
+                "y": 860.1327
+              },
+              {
+                "x": 425.8152,
+                "y": 841.8519
+              }
+            ],
+            "start_progress": 0.2802926067590556,
+            "end_progress": 0.3081823906431655
+          },
+          {
+            "points": [
+              {
+                "x": 445.5018,
+                "y": 917.7885
+              },
+              {
+                "x": 453.9402,
+                "y": 920.6019
+              },
+              {
+                "x": 462.3768,
+                "y": 920.6019
+              },
+              {
+                "x": 473.6268,
+                "y": 917.0865
+              }
+            ],
+            "start_progress": 0.3081823906431655,
+            "end_progress": 0.32822630085644966
+          },
+          {
+            "points": [
+              {
+                "x": 446.9076,
+                "y": 820.0539
+              },
+              {
+                "x": 456.7518,
+                "y": 817.2423
+              },
+              {
+                "x": 470.8152,
+                "y": 818.6481
+              }
+            ],
+            "start_progress": 0.32822630085644966,
+            "end_progress": 0.3450026948296175
+          },
+          {
+            "points": [
+              {
+                "x": 489.096,
+                "y": 896.6961
+              },
+              {
+                "x": 494.0172,
+                "y": 872.0865
+              },
+              {
+                "x": 491.2056,
+                "y": 842.5539
+              }
+            ],
+            "start_progress": 0.3450026948296175,
+            "end_progress": 0.3826996547313536
+          },
+          {
+            "points": [
+              {
+                "x": 425.1114,
+                "y": 882.6327
+              },
+              {
+                "x": 425.1114,
+                "y": 884.7423
+              }
+            ],
+            "start_progress": 0.3826996547313536,
+            "end_progress": 0.3882754193794152
+          },
+          {
+            "points": [
+              {
+                "x": 425.8152,
+                "y": 885.4461
+              },
+              {
+                "x": 429.3306,
+                "y": 896.6961
+              }
+            ],
+            "start_progress": 0.3882754193794152,
+            "end_progress": 0.39638881479014
+          },
+          {
+            "points": [
+              {
+                "x": 426.5172,
+                "y": 841.1481
+              },
+              {
+                "x": 429.3306,
+                "y": 834.8211
+              }
+            ],
+            "start_progress": 0.39638881479014,
+            "end_progress": 0.4019645794382015
+          },
+          {
+            "points": [
+              {
+                "x": 430.0326,
+                "y": 833.4135
+              },
+              {
+                "x": 430.7364,
+                "y": 832.0077
+              }
+            ],
+            "start_progress": 0.4019645794382015,
+            "end_progress": 0.4075403440862631
+          },
+          {
+            "points": [
+              {
+                "x": 430.0326,
+                "y": 897.3981
+              },
+              {
+                "x": 432.846,
+                "y": 904.4307
+              },
+              {
+                "x": 439.1748,
+                "y": 912.1635
+              }
+            ],
+            "start_progress": 0.4075403440862631,
+            "end_progress": 0.4196328477938092
+          },
+          {
+            "points": [
+              {
+                "x": 430.7364,
+                "y": 832.0077
+              },
+              {
+                "x": 432.1422,
+                "y": 830.6019
+              }
+            ],
+            "start_progress": 0.4196328477938092,
+            "end_progress": 0.4252086124418708
+          },
+          {
+            "points": [
+              {
+                "x": 431.4402,
+                "y": 831.3039
+              },
+              {
+                "x": 432.1422,
+                "y": 829.8981
+              }
+            ],
+            "start_progress": 0.4252086124418708,
+            "end_progress": 0.43078437708993234
+          },
+          {
+            "points": [
+              {
+                "x": 432.1422,
+                "y": 829.8981
+              },
+              {
+                "x": 433.548,
+                "y": 828.4923
+              }
+            ],
+            "start_progress": 0.43078437708993234,
+            "end_progress": 0.4363601417379939
+          },
+          {
+            "points": [
+              {
+                "x": 435.6576,
+                "y": 826.3827
+              },
+              {
+                "x": 437.7672,
+                "y": 824.2731
+              }
+            ],
+            "start_progress": 0.4363601417379939,
+            "end_progress": 0.4419359063860555
+          },
+          {
+            "points": [
+              {
+                "x": 438.471,
+                "y": 824.2731
+              },
+              {
+                "x": 441.9864,
+                "y": 821.4615
+              }
+            ],
+            "start_progress": 0.4419359063860555,
+            "end_progress": 0.44751167103411704
+          },
+          {
+            "points": [
+              {
+                "x": 441.2826,
+                "y": 914.9769
+              },
+              {
+                "x": 444.798,
+                "y": 917.0865
+              }
+            ],
+            "start_progress": 0.44751167103411704,
+            "end_progress": 0.45308743568217863
+          },
+          {
+            "points": [
+              {
+                "x": 442.6902,
+                "y": 821.4615
+              },
+              {
+                "x": 446.2056,
+                "y": 820.0539
+              }
+            ],
+            "start_progress": 0.45308743568217863,
+            "end_progress": 0.4586632003302402
+          },
+          {
+            "points": [
+              {
+                "x": 471.5172,
+                "y": 819.3519
+              },
+              {
+                "x": 473.6268,
+                "y": 819.3519
+              }
+            ],
+            "start_progress": 0.4586632003302402,
+            "end_progress": 0.46423896497830175
+          },
+          {
+            "points": [
+              {
+                "x": 474.3306,
+                "y": 820.0539
+              },
+              {
+                "x": 477.1422,
+                "y": 821.4615
+              }
+            ],
+            "start_progress": 0.46423896497830175,
+            "end_progress": 0.46981472962636334
+          },
+          {
+            "points": [
+              {
+                "x": 475.0326,
+                "y": 916.3827
+              },
+              {
+                "x": 477.846,
+                "y": 913.5711
+              }
+            ],
+            "start_progress": 0.46981472962636334,
+            "end_progress": 0.4753904942744249
+          },
+          {
+            "points": [
+              {
+                "x": 477.846,
+                "y": 822.1635
+              },
+              {
+                "x": 479.9556,
+                "y": 823.5711
+              }
+            ],
+            "start_progress": 0.4753904942744249,
+            "end_progress": 0.48096625892248646
+          },
+          {
+            "points": [
+              {
+                "x": 480.6576,
+                "y": 911.4615
+              },
+              {
+                "x": 482.0652,
+                "y": 909.3519
+              }
+            ],
+            "start_progress": 0.48096625892248646,
+            "end_progress": 0.48654202357054804
+          },
+          {
+            "points": [
+              {
+                "x": 482.7672,
+                "y": 825.6807
+              },
+              {
+                "x": 486.9864,
+                "y": 832.0077
+              }
+            ],
+            "start_progress": 0.48654202357054804,
+            "end_progress": 0.49211778821860963
+          },
+          {
+            "points": [
+              {
+                "x": 482.7672,
+                "y": 908.6481
+              },
+              {
+                "x": 486.2826,
+                "y": 903.0231
+              }
+            ],
+            "start_progress": 0.49211778821860963,
+            "end_progress": 0.4976935528666712
+          },
+          {
+            "points": [
+              {
+                "x": 486.9864,
+                "y": 902.3211
+              },
+              {
+                "x": 488.3922,
+                "y": 897.3981
+              }
+            ],
+            "start_progress": 0.4976935528666712,
+            "end_progress": 0.5032693175147328
+          },
+          {
+            "points": [
+              {
+                "x": 487.6902,
+                "y": 832.7115
+              },
+              {
+                "x": 490.5018,
+                "y": 841.1481
+              }
+            ],
+            "start_progress": 0.5032693175147328,
+            "end_progress": 0.5093907963724379
+          },
+          {
+            "points": [
+              {
+                "x": 578.4893999999999,
+                "y": 881.9307
+              },
+              {
+                "x": 576.3797999999999,
+                "y": 860.1327
+              },
+              {
+                "x": 579.897,
+                "y": 841.8519
+              }
+            ],
+            "start_progress": 0.5335524431807046,
+            "end_progress": 0.5614422270648146
+          },
+          {
+            "points": [
+              {
+                "x": 599.5835999999999,
+                "y": 917.7885
+              },
+              {
+                "x": 608.022,
+                "y": 920.6019
+              },
+              {
+                "x": 616.4585999999999,
+                "y": 920.6019
+              },
+              {
+                "x": 627.7085999999999,
+                "y": 917.0865
+              }
+            ],
+            "start_progress": 0.5614422270648146,
+            "end_progress": 0.5814861372780987
+          },
+          {
+            "points": [
+              {
+                "x": 600.9893999999999,
+                "y": 820.0539
+              },
+              {
+                "x": 610.8335999999999,
+                "y": 817.2423
+              },
+              {
+                "x": 624.897,
+                "y": 818.6481
+              }
+            ],
+            "start_progress": 0.5814861372780987,
+            "end_progress": 0.5982625312512666
+          },
+          {
+            "points": [
+              {
+                "x": 643.1777999999999,
+                "y": 896.6961
+              },
+              {
+                "x": 648.099,
+                "y": 872.0865
+              },
+              {
+                "x": 645.2873999999999,
+                "y": 842.5539
+              }
+            ],
+            "start_progress": 0.5982625312512666,
+            "end_progress": 0.6359594911530027
+          },
+          {
+            "points": [
+              {
+                "x": 579.1931999999999,
+                "y": 882.6327
+              },
+              {
+                "x": 579.1931999999999,
+                "y": 884.7423
+              }
+            ],
+            "start_progress": 0.6359594911530027,
+            "end_progress": 0.6415352558010643
+          },
+          {
+            "points": [
+              {
+                "x": 579.897,
+                "y": 885.4461
+              },
+              {
+                "x": 583.4123999999999,
+                "y": 896.6961
+              }
+            ],
+            "start_progress": 0.6415352558010643,
+            "end_progress": 0.6496486512117889
+          },
+          {
+            "points": [
+              {
+                "x": 580.599,
+                "y": 841.1481
+              },
+              {
+                "x": 583.4123999999999,
+                "y": 834.8211
+              }
+            ],
+            "start_progress": 0.6496486512117889,
+            "end_progress": 0.6552244158598506
+          },
+          {
+            "points": [
+              {
+                "x": 584.1143999999999,
+                "y": 833.4135
+              },
+              {
+                "x": 584.8181999999999,
+                "y": 832.0077
+              }
+            ],
+            "start_progress": 0.6552244158598506,
+            "end_progress": 0.6608001805079121
+          },
+          {
+            "points": [
+              {
+                "x": 584.1143999999999,
+                "y": 897.3981
+              },
+              {
+                "x": 586.9277999999999,
+                "y": 904.4307
+              },
+              {
+                "x": 593.2565999999999,
+                "y": 912.1635
+              }
+            ],
+            "start_progress": 0.6608001805079121,
+            "end_progress": 0.6728926842154583
+          },
+          {
+            "points": [
+              {
+                "x": 584.8181999999999,
+                "y": 832.0077
+              },
+              {
+                "x": 586.224,
+                "y": 830.6019
+              }
+            ],
+            "start_progress": 0.6728926842154583,
+            "end_progress": 0.6784684488635199
+          },
+          {
+            "points": [
+              {
+                "x": 585.522,
+                "y": 831.3039
+              },
+              {
+                "x": 586.224,
+                "y": 829.8981
+              }
+            ],
+            "start_progress": 0.6784684488635199,
+            "end_progress": 0.6840442135115814
+          },
+          {
+            "points": [
+              {
+                "x": 586.224,
+                "y": 829.8981
+              },
+              {
+                "x": 587.6297999999999,
+                "y": 828.4923
+              }
+            ],
+            "start_progress": 0.6840442135115814,
+            "end_progress": 0.689619978159643
+          },
+          {
+            "points": [
+              {
+                "x": 589.7393999999999,
+                "y": 826.3827
+              },
+              {
+                "x": 591.849,
+                "y": 824.2731
+              }
+            ],
+            "start_progress": 0.689619978159643,
+            "end_progress": 0.6951957428077046
+          },
+          {
+            "points": [
+              {
+                "x": 592.5527999999999,
+                "y": 824.2731
+              },
+              {
+                "x": 596.0681999999999,
+                "y": 821.4615
+              }
+            ],
+            "start_progress": 0.6951957428077046,
+            "end_progress": 0.7007715074557661
+          },
+          {
+            "points": [
+              {
+                "x": 595.3643999999999,
+                "y": 914.9769
+              },
+              {
+                "x": 598.8797999999999,
+                "y": 917.0865
+              }
+            ],
+            "start_progress": 0.7007715074557661,
+            "end_progress": 0.7063472721038278
+          },
+          {
+            "points": [
+              {
+                "x": 596.772,
+                "y": 821.4615
+              },
+              {
+                "x": 600.2873999999999,
+                "y": 820.0539
+              }
+            ],
+            "start_progress": 0.7063472721038278,
+            "end_progress": 0.7119230367518893
+          },
+          {
+            "points": [
+              {
+                "x": 625.599,
+                "y": 819.3519
+              },
+              {
+                "x": 627.7085999999999,
+                "y": 819.3519
+              }
+            ],
+            "start_progress": 0.7119230367518893,
+            "end_progress": 0.7174988013999508
+          },
+          {
+            "points": [
+              {
+                "x": 628.4123999999999,
+                "y": 820.0539
+              },
+              {
+                "x": 631.224,
+                "y": 821.4615
+              }
+            ],
+            "start_progress": 0.7174988013999508,
+            "end_progress": 0.7230745660480125
+          },
+          {
+            "points": [
+              {
+                "x": 629.1143999999999,
+                "y": 916.3827
+              },
+              {
+                "x": 631.9277999999999,
+                "y": 913.5711
+              }
+            ],
+            "start_progress": 0.7230745660480125,
+            "end_progress": 0.728650330696074
+          },
+          {
+            "points": [
+              {
+                "x": 631.9277999999999,
+                "y": 822.1635
+              },
+              {
+                "x": 634.0373999999999,
+                "y": 823.5711
+              }
+            ],
+            "start_progress": 0.728650330696074,
+            "end_progress": 0.7342260953441355
+          },
+          {
+            "points": [
+              {
+                "x": 634.7393999999999,
+                "y": 911.4615
+              },
+              {
+                "x": 636.147,
+                "y": 909.3519
+              }
+            ],
+            "start_progress": 0.7342260953441355,
+            "end_progress": 0.7398018599921972
+          },
+          {
+            "points": [
+              {
+                "x": 636.849,
+                "y": 825.6807
+              },
+              {
+                "x": 641.0681999999999,
+                "y": 832.0077
+              }
+            ],
+            "start_progress": 0.7398018599921972,
+            "end_progress": 0.7453776246402587
+          },
+          {
+            "points": [
+              {
+                "x": 636.849,
+                "y": 908.6481
+              },
+              {
+                "x": 640.3643999999999,
+                "y": 903.0231
+              }
+            ],
+            "start_progress": 0.7453776246402587,
+            "end_progress": 0.7509533892883202
+          },
+          {
+            "points": [
+              {
+                "x": 641.0681999999999,
+                "y": 902.3211
+              },
+              {
+                "x": 642.474,
+                "y": 897.3981
+              }
+            ],
+            "start_progress": 0.7509533892883202,
+            "end_progress": 0.7565291539363819
+          },
+          {
+            "points": [
+              {
+                "x": 641.772,
+                "y": 832.7115
+              },
+              {
+                "x": 644.5835999999999,
+                "y": 841.1481
+              }
+            ],
+            "start_progress": 0.7565291539363819,
+            "end_progress": 0.762650632794087
+          },
+          {
+            "points": [
+              {
+                "x": 682.7652,
+                "y": 919.8981
+              },
+              {
+                "x": 684.8748,
+                "y": 837.6327
+              },
+              {
+                "x": 686.2824,
+                "y": 836.2269
+              }
+            ],
+            "start_progress": 0.7694654562528288,
+            "end_progress": 0.8274821955721214
+          },
+          {
+            "points": [
+              {
+                "x": 686.9844,
+                "y": 836.2269
+              },
+              {
+                "x": 698.2344,
+                "y": 839.7423
+              },
+              {
+                "x": 715.8132,
+                "y": 866.4615
+              }
+            ],
+            "start_progress": 0.8274821955721214,
+            "end_progress": 0.8576117900183339
+          },
+          {
+            "points": [
+              {
+                "x": 722.844,
+                "y": 879.1173
+              },
+              {
+                "x": 736.9074,
+                "y": 905.8365
+              },
+              {
+                "x": 747.4536,
+                "y": 911.4615
+              }
+            ],
+            "start_progress": 0.8576117900183339,
+            "end_progress": 0.8866242245662068
+          },
+          {
+            "points": [
+              {
+                "x": 748.8594,
+                "y": 819.3519
+              },
+              {
+                "x": 749.5632,
+                "y": 909.3519
+              }
+            ],
+            "start_progress": 0.8866242245662068,
+            "end_progress": 0.9485790593567656
+          },
+          {
+            "points": [
+              {
+                "x": 685.5786,
+                "y": 831.3039
+              },
+              {
+                "x": 686.9844,
+                "y": 834.8211
+              }
+            ],
+            "start_progress": 0.9485790593567656,
+            "end_progress": 0.9541548240048271
+          },
+          {
+            "points": [
+              {
+                "x": 716.5152,
+                "y": 867.1635
+              },
+              {
+                "x": 718.6248,
+                "y": 871.3827
+              }
+            ],
+            "start_progress": 0.9541548240048271,
+            "end_progress": 0.9597305886528887
+          },
+          {
+            "points": [
+              {
+                "x": 719.3286,
+                "y": 872.0865
+              },
+              {
+                "x": 721.4382,
+                "y": 876.3039
+              }
+            ],
+            "start_progress": 0.9597305886528887,
+            "end_progress": 0.9653063533009503
+          },
+          {
+            "points": [
+              {
+                "x": 722.1419999999999,
+                "y": 877.7115
+              },
+              {
+                "x": 722.844,
+                "y": 879.1173
+              }
+            ],
+            "start_progress": 0.9653063533009503,
+            "end_progress": 0.9708821179490118
+          },
+          {
+            "points": [
+              {
+                "x": 747.4536,
+                "y": 911.4615
+              },
+              {
+                "x": 748.8594,
+                "y": 910.0539
+              }
+            ],
+            "start_progress": 0.9708821179490118,
+            "end_progress": 0.9764578825970734
+          },
+          {
+            "points": [
+              {
+                "x": 748.1574,
+                "y": 910.7577
+              },
+              {
+                "x": 749.5632,
+                "y": 910.0539
+              }
+            ],
+            "start_progress": 0.9764578825970734,
+            "end_progress": 0.982033647245135
+          },
+          {
+            "points": [
+              {
+                "x": 748.1574,
+                "y": 911.4615
+              },
+              {
+                "x": 748.8594,
+                "y": 910.0539
+              }
+            ],
+            "start_progress": 0.982033647245135,
+            "end_progress": 0.9876094118931965
+          },
+          {
+            "points": [
+              {
+                "x": 748.8594,
+                "y": 918.4923
+              },
+              {
+                "x": 748.1574,
+                "y": 912.1635
+              }
+            ],
+            "start_progress": 0.9876094118931965,
+            "end_progress": 0.9931851765412582
+          }
+        ],
+        "ink_width": 17.1,
+        "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+        },
+        "outline": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+        },
+        "outline_width": 4.0,
+        "blur_layers": [
+          {
+            "alpha_power": 2,
+            "color": {
+              "red": 0.611764705882353,
+              "green": 0.25098039215686274,
+              "blue": 1.0,
+              "alpha": 0.32941176470588235
+            },
+            "sigma": 8.0,
+            "dx": 0.0,
+            "dy": 0.0
+          },
+          {
+            "alpha_power": 2,
+            "color": {
+              "red": 0.611764705882353,
+              "green": 0.25098039215686274,
+              "blue": 1.0,
+              "alpha": 0.6039215686274509
+            },
+            "sigma": 20.0,
+            "dx": 0.0,
+            "dy": 0.0
+          },
+          {
+            "alpha_power": 1,
+            "color": {
+              "red": 0.0,
+              "green": 0.0,
+              "blue": 0.0,
+              "alpha": 0.6274509803921569
+            },
+            "sigma": 12.0,
+            "dx": 0.0,
+            "dy": 6.0
+          }
+        ],
+        "gradient": null
+      },
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": null,
+      "fade": null,
+      "giant_title": {
+        "origin_x": 448.2861328125,
+        "origin_y": 864.396484375
+      },
+      "dissolve_seed": null
+    },
+    "font": null
+  },
+  {
+    "id": "giant-title-dissolve",
+    "layer": {
+      "id": "giant-title-dissolve",
+      "start": 0.5,
+      "end": 5.5,
+      "anchor_x": 540.0,
+      "anchor_y": 864.0,
+      "rotation_degrees": 0.0,
+      "runs": [
+        {
+          "text": "GO ON",
+          "font_asset_id": "font-Inter-Bold.ttf",
+          "font_size": 180.0,
+          "x": 243.8525390625,
+          "baseline_y": 929.875,
+          "letter_spacing": 0.0,
+          "shaped": false,
+          "glyphs": [
+            {
+              "glyph_id": 141,
+              "x": 0.0,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 135.087890625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 1747,
+              "x": 273.779296875,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 321,
+              "x": 316.40625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 300,
+              "x": 455.09765625,
+              "y": 0.0
+            }
+          ],
+          "fill": {
+            "red": 1.0,
+            "green": 1.0,
+            "blue": 1.0,
+            "alpha": 1.0
+          },
+          "stroke": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.9019607843137255
+          },
+          "stroke_width": 4.0,
+          "blur_layers": [
+            {
+              "alpha_power": 1,
+              "color": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.6274509803921569
+              },
+              "sigma": 12.0,
+              "dx": 0.0,
+              "dy": 6.0
+            }
+          ],
+          "gradient": null
+        }
+      ],
+      "effect": "dissolve-out",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": null,
+      "fade": null,
+      "giant_title": null,
+      "dissolve_seed": 138
+    },
+    "font": {
+      "kind": "library",
+      "id": "font-Inter-Bold.ttf",
+      "catalog": "font",
+      "catalog_id": "Inter-Bold.ttf",
+      "generation": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+      "fingerprint": {
+        "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c",
+        "byte_count": 326468
+      }
+    }
   }
 ]

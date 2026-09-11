@@ -64,6 +64,9 @@ private final class DeviceEffectsSession {
     var output: URL?
     private var prepared: (KriaMediaEngine.EditRecipe, [String: URL])?
     private var results: [[String: Any]] = []
+    private var activeCase: String?
+    private var phase = "idle"
+    private var requestedCount = 0
     private let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("DeviceEffects", isDirectory: true)
 
@@ -144,6 +147,7 @@ private final class DeviceEffectsSession {
     private func export(_ value: (KriaMediaEngine.EditRecipe, [String: URL]), id: String) async throws {
         let destination = directory.appendingPathComponent("\(id)-\(UUID().uuidString).mp4")
         status = "Exporting \(id)…"
+        phase = "export"; activeCase = id; saveReport()
         let start = Date()
         _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
             .export(recipe: value.0, assetURLs: value.1, outputURL: destination)
@@ -168,26 +172,43 @@ private final class DeviceEffectsSession {
         player.replaceCurrentItem(with: nil)
         prepared = nil
         results = []
-        for item in cases {
+        let arguments = ProcessInfo.processInfo.arguments
+        let requested: [Case]
+        if let index = arguments.firstIndex(of: "-device-effects-only"), index + 1 < arguments.count {
+            let ids = Set(arguments[index + 1].split(separator: ",").map(String.init))
+            requested = cases.filter { ids.contains($0.id) }
+        } else { requested = cases }
+        requestedCount = requested.count
+        for item in requested {
             do {
+                activeCase = item.id; phase = "preview_prepare"
+                status = "Preparing \(item.id)…"; saveReport()
+                let prepareStart = Date()
                 let value = try recipe(for: item)
                 // Request real compositor frames, including a backwards jump, before encoding.
                 let preview = try await AVPlayerPreviewComposer().makePreview(recipe: value.0, assetURLs: value.1)
+                let prepareSeconds = Date().timeIntervalSince(prepareStart)
+                let frameStart = Date()
                 let generator = AVAssetImageGenerator(asset: preview.playerItem.asset)
                 generator.videoComposition = preview.playerItem.videoComposition
                 generator.requestedTimeToleranceBefore = .zero
                 generator.requestedTimeToleranceAfter = .zero
                 for time in [0.1, 1.0, 3.0, 5.3, 1.0, 5.8] {
+                    phase = "preview_frame_\(time)"; saveReport()
                     _ = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
                 }
+                let frameSeconds = Date().timeIntervalSince(frameStart)
                 try await export(value, id: item.id)
+                results[results.count - 1]["preview_prepare_seconds"] = prepareSeconds
+                results[results.count - 1]["preview_frame_requests_seconds"] = frameSeconds
             } catch {
                 results.append(["effect": item.id, "status": "failed", "error": String(describing: error)])
             }
-            saveReport()
+            activeCase = nil; phase = "between_cases"; saveReport()
         }
+        phase = "finished"; saveReport()
         let failed = results.filter { $0["status"] as? String == "failed" }.count
-        status = "Finished: \(results.count - failed)/\(cases.count) exported; \(failed) failed. Report saved in DeviceEffects."
+        status = "Finished: \(results.count - failed)/\(requested.count) exported; \(failed) failed. Report saved in DeviceEffects."
         print("DEVICE_EFFECTS_RESULT \(status)")
     }
 
@@ -195,6 +216,7 @@ private final class DeviceEffectsSession {
         do {
             let report: [String: Any] = ["device": UIDevice.current.model, "os": UIDevice.current.systemVersion,
                                        "date": ISO8601DateFormatter().string(from: Date()), "results": results,
+                                       "phase": phase, "active_case": activeCase ?? "", "requested_count": requestedCount,
                                        "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."]
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 .write(to: directory.appendingPathComponent("report.json"), options: .atomic)

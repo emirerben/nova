@@ -1,8 +1,18 @@
 # Native giant-title increment — 2026-09-11
 
-Rollout remains disabled. This increment supports giant-title-wipe with static,
-none, fade-in, scale-up, slide-up/down/in, pop-in, bounce, ink-reveal and lyric-line.
-Other painter combinations still reject the contract.
+Rollout remains disabled. Giant-title-wipe now supports the shared text painters,
+including typewriter, stream-in, karaoke, smooth-type, staggered-slice and
+handwriting. Dissolve preserves production's static opening source: the cloud
+sequence never applies the later giant-title camera transform to that effect.
+
+Current validation: 396 cloud RGBA frames, 85 timing samples, 82 native tests and
+87 backend checks pass. The maximum RGBA error remains 3.359/255 under the 3.5/255
+limit, with independent foreground-edge checks. Preview and H.264 composition
+tests include handwriting, nonzero start/end times and backward seeking. A
+26-case physical-device catalog is being exercised; its result is recorded below.
+The following sections retain the evidence from each increment.
+
+## Initial vector increment
 
 The compiler resolves the production target-glyph camera origin. Native rendering
 retains font outlines and redraws at the final camera scale, preserving sharp
@@ -119,3 +129,26 @@ for runs sharing an asset and size, including per-glyph runs.
 All 348 reference frames, 82 native tests and 63 focused backend tests pass. The
 maximum RGBA error remains 3.359/255. The export/seek test includes the slower
 staggered case. This increment has not yet been installed on the phone.
+
+
+## Handwriting and dissolve increment
+
+Handwriting transforms its centerline paths at the final camera scale, with
+round caps and joins, then paints glow, black shadow, outline and foreground in
+cloud order. Both handwriting glow and font glow use entrance alpha squared.
+The same bounded device-space blur helper serves glyphs and pen paths.
+
+Individual masks matched while the aggregate pen glow was initially too bright.
+Skia source-over uses `src + floor(dst * (256 - srcAlpha) / 256)` on premultiplied
+bytes; Core Graphics rounds the destination product instead. Across 99 faint
+paths, that difference reached 25/255 mean RGBA error. The handwriting shadow
+compositor now preserves the integer operation per path using packed byte lanes.
+The rotated glowing handwriting case dropped to 0.312/255 maximum mean error.
+Reference: [SkColorPriv.h](https://github.com/google/skia/blob/main/src/core/SkColorPriv.h).
+
+New fixtures cover handwriting, rotated glow/outline/shadow, fading purple glow,
+and a rotated gradient. The compiler fixtures also validate each serialized
+layer through the public model, rather than relying on unchecked model copies.
+A production `_generate_overlay_sequence` spy compares every dissolve source and
+sample with/without the theme and confirms the overlay-index seed is retained.
+The native wire model still rejects a dissolve carrying a giant camera transform.
