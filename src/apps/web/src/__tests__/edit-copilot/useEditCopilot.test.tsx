@@ -1,3 +1,4 @@
+import { editorDraftRevision } from "@/lib/editor-chat/draft-revision";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { editCopilotTurn, executeEditCopilotReceipt } from "@/lib/plan-api";
 import {
@@ -1153,4 +1154,40 @@ describe("shared editor conversation", () => {
     await act(async () => { pending.resolve(response({ ops: [{ op: "set_title", title: "Hello" }] })); await sending; });
     expect(applyOpsAtomic).not.toHaveBeenCalled();
   });
+});
+
+
+test("use all uploaded videos applies once across equivalent polling refreshes", async () => {
+  const pending = deferred<EditCopilotTurnResponse>();
+  mockEditCopilotTurn.mockReturnValue(pending.promise);
+  const applyOpsAtomic = jest.fn(() => appliedResult());
+  const { result, rerender } = renderHook(({ url }) => useEditCopilot(copilotOptions({
+    getDraftRevision: () => editorDraftRevision({ slots: [{ id: "one" }], source: { id: "a", signed_url: url } }),
+    applyOpsAtomic,
+  })), { initialProps: { url: "old" } });
+  let sending!: Promise<void>;
+  act(() => { sending = result.current.send("use all uploaded videos"); });
+  rerender({ url: "new" });
+  await act(async () => { pending.resolve(response()); await sending; });
+  expect(applyOpsAtomic).toHaveBeenCalledTimes(1);
+  expect(result.current.error).toBeNull();
+});
+
+
+test("retains a late chat edit instead of staging it into an in-flight save", async () => {
+  const pending = deferred<EditCopilotTurnResponse>();
+  mockEditCopilotTurn.mockReturnValue(pending.promise);
+  const applyOpsAtomic = jest.fn(() => appliedResult());
+  const { result, rerender } = renderHook(({ saving }) => useEditCopilot(copilotOptions({
+    getDraftRevision: () => "same-document",
+    getApplyBlockedReason: () => saving ? "The video is saving. Try again." : null,
+    applyOpsAtomic,
+  })), { initialProps: { saving: false } });
+  let sending!: Promise<void>;
+  act(() => { sending = result.current.send("use all uploaded videos"); });
+  rerender({ saving: true });
+  await act(async () => { pending.resolve(response()); await sending; });
+  expect(applyOpsAtomic).not.toHaveBeenCalled();
+  expect(result.current.error).toContain("saving");
+  expect(result.current.restoredInput).toBe("use all uploaded videos");
 });

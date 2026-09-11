@@ -148,6 +148,18 @@ answer first. For example, “help me with the third one” selects item 3 from 
 assistant's numbered diagnosis unless the user explicitly says “text bar 3”,
 “clip 3”, “caption 3”, or another current-draft object.
 
+Shared editor chat fences responses and confirmations with a content-based local
+revision (`src/lib/editor-chat/draft-revision.ts`) over full editable state,
+identity, history, and capabilities, rather than the budget-capped AI snapshot.
+Equivalent polling objects, refreshed delivery URLs, callback identity, playback,
+and saving state do not invalidate the revision. Actual draft, target, or
+capability changes still reject stale responses and expire pending confirmations.
+
+An active Save owns a captured draft: a late chat edit is rejected with a
+saving-specific retry message and its request text is retained, rather than
+staging changes that Save would discard. Saving itself does not change the
+content revision.
+
 ## Effects and transitions
 
 The typed operation contract includes camera-pulse add/patch/remove operations,

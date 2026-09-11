@@ -263,6 +263,7 @@ import type {
   CaptionsDrawerControl,
 } from "./CaptionsDrawer";
 import { useEditorChatBridge } from "@/lib/editor-chat/useEditorChatBridge";
+import { editorDraftRevision } from "@/lib/editor-chat/draft-revision";
 import { useEditorConfirmation } from "@/lib/editor-chat/useEditorConfirmation";
 import type { EditorChatState } from "@/lib/editor-chat/protocol";
 import ToolRail, { type EditorTool } from "./ToolRail";
@@ -5942,9 +5943,39 @@ export default function EditorShell({
   );
 
   const [editorChatInstanceId] = useState(() => crypto.randomUUID());
-  const editorChatRevision = useMemo(() => ({
-    snapshot: buildCopilotDraftSnapshot, saving, readOnly, id: crypto.randomUUID(),
-  }), [buildCopilotDraftSnapshot, saving, readOnly]).id;
+  // Polling replaces objects and callbacks without changing the document. Fence
+  // against full editable values instead; never use the budget-capped AI snapshot.
+  const editorChatRevision = useMemo(() => editorDraftRevision({
+    itemId, jobId: item?.current_job_id, timelineVariantId, timelineSeedIdentity,
+    historyVersion: history.version,
+    bars: state.bars, slots, grid: clip.state.grid,
+    clips: clip.clips, sourcePool: clip.sourcePool, poolAssets,
+    overlays: localOverlays, sfx: localSfx, cameraEffects: localCameraEffects,
+    visualBlocks: localVisualBlocks, motionScenes: localMotionScenes,
+    carouselMoment, title, mixLevel, musicRemoved,
+    videoMuted, soundMuted, musicStartS, backgroundMusic, lyricsEnabled, orientation,
+    lyricLineOverrides,
+    musicTrackId: effectiveMusicTrackId,
+    capabilities, readOnly, toolDisabledReasons,
+    introControlsEditable, visualBlocksAllowed, motionScenesAllowed,
+    captionMeta, captionCues: variant?.caption_cues,
+    intro: {
+      text: variant?.intro_text, mode: variant?.intro_mode,
+      layout: variant?.intro_layout, textMode: variant?.text_mode,
+      sequenceSynced: variant?.sequence_synced,
+      userEdited: variant?.text_elements_user_edited,
+    },
+  }), [
+    itemId, item?.current_job_id, timelineVariantId, timelineSeedIdentity,
+    history.version, state.bars, slots, clip.state.grid, clip.clips, clip.sourcePool,
+    poolAssets, localOverlays, localSfx, localCameraEffects, localVisualBlocks,
+    localMotionScenes, carouselMoment, title, mixLevel, musicRemoved,
+    effectiveMusicTrackId, videoMuted, soundMuted, musicStartS, backgroundMusic,
+    lyricsEnabled, orientation, lyricLineOverrides, capabilities, readOnly, toolDisabledReasons,
+    introControlsEditable, visualBlocksAllowed, motionScenesAllowed, captionMeta,
+    variant?.caption_cues, variant?.intro_text, variant?.intro_mode, variant?.intro_layout,
+    variant?.text_mode, variant?.sequence_synced, variant?.text_elements_user_edited,
+  ]);
   const editorChatRevisionRef = useRef(editorChatRevision);
   editorChatRevisionRef.current = editorChatRevision;
   const editorConfirmation = useEditorConfirmation(editorChatRevision);
@@ -5952,6 +5983,7 @@ export default function EditorShell({
   const copilot = useEditCopilot({
     persistLocally: false,
     getDraftRevision: () => editorChatRevisionRef.current,
+    getApplyBlockedReason: () => saving ? "The video is saving. Send this request again when it finishes." : null,
     confirmServerAction: (result) => editorConfirmation.request(
       result.renderRequest?.kind === "set_intro_layout"
         ? "Change the intro layout and render a new video version?"
