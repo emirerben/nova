@@ -2,9 +2,11 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import skia
 
 from app.pipeline.portable_text_layout import resolve_legacy_glyphs
+from tests.kria.reference_assertions import assert_reference_matches, write_linux_reference
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/phone_legacy_glyphs.json"
 
@@ -26,9 +28,13 @@ def reference_cases():
     return cases
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Canonical Skia font fixtures use Linux/FreeType; verify in the production Docker image",
+)
 def test_reference_matches_cloud_glyph_advances():
-    assert json.loads(FIXTURE.read_text()) == reference_cases()
+    assert_reference_matches(reference_cases(), json.loads(FIXTURE.read_text()))
 
 
 if __name__ == "__main__" and "--write" in sys.argv:
-    FIXTURE.write_text(json.dumps(reference_cases(), indent=2) + "\n")
+    write_linux_reference(FIXTURE, reference_cases())

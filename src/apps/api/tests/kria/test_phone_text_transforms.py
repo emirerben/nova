@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app.pipeline.text_motion_v2 import normalize_text_motion
 from app.pipeline.text_overlay_skia import _draw_with_animation
+from tests.kria.reference_assertions import assert_reference_matches
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/phone_text_transforms_v2.json"
 
@@ -122,14 +123,14 @@ def reference_cases(*, legacy=False):
 
 
 def test_native_transform_reference_is_current():
-    assert json.loads(FIXTURE.read_text()) == reference_cases()
+    assert_reference_matches(reference_cases(), json.loads(FIXTURE.read_text()))
 
 
 LEGACY_FIXTURE = FIXTURE.with_name("phone_text_transforms_legacy.json")
 
 
 def test_native_legacy_transform_reference_is_current():
-    assert json.loads(LEGACY_FIXTURE.read_text()) == reference_cases(legacy=True)
+    assert_reference_matches(reference_cases(legacy=True), json.loads(LEGACY_FIXTURE.read_text()))
 
 
 if __name__ == "__main__" and "--write" in sys.argv:

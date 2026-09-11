@@ -6,9 +6,12 @@ import unicodedata
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from app.pipeline import text_overlay_skia as cloud
 from app.pipeline.canvas import Canvas
 from app.pipeline.portable_text_layout import compile_text_overlay
+from tests.kria.reference_assertions import assert_reference_matches, write_linux_reference
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/phone_smooth_clips.json"
 
@@ -159,9 +162,13 @@ def reference():
     return result
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Canonical Skia font fixtures use Linux/FreeType; verify in the production Docker image",
+)
 def test_reference_matches_actual_cloud_masks():
-    assert json.loads(FIXTURE.read_text()) == reference()
+    assert_reference_matches(reference(), json.loads(FIXTURE.read_text()))
 
 
 if __name__ == "__main__" and "--write" in sys.argv:
-    FIXTURE.write_text(json.dumps(reference(), ensure_ascii=False, indent=2) + "\n")
+    write_linux_reference(FIXTURE, reference())

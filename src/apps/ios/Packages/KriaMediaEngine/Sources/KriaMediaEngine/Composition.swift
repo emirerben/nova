@@ -141,7 +141,25 @@ public struct PreviewComposition: @unchecked Sendable {
         var textBitmapBytes = textLayers.reduce(0) { $0 + Int($1.image.extent.width * $1.image.extent.height * 4) }
         for layer in recipe.textLayers {
             let painted = try RecipeTextLayer.make(layer, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: 64 * 1024 * 1024 - textBitmapBytes)
-            textBitmapBytes += painted.dissolve.map { $0.bitmapBytes + Int(painted.image.extent.width * painted.image.extent.height * 12) } ?? painted.giantTitle?.bitmapBytes ?? painted.handwriting?.bitmapBytes ?? painted.karaoke?.bitmapBytes ?? painted.staggered?.bitmapBytes ?? painted.smoothReveal?.bitmapBytes ?? (Int(painted.image.extent.width * painted.image.extent.height * 4) * (painted.handwriting == nil && painted.discreteReveal == nil ? 1 : 2))
+            let pixelCount = painted.image.extent.width * painted.image.extent.height
+            let bitmapBytes: Int
+            if let dissolve = painted.dissolve {
+                bitmapBytes = dissolve.bitmapBytes + Int(pixelCount * 12)
+            } else if let giantTitle = painted.giantTitle {
+                bitmapBytes = giantTitle.bitmapBytes
+            } else if let handwriting = painted.handwriting {
+                bitmapBytes = handwriting.bitmapBytes
+            } else if let karaoke = painted.karaoke {
+                bitmapBytes = karaoke.bitmapBytes
+            } else if let staggered = painted.staggered {
+                bitmapBytes = staggered.bitmapBytes
+            } else if let smoothReveal = painted.smoothReveal {
+                bitmapBytes = smoothReveal.bitmapBytes
+            } else {
+                let copies = painted.handwriting == nil && painted.discreteReveal == nil ? 1 : 2
+                bitmapBytes = Int(pixelCount * 4) * copies
+            }
+            textBitmapBytes += bitmapBytes
             textLayers.append(painted)
         }
         if !layers.contains(where: { $0.trackID != nil }) {

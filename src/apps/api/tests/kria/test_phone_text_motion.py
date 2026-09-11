@@ -15,6 +15,7 @@ from app.pipeline.text_motion_v2 import (
     smooth_type_state_at,
     total_duration_s,
 )
+from tests.kria.reference_assertions import assert_reference_matches
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/phone_text_motion_v2.json"
 
@@ -74,7 +75,7 @@ def reference_cases():
 
 
 def test_native_text_motion_fixture_matches_python_renderer():
-    assert json.loads(FIXTURE.read_text()) == reference_cases()
+    assert_reference_matches(reference_cases(), json.loads(FIXTURE.read_text()))
 
 
 if __name__ == "__main__" and sys.argv[1:] == ["--write"]:

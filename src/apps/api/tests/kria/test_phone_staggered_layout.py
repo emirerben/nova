@@ -12,6 +12,7 @@ from app.kria.portable_text import PortableTextLayer
 from app.pipeline import text_overlay_skia as cloud
 from app.pipeline.canvas import Canvas
 from app.pipeline.portable_text_layout import compile_text_overlay
+from tests.kria.reference_assertions import assert_reference_matches, write_linux_reference
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/phone_staggered_layout.json"
 
@@ -93,8 +94,12 @@ def reference():
     return cases
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Canonical Skia font fixtures use Linux/FreeType; verify in the production Docker image",
+)
 def test_actual_cloud_glyph_draw_matches_fixture():
-    assert json.loads(FIXTURE.read_text()) == reference()
+    assert_reference_matches(reference(), json.loads(FIXTURE.read_text()))
 
 
 @pytest.mark.parametrize("failure", ["index", "order", "text", "shape", "unnormalized"])
@@ -117,4 +122,4 @@ def test_rejects_invalid_staggered_geometry(failure):
 
 
 if __name__ == "__main__" and "--write" in sys.argv:
-    FIXTURE.write_text(json.dumps(reference(), ensure_ascii=False, indent=2) + "\n")
+    write_linux_reference(FIXTURE, reference())

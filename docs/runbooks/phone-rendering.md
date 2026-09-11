@@ -316,7 +316,21 @@ time window and exit breakup through native preview and H.264 export.
 The six-second physical pilot passed; general rollout and full physical-device
 qualification remain outstanding.
 Generate Python fixtures with `PYTHONPATH=.` so the shared editable environment
-cannot silently import another checkout's renderer.
+cannot silently import another checkout's renderer. Font-dependent references
+must be generated in the production Linux Docker image: macOS Skia uses CoreText
+metrics, while production and CI use FreeType. Their fixture-generation commands
+reject macOS; only the six exact font-reference comparisons skip there. Linux CI
+still runs them, and native tests consume the same committed Linux references.
+Numeric comparisons allow `1e-12` floating-point rounding; integer pixel values,
+array ordering, schema keys, and strings remain exact.
+
+The giant-title reference uses bounded JSON lines so the normal push credential
+scanner can inspect it. Against Linux references, the measured native maximum
+mean RGBA error is 3.602/255. Three heavily zoomed glow cases have a 3.75/255
+budget; other cases retain 3.5/255. Foreground edge displacement is independently
+bounded to two pixels for sharp frames (three for the rotated `styled-0` case); diffuse entrance frames retain the full-frame pixel check. The red/blue
+smooth-type gradient is separated from its green glow for that check. These are
+rasterization tolerances, not a claim of byte-identical output.
 
 
 ### Native karaoke and slide-in coverage (general rollout unqualified)

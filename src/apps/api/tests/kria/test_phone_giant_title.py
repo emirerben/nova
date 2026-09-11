@@ -13,6 +13,7 @@ from app.kria.portable_text import PortableTextLayer
 from app.pipeline import text_overlay_skia as cloud
 from app.pipeline.canvas import Canvas
 from app.pipeline.portable_text_layout import compile_text_overlay
+from tests.kria.reference_assertions import assert_reference_matches, write_linux_reference
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/phone_giant_title.json"
 
@@ -320,12 +321,17 @@ def frame_case(name, overlay, layer, font, canvas):
     )
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Canonical Skia font fixtures use Linux/FreeType; verify in the production Docker image",
+)
+@pytest.mark.timeout(300)
 def test_giant_fixture_matches_actual_cloud():
-    assert json.loads(FIXTURE.read_text()) == reference()
+    assert_reference_matches(reference(), json.loads(FIXTURE.read_text()))
 
 
 if __name__ == "__main__" and "--write" in sys.argv:
-    FIXTURE.write_text(json.dumps(reference(), separators=(",", ":")) + "\n")
+    write_linux_reference(FIXTURE, reference(), compact=True)
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -30001, 30001])

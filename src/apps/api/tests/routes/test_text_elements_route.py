@@ -41,6 +41,8 @@ def _job(variants: list[dict]) -> MagicMock:
     job = MagicMock()
     job.id = uuid.uuid4()
     job.status = "variants_ready"
+    job.all_candidates = {}
+    job.raw_storage_path = "source.mp4"
     job.assembly_plan = {"variants": variants}
     return job
 
