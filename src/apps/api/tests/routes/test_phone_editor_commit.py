@@ -17,6 +17,11 @@ from tests.pipeline.test_phone_guided_plan import fixture
 
 def phone_job(monkeypatch):
     monkeypatch.setattr(gj.settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        ["basicComposition", "local1080Export", "positionedText", "animatedText", "audioMix"],
+    )
     monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", False)
     plan, bindings = fixture()
     plan.text_elements = [
@@ -33,6 +38,7 @@ def phone_job(monkeypatch):
     raw = plan.model_dump(mode="json")
     job = SimpleNamespace(
         id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
         status="awaiting_device",
         current_phase=None,
         assembly_plan={
@@ -104,16 +110,24 @@ def test_phone_save_atomically_pins_revision_without_cloud_dispatch(monkeypatch)
     assert device_status(job, "guided_story").request.identity.recipe_revision == 3
 
 
-@pytest.mark.parametrize("failure", ["effect", "rollback", "binding"])
+@pytest.mark.parametrize("failure", ["capability", "cohort", "rollback", "binding"])
 def test_failed_native_compile_leaves_entire_baseline_untouched(monkeypatch, failure):
     job = phone_job(monkeypatch)
-    if failure == "rollback":
+    if failure == "capability":
+        monkeypatch.setattr(
+            gj.settings,
+            "phone_render_verified_features",
+            ["basicComposition", "local1080Export", "positionedText", "audioMix"],
+        )
+    elif failure == "cohort":
+        monkeypatch.setattr(gj.settings, "phone_render_user_ids", [uuid.uuid4()])
+    elif failure == "rollback":
         monkeypatch.setattr(gj.settings, "phone_rendering_enabled", False)
     elif failure == "binding":
         job.assembly_plan[PHONE_SOURCES_FIELD][0]["generation"] = "changed"
     before = copy.deepcopy(vars(job))
     with pytest.raises(HTTPException) as error:
-        save(job, effect="dissolve-out" if failure == "effect" else "fade-in")
+        save(job, effect="fade-in")
     assert error.value.status_code == 422
     assert vars(job) == before
 

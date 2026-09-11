@@ -22,6 +22,7 @@ def setup(monkeypatch):
     }
     job = SimpleNamespace(
         id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
         assembly_plan=copy.deepcopy(snapshot),
         status="queued",
         all_candidates={},
@@ -39,6 +40,11 @@ def setup(monkeypatch):
     planner = Mock(return_value=(plan.model_dump(mode="json"), None))
     monkeypatch.setattr(gb, "_guided_execution_plan", planner)
     monkeypatch.setattr(gb.settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        ["basicComposition", "local1080Export", "audioMix"],
+    )
     cloud = Mock(side_effect=AssertionError("phone job entered the cloud renderer"))
     monkeypatch.setattr(gb, "_run_guided_story_job", cloud)
     return job, snapshot, session, planner, cloud

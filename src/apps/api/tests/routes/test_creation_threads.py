@@ -4015,6 +4015,17 @@ async def test_phone_capabilities_are_explicit_and_rollback_removes_advertising(
 
 
 @pytest.mark.asyncio
+async def test_phone_pilot_is_advertised_only_to_enrolled_account(monkeypatch):
+    enrolled = uuid.uuid4()
+    monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [enrolled])
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["basicComposition"])
+    assert (await capabilities(SimpleNamespace(id=enrolled)))["phone_rendering"]["enabled"]
+    other = (await capabilities(SimpleNamespace(id=uuid.uuid4())))["phone_rendering"]
+    assert other == {"enabled": False, "recipe_versions": [], "verified_features": []}
+
+
+@pytest.mark.asyncio
 async def test_proxy_reservation_pins_original_and_rejects_changed_binding(monkeypatch):
     import app.routes.creation_threads as routes
     from app.config import settings

@@ -125,7 +125,7 @@ async def get_device_render(
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
     _record(job, status.request.identity)
-    if not settings.phone_rendering_enabled and status.phase == "awaiting_device":
+    if not settings.phone_rendering_for(user.id) and status.phase == "awaiting_device":
         return status.model_copy(
             update={
                 "phase": "needs_attention",
@@ -144,7 +144,7 @@ async def download_device_asset(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DeviceAssetDownloadOut:
-    if not settings.phone_rendering_enabled:
+    if not settings.phone_rendering_for(user.id):
         raise HTTPException(404, "Phone rendering is unavailable")
     user_id = user.id
     job = await _owned_job(db, user_id, job_id)
@@ -194,7 +194,7 @@ async def reserve_device_export(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DeviceExportReservationOut:
-    if not settings.phone_rendering_enabled:
+    if not settings.phone_rendering_for(user.id):
         raise HTTPException(404, "Phone rendering is unavailable")
     job = await _owned_job(db, user.id, job_id)
     record, status = _record(job, body.identity)

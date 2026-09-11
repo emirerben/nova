@@ -1399,7 +1399,7 @@ def _dispatch_item_render(
         phone_sources = ()
         if any(is_analysis_proxy_path(path) for path in clip_paths):
             if (
-                not settings.phone_rendering_enabled
+                not settings.phone_rendering_for(plan.user_id)
                 or approved_proposal is None
                 or not guided_applicable
             ):

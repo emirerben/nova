@@ -3594,6 +3594,7 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.guided_story import GuidedStoryExecutionPlan  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import compile_phone_guided_plan  # noqa: PLC0415
+    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
         pin_device_request,
@@ -3618,6 +3619,7 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
         )
     raw_plan, _track = _guided_execution_plan(job_id, guided)
     recipe = compile_phone_guided_plan(GuidedStoryExecutionPlan.model_validate(raw_plan), bindings)
+    validate_phone_pilot_recipe(recipe)
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe
     )
@@ -3626,6 +3628,8 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
         if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
             return
         job = entry[0]
+        if not settings.phone_rendering_for(job.user_id):
+            raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
         if any(
             current.get(field) != snapshot.get(field)

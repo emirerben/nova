@@ -1,6 +1,7 @@
 import json
 from typing import Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,6 +15,13 @@ class Settings(BaseSettings):
     # Phone rendering remains off until a capability group has device evidence.
     phone_rendering_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
+    phone_render_user_ids: list[UUID] = Field(default_factory=list)
+
+    def phone_rendering_for(self, user_id: object) -> bool:
+        """Apply the kill switch and optional account-scoped pilot cohort."""
+        return self.phone_rendering_enabled and (
+            not self.phone_render_user_ids or str(user_id) in map(str, self.phone_render_user_ids)
+        )
 
     # Storage
     storage_bucket: str

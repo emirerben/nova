@@ -2495,14 +2495,14 @@ async def _agent_message(
 
 @router.get("/capabilities", response_model=CreationCapabilitiesOut)
 async def capabilities(user: CurrentUser) -> dict[str, Any]:
-    _ = user
+    phone_enabled = settings.phone_rendering_for(user.id)
     return {
         "runtime_versions": [1, 2] if settings.kria_runtime_v2_enabled else [1],
         "phone_rendering": DeviceRenderCapabilities(
-            enabled=settings.phone_rendering_enabled,
-            recipe_versions=[2] if settings.phone_rendering_enabled else [],
+            enabled=phone_enabled,
+            recipe_versions=[2] if phone_enabled else [],
             verified_features=(
-                settings.phone_render_verified_features if settings.phone_rendering_enabled else []
+                settings.phone_render_verified_features if phone_enabled else []
             ),
         ).model_dump(),
         "visuals_enabled": bool(
@@ -4010,7 +4010,7 @@ async def upload_urls(
         if file.client_upload_id.startswith(PROXY_MEDIA_PREFIX):
             raise HTTPException(422, "Upload identifier uses a reserved prefix")
         if contract.purpose == "analysis_proxy":
-            if not settings.phone_rendering_enabled:
+            if not settings.phone_rendering_for(user.id):
                 raise HTTPException(404, "Phone rendering is unavailable")
             if len(file.client_upload_id) > 160 - len(PROXY_MEDIA_PREFIX):
                 raise HTTPException(422, "Proxy upload identifier is too long")
