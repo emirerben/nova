@@ -144,8 +144,6 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
     for key in (
         "emoji",
         "emoji_prefix",
-        "pop_animated_suffix",
-        "highlight_word",
         "karaoke_words",
         "theme_transition",
         "behind_subject",
@@ -154,6 +152,10 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
     ):
         if overlay.get(key):
             raise UnsupportedPortableText(f"unsupported text treatment: {key}")
+    if effect == "pop-in" and overlay.get("pop_animated_suffix"):
+        suffix_layer = _compile_pop_suffix_overlay(overlay, layer_id=layer_id, canvas=canvas)
+        if suffix_layer is not None:
+            return suffix_layer
     if effect == "karaoke-line":
         return _compile_karaoke_overlay(overlay, layer_id=layer_id, canvas=canvas)
     fade = _compile_fade_envelope(overlay)
@@ -616,3 +618,76 @@ def _compile_fade_envelope(overlay: dict):
         )
     # Other effects ignore these fields in the production dispatcher.
     return None
+
+
+def _compile_pop_suffix_overlay(overlay: dict, *, layer_id: str, canvas):
+    """The cloud suffix handler is a settled split line, with no entrance motion."""
+    from app.kria.portable_text import PortableTextLayer, PositionedTextRun, TextInk
+    from app.pipeline import text_overlay_skia as cloud
+    from app.services.render_library import bundled_font_asset
+
+    text = cloud._overlay_text(overlay)
+    suffix = overlay.get("pop_animated_suffix") or ""
+    if not suffix or not text.endswith(suffix):
+        return None
+    resolved = cloud._resolve_typeface_for_overlay(overlay)
+    cloud.assert_lyric_glyphs(resolved.typeface, text)
+    size = cloud._resolve_font_size_px(overlay)
+    width = cloud._overlay_max_width_px(overlay, canvas)
+    anchor = cloud._resolve_text_anchor(overlay)
+    args = (text, resolved.typeface, size, width)
+    if overlay.get("preserve_font_size"):
+        font, size, lines = cloud._wrap_at_fixed_size(*args)
+    elif anchor == "left":
+        font, size, lines = cloud._shrink_to_fit(*args)
+    else:
+        font, size, lines = cloud._shrink_to_fit_max_lines(*args, cloud._POP_SUFFIX_MAX_LINES)
+    if not lines or not lines[-1].rstrip().endswith(suffix):
+        return None
+    asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
+    block = cloud._measure_block(font, lines)
+    cx, cy = cloud._resolve_anchor(overlay, canvas)
+    top = cloud._vertical_block_top(cloud._resolve_vertical_anchor(overlay), cy, block["block_h"])
+    fill, blurs, _ = _resolve_paints(
+        {**overlay, "text_gradient": None}, width=1, height=1, left=0, top=0
+    )
+    prefix = lines[-1].rstrip()[: -len(suffix)].rstrip()
+    full_width = font.measureText(lines[-1])
+    draws = []
+    for index, line in enumerate([*lines[:-1], prefix]):
+        if line:
+            anchor_width = full_width if index == len(lines) - 1 else font.measureText(line)
+            draws.append((line, cloud._anchored_left_x(anchor, cx, anchor_width), index))
+    suffix_x = cloud._anchored_left_x(anchor, cx, full_width) + font.measureText(
+        prefix + " " if prefix else ""
+    )
+    draws.append((suffix, suffix_x, len(lines) - 1))
+    runs = [
+        PositionedTextRun(
+            text=line,
+            font_asset_id=asset.id,
+            font_size=size,
+            x=x,
+            baseline_y=top + block["ascent_offset"] + index * block["line_step"],
+            letter_spacing=0,
+            shaped=False,
+            glyphs=resolve_legacy_glyphs(font, line, 0),
+            fill=fill,
+            stroke=TextInk(red=0, green=0, blue=0, alpha=230 / 255),
+            stroke_width=max(
+                0, int(overlay.get("outline_px") or overlay.get("stroke_width") or 0) * 2
+            ),
+            blur_layers=blurs,
+        )
+        for line, x, index in draws
+    ]
+    return PortableTextLayer(
+        id=layer_id,
+        start=overlay["start_s"],
+        end=overlay["end_s"],
+        anchor_x=cx,
+        anchor_y=cy,
+        rotation_degrees=cloud._finite_float(overlay.get("rotation_deg"), 0),
+        runs=runs,
+        effect="static",
+    ), asset
