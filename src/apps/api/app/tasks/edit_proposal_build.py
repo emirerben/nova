@@ -502,29 +502,24 @@ def guided_feasibility_threshold_s(media_count: int) -> float:
 
 
 def adapt_target_duration_s(
-    brief_duration_s: int,
+    brief_duration_s: int | float,
     feasible_s: float,
     *,
     allow_source_reuse: bool = False,
-) -> int:
+) -> int | float:
     """Clamp the brief's target to what the footage can actually support.
 
-    Never exceeds the feasible estimate (floored, so the agent's target is
-    never longer than real footage allows) and never exceeds the creator's
-    requested duration. Callers must treat
-    ``feasible_s < guided_feasibility_threshold_s(len(media))`` as infeasible
-    before calling this — that threshold is always >= MIN_GUIDED_DURATION_S,
-    so in correct use ``math.floor(feasible_s)`` alone already clears the
-    ``max(MIN_GUIDED_DURATION_S, ...)`` floor below; it stays only as a
-    defensive absolute floor matching the agent's Pydantic ge=3.
+    Preserve subsecond footage and requested durations. Callers reject footage
+    below the guided feasibility threshold before invoking this; the floor
+    here stays as a defensive match for the proposal's 3s lower bound.
     """
 
     if allow_source_reuse:
-        return max(MIN_GUIDED_DURATION_S, min(int(brief_duration_s), 60))
-    return max(MIN_GUIDED_DURATION_S, min(int(brief_duration_s), math.floor(feasible_s)))
+        return max(MIN_GUIDED_DURATION_S, min(brief_duration_s, 60))
+    return max(MIN_GUIDED_DURATION_S, min(brief_duration_s, feasible_s, 60))
 
 
-def cadence_target_duration_s(brief, media: list[MediaRef]) -> int | None:  # noqa: ANN001
+def cadence_target_duration_s(brief, media: list[MediaRef]) -> int | float | None:  # noqa: ANN001
     """Validate a cadence against cut capacity, bypassing story-beat minimums."""
 
     cadence = brief.montage_cadence
@@ -538,7 +533,7 @@ def cadence_target_duration_s(brief, media: list[MediaRef]) -> int | None:  # no
     required_s = cycle_s if cadence.reuse_policy == "allow_repeat" else brief.duration_s
     if capacity_s + 0.001 < required_s:
         raise ValueError("round-robin cadence exceeds available source capacity")
-    return int(brief.duration_s)
+    return brief.duration_s
 
 
 def _fail(
@@ -1471,7 +1466,7 @@ def _run_draft_attempt(
                     db.commit()
             return
         target_duration_s = (
-            int(round(narration.duration_s))
+            max(MIN_GUIDED_DURATION_S, min(60, narration.duration_s))
             if narration is not None
             else cadence_target_s
             or adapt_target_duration_s(
@@ -1729,7 +1724,7 @@ def _run_draft_attempt(
             output is not None
             and brief.montage_cadence is None
             and video_reuse_policy != "allow_repeat"
-            and output.duration_s > math.floor(feasible_duration_s)
+            and output.duration_s > feasible_duration_s + 1e-6
         ):
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)

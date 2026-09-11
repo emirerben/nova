@@ -388,14 +388,14 @@ def infer_direction_guidance(
     item: PlanItem,
     *,
     media_digest: str,
-    duration_s: int,
+    duration_s: int | float,
 ) -> ProposalGuidance:
     """Build the first-pass hypothesis shown before any expensive planning."""
 
     hypothesis = DirectionHypothesis(
         direction="fast_montage",
         pace="fast",
-        duration_s=max(3, min(60, int(duration_s))),
+        duration_s=max(3, min(60, duration_s)),
         text_density="minimal",
         audio_role="music_led",
         rationale=(

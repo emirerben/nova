@@ -2,6 +2,13 @@ name: iOS
 
 # Always report the stable build-and-test check; select work at job level.
 on:
+  workflow_dispatch:
+    inputs:
+      benchmark_ui_group:
+        description: Compare a focused UI group after the full gate (manual only)
+        type: choice
+        default: none
+        options: [none, creation, projects, editor]
   pull_request:
     branches: [main, dev]
   push:
@@ -98,7 +105,23 @@ jobs:
         if: needs.changes.outputs.ios_ui == 'true'
         env:
           KRIA_IOS_TEST_MODE: ui
+          KRIA_IOS_UI_GROUPS: ${{ needs.changes.outputs.ios_ui_groups }}
         run: bash scripts/ios/verify.sh
+      - name: Compare focused UI coverage (manual only)
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_ui_group != 'none'
+        env:
+          BENCHMARK_UI_GROUP: ${{ inputs.benchmark_ui_group }}
+        run: |
+          KRIA_IOS_TEST_MODE=prepare-ui bash scripts/ios/verify.sh
+          KRIA_IOS_TEST_MODE=ui KRIA_IOS_UI_GROUPS="smoke,$BENCHMARK_UI_GROUP" bash scripts/ios/verify.sh
+      - name: Upload iOS test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-diagnostics
+          path: test-results/ios/
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Explain omitted UI tests
         if: needs.changes.outputs.ios_ui == 'false'
         run: echo "Native UI tests not applicable; build and unit tests passed." >> "$GITHUB_STEP_SUMMARY"

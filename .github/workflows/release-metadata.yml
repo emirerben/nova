@@ -1,0 +1,76 @@
+name: Release metadata
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  publish:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+      RELEASE_DATE: ${{ github.event.pull_request.merged_at }}
+    steps:
+      - name: Mint release-bot token
+        id: release-bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_METADATA_APP_ID }}
+          private-key: ${{ secrets.RELEASE_METADATA_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.release-bot.outputs.token }}
+
+      - name: Generate and publish release metadata
+        env:
+          GH_TOKEN: ${{ steps.release-bot.outputs.token }}
+        run: |
+          set -euo pipefail
+          release_date="${RELEASE_DATE%%T*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main --quiet
+            git reset --hard origin/main
+            python3 scripts/release_metadata.py prepare \
+              --pr-number "$PR_NUMBER" \
+              --title "$PR_TITLE" \
+              --labels-json "$PR_LABELS" \
+              --date "$release_date"
+
+            if git diff --quiet; then
+              echo "Release metadata for #$PR_NUMBER already exists."
+              exit 0
+            fi
+
+            unexpected="$(git diff --name-only | grep -vE '^(VERSION|CHANGELOG\.md|package\.json|package-lock\.json)$' || true)"
+            if [ -n "$unexpected" ]; then
+              echo "::error::release automation changed files outside its ownership: $unexpected"
+              exit 1
+            fi
+
+            git add VERSION CHANGELOG.md package.json package-lock.json
+            git commit -m "chore(release): publish metadata for #$PR_NUMBER [skip ci]"
+            if git push origin HEAD:main; then
+              echo "Published release metadata for #$PR_NUMBER."
+              exit 0
+            fi
+            echo "Push raced with another merge; retrying ($attempt/5)."
+            sleep "$attempt"
+          done
+
+          echo "::error::could not publish release metadata after five optimistic retries"
+          exit 1

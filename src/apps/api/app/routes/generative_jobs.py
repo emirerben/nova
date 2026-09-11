@@ -1673,10 +1673,23 @@ def _guided_text_state_for_response(
     runtime: dict[str, Any] | None = None
     if isinstance(execution_plan, dict) and isinstance(guided_snapshot, dict):
         try:
-            from app.pipeline.guided_story import compile_guided_runtime_plan  # noqa: PLC0415
+            from app.pipeline.guided_story import (  # noqa: PLC0415
+                GuidedStoryError,
+                compile_guided_runtime_plan,
+            )
 
             runtime = compile_guided_runtime_plan(execution_plan, guided_snapshot, revision)
-        except (KeyError, TypeError, ValueError):
+        except (GuidedStoryError, KeyError, TypeError, ValueError):
+            # compile_guided_runtime_plan's own contract normalizes every
+            # internal failure into GuidedStoryError (its final `except
+            # Exception as exc: raise GuidedStoryError(...) from exc`) -- this
+            # read path polls/loads on every request, so a revision that
+            # failed to compile once must degrade to the text_elements
+            # fallback below forever after, not crash the whole response on
+            # every subsequent load. Without GuidedStoryError in this tuple,
+            # a job whose guided-story revision failed to compile made its
+            # entire parent creation thread un-loadable (500) permanently --
+            # not just re-report the same failure. See KRI-26.
             runtime = None
     if runtime is not None:
         for row in runtime.get("text_elements") or []:

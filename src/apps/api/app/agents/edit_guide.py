@@ -23,6 +23,7 @@ from app.schemas.edit_proposal import (
     MAX_EDIT_PROPOSAL_MEDIA,
     EditConversationTurn,
     ProposalBrief,
+    ProposalDuration,
 )
 
 
@@ -60,7 +61,7 @@ class EditGuideRevision(BaseModel):
     goal: str = Field(default="", max_length=500)
     pace: Literal["relaxed", "balanced", "fast"]
     # Main Creator cadence plans can be as short as the shared proposal floor.
-    duration_s: int = Field(ge=3, le=60)
+    duration_s: ProposalDuration
     title: str = Field(min_length=1, max_length=100)
     story_beats: list[EditGuideRevisionBeat] = Field(min_length=1, max_length=20)
 
