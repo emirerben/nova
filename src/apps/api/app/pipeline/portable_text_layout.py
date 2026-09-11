@@ -116,6 +116,8 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         "bounce",
         "ink-reveal",
         "lyric-line",
+        "typewriter",
+        "stream-in",
     }:
         raise UnsupportedPortableText("giant title is unsupported for this text painter")
     layer, font = _compile_text_overlay(

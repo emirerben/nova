@@ -26,7 +26,7 @@ final class GiantTitleCompositionTests: XCTestCase {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../../../api/tests/fixtures/phone_giant_title.json").standardizedFileURL
         let document = try JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as! [String: Any]
         let rows = document["cases"] as! [[String: Any]]
-        let exportCases = try rows.prefix(1).map { row in
+        let exportCases = try rows.filter { ["static", "scheduled-typewriter"].contains($0["id"] as? String ?? "") }.map { row in
             var layer = row["layer"] as! [String: Any]
             layer["start"] = 1.0; layer["end"] = 5.0
             return try RecipeJSON.decoder().decode(PortableTextLayer.self, from: JSONSerialization.data(withJSONObject: layer))

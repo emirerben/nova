@@ -93,10 +93,10 @@ final class GiantTitleTests: XCTestCase {
                     }
                     XCTAssertEqual(distantMismatch, 0, "\(row.id) t=\(sample.time) edge displacement")
                 }
-                // Styled frames combine stroke, shadow and fill rasterization errors.
-                // Their geometry is independently constrained above; the maximum
-                // measured difference is 3.73/255, concentrated at glyph edges.
-                XCTAssertLessThanOrEqual(error, row.id.hasPrefix("styled") ? 4 : 3.5, "\(row.id) t=\(sample.time) MAE=\(error)")
+                // Independent edge checks above prevent layout shifts from hiding
+                // in the full-frame average. Hinted text plus large-size outlines
+                // currently has a maximum mean RGBA difference of 2.385/255.
+                XCTAssertLessThanOrEqual(error, 3.5, "\(row.id) t=\(sample.time) MAE=\(error)")
                 if let directory = ProcessInfo.processInfo.environment["KRIA_GIANT_DEBUG_DIR"] {
                     try context.writePNGRepresentation(of: image, to: URL(fileURLWithPath: directory).appendingPathComponent("native-\(row.id)-\(sample.time).png"), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
                 }

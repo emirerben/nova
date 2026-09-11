@@ -34,6 +34,8 @@ def reference():
         "bounce",
         "ink-reveal",
         "lyric-line",
+        "typewriter",
+        "stream-in",
     ]:
         overlay = dict(
             text="GO ON",
@@ -86,6 +88,26 @@ def reference():
         overlay = {**base_overlay, "effect": "fade-in", **values}
         layer, font = compile_text_overlay(overlay, layer_id=f"styled-{index}", canvas=canvas)
         cases.append(frame_case(f"styled-{index}", overlay, layer, font, canvas))
+    for name, values in [
+        (
+            "scheduled-typewriter",
+            dict(effect="typewriter", reveal_schedule_s=[0, 2.9, 3.15, 3.6, 3.8]),
+        ),
+        (
+            "slow-stream",
+            dict(
+                effect="stream-in",
+                text="GO ON GO ON GO ON GO ON GO ON GO ON",
+                text_size_px=32,
+                shape_text=True,
+                rotation_deg=12,
+                motion={"version": 2, "speed": 3, "cursor_style": "underscore"},
+            ),
+        ),
+    ]:
+        overlay = {**base_overlay, **values}
+        layer, font = compile_text_overlay(overlay, layer_id=name, canvas=canvas)
+        cases.append(frame_case(name, overlay, layer, font, canvas))
     samples = []
     for duration in [0.02, 0.2, 1, 4, 17]:
         for fraction in [

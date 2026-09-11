@@ -19,16 +19,28 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         let fill: CGColor; let strokeColor: CGColor; let strokeWidth: Double
         let outline: CGPath?
         func draw(_ context: CGContext, mode: CGTextDrawingMode = .fill, isMask: Bool = false, opacity: Double = 1) {
-            if let outline {
+            // Hint ordinary-size glyphs at fractional positions. Above 256px,
+            // use outlines to bound the platform glyph cache during a 60× zoom.
+            let deviceFontSize = CTFontGetSize(font) * hypot(context.ctm.a, context.ctm.b)
+            if let outline, mode == .clip || deviceFontSize > 256 {
                 context.setFillColor(isMask ? CGColor(gray: 1, alpha: 1) : fill.copy(alpha: floor(fill.alpha * opacity * 255) / 255)!)
                 context.setStrokeColor(strokeColor.copy(alpha: floor(strokeColor.alpha * opacity * 255) / 255)!)
-                context.setLineWidth(strokeWidth)
-                context.setLineJoin(.round)
+                context.setLineWidth(strokeWidth); context.setLineJoin(.round)
                 context.addPath(outline)
                 if mode == .clip { context.clip() }
                 else if mode == .stroke { context.strokePath() }
                 else { context.fillPath() }
                 return
+            }
+            if mode != .clip { context.saveGState() }
+            defer { if mode != .clip { context.restoreGState() } }
+            if !isMask, opacity < 1 {
+                let paintAlpha = mode == .stroke ? strokeColor.alpha : fill.alpha
+                context.setAlpha(paintAlpha > 0 ? floor(paintAlpha * opacity * 255) / 255 / paintAlpha : 0)
+            }
+            if outline != nil {
+                context.setShouldSubpixelPositionFonts(true)
+                context.setShouldSubpixelQuantizeFonts(false)
             }
             context.setTextDrawingMode(mode)
             context.textPosition = origin

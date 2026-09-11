@@ -2,16 +2,20 @@
 import Foundation
 import CoreImage
 
-struct NativeGiantTitlePainter: @unchecked Sendable {
+final class NativeGiantTitlePainter: @unchecked Sendable {
     private let layer: PortableTextLayer
     private let canvas: CGSize
     private let vector: PortableTextVectorPainter
     private let maxBitmapBytes: Int
+    private let assetURLs: [String: URL]
+    private let lock = NSLock()
+    private var lastReveal: TextRevealSample?
+    private var lastVector: PortableTextVectorPainter?
     let bitmapBytes: Int
 
     init(layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int) throws {
         guard layer.giantTitle != nil else { throw RecipeError.invalidTimeline }
-        self.layer = layer; self.canvas = canvas
+        self.layer = layer; self.canvas = canvas; self.assetURLs = assetURLs
         vector = try PortableTextVectorPainter(layer: layer, assetURLs: assetURLs, canvas: canvas, outlineGlyphs: true)
         // Settled image + live foreground. Shadows add a cropped output and one
         // padded source mask, bounded by Skia's 128px source-mask clip outset.
@@ -27,18 +31,36 @@ struct NativeGiantTitlePainter: @unchecked Sendable {
         try vector.image(bounds: CGRect(origin: .zero, size: canvas), maxBitmapBytes: maxBitmapBytes)
     }
 
+    private func visibleVector(localTime: Double) throws -> (PortableTextVectorPainter, Bool) {
+        guard let content = layer.discreteReveal,
+              let effect = PortableTextEffect(rawValue: layer.effect.rawValue) else { return (vector, true) }
+        let sample = try TextRevealTiming.sample(effect: effect, text: content.text, localTime: localTime,
+            start: layer.start, schedule: content.schedule, motion: layer.motion)
+        if sample.visibleText.unicodeScalars.elementsEqual(TextRevealTiming.normalized(content.text).unicodeScalars), !sample.showCursor {
+            return (vector, true)
+        }
+        lock.lock(); defer { lock.unlock() }
+        if sample == lastReveal, let lastVector { return (lastVector, false) }
+        let runs = content.visibleRuns(layer.runs, sample: sample)
+        let partial = try PortableTextVectorPainter(layer: NativeDiscreteRevealPainter.paintingLayer(layer, runs: runs),
+            assetURLs: assetURLs, canvas: canvas, outlineGlyphs: true)
+        lastReveal = sample; lastVector = partial
+        return (partial, false)
+    }
+
     func image(localTime: Double, settled: CIImage) throws -> CIImage {
         guard let theme = layer.giantTitle else { throw RecipeError.invalidTimeline }
+        let (visible, complete) = try visibleVector(localTime: localTime)
         let duration = layer.end - layer.start
         let state = try TextTransformTiming.sample(effect: layer.effect == .slideIn ? .static : PortableTextEffect(rawValue: layer.effect.rawValue)!,
-            text: layer.runs.map(\.text).joined(separator: "\n"), localTime: localTime, duration: duration,
+            text: layer.discreteReveal?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: localTime, duration: duration,
             motion: layer.motion, fade: layer.fade)
         let wipe = try GiantTitleTiming.sample(localTime: localTime, duration: duration)
         let outputBounds = CGRect(origin: .zero, size: canvas)
         guard state.alpha * wipe.alpha > 0, state.revealProgress > 0 else {
             return CIImage(color: .clear).cropped(to: outputBounds)
         }
-        if state.alpha == 1 && wipe.scale == 1 && state.scale == 1 && state.xTranslate == 0 && state.yTranslate == 0 && state.revealProgress >= 1 {
+        if complete && state.alpha == 1 && wipe.scale == 1 && state.scale == 1 && state.xTranslate == 0 && state.yTranslate == 0 && state.revealProgress >= 1 {
             return Self.alpha(settled, state.alpha * wipe.alpha)
         }
         let anchor = vector.anchor
@@ -59,7 +81,7 @@ struct NativeGiantTitlePainter: @unchecked Sendable {
             var clipTransform = vector.rotation.concatenating(transform)
             clip = CGPath(rect: rect, transform: &clipTransform)
         }
-        let image = try vector.image(bounds: outputBounds, maxBitmapBytes: maxBitmapBytes, transform: transform, clip: clip, opacity: state.alpha)
+        let image = try visible.image(bounds: outputBounds, maxBitmapBytes: maxBitmapBytes, transform: transform, clip: clip, opacity: state.alpha)
         return Self.alpha(image, wipe.alpha)
     }
 

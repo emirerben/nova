@@ -62,3 +62,24 @@ Reports: [first](iphone13pro-giant-first.json), [repeat](iphone13pro-giant-repea
 The updated interactive picker is left on the phone. Displayed playback FPS,
 seek-to-display p95, 60-second exports, memory/thermal measurements and recovery
 remain outstanding alongside the broader creator matrix.
+
+
+## Discrete reveal follow-through
+
+Typewriter and stream-in now retain a vector run set for the current text/cursor
+sample. It is replaced only when that sample changes. The giant camera redraws
+those glyphs at output resolution; it never enlarges a prefix bitmap. A delayed
+schedule changes letters during the zoom, and a rotated, shaped stream case
+checks cursor and small-font drawing.
+
+At smaller sizes, font hinting preserves the cloud's stroke weight. Explicit
+fractional positioning with Core Text subpixel quantization disabled fixes a
+separate half-pixel phase difference. Above a 256-pixel device font size, retained
+outlines bound glyph raster-cache use during the zoom. This reduces the full
+240-frame set's maximum mean RGBA error to 2.385/255. Every frame now uses the
+stricter 3.5/255 limit, including styles; the independent edge checks remain.
+
+All 81 native tests pass, including delayed-typewriter preview/export and backward
+seeking. The focused backend/compiler/reveal set passes 61 tests. This later
+increment has not yet been installed on the phone; the physical pilot above
+records the preceding plain/glow implementation.

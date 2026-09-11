@@ -252,7 +252,7 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         try fade?.validate()
         try giantTitle?.validate()
         if giantTitle != nil {
-            guard [.static, .none, .fadeIn, .scaleUp, .slideUp, .slideDown, .slideIn, .popIn, .bounce, .inkReveal, .lyricLine].contains(effect) else { throw RecipeError.invalidTimeline }
+            guard [.static, .none, .fadeIn, .scaleUp, .slideUp, .slideDown, .slideIn, .popIn, .bounce, .inkReveal, .lyricLine, .typewriter, .streamIn].contains(effect) else { throw RecipeError.invalidTimeline }
         }
         try handwriting?.validate()
         guard (effect == .typewriter || effect == .streamIn) == (discreteReveal != nil) else { throw RecipeError.invalidTimeline }
