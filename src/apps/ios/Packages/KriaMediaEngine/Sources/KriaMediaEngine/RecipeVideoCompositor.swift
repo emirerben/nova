@@ -12,6 +12,7 @@ struct RecipeVideoLayer: @unchecked Sendable {
     let start: Double
     let end: Double
     let fadeIn: Double
+    var transitionKind: Transition.Kind = .crossfade
 }
 
 struct RecipeTextLayer: @unchecked Sendable {
@@ -121,7 +122,14 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                     } else { continue }
                     let alpha = layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1
                     let positioned = source.transformed(by: layer.transform)
-                    if alpha < 1 {
+                    if alpha < 1 && layer.transitionKind != .crossfade {
+                        do {
+                            frame = try NativeClipTransitionPainter.image(incoming: positioned, outgoing: frame, kind: layer.transitionKind, progress: alpha, canvas: instruction.canvas)
+                        } catch {
+                            request.finish(with: error)
+                            return
+                        }
+                    } else if alpha < 1 {
                         // FFmpeg xfade blends encoded channel values. Keep the
                         // compositor's linear space for text, but perform this
                         // clip blend in encoded sRGB and convert back afterward.

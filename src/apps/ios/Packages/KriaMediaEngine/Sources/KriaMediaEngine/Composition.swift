@@ -97,7 +97,7 @@ public struct PreviewComposition: @unchecked Sendable {
                     let preferred = try await source.load(.preferredTransform)
                     layers.append(RecipeVideoLayer(trackID: track.trackID, image: nil,
                         transform: Self.transform(naturalSize: size, preferred: preferred, canvas: canvas, clip: clip),
-                        start: clip.timelineStart, end: end, fadeIn: fadeIn))
+                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade))
                     try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1)
                 } else {
                     guard let imageSource, let image = stillImage else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
@@ -108,7 +108,7 @@ public struct PreviewComposition: @unchecked Sendable {
                     let normalized = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
                     layers.append(RecipeVideoLayer(trackID: nil, image: normalized,
                         transform: Self.transform(naturalSize: normalized.extent.size, preferred: .identity, canvas: canvas, clip: clip),
-                        start: clip.timelineStart, end: end, fadeIn: fadeIn))
+                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade))
                 }
                 if let text = clip.text { textLayers.append(try RecipeTextLayer.make(text, start: clip.timelineStart, end: end, canvas: canvas)) }
             }

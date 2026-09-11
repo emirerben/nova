@@ -30,6 +30,16 @@ def test_generation_and_original_binding_participate_in_recipe_digest():
     assert recipe_digest(EditRecipeV2.model_validate(document)) != before
 
 
+@pytest.mark.parametrize("kind", ["fade_black", "fade_white", "wipe_left", "wipe_right"])
+def test_extended_transition_requires_its_own_capability(kind):
+    document = json.loads(FIXTURE.read_text())
+    document["tracks"][0]["clips"][0]["transition"] = {"kind": kind, "duration": 0.2}
+    document["required_capabilities"] = ["crossfade"]
+    recipe = EditRecipeV2.model_validate(document)
+    assert "clipTransitions" in recipe.required_capabilities
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
 @pytest.mark.parametrize("mutation", ["missing", "extra", "path", "fingerprint", "v1"])
 def test_v2_asset_projection_cannot_disagree_with_manifest(mutation):
     document = json.loads(FIXTURE.read_text())

@@ -56,8 +56,9 @@ private final class DeviceEffectsSession {
     struct Case: Decodable, Identifiable {
         struct Font: Decodable { let id: String; let catalogId: String }
         let id: String
-        let layer: PortableTextLayer
+        let layer: PortableTextLayer?
         let font: Font?
+        let transition: KriaMediaEngine.Transition.Kind?
     }
     let player = AVPlayer()
     var cases: [Case] = []
@@ -87,6 +88,9 @@ private final class DeviceEffectsSession {
                 throw MediaEngineError.missingAsset("device-effects.json")
             }
             cases = try RecipeJSON.decoder().decode([Case].self, from: Data(contentsOf: url))
+            cases += [KriaMediaEngine.Transition.Kind.crossfade, .fadeBlack, .fadeWhite, .wipeLeft, .wipeRight].map {
+                Case(id: "transition-\($0.rawValue)", layer: nil, font: nil, transition: $0)
+            }
             if ProcessInfo.processInfo.arguments.contains("-device-effects-auto") { await testAll() }
             else { await previewSelected() }
         } catch { status = "Catalog failed: \(error)" }
@@ -113,11 +117,15 @@ private final class DeviceEffectsSession {
                 source: asset.id == "footage" ? .original(mediaID: "footage") :
                     .library(catalog: .font, catalogID: item.font!.catalogId, generation: fingerprint.hex))
         }
+        let overlap = item.transition == nil ? 0.0 : 0.3
+        let clipDuration = 3 + overlap / 2
         let recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: KriaMediaEngine.Canvas(width: 1080, height: 1920),
             assets: assets, tracks: [TimelineTrack(id: "video", kind: .video, clips: [
-                TimelineClip(id: "clip-a", sourceAssetID: "footage", sourceDuration: 3),
-                TimelineClip(id: "clip-b", sourceAssetID: "footage", sourceDuration: 3, timelineStart: 3)
-            ])], assetManifest: RenderAssetManifest(assets: references), textLayers: [item.layer])
+                TimelineClip(id: "clip-a", sourceAssetID: "footage", sourceDuration: clipDuration),
+                TimelineClip(id: "clip-b", sourceAssetID: "footage", sourceDuration: clipDuration,
+                             timelineStart: clipDuration - overlap,
+                             transition: item.transition.map { KriaMediaEngine.Transition(kind: $0, duration: overlap) })
+            ])], assetManifest: RenderAssetManifest(assets: references), textLayers: item.layer.map { [$0] } ?? [])
         try recipe.validate()
         return (recipe, urls)
     }

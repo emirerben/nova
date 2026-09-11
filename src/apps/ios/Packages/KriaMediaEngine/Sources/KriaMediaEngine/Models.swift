@@ -128,7 +128,8 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if textLayers.contains(where: { $0.effect != .static && $0.effect != .none }) { result.insert(.animatedText) }
         if clips.contains(where: { $0.text != nil }) { result.insert(.animatedText) }
         if clips.contains(where: { $0.rate != 1 }) { result.insert(.variableSpeed) }
-        if clips.contains(where: { $0.transition != nil }) { result.insert(.crossfade) }
+        if clips.contains(where: { $0.transition?.kind == .crossfade }) { result.insert(.crossfade) }
+        if clips.contains(where: { $0.transition != nil && $0.transition?.kind != .crossfade }) { result.insert(.clipTransitions) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
             result.insert(.audioMix)
@@ -235,7 +236,7 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
 
 public struct MediaTransform: Codable, Equatable, Sendable { public var scale: Double; public var rotationDegrees: Double; public var positionX: Double; public var positionY: Double; public init(scale: Double = 1, rotationDegrees: Double = 0, positionX: Double = 0, positionY: Double = 0) { self.scale = scale; self.rotationDegrees = rotationDegrees; self.positionX = positionX; self.positionY = positionY }; public static let identity = MediaTransform() }
 
-public struct Transition: Codable, Equatable, Sendable { public enum Kind: String, Codable, Sendable { case crossfade }; public var kind: Kind; public var duration: TimeInterval; public init(kind: Kind = .crossfade, duration: TimeInterval = 0.35) { self.kind = kind; self.duration = duration } }
+public struct Transition: Codable, Equatable, Sendable { public enum Kind: String, Codable, Sendable { case crossfade, fadeBlack = "fade_black", fadeWhite = "fade_white", wipeLeft = "wipe_left", wipeRight = "wipe_right" }; public var kind: Kind; public var duration: TimeInterval; public init(kind: Kind = .crossfade, duration: TimeInterval = 0.35) { self.kind = kind; self.duration = duration } }
 
 public struct TextTreatment: Codable, Equatable, Sendable {
     public var text: String; public var fontName: String; public var fontSize: Double; public var colorRGBA: [Double]
@@ -268,7 +269,7 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
     public static let `default` = AudioMixRecipe()
 }
 
-public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable { case basicComposition, positionedText, animatedText, crossfade, audioMix, variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export }
+public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable { case basicComposition, positionedText, animatedText, crossfade, clipTransitions, audioMix, variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
 public struct ThumbnailSample: Codable, Equatable, Sendable { public var time: TimeInterval; public var fileURL: URL; private enum CodingKeys: String, CodingKey { case time, fileURL = "fileUrl" }; public init(time: TimeInterval, fileURL: URL) { self.time = time; self.fileURL = fileURL } }
