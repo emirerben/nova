@@ -12,6 +12,23 @@ private actor SessionExport: LocalExporting {
         return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
     }
 }
+private actor PausedSessionExport: LocalExporting {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var calls = 0
+    func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
+        calls += 1
+        await withCheckedContinuation { waiters.append($0) }
+        try Task.checkCancellation()
+        try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("test export".utf8).write(to: outputURL)
+        return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
+    }
+    func release() {
+        for waiter in waiters { waiter.resume() }
+        waiters.removeAll()
+    }
+}
+
 private struct SessionSources: DeviceSourceResolving {
     func resolve(for recipe: KriaMediaEngine.EditRecipe) async throws -> [String: URL] { [:] }
 }
@@ -77,6 +94,43 @@ private actor SessionRequest {
         XCTAssertEqual(saved.outputURL, synced.outputURL)
         let calls = await exporter.calls
         XCTAssertEqual(calls, 1)
+        await sessions.stopAll()
+    }
+
+    func testNewRevisionReplacesActiveObserverAndPublishesLocalOutput() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let initial = request(job), exporter = PausedSessionExport()
+        let remote = SessionRequest(initial)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: "awaiting_device", request: await remote.request)
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: SessionPublisher())
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if await exporter.calls == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let next = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: job, variantID: "first", recipeRevision: 2,
+            recipeDigest: String(repeating: "b", count: 64)), recipe: initial.recipe)
+        await remote.set(next)
+        await sessions.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if await exporter.calls == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 2)
+        await exporter.release()
+        // No further reconcile: the new revision's observer must deliver completion.
+        for _ in 0..<100 {
+            if sessions.presentations[key]?.phase == .synced { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(sessions.presentations[key]?.phase, .synced)
+        XCTAssertNotNil(sessions.presentations[key]?.localFile)
         await sessions.stopAll()
     }
 

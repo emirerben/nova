@@ -349,9 +349,11 @@ struct DraftSnapshot: Codable, Sendable {
 struct OpenInEditorResponse: Codable, Sendable, Equatable {
     let planItemID: String
     let variantID: String
+    var creationThreadID: UUID? = nil
     private enum CodingKeys: String, CodingKey {
         case planItemID = "plan_item_id"
         case variantID = "variant_id"
+        case creationThreadID = "creation_thread_id"
     }
 }
 

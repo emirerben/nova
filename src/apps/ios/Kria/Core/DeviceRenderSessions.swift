@@ -68,7 +68,7 @@ struct DeviceRenderPresentation: Equatable, Sendable {
                   status.request.identity.variantID == key.variantID else { throw APIError.invalidResponse }
             let request = status.request
             if requests[key] != request {
-                observations[key]?.cancel()
+                observations.removeValue(forKey: key)?.cancel()
                 if let previous = entries[key] { try await previous.cancel() }
                 guard tickets[key] == ticket else { return }
                 entries[key] = try factory(key, request)
@@ -162,10 +162,11 @@ struct DeviceRenderPresentation: Equatable, Sendable {
         guard observations[key] == nil else { return }
         observations[key] = Task { [weak self] in
             while !Task.isCancelled {
-                guard let saved = await coordinator.snapshot(), let self,
+                guard let saved = await coordinator.snapshot(), !Task.isCancelled, let self,
                       self.requests[key] == saved.request else { return }
                 self.presentations[key] = Self.presentation(saved)
                 if ![.preparing, .rendering, .syncing].contains(saved.phase), !(await coordinator.isBusy()) {
+                    guard !Task.isCancelled else { return }
                     self.observations[key] = nil
                     return
                 }

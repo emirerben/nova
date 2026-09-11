@@ -497,6 +497,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             } else {
                 nil
             }
+            self.threadID = threadID ?? receipt?.creationThreadID
             guard let resolvedPlanItemID = planItemID ?? receipt?.planItemID else {
                 throw APIError.invalidResponse
             }

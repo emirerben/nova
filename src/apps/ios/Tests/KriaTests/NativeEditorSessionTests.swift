@@ -276,6 +276,39 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
     }
 
+    func testPhoneGalleryJobUsesCreationThreadForLocalOriginals() async {
+        let jobID = UUID(), threadID = UUID()
+        let emptySnapshot = DraftSnapshot(
+            draftID: "unused",
+            itemID: "unused",
+            variantKey: "initial",
+            draftRevision: 0,
+            snapshotHash: "",
+            etag: "",
+            baseJobID: nil,
+            baseGenerationID: nil,
+            snapshot: [:],
+            canUndo: false,
+            createdAt: .now
+        )
+        var variant = Self.variant(duration: 2, generation: "generation-1")
+        variant["render_destination"] = .string("device")
+        let fake = EditorCommitSpy(
+            draftSnapshot: emptySnapshot,
+            openReceipt: OpenInEditorResponse(planItemID: "item-gallery", variantID: "initial", creationThreadID: threadID),
+            authoritativeVariant: variant
+        )
+        let project = ProjectSummary(id: jobID, title: "Gallery cut", status: .ready, updatedAt: .now, posterURL: nil)
+        let session = NativeEditorSession(project: project)
+
+        await session.load(libraryJobID: jobID, api: fake)
+        XCTAssertEqual(fake.openedJobID, jobID)
+        XCTAssertEqual(try! XCTUnwrap(session.draft.clips.first?.end), 2, accuracy: 0.0001)
+        XCTAssertNotNil(session.player)
+
+        XCTAssertEqual(session.deviceRenderKey, DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "initial"))
+    }
+
     func testReadyCreationProjectHydratesListProjectionAndLoadsItsExistingPlanItem() async throws {
         let threadID = UUID()
         let jobID = UUID()
