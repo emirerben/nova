@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.7.0] - 2026-09-11
+
+### Changed
+- fix: expose original sources for native editor previews (#1016) <!-- release-pr: 1016 -->
+
 ## [0.76.6.0] - 2026-09-11
 
 ### Changed
