@@ -101,11 +101,96 @@ def reference():
                 text_size_px=32,
                 shape_text=True,
                 rotation_deg=12,
-                motion={"version": 2, "speed": 3, "cursor_style": "underscore"},
+                motion={"version": 2, "speed": 0.25, "cursor_style": "underscore"},
             ),
         ),
     ]:
         overlay = {**base_overlay, **values}
+        layer, font = compile_text_overlay(overlay, layer_id=name, canvas=canvas)
+        cases.append(frame_case(name, overlay, layer, font, canvas))
+    overlay = {
+        **base_overlay,
+        "effect": "karaoke-line",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FF4D00",
+        "word_timings": [
+            {"text": "GO", "start_s": 0, "end_s": 3.1},
+            {"text": "ON", "start_s": 3.1, "end_s": 4},
+        ],
+    }
+    layer, font = compile_text_overlay(overlay, layer_id="late-karaoke", canvas=canvas)
+    assert layer.effect == "karaoke-line"
+    cases.append(frame_case("late-karaoke", overlay, layer, font, canvas))
+    for name, values in [
+        ("smooth-legacy", {}),
+        (
+            "styled-smooth-gradient",
+            {
+                "text": "GO ON GO ON",
+                "text_size_px": 32,
+                "rotation_deg": -18,
+                "text_gradient": {"colors": ["#FF0000", "#0000FF"], "angle_deg": 135},
+                "motion": {
+                    "version": 2,
+                    "speed": 0.25,
+                    "blur_px": 0,
+                    "order": "center-out",
+                    "direction": "down",
+                    "travel_px": 40,
+                },
+            },
+        ),
+        (
+            "styled-smooth-clear",
+            {
+                "text": "GO ON GO ON",
+                "text_size_px": 32,
+                "rotation_deg": -18,
+                "text_gradient": {"colors": ["#FF0000", "#0000FF"], "angle_deg": 135},
+                "shadow_enabled": True,
+                "glow_color": "#40FF90",
+                "glow_strength": 0.5,
+                "motion": {
+                    "version": 2,
+                    "speed": 0.25,
+                    "blur_px": 0,
+                    "order": "center-out",
+                    "direction": "down",
+                    "travel_px": 40,
+                },
+            },
+        ),
+        (
+            "styled-smooth",
+            {
+                "text": "GO ON GO ON",
+                "text_size_px": 32,
+                "rotation_deg": -18,
+                "text_gradient": {"colors": ["#FF0000", "#0000FF"], "angle_deg": 135},
+                "shadow_enabled": True,
+                "glow_color": "#40FF90",
+                "glow_strength": 0.5,
+                "motion": {
+                    "version": 2,
+                    "speed": 0.25,
+                    "blur_px": 8,
+                    "order": "center-out",
+                    "direction": "down",
+                    "travel_px": 40,
+                },
+            },
+        ),
+        ("smooth-motion", {"motion": {"version": 2, "blur_px": 8, "travel_px": 30}}),
+        (
+            "smooth-late",
+            {
+                "text": "GO ON GO ON GO ON",
+                "text_size_px": 32,
+                "motion": {"version": 2, "speed": 0.25, "blur_px": 8, "order": "reverse"},
+            },
+        ),
+    ]:
+        overlay = {**base_overlay, "effect": "smooth-type", **values}
         layer, font = compile_text_overlay(overlay, layer_id=name, canvas=canvas)
         cases.append(frame_case(name, overlay, layer, font, canvas))
     samples = []

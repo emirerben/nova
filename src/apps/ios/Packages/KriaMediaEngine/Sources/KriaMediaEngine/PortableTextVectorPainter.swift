@@ -9,10 +9,26 @@ struct PortableTextVectorPainter: @unchecked Sendable {
     private let canvas: CGSize
     private let runs: [Run]
     private let imageContext = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
+    private static let glyphTintKernel: Result<CIKernel, Error> = Result {
+        let kernels = try CIKernel.kernels(withMetalString: """
+        #include <CoreImage/CoreImage.h>
+        using namespace metal;
+        extern "C" { namespace coreimage {
+        [[stitchable]] float4 kriaGlyphMaskTint(sampler mask, float4 colorBytes, destination dest) {
+            float coverage = round(clamp(mask.sample(mask.transform(dest.coord())).a, 0.0, 1.0) * 255.0);
+            return floor(colorBytes * (coverage + 1.0) / 256.0) / 255.0;
+        }
+        }}
+        """)
+        guard let kernel = kernels.first else { throw MediaEngineError.unsupportedCapability }
+        return kernel
+    }
     let anchor: CGPoint
     let rotation: CGAffineTransform
     let bounds: CGRect
     struct Run {
+        struct Glyph { let id: CGGlyph; let position: CGPoint; let path: CGPath }
+        let outlinedGlyphs: [Glyph]
         let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint
         let blurs: [TextBlurLayer]; let gradient: TextGradient?
         let font: CTFont; let glyphs: [CGGlyph]?; let positions: [CGPoint]
@@ -22,7 +38,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
             // Hint ordinary-size glyphs at fractional positions. Above 256px,
             // use outlines to bound the platform glyph cache during a 60× zoom.
             let deviceFontSize = CTFontGetSize(font) * hypot(context.ctm.a, context.ctm.b)
-            if let outline, mode == .clip || deviceFontSize > 256 {
+            if let outline, isMask && mode != .clip || deviceFontSize > 256 {
                 context.setFillColor(isMask ? CGColor(gray: 1, alpha: 1) : fill.copy(alpha: floor(fill.alpha * opacity * 255) / 255)!)
                 context.setStrokeColor(strokeColor.copy(alpha: floor(strokeColor.alpha * opacity * 255) / 255)!)
                 context.setLineWidth(strokeWidth); context.setLineJoin(.round)
@@ -120,12 +136,16 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                     .insetBy(dx: -ceil(3 * blur.sigma) - 2, dy: -ceil(3 * blur.sigma) - 2).applying(rotation))
             }
             var outline: CGPath?
+            var outlines: [Run.Glyph] = []
             if outlineGlyphs {
                 let path = CGMutablePath()
                 func append(_ ids: [CGGlyph], _ locations: [CGPoint]) {
                     for (id, point) in zip(ids, locations) {
                         if let glyphPath = CTFontCreatePathForGlyph(font, id, nil) {
-                            path.addPath(glyphPath, transform: CGAffineTransform(translationX: point.x, y: point.y))
+                            let placed = CGMutablePath()
+                            placed.addPath(glyphPath, transform: CGAffineTransform(translationX: point.x, y: point.y))
+                            path.addPath(placed)
+                            outlines.append(Run.Glyph(id: id, position: point, path: placed))
                         }
                     }
                 }
@@ -142,7 +162,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                 }
                 outline = path
             }
-            runs.append(Run(line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers, gradient: run.gradient, font: font, glyphs: glyphIDs, positions: positions,
+            runs.append(Run(outlinedGlyphs: outlines, line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers, gradient: run.gradient, font: font, glyphs: glyphIDs, positions: positions,
                             fill: run.fill.cgColor, strokeColor: run.stroke.cgColor, strokeWidth: run.strokeWidth, outline: outline))
         }
         // Moving/scaling text can enter the canvas from an offscreen position.
@@ -158,39 +178,60 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         // This also bounds the off-canvas source mask needed for visible shadow pixels.
         let sigma = min(128, blur.sigma * hypot(transform.a, transform.b))
         // SkDraw::compute_mask_bounds caps the source-mask clip outset at 128.
-        let padding = min(128, ceil(3 * sigma) + 2)
-        let maskBounds = bounds.insetBy(dx: -padding, dy: -padding).integral
-        guard maskBounds.width * maskBounds.height * 4 <= Double(maxBitmapBytes),
-              let mask = CGContext(data: nil, width: Int(maskBounds.width), height: Int(maskBounds.height),
-                  bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw MediaEngineError.unsupportedCapability }
-        mask.translateBy(x: -maskBounds.minX, y: -maskBounds.minY)
-        mask.concatenate(transform)
-        mask.concatenate(rotation)
-        mask.translateBy(x: blur.dx, y: -blur.dy)
-        run.draw(mask, isMask: true)
-        guard let image = mask.makeImage() else { throw MediaEngineError.exportFailed }
+        let window = max(1, Int(floor(sigma * 3 * sqrt(2 * Double.pi) / 4 + 0.5)))
+        let border = window.isMultiple(of: 2) ? 3 * (window / 2) - 1 : 3 * ((window - 1) / 2)
+        let padding = min(128, sigma >= 2 ? Double(border) : ceil(3 * sigma))
+        let sourceClip = bounds.insetBy(dx: -padding, dy: -padding).integral
+        let placement = CGAffineTransform(translationX: blur.dx, y: -blur.dy)
+            .concatenating(rotation).concatenating(transform)
         let tint = TextInk(red: blur.color.red, green: blur.color.green, blue: blur.color.blue,
             alpha: floor(blur.color.alpha * pow(opacity, Double(blur.alphaPower)) * 255) / 255)
-        var shadow = tint.tint(mask: CIImage(cgImage: image))
-        if sigma >= 2 {
-            // SkMaskBlurFilter uses two equal boxes and an odd-width third.
-            // CIBoxBlur's inputRadius is the full kernel width (measured on a
-            // half-plane), despite its name. Half that value gives narrow tails.
-            let window = max(1, Int(floor(sigma * 3 * sqrt(2 * Double.pi) / 4 + 0.5)))
-            for size in [window, window, window.isMultiple(of: 2) ? window + 1 : window] {
-                shadow = shadow.applyingFilter("CIBoxBlur", parameters: ["inputRadius": Double(size)])
+        // Skia blurs and blends each glyph mask separately. Combining the line
+        // changes overlapping tails and accumulates different byte rounding.
+        for glyph in run.outlinedGlyphs {
+            let maskBounds = glyph.path.boundingBoxOfPath.applying(placement)
+                .insetBy(dx: -0.5, dy: -0.5).integral.intersection(sourceClip)
+            if maskBounds.isNull || maskBounds.isEmpty { continue }
+            guard maskBounds.width * maskBounds.height * 4 <= Double(maxBitmapBytes),
+                  let mask = CGContext(data: nil, width: Int(maskBounds.width), height: Int(maskBounds.height),
+                      bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw MediaEngineError.unsupportedCapability }
+            mask.translateBy(x: -maskBounds.minX, y: -maskBounds.minY)
+            mask.concatenate(placement)
+            mask.setFillColor(CGColor(gray: 1, alpha: 1))
+            if CTFontGetSize(run.font) * hypot(mask.ctm.a, mask.ctm.b) > 256 {
+                mask.addPath(glyph.path); mask.fillPath()
+            } else {
+                mask.setShouldSubpixelPositionFonts(true); mask.setShouldSubpixelQuantizeFonts(false)
+                CTFontDrawGlyphs(run.font, [glyph.id], [glyph.position], 1, mask)
             }
-        } else if sigma > 0 {
-            shadow = shadow.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": sigma])
+            guard let image = mask.makeImage() else { throw MediaEngineError.exportFailed }
+            var shadow = CIImage(cgImage: image)
+            if sigma >= 2 {
+                // CIBoxBlur uses a full kernel width, despite inputRadius's name.
+                for size in [window, window, window.isMultiple(of: 2) ? window + 1 : window] {
+                    shadow = shadow.applyingFilter("CIBoxBlur", parameters: ["inputRadius": Double(size)])
+                }
+            } else if sigma > 0 {
+                shadow = shadow.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": sigma])
+            }
+            let alphaByte = Int((tint.alpha * 255).rounded())
+            func premultiplied(_ channel: Double) -> CGFloat {
+                CGFloat((Int((channel * 255).rounded()) * alphaByte + 127) / 255)
+            }
+            let color = CIVector(x: premultiplied(tint.red), y: premultiplied(tint.green),
+                z: premultiplied(tint.blue), w: CGFloat(alphaByte))
+            guard let tinted = try Self.glyphTintKernel.get().apply(extent: shadow.extent,
+                roiCallback: { _, rect in rect }, arguments: [shadow, color]) else { throw MediaEngineError.unsupportedCapability }
+            shadow = tinted.transformed(by: CGAffineTransform(translationX: maskBounds.minX, y: maskBounds.minY))
+            let crop = shadow.extent.intersection(bounds).integral
+            if crop.isNull || crop.isEmpty { continue }
+            guard let output = imageContext.createCGImage(shadow, from: crop) else { throw MediaEngineError.exportFailed }
+            context.draw(output, in: crop)
         }
-        let crop = CGRect(x: bounds.minX - maskBounds.minX, y: bounds.minY - maskBounds.minY,
-                          width: bounds.width, height: bounds.height)
-        guard let output = imageContext.createCGImage(shadow, from: crop) else { throw MediaEngineError.exportFailed }
-        context.draw(output, in: bounds)
     }
 
-    func image(bounds requestedBounds: CGRect? = nil, maxBitmapBytes: Int, transform: CGAffineTransform = .identity, clip: CGPath? = nil, opacity: Double = 1) throws -> CIImage {
+    func image(bounds requestedBounds: CGRect? = nil, maxBitmapBytes: Int, transform: CGAffineTransform = .identity, clip: CGPath? = nil, runClips: [CGPath?]? = nil, opacity: Double = 1) throws -> CIImage {
         let bounds = requestedBounds ?? self.bounds
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0,
               bounds.width * bounds.height * 4 <= Double(maxBitmapBytes),
@@ -202,7 +243,10 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         if let clip { context.addPath(clip); context.clip() }
         let maskBounds = transform.isIdentity ? bounds : self.bounds
         guard maskBounds.width * maskBounds.height * 4 <= Double(maxBitmapBytes) else { throw MediaEngineError.unsupportedCapability }
-        for run in runs {
+        guard runClips == nil || runClips?.count == runs.count else { throw RecipeError.invalidTimeline }
+        for (index, run) in runs.enumerated() {
+            context.saveGState(); defer { context.restoreGState() }
+            if let clip = runClips?[index] { context.addPath(clip); context.clip() }
             if !run.blurs.isEmpty && run.outline != nil {
                 for blur in run.blurs {
                     try drawScaledShadow(run: run, blur: blur, context: context, bounds: bounds,

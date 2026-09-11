@@ -9,7 +9,11 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
     private let maxBitmapBytes: Int
     private let assetURLs: [String: URL]
     private let lock = NSLock()
+    private let imageContext = CIContext(options: [.cacheIntermediates: false,
+        .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+        .outputColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
     private var lastReveal: TextRevealSample?
+    private var lastHighlights: [Bool]?
     private var lastVector: PortableTextVectorPainter?
     let bitmapBytes: Int
 
@@ -20,8 +24,23 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         // Settled image + live foreground. Shadows add a cropped output and one
         // padded source mask, bounded by Skia's 128px source-mask clip outset.
         let hasShadows = layer.runs.contains { !$0.blurLayers.isEmpty }
-        let shadowBytes = hasShadows ? Int(canvas.width * canvas.height * 4 + (canvas.width + 256) * (canvas.height + 256) * 4) : 0
-        bitmapBytes = Int(canvas.width * canvas.height * 8) + shadowBytes
+        var maxBlur = 0.0
+        if let content = layer.smoothReveal, let motion = layer.motion {
+            // Blur decreases and camera scale increases. Endpoint products on
+            // each interval conservatively bound their product between samples.
+            for index in 0..<32 {
+                let start = (layer.end - layer.start) * Double(index) / 32
+                let end = (layer.end - layer.start) * Double(index + 1) / 32
+                let blur = try TextMotionTiming.smoothType(text: content.text, localTime: start, motion: motion).blurPx
+                let scale = try GiantTitleTiming.sample(localTime: end, duration: layer.end - layer.start).scale
+                maxBlur = max(maxBlur, blur * scale)
+            }
+        }
+        let padding = maxBlur > 0.01 ? ceil(maxBlur * 3) + 2 : 0
+        let width = canvas.width + padding * 2, height = canvas.height + padding * 2
+        let shadowBytes = hasShadows ? Int(width * height * 4 + (width + 256) * (height + 256) * 4) : 0
+        let liveBytes = Int(width * height * (padding > 0 ? 8 : 4))
+        bitmapBytes = Int(canvas.width * canvas.height * 4) + liveBytes + shadowBytes
         guard bitmapBytes <= maxBitmapBytes else { throw MediaEngineError.unsupportedCapability }
         self.maxBitmapBytes = maxBitmapBytes
     }
@@ -32,6 +51,22 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
     }
 
     private func visibleVector(localTime: Double) throws -> (PortableTextVectorPainter, Bool) {
+        if let content = layer.karaoke {
+            let highlighted = content.starts.map { localTime >= $0 }
+            if !highlighted.contains(true) { return (vector, true) }
+            lock.lock(); defer { lock.unlock() }
+            if highlighted == lastHighlights, let lastVector { return (lastVector, false) }
+            let runs = zip(layer.runs, highlighted).map { run, active in
+                active ? PositionedTextRun(text: run.text, fontAssetID: run.fontAssetID, fontSize: run.fontSize,
+                    x: run.x, baselineY: run.baselineY, letterSpacing: run.letterSpacing, shaped: false,
+                    fill: content.highlight, stroke: run.stroke, strokeWidth: run.strokeWidth,
+                    blurLayers: run.blurLayers, glyphs: run.glyphs) : run
+            }
+            let colored = try PortableTextVectorPainter(layer: NativeDiscreteRevealPainter.paintingLayer(layer, runs: runs),
+                assetURLs: assetURLs, canvas: canvas, outlineGlyphs: true)
+            lastHighlights = highlighted; lastVector = colored
+            return (colored, false)
+        }
         guard let content = layer.discreteReveal,
               let effect = PortableTextEffect(rawValue: layer.effect.rawValue) else { return (vector, true) }
         let sample = try TextRevealTiming.sample(effect: effect, text: content.text, localTime: localTime,
@@ -53,7 +88,7 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         let (visible, complete) = try visibleVector(localTime: localTime)
         let duration = layer.end - layer.start
         let state = try TextTransformTiming.sample(effect: layer.effect == .slideIn ? .static : PortableTextEffect(rawValue: layer.effect.rawValue)!,
-            text: layer.discreteReveal?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: localTime, duration: duration,
+            text: layer.smoothReveal?.text ?? layer.discreteReveal?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: localTime, duration: duration,
             motion: layer.motion, fade: layer.fade)
         let wipe = try GiantTitleTiming.sample(localTime: localTime, duration: duration)
         let outputBounds = CGRect(origin: .zero, size: canvas)
@@ -81,8 +116,32 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
             var clipTransform = vector.rotation.concatenating(transform)
             clip = CGPath(rect: rect, transform: &clipTransform)
         }
-        let image = try visible.image(bounds: outputBounds, maxBitmapBytes: maxBitmapBytes, transform: transform, clip: clip, opacity: state.alpha)
-        return Self.alpha(image, wipe.alpha)
+        var runClips: [CGPath?]?
+        if let content = layer.smoothReveal {
+            runClips = [CGPath?](repeating: nil, count: layer.runs.count)
+            let clips = try content.clips(localTime: localTime, motion: layer.motion)
+            for (line, rectangle) in zip(content.lines, clips) {
+                guard let index = line.runIndex, let rectangle else { continue }
+                let rect = CGRect(x: rectangle.left, y: canvas.height - rectangle.bottom,
+                    width: max(0, rectangle.right - rectangle.left), height: rectangle.bottom - rectangle.top)
+                var mapping = vector.rotation.concatenating(transform)
+                runClips?[index] = CGPath(rect: rect, transform: &mapping)
+            }
+        }
+        let blur = state.blurPx * hypot(transform.a, transform.b)
+        let padding = blur > 0.01 ? ceil(blur * 3) + 2 : 0
+        let drawingBounds = outputBounds.insetBy(dx: -padding, dy: -padding)
+        var image = try visible.image(bounds: drawingBounds, maxBitmapBytes: maxBitmapBytes, transform: transform,
+            clip: clip, runClips: runClips, opacity: state.alpha)
+            .transformed(by: CGAffineTransform(translationX: drawingBounds.minX, y: drawingBounds.minY))
+        if blur > 0.01 {
+            image = image.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": blur])
+            // Blur in the renderer's sRGB space before handing the layer to a
+            // consumer, whose working color space may be linear (video fades).
+            guard let blurred = imageContext.createCGImage(image, from: outputBounds) else { throw MediaEngineError.exportFailed }
+            image = CIImage(cgImage: blurred)
+        }
+        return Self.alpha(image.cropped(to: outputBounds), wipe.alpha)
     }
 
     private static func alpha(_ image: CIImage, _ value: Double) -> CIImage {

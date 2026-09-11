@@ -312,6 +312,8 @@ class PortableTextLayer(_TextModel):
             "lyric-line",
             "typewriter",
             "stream-in",
+            "karaoke-line",
+            "smooth-type",
         }:
             raise ValueError("giant title is unsupported for this text painter")
         if (self.effect == "lyric-line") != bool(self.fade and self.fade.kind == "lyric"):

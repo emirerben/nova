@@ -43,6 +43,28 @@ final class GiantTitleTests: XCTestCase {
         XCTAssertThrowsError(try GiantTitleTiming.sample(localTime: 0, duration: 0))
     }
 #if canImport(AVFoundation)
+    func testSmoothBlurColorDoesNotDependOnConsumerWorkingSpace() throws {
+        let fixture = try fixture()
+        let row = try XCTUnwrap(fixture.cases.first { $0.id == "styled-smooth" })
+        let root = String(#filePath.prefix(upTo: #filePath.range(of: "/src/apps/ios/")!.lowerBound))
+        let font = URL(fileURLWithPath: root).appendingPathComponent("src/apps/api/assets/fonts/Inter-Bold.ttf")
+        let canvas = CGSize(width: fixture.width, height: fixture.height)
+        let layer = try RecipeTextLayer.make(row.layer, assetURLs: ["font-Inter-Bold.ttf": font], canvas: canvas)
+        let painter = try XCTUnwrap(layer.giantTitle)
+        let contexts = [CIContext(options: [.workingColorSpace: NSNull()]),
+                        CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.linearSRGB)!])]
+        for time in [0.08, 0.2, 1, 2.9] {
+            let image = try painter.image(localTime: time, settled: layer.image)
+            let pixels = contexts.map { context in
+                var values = [UInt8](repeating: 0, count: fixture.width * fixture.height * 4)
+                context.render(image, toBitmap: &values, rowBytes: fixture.width * 4,
+                    bounds: CGRect(origin: .zero, size: canvas), format: .RGBA8,
+                    colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+                return values
+            }
+            XCTAssertLessThanOrEqual(zip(pixels[0], pixels[1]).map { abs(Int($0) - Int($1)) }.max() ?? 0, 1)
+        }
+    }
     func testVectorFramesMatchCloudAtLargeZoomsAndRotatedStyles() throws {
         let fixture = try fixture()
         let root = String(#filePath.prefix(upTo: #filePath.range(of: "/src/apps/ios/")!.lowerBound))

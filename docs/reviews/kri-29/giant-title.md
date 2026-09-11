@@ -83,3 +83,26 @@ All 81 native tests pass, including delayed-typewriter preview/export and backwa
 seeking. The focused backend/compiler/reveal set passes 61 tests. This later
 increment has not yet been installed on the phone; the physical pilot above
 records the preceding plain/glow implementation.
+
+
+## Karaoke and smooth reveal follow-through
+
+Timed karaoke colors and per-line smooth-reveal masks now draw through the giant
+camera. Smooth motion blur is baked in sRGB before composition; rendering its
+result through sRGB and linear consumer contexts agrees within one byte. The
+planner reserves padded blur intermediates using a conservative bound on the
+product of decreasing entrance blur and increasing camera scale.
+
+Dense colored glows exposed another parity detail: Skia blurs and blends glyphs
+individually, with integer premultiplied-color rounding. The native painter now
+clips each glyph source to its needed bounds, uses GPU box blurs and a Metal
+color kernel for that byte rounding, and composites in the same glyph order.
+A whole-line glow retained color in tiny tails that the individual Skia masks
+rounded away. Gradient clips retain small-size font hinting.
+
+The current reference set has 324 frames, including gradient-only, glow/shadow,
+combined motion blur, rotated small text, highlights changing during zoom, and a
+stream-in speed of 0.25 so its prefix remains active late in the layer. Maximum
+mean RGBA error is 3.359/255, within the unchanged 3.5/255 limit. All 82 native
+tests and 72 focused backend tests pass. Preview/H.264 export/backward-seek checks
+include karaoke and smooth reveal. This increment is not yet phone-tested.
