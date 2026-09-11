@@ -6,6 +6,7 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
     private let layer: PortableTextLayer
     private let canvas: CGSize
     private let vector: PortableTextVectorPainter
+    private let staggeredVector: PortableTextVectorPainter?
     private let maxBitmapBytes: Int
     private let assetURLs: [String: URL]
     private let lock = NSLock()
@@ -21,6 +22,11 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         guard layer.giantTitle != nil else { throw RecipeError.invalidTimeline }
         self.layer = layer; self.canvas = canvas; self.assetURLs = assetURLs
         vector = try PortableTextVectorPainter(layer: layer, assetURLs: assetURLs, canvas: canvas, outlineGlyphs: true)
+        if let content = layer.staggered {
+            let drawing = PortableTextLayer(id: layer.id, start: layer.start, end: layer.end, anchorX: layer.anchorX,
+                anchorY: layer.anchorY, rotationDegrees: 0, runs: content.glyphs.map(\.run), effect: .fadeIn)
+            staggeredVector = try PortableTextVectorPainter(layer: drawing, assetURLs: assetURLs, canvas: canvas, outlineGlyphs: true)
+        } else { staggeredVector = nil }
         // Settled image + live foreground. Shadows add a cropped output and one
         // padded source mask, bounded by Skia's 128px source-mask clip outset.
         let hasShadows = layer.runs.contains { !$0.blurLayers.isEmpty }
@@ -39,7 +45,7 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         let padding = maxBlur > 0.01 ? ceil(maxBlur * 3) + 2 : 0
         let width = canvas.width + padding * 2, height = canvas.height + padding * 2
         let shadowBytes = hasShadows ? Int(width * height * 4 + (width + 256) * (height + 256) * 4) : 0
-        let liveBytes = Int(width * height * (padding > 0 ? 8 : 4))
+        let liveBytes = Int(width * height * (padding > 0 || layer.staggered != nil ? 8 : 4))
         bitmapBytes = Int(canvas.width * canvas.height * 4) + liveBytes + shadowBytes
         guard bitmapBytes <= maxBitmapBytes else { throw MediaEngineError.unsupportedCapability }
         self.maxBitmapBytes = maxBitmapBytes
@@ -85,7 +91,26 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
 
     func image(localTime: Double, settled: CIImage) throws -> CIImage {
         guard let theme = layer.giantTitle else { throw RecipeError.invalidTimeline }
-        let (visible, complete) = try visibleVector(localTime: localTime)
+        var (visible, complete) = try visibleVector(localTime: localTime)
+        var runTransforms: [CGAffineTransform]?
+        var runGroupAlphas: [Double]?
+        if let content = layer.staggered, let partial = staggeredVector {
+            let sample = try StaggeredSliceTiming.sample(text: content.text, localTime: localTime,
+                duration: layer.end - layer.start, motion: layer.motion)
+            if !sample.settled {
+                visible = partial; complete = false
+                runTransforms = []; runGroupAlphas = []
+                for entry in content.glyphs {
+                    let glyph = sample.lines[entry.logicalLine].glyphs[entry.glyphIndex]
+                    let pivot = CGPoint(x: entry.pivotX, y: canvas.height - entry.pivotY)
+                    runTransforms?.append(CGAffineTransform(translationX: -pivot.x, y: -pivot.y)
+                        .concatenating(CGAffineTransform(rotationAngle: -glyph.rotateDeg * .pi / 180))
+                        .concatenating(CGAffineTransform(translationX: pivot.x,
+                            y: pivot.y - entry.run.fontSize * glyph.translateYEm)))
+                    runGroupAlphas?.append(floor(min(255, max(0, 255 * glyph.opacity))) / 255)
+                }
+            }
+        }
         let duration = layer.end - layer.start
         let state = try TextTransformTiming.sample(effect: layer.effect == .slideIn ? .static : PortableTextEffect(rawValue: layer.effect.rawValue)!,
             text: layer.smoothReveal?.text ?? layer.discreteReveal?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: localTime, duration: duration,
@@ -132,7 +157,7 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         let padding = blur > 0.01 ? ceil(blur * 3) + 2 : 0
         let drawingBounds = outputBounds.insetBy(dx: -padding, dy: -padding)
         var image = try visible.image(bounds: drawingBounds, maxBitmapBytes: maxBitmapBytes, transform: transform,
-            clip: clip, runClips: runClips, opacity: state.alpha)
+            clip: clip, runClips: runClips, runTransforms: runTransforms, runGroupAlphas: runGroupAlphas, opacity: state.alpha)
             .transformed(by: CGAffineTransform(translationX: drawingBounds.minX, y: drawingBounds.minY))
         if blur > 0.01 {
             image = image.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": blur])

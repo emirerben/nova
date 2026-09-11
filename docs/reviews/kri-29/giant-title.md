@@ -106,3 +106,16 @@ stream-in speed of 0.25 so its prefix remains active late in the layer. Maximum
 mean RGBA error is 3.359/255, within the unchanged 3.5/255 limit. All 82 native
 tests and 72 focused backend tests pass. Preview/H.264 export/backward-seek checks
 include karaoke and smooth reveal. This increment is not yet phone-tested.
+
+
+## Staggered-slice follow-through
+
+Partial staggered glyphs now keep independent rotations, translations and
+byte-quantized group opacity inside the giant camera. The partial stage omits the
+overlay rotation exactly as the cloud does; the settled branch restores it.
+One bounded transparency intermediate is reserved. Font preparation is reused
+for runs sharing an asset and size, including per-glyph runs.
+
+All 348 reference frames, 82 native tests and 63 focused backend tests pass. The
+maximum RGBA error remains 3.359/255. The export/seek test includes the slower
+staggered case. This increment has not yet been installed on the phone.

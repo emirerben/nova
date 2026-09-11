@@ -5,6 +5,7 @@ import CoreImage
 
 /// Retains resolved font/glyph geometry so vector text can be painted at output scale.
 struct PortableTextVectorPainter: @unchecked Sendable {
+    private struct FontKey: Hashable { let assetID: String; let size: Double }
     private let layer: PortableTextLayer
     private let canvas: CGSize
     private let runs: [Run]
@@ -81,14 +82,22 @@ struct PortableTextVectorPainter: @unchecked Sendable {
             .concatenating(CGAffineTransform(rotationAngle: -layer.rotationDegrees * .pi / 180))
             .concatenating(CGAffineTransform(translationX: anchor.x, y: anchor.y))
         var runs: [Run] = []
+        var fonts: [FontKey: (CGFont, CTFont)] = [:]
         var bounds = CGRect.null
         for run in layer.runs {
             guard run.shaped || run.glyphs != nil else { throw MediaEngineError.unsupportedCapability }
-            guard let url = assetURLs[run.fontAssetID],
-                  let provider = CGDataProvider(url: url as CFURL), let graphicsFont = CGFont(provider) else {
-                throw MediaEngineError.missingAsset(run.fontAssetID)
+            let key = FontKey(assetID: run.fontAssetID, size: run.fontSize)
+            let graphicsFont: CGFont, font: CTFont
+            if let cached = fonts[key] { (graphicsFont, font) = cached }
+            else {
+                guard let url = assetURLs[run.fontAssetID],
+                      let provider = CGDataProvider(url: url as CFURL), let graphics = CGFont(provider) else {
+                    throw MediaEngineError.missingAsset(run.fontAssetID)
+                }
+                graphicsFont = graphics
+                font = CTFontCreateWithGraphicsFont(graphics, run.fontSize, nil, nil)
+                fonts[key] = (graphicsFont, font)
             }
-            let font = CTFontCreateWithGraphicsFont(graphicsFont, run.fontSize, nil, nil)
             let attributes: [NSAttributedString.Key: Any] = [
                 NSAttributedString.Key(kCTFontAttributeName as String): font,
                 NSAttributedString.Key(kCTForegroundColorAttributeName as String): run.fill.cgColor,
@@ -231,7 +240,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         }
     }
 
-    func image(bounds requestedBounds: CGRect? = nil, maxBitmapBytes: Int, transform: CGAffineTransform = .identity, clip: CGPath? = nil, runClips: [CGPath?]? = nil, opacity: Double = 1) throws -> CIImage {
+    func image(bounds requestedBounds: CGRect? = nil, maxBitmapBytes: Int, transform: CGAffineTransform = .identity, clip: CGPath? = nil, runClips: [CGPath?]? = nil, runTransforms: [CGAffineTransform]? = nil, runGroupAlphas: [Double]? = nil, opacity: Double = 1) throws -> CIImage {
         let bounds = requestedBounds ?? self.bounds
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0,
               bounds.width * bounds.height * 4 <= Double(maxBitmapBytes),
@@ -244,13 +253,23 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         let maskBounds = transform.isIdentity ? bounds : self.bounds
         guard maskBounds.width * maskBounds.height * 4 <= Double(maxBitmapBytes) else { throw MediaEngineError.unsupportedCapability }
         guard runClips == nil || runClips?.count == runs.count else { throw RecipeError.invalidTimeline }
+        guard runTransforms == nil || runTransforms?.count == runs.count,
+              runGroupAlphas == nil || (runGroupAlphas?.count == runs.count && runGroupAlphas!.allSatisfy { $0.isFinite && (0...1).contains($0) }) else { throw RecipeError.invalidTimeline }
         for (index, run) in runs.enumerated() {
+            let groupAlpha = runGroupAlphas?[index] ?? 1
+            if groupAlpha <= 0.001 { continue }
+            let drawingTransform = runTransforms?[index].concatenating(transform) ?? transform
             context.saveGState(); defer { context.restoreGState() }
+            if groupAlpha < 1 {
+                context.setAlpha(groupAlpha)
+                context.beginTransparencyLayer(in: bounds, auxiliaryInfo: nil)
+            }
+            defer { if groupAlpha < 1 { context.endTransparencyLayer() } }
             if let clip = runClips?[index] { context.addPath(clip); context.clip() }
             if !run.blurs.isEmpty && run.outline != nil {
                 for blur in run.blurs {
                     try drawScaledShadow(run: run, blur: blur, context: context, bounds: bounds,
-                                         transform: transform, maxBitmapBytes: maxBitmapBytes, opacity: opacity)
+                                         transform: drawingTransform, maxBitmapBytes: maxBitmapBytes, opacity: opacity)
                 }
             } else if !run.blurs.isEmpty {
                 guard let maskContext = CGContext(data: nil, width: Int(maskBounds.width), height: Int(maskBounds.height), bitsPerComponent: 8,
@@ -282,7 +301,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                 }
             }
             context.saveGState()
-            context.concatenate(transform)
+            context.concatenate(drawingTransform)
             context.concatenate(rotation)
             if run.strokeWidth > 0 { run.draw(context, mode: .stroke, opacity: opacity) }
             if let gradient = run.gradient {

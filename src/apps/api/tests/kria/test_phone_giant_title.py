@@ -193,6 +193,23 @@ def reference():
         overlay = {**base_overlay, "effect": "smooth-type", **values}
         layer, font = compile_text_overlay(overlay, layer_id=name, canvas=canvas)
         cases.append(frame_case(name, overlay, layer, font, canvas))
+    for name, values in [
+        ("staggered-legacy", {}),
+        (
+            "staggered-late",
+            {
+                "text": "GO ON GO ON",
+                "text_size_px": 32,
+                "rotation_deg": 23,
+                "shadow_enabled": True,
+                "outline_px": 2,
+                "motion": {"version": 2, "speed": 0.25},
+            },
+        ),
+    ]:
+        overlay = {**base_overlay, "effect": "staggered-slice", **values}
+        layer, font = compile_text_overlay(overlay, layer_id=name, canvas=canvas)
+        cases.append(frame_case(name, overlay, layer, font, canvas))
     samples = []
     for duration in [0.02, 0.2, 1, 4, 17]:
         for fraction in [
