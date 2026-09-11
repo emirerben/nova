@@ -110,8 +110,9 @@ The pilot does not satisfy or remove the remaining KRI-29 release gates.
   and capabilities explicitly advertised as verified by the server. Sign-out
   cancels its sessions. The status card distinguishes preparation, rendering,
   local availability, syncing, and synced output, with local playback/sharing
-  and sync retry. Supported editor saves issue a new device recipe revision. Capabilities remain
-  disabled until device verification.
+  and sync retry. Supported editor saves issue a new device recipe revision.
+  Account-pilot capabilities require explicit server configuration; general
+  rollout still requires full device qualification.
 - Project proxy uploads now carry immutable original fingerprint, duration,
   geometry, orientation, and audio provenance through reservation and recovery.
   Migration 0105 stores the binding before a signed PUT is issued. Registration
@@ -209,7 +210,8 @@ must succeed before either the desired variant or its next device receipt change
 `test_phone_editor_commit.py` covers revision supersession and atomic failure;
 `phone_text_transforms_{v2,legacy}.json` and `PortableTextTests` cover cloud timing
 references and real native preview/export. All unimplemented lanes still fail
-closed, and the rollout remains disabled pending the complete parity/device gates.
+closed. The account pilot is configured separately; general rollout requires
+the complete parity/device gates.
 
 
 ### Relinking local originals
@@ -264,7 +266,7 @@ The total bitmap budget includes every retained line plus settled and partial
 composites. `SmoothRevealTests` compares masks to real cloud drawing calls and
 exercises rotated text through native preview and H.264 export in all three
 orders. This remains staged: the remaining effects/styles and physical-device
-performance and visual gates are still required before rollout.
+performance and visual gates are still required before general rollout.
 
 ### Staggered Slice parity (staged)
 
@@ -278,10 +280,10 @@ phone preserves that distinction and does not add the common text exit fade.
 `phone_staggered_timing.json` covers 105 timing cases, and
 `StaggeredPainterTests` compares actual cloud draw calls and exercises both
 motion versions through native preview and H.264 export. Glyph and composite
-bitmaps share the bounded text-memory budget. This remains disabled for rollout
+bitmaps share the bounded text-memory budget. General rollout remains disabled
 until the complete capability matrix and physical-device gates pass.
 
-### Native dissolve coverage (rollout disabled)
+### Native dissolve coverage (general rollout unqualified)
 
 `DissolveTiming` matches the cloud's exit window and seeded particle alpha.
 `DissolveNoise` ports Skia's one-octave noise and text displacement map; its
@@ -311,12 +313,13 @@ The map and particle field retain eight bytes per canvas pixel within the
 caller-supplied budget. The integrated text painter reserves twenty bytes per canvas pixel for retained
 maps, text, and intermediate composition. `DissolvePainterTests` verifies its
 time window and exit breakup through native preview and H.264 export.
-Rollout and physical-device verification remain outstanding.
+The six-second physical pilot passed; general rollout and full physical-device
+qualification remain outstanding.
 Generate Python fixtures with `PYTHONPATH=.` so the shared editable environment
 cannot silently import another checkout's renderer.
 
 
-### Native karaoke and slide-in coverage (rollout disabled)
+### Native karaoke and slide-in coverage (general rollout unqualified)
 
 `karaoke-line` carries fixed-size word glyph runs, independently normalized local
 start times, and a highlight color. Each word switches color at its start time
@@ -336,7 +339,7 @@ The phone preserves that actual behavior, including ignoring motion and exit
 fades. A cloud full-frame comparison and native timing test pin this behavior.
 
 
-### Lyric and sequence fades (rollout disabled)
+### Lyric and sequence fades (general rollout unqualified)
 
 `TextFadeEnvelope` carries the production lyric head/tail durations and square
 or square-root tail curve. Short windows clamp the head first, then the tail;
@@ -350,5 +353,5 @@ sequence text after other lanes as production does. Other sequence effects
 remain rejected pending composite-stream parity. Unrelated effects continue
 to ignore fade_in_ms/fade_out_ms, matching the dispatcher.
 
-See `docs/reviews/kri-29/coverage.md` for the concrete catalog and combination
-ledger. This is implementation coverage, not rollout or device verification.
+See the [coverage ledger](../reviews/kri-29/coverage.md) for the concrete catalog
+and combination matrix. This is implementation coverage, not rollout or device verification.

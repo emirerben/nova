@@ -32,11 +32,12 @@ not pixel-identical encoding. Do not introduce new generated-media features.
 
 ## Acceptance and rollout
 
-Each enabled capability must pass correctness/parity and physical-device gates:
+For general rollout, each enabled capability must pass correctness/parity and physical-device gates:
 sustained 30-fps preview, seek p95 <=250ms, and a 60-second export <=120 seconds,
 with no crashes or critical thermal state. Record peak memory and thermal
 behavior per fixture. The user will help with physical iPhone testing.
-Capabilities remain disabled until measured. Rollback blocks new local attempts,
+General-rollout capabilities remain disabled until measured. The separately
+authorized account pilot below does not satisfy these gates. Rollback blocks new local attempts,
 preserves finished exports, and never uploads originals automatically. All
 agreed matrix rows must pass before KRI-29 is complete.
 
