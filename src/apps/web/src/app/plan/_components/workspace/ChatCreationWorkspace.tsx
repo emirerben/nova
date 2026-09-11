@@ -42,7 +42,7 @@ import { BeamLoader } from "@/components/progress";
 import { VoiceRecorder } from "@/app/generative/VoiceRecorder";
 import {
   applyCreationAction, cancelKriaTurn, creationFormat, creationFormatLabel, creationJobFailed,
-  creationJobPartial, creationJobReady, creationJobSettled, creationPlanningFailed, creationThreadMediaCount, createCreationThread,
+  creationProjectDeletionReason, creationJobPartial, creationJobReady, creationJobSettled, creationPlanningFailed, creationThreadMediaCount, createCreationThread,
   CreationThreadError, decideKriaApproval, deleteCreationThread, getCreationCapabilities,
   getKriaApproval, getKriaDelta, getKriaDraft, listCreationThreads, refreshCreationThread,
   creationClipLimit, sendCreationMessage, threadMessages, uploadCreationMedia,
@@ -133,21 +133,6 @@ function projectStatusLabel(thread: CreationThread): string {
   if (creationThreadInProgress(thread)) return "Rendering";
   if (creationThreadMediaCount(thread) > 0) return "Shaping direction";
   return "New project";
-}
-
-function projectDeletionBlocked(thread: CreationThread): boolean {
-  const stateStatus = [thread.state.job_status, thread.state.render_status]
-    .map((value) => typeof value === "string" ? value.toLowerCase() : "")
-    .find(Boolean);
-  const agentStatus = thread.creator_agent?.status?.toLowerCase();
-  return Boolean(
-    (thread.job && !creationJobSettled(thread))
-    || (agentStatus && [
-      "briefing", "planning", "awaiting_confirmation", "executing", "rendering",
-      "reviewing", "awaiting_feedback", "revising",
-    ].includes(agentStatus))
-    || (stateStatus && ["queued", "processing", "generating", "rendering"].includes(stateStatus)),
-  );
 }
 
 interface AttachedMedia {
@@ -1636,9 +1621,22 @@ export default function ChatCreationWorkspace({
           router.replace("/plan", { scroll: false });
         }
       }
-    } catch {
-      setProjectActionError("I couldn’t delete that project. It may have changed elsewhere.");
-      setError("I couldn’t delete that project. It may have changed elsewhere.");
+    } catch (cause) {
+      let message = cause instanceof CreationThreadError
+        ? cause.message : "I couldn’t delete that project. Try again in a moment.";
+      if (isCreationThreadRevisionConflict(cause)) {
+        try {
+          const next = await refreshCreationThread(target.id);
+          setDeleteTarget(next);
+          setProjects((items) => items.map((item) => item.id === next.id ? next : item));
+          setThread((current) => current?.id === next.id ? next : current);
+          message = "This project changed. Review it and confirm deletion again.";
+        } catch {
+          message = "This project changed, but couldn’t be refreshed. Close this dialog and try again.";
+        }
+      }
+      setProjectActionError(message);
+      setError(message);
     } finally {
       setProjectActionBusy(false);
     }
@@ -1908,7 +1906,7 @@ export default function ChatCreationWorkspace({
                 <DropdownMenuContent align="end" onCloseAutoFocus={(event) => { if (renameInputRef.current) { event.preventDefault(); requestAnimationFrame(() => renameInputRef.current?.focus()); } }}>
                   <DropdownMenuItem onSelect={() => beginRename(project)}>Rename project{productionPreview ? " (preview)" : ""}</DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={projectDeletionBlocked(project)} title={projectDeletionBlocked(project) ? "Finish the active render before deleting this project." : undefined} onSelect={() => setDeleteTarget(project)}>{projectDeletionBlocked(project) ? "Delete after rendering" : `Delete project${productionPreview ? " (preview)" : ""}`}</DropdownMenuItem>
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={Boolean(creationProjectDeletionReason(project))} title={creationProjectDeletionReason(project) ?? undefined} onSelect={() => setDeleteTarget(project)}>{creationProjectDeletionReason(project) ? "Delete when ready" : `Delete project${productionPreview ? " (preview)" : ""}`}</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

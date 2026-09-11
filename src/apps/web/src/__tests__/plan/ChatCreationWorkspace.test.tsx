@@ -1159,6 +1159,8 @@ describe("ChatCreationWorkspace", () => {
     const completed = {
       ...baseThread,
       title: "Finished harbor",
+      creator_agent: { status: "awaiting_feedback" },
+      state: { ...baseThread.state, render_status: "rendering" },
       active_job_id: "job-1",
       job: { id: "job-1", status: "variants_ready", variants: [
         { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
@@ -1190,9 +1192,9 @@ describe("ChatCreationWorkspace", () => {
     render(<ChatCreationWorkspace />);
 
     await userEvent.click(await screen.findByRole("button", { name: "Project actions for Rendering harbor" }));
-    const deleteItem = screen.getByRole("menuitem", { name: "Delete after rendering" });
+    const deleteItem = screen.getByRole("menuitem", { name: "Delete when ready" });
     expect(deleteItem).toHaveAttribute("aria-disabled", "true");
-    expect(deleteItem).toHaveAttribute("title", "Finish the active render before deleting this project.");
+    expect(deleteItem).toHaveAttribute("title", "Wait for the active render before deleting this project.");
   });
 
   it("shows a local error when rename loses a revision race", async () => {
@@ -1212,18 +1214,36 @@ describe("ChatCreationWorkspace", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t rename that project");
   });
 
-  it("shows a local error when delete loses a revision race", async () => {
+  it("refreshes a deletion revision conflict and requires another deliberate confirmation", async () => {
+    const user = userEvent.setup();
+    const titled = { ...baseThread, title: "Old name" };
+    const refreshed = { ...titled, revision: titled.revision + 1 };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([titled]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(titled);
+    jest.mocked(deleteCreationThread).mockRejectedValueOnce(new CreationThreadError("Creation thread changed", 409));
+    render(<ChatCreationWorkspace />);
+    await user.click(await screen.findByRole("button", { name: "Project actions for Old name" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete project" }));
+    jest.mocked(refreshCreationThread).mockResolvedValue(refreshed);
+    await user.click(screen.getByRole("button", { name: "Delete project" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("confirm deletion again");
+    expect(deleteCreationThread).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Delete project" }));
+    await waitFor(() => expect(deleteCreationThread).toHaveBeenLastCalledWith(refreshed));
+  });
+
+  it("shows the server deletion blocker", async () => {
     const user = userEvent.setup();
     const titled = { ...baseThread, title: "Old name" };
     jest.mocked(listCreationThreads).mockResolvedValueOnce([titled]);
     jest.mocked(refreshCreationThread).mockResolvedValue(titled);
-    jest.mocked(deleteCreationThread).mockRejectedValueOnce(new CreationThreadError("stale", 409));
+    jest.mocked(deleteCreationThread).mockRejectedValueOnce(new CreationThreadError("Project has an active upload", 409));
     render(<ChatCreationWorkspace />);
-
     await user.click(await screen.findByRole("button", { name: "Project actions for Old name" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete project" }));
     await user.click(screen.getByRole("button", { name: "Delete project" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t delete that project");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Project has an active upload");
+    expect(deleteCreationThread).toHaveBeenCalledTimes(1);
   });
 
   it("renames a project inline with Enter without sending creative direction", async () => {

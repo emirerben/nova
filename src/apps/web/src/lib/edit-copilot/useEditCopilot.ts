@@ -83,6 +83,8 @@ export interface UseEditCopilotOptions {
   /** Shared chat owns durable history; standalone test consumers may retain local storage. */
   persistLocally?: boolean;
   getDraftRevision?: () => string;
+  /** A save already owns a snapshot; do not stage edits it would discard. */
+  getApplyBlockedReason?: () => string | null;
   confirmServerAction?: (result: ApplyCopilotOpsResult) => Promise<boolean>;
   itemId: string;
   variantId: string;
@@ -563,6 +565,8 @@ export function useEditCopilot(
         return;
       }
       if (!targetIsCurrent()) throw new Error("The draft changed while Kria was working. Review it and send the request again.");
+      const applyBlockedReason = optsRef.current.getApplyBlockedReason?.();
+      if (!shouldClarify && applyBlockedReason) throw new Error(applyBlockedReason);
       let applyResult: ApplyCopilotOpsResult = shouldClarify
         ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
       : (optsRef.current.applyOpsAtomic ?? optsRef.current.applyOps)(response.ops, snapshot);
@@ -575,6 +579,8 @@ export function useEditCopilot(
         const approved = await optsRef.current.confirmServerAction(applyResult);
         if (abandonedTurnsRef.current.has(turnId)) return;
         if (!targetIsCurrent()) throw new Error("The draft changed. Confirm a new request against the current edit.");
+        const confirmationBlockedReason = optsRef.current.getApplyBlockedReason?.();
+        if (approved && confirmationBlockedReason) throw new Error(confirmationBlockedReason);
         if (!approved) {
           declined = true;
           applyResult = { textActions: [], nextSlots: null, applied: [], rejected: [] };

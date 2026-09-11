@@ -259,6 +259,19 @@ export function setCreationThreadDirectionOverride(
   );
 }
 
+/** Only background work blocks deletion; an open conversation may be idle. */
+export function creationProjectDeletionReason(thread: CreationThread): string | null {
+  if (thread.job ? !creationJobSettled(thread) :
+    [thread.state.job_status, thread.state.render_status].some((value) =>
+      typeof value === "string" && ["queued", "processing", "generating", "rendering"].includes(value.toLowerCase()))) {
+    return "Wait for the active render before deleting this project.";
+  }
+  if (["planning", "executing", "rendering", "reviewing", "revising"].includes(
+    thread.creator_agent?.status?.toLowerCase() ?? "",
+  )) return "Wait for Kria to finish working before deleting this project.";
+  return null;
+}
+
 /** Remove a project-only override and restore the account preference. */
 export function clearCreationThreadDirectionOverride(
   threadId: string,

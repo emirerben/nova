@@ -1,5 +1,6 @@
 import {
   applyCreationAction,
+  creationProjectDeletionReason,
   creationDirectionReceiptLabel,
   creationFormat,
   creationClipLimit,
@@ -861,5 +862,27 @@ describe("creation thread projection", () => {
 
     expect(label).toBe("Personalization · 3 applied (2 enforced, 1 advisory)");
     expect(creationDirectionReceiptLabel(thread())).toBeNull();
+  });
+});
+
+
+describe("project deletion eligibility", () => {
+  test.each(["briefing", "awaiting_confirmation", "awaiting_feedback"])("allows idle %s", (status) => {
+    expect(creationProjectDeletionReason(thread({ creator_agent: { status } }))).toBeNull();
+  });
+  test.each(["planning", "executing", "rendering", "reviewing", "revising"])("blocks active %s", (status) => {
+    expect(creationProjectDeletionReason(thread({ creator_agent: { status } }))).toContain("Kria");
+  });
+  test.each(["variants_ready", "variants_ready_partial"])("prefers settled job %s over stale projected render state", (status) => {
+    expect(creationProjectDeletionReason(thread({
+      job: { id: "job-1", status, variants: [] } as NonNullable<CreationThread["job"]>,
+      creator_agent: { status: "awaiting_feedback" }, state: { render_status: "rendering" },
+    }))).toBeNull();
+  });
+  test("blocks a live render even while the agent waits", () => {
+    expect(creationProjectDeletionReason(thread({
+      job: { id: "job-1", status: "processing", variants: [] } as NonNullable<CreationThread["job"]>,
+      creator_agent: { status: "awaiting_feedback" },
+    }))).toContain("active render");
   });
 });
