@@ -1,9 +1,30 @@
 # Phone rendering — KRI-29 work in progress
 
-Phone rendering is **disabled for rollout**. This branch includes staged guided
-creation, editor-save, recovery, publication, and native-renderer integration.
-It is not a completed KRI-29 implementation. Do not enable `PHONE_RENDERING_ENABLED` as a rollout: no creator
-style has passed the complete parity and physical-device gates.
+Phone rendering is an **account-scoped experimental pilot**, not a completed
+KRI-29 implementation or a general rollout. On 2026-09-11 the user requested
+enabling the currently supported path for their own account after the physical
+pilot. Full style parity, long exports, thermal and recovery qualification remain
+open in the [coverage ledger](../reviews/kri-29/coverage.md).
+
+## Account pilot configuration
+
+Deploy the account-gating backend before enabling it. Set `PHONE_RENDER_USER_IDS`
+to a JSON array containing only the explicitly enrolled user UUIDs, and set
+`PHONE_RENDER_VERIFIED_FEATURES` to the selected capability list before setting
+`PHONE_RENDERING_ENABLED=true`. An empty cohort means global eligibility when
+enabled; never use an empty cohort for this pilot. All flags default off/empty.
+The same configuration must reach API and worker process groups.
+
+Capabilities, proxy reservations, job dispatch, editor revision compilation and
+new export reservations enforce the cohort. Recipe compilation also checks the
+capability list and rejects giant-title handwriting because its measured export
+cost is too high. Unsupported edits fail without rendering analysis proxies or
+uploading originals. Existing cloud projects keep their current path; the local
+path starts with new, explicitly consented analysis-proxy uploads.
+
+Rollback: set `PHONE_RENDERING_ENABLED=false`. This blocks new attempts while
+preserving published outputs and allowing already-reserved exports to finalize.
+The pilot does not satisfy or remove the remaining KRI-29 release gates.
 
 ## Implemented foundations
 

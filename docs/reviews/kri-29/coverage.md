@@ -1,6 +1,8 @@
 # KRI-29 implementation coverage ledger
 
-Rollout: **disabled**. No row has passed its full release gate. An iPhone 13 Pro
+General rollout: **disabled**. An own-account experimental pilot was authorized on
+2026-09-11; see the [pilot configuration](../../runbooks/phone-rendering.md).
+No row has passed its full release gate. An iPhone 13 Pro
 [effect pilot](iphone13pro-effects.md) has passed preview-frame requests and
 six-second exports for 18 text cases. The production group baseline
 is `capability-baseline.json`; this ledger expands the source catalogs at the

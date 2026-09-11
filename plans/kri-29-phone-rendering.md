@@ -1,6 +1,6 @@
 # KRI-29: phone rendering for creator chat and re-edits
 
-Status: implementation in progress; no verified rollout capabilities.
+Status: implementation in progress; account-scoped experimental pilot authorized on 2026-09-11. General rollout remains unqualified.
 Branch: `emirerben/kri-29-rendering-videos-on-the-phone-in-our-app-rather-than-cloud`.
 
 The user approved cloud AI analysis of low-resolution proxies, device-only
@@ -42,3 +42,16 @@ agreed matrix rows must pass before KRI-29 is complete.
 
 See [current implementation boundaries](../docs/runbooks/phone-rendering.md) and
 [production capability baseline](../docs/reviews/kri-29/capability-baseline.json).
+
+## Current release scope (2026-09-11)
+
+The user requested enabling the staged supported path on their own account. This
+release adds explicit account gating and capability enforcement, blocks the slow
+giant-title handwriting combination, and preserves all unfinished matrix work
+above as future KRI-29 work. It does not claim those boxes are complete.
+
+- [x] Restrict capabilities, proxy uploads and device dispatch to the enrolled account.
+- [x] Reject recipes needing unadvertised capabilities or giant-title handwriting.
+- [x] Finish integration review and regression gates against current main.
+- [ ] Deploy backend with a nonempty cohort, then enable the pilot.
+- [ ] Verify production capabilities and a new-clip flow on the user's phone.
