@@ -120,7 +120,18 @@ final class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
                         source = image
                     } else { continue }
                     let alpha = layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1
-                    frame = opacity(source.transformed(by: layer.transform), alpha).composited(over: frame).cropped(to: instruction.canvas)
+                    let positioned = source.transformed(by: layer.transform)
+                    if alpha < 1 {
+                        // FFmpeg xfade blends encoded channel values. Keep the
+                        // compositor's linear space for text, but perform this
+                        // clip blend in encoded sRGB and convert back afterward.
+                        frame = opacity(positioned.applyingFilter("CILinearToSRGBToneCurve"), alpha)
+                            .composited(over: frame.applyingFilter("CILinearToSRGBToneCurve"))
+                            .applyingFilter("CISRGBToneCurveToLinear")
+                            .cropped(to: instruction.canvas)
+                    } else {
+                        frame = positioned.composited(over: frame).cropped(to: instruction.canvas)
+                    }
                 }
                 for text in instruction.text where time >= text.start && time < text.end {
                     if let layer = text.portable {
