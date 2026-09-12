@@ -39,7 +39,8 @@
       "KriaUITests/NativeEditorInspectorUITests/testTextFirstTapShowsTrimsAndSecondTapOpensInspector",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineCanZoomBeyondPreviousLimit",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeShrinksPreviewAndRestoresIt",
-      "KriaUITests/NativeEditorInspectorUITests/testTimelineSwipesSeekUnderFixedPlayhead"
+      "KriaUITests/NativeEditorInspectorUITests/testTimelineSwipesSeekUnderFixedPlayhead",
+      "KriaUITests/NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

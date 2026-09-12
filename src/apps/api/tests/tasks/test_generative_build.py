@@ -7177,6 +7177,11 @@ def test_reburn_subtitled_passes_caption_appearance(monkeypatch):
         caption_highlight_color="#A3E635",
         caption_stroke_width=6,
         caption_shadow_enabled=False,
+        caption_editor_style={
+            "alignment": "right",
+            "highlight_spoken_word": False,
+            "shadow_opacity": 0.25,
+        },
     )
     job = _FakeJob(assembly_plan={"variants": [variant]})
     _patch_job_session(monkeypatch, job)
@@ -7196,6 +7201,10 @@ def test_reburn_subtitled_passes_caption_appearance(monkeypatch):
         "highlight_color": "#A3E635",
         "stroke_width": 6,
         "shadow_enabled": False,
+        "alignment": "right",
+        "highlight_spoken_word": False,
+        "shadow_opacity": 0.25,
+        "display_style": "sentence",
     }
 
 
@@ -7581,6 +7590,7 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
         "caption_highlight_color": "#A3E635",
         "caption_stroke_width": 7,
         "caption_shadow_enabled": False,
+        "caption_editor_style": {"alignment": "left", "highlight_spoken_word": False},
         "caption_font_user_edited": True,
         "caption_position_user_edited": True,
         "caption_language": "tr",
@@ -7604,6 +7614,7 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     assert v["caption_highlight_color"] == "#A3E635"
     assert v["caption_stroke_width"] == 7
     assert v["caption_shadow_enabled"] is False
+    assert v["caption_editor_style"] == result["caption_editor_style"]
     assert v["caption_font_user_edited"] is True
     assert v["caption_position_user_edited"] is True
     # subtitled: the language must survive or the editor chip + re-transcribe lose it.
@@ -8652,3 +8663,24 @@ def test_persist_archetype_fallback_sets_clears_and_noops(monkeypatch):
     _patch_job_session(monkeypatch, clean)
     gb._persist_archetype_fallback("11111111-1111-1111-1111-111111111111", "montage", None)
     assert "archetype_fallback" not in clean.assembly_plan
+
+
+def test_speech_cut_rebuild_preserves_creator_caption_appearance(monkeypatch):
+    prior_style = {"alignment": "right", "shadow_opacity": 0.25, "highlight_spoken_word": False}
+    prior = {"variant_id": "subtitled", "caption_editor_style": prior_style}
+    job = _FakeJob(
+        assembly_plan={
+            "speech_cut_control": {"variant_id": "subtitled"},
+            "speech_cut_previous_variant": prior,
+        }
+    )
+    _patch_job_session(monkeypatch, job)
+    result = {
+        "variant_id": "subtitled",
+        "caption_editor_style": {"alignment": "center"},
+        "caption_cues": [{"text": "New timing", "start_s": 0, "end_s": 1}],
+    }
+    merged = gb._merge_speech_cut_prior_state(str(uuid.uuid4()), result)
+    assert merged["caption_editor_style"] == prior_style
+    assert merged["caption_cues"] == result["caption_cues"]
+    assert result["caption_editor_style"] == {"alignment": "center"}

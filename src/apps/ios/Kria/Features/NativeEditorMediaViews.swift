@@ -83,6 +83,7 @@ struct NativeVideoPreview: View {
     @State private var directResizeBaseline: CGFloat?
     @State private var directResizeTextBaseline: EditorTextElement?
     @State private var transformBaseline: EditorTextElement?
+    @State private var visualTransformBaseline: NativeEditorPreviewObject?
     @State private var transformCenter: CGPoint?
     @State private var transformStartVector: CGVector?
     @State private var liveTextBaseline: EditorTextElement?
@@ -154,7 +155,8 @@ struct NativeVideoPreview: View {
                     render: .mediaOverlay,
                     detail: overlay.map { nativeEffectName($0.raw, fallback: $0.kind ?? "Overlay") },
                     scale: overlay.map { nativeVisualScale($0.raw) } ?? 0.35,
-                    fullscreen: overlay.map { nativeIsFullscreen($0.raw) } ?? false
+                    fullscreen: overlay.map { nativeIsFullscreen($0.raw) } ?? false,
+                    rotation: overlay?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0
                 )
             case .visualBlock:
                 let block = document.visualBlocks.first { $0.id == item.id }
@@ -166,7 +168,8 @@ struct NativeVideoPreview: View {
                     render: .visualBlock,
                     detail: block?.kind,
                     scale: block.map { nativeVisualScale($0.raw) } ?? 0.35,
-                    fullscreen: block.map { nativeIsFullscreen($0.raw) } ?? false
+                    fullscreen: block.map { nativeIsFullscreen($0.raw) } ?? false,
+                    rotation: block?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0
                 )
             case .carousel:
                 return NativeEditorPreviewObject(item: item, text: nil, position: CGPoint(x: 0.5, y: 0.78), style: nil, title: "Carousel moment", render: .carousel, detail: nil)
@@ -362,6 +365,30 @@ struct NativeVideoPreview: View {
                 }
             }
         }
+        if directMoveObjectID == nil, let selection = session.selection,
+           let selected = objects.first(where: { $0.item.selection == selection }),
+           selected.item.kind != .text, canDirectlyPosition(selected), session.canEdit("visual_editor_style") {
+            let bounds = frame(for: selected, in: size)
+            let radians = selected.rotation * .pi / 180
+            let corner = CGPoint(x: bounds.midX + bounds.width / 2 * cos(radians) - bounds.height / 2 * sin(radians),
+                                 y: bounds.midY + bounds.width / 2 * sin(radians) + bounds.height / 2 * cos(radians))
+            if hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y) <= 22 {
+                directMoveObjectID = selected.id
+                visualTransformBaseline = selected
+                transformCenter = CGPoint(x: bounds.midX, y: bounds.midY)
+                transformStartVector = CGVector(dx: value.startLocation.x - bounds.midX, dy: value.startLocation.y - bounds.midY)
+                session.beginDirectManipulation()
+            }
+        }
+        if let baseline = visualTransformBaseline, let center = transformCenter, let start = transformStartVector {
+            let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
+            let radius = hypot(start.dx, start.dy)
+            guard radius > 1 else { return }
+            scaleHandler(for: baseline)?(baseline.scale * hypot(next.dx, next.dy) / radius)
+            let rotation = baseline.rotation + (atan2(next.dy, next.dx) - atan2(start.dy, start.dx)) * 180 / .pi
+            session.setVisualEditorStyle(baseline.item.selection, key: "rotation_deg", value: .number(max(-360, min(360, rotation))))
+            return
+        }
         if let baseline = transformBaseline, let center = transformCenter, let start = transformStartVector {
             let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
             let radius = hypot(start.dx, start.dy)
@@ -404,6 +431,7 @@ struct NativeVideoPreview: View {
         directMoveObjectID = nil
         directMoveBaseline = nil
         transformBaseline = nil
+        visualTransformBaseline = nil
         transformCenter = nil
         transformStartVector = nil
         if directResizeObjectID == nil { session.endDirectManipulation() }
@@ -421,7 +449,7 @@ struct NativeVideoPreview: View {
                     // A two-finger pinch owns the transform; do not also
                     // interpret its first finger as a corner drag.
                     directMoveObjectID = nil; directMoveBaseline = nil
-                    transformBaseline = nil; transformCenter = nil; transformStartVector = nil
+                    transformBaseline = nil; visualTransformBaseline = nil; transformCenter = nil; transformStartVector = nil
                     directResizeObjectID = object.id
                     directResizeBaseline = object.scale
                     if object.item.kind == .text {

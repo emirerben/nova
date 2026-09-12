@@ -20,7 +20,11 @@ import CoreImage
               let instruction = instructions.first(where: { CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: 60_000)) }),
               let layer = instruction.layers.first(where: { $0.clipID == id }), let size = layer.naturalSize else { return nil }
         var rectangle = CGRect(origin: .zero, size: size).applying(layer.transform)
-        if let placement = layer.visualPlacement {
+        let rotation = layer.visualPlacement?.editorStyle?.rotationDegrees ?? 0
+        if var placement = layer.visualPlacement {
+            // Selection chrome rotates once around the actual unrotated media box.
+            // Using the rotated axis-aligned image extent would rotate it twice.
+            placement.editorStyle?.rotationDegrees = 0
             rectangle = placement.position(CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: size)),
                 preferred: layer.preferredTransform, canvas: instruction.canvas, time: time,
                 clipStart: layer.start, clipEnd: layer.end).extent.intersection(instruction.canvas)
@@ -33,7 +37,7 @@ import CoreImage
         }
         return TextSelectionBounds(centerX: rectangle.midX / instruction.canvas.width,
             centerY: 1 - rectangle.midY / instruction.canvas.height,
-            width: rectangle.width / instruction.canvas.width, height: rectangle.height / instruction.canvas.height, rotationDegrees: 0)
+            width: rectangle.width / instruction.canvas.width, height: rectangle.height / instruction.canvas.height, rotationDegrees: rotation)
     }
 
     public func textSelectionBounds(id: String, time: Double) -> TextSelectionBounds? {
@@ -152,6 +156,7 @@ import CoreImage
         painted += next.textLayers.map { layer in
             previous.first(where: { $0.portable == layer }) ?? RecipeTextLayer.deferred(layer)
         }
+        let overlayOrders = AVPlayerPreviewComposer.overlayOrders(in: next)
         let nextClips = Dictionary(uniqueKeysWithValues: next.tracks.flatMap(\.clips).map { ($0.id, $0) })
         let motion = recipe.motionScenes == next.motionScenes ? first.motionScenes : try NativeMotionPainter.make(next.motionScenes,
             assets: urls, canvas: current.renderSize, duration: TimelineMath.totalDuration(of: next), frameRate: next.frameRate)
@@ -175,7 +180,7 @@ import CoreImage
                 updated.overlayPopIn = clip.overlayPopIn == true
                 updated.overlayPreserveAlpha = clip.overlayPreserveAlpha
                 updated.visualPlacement = clip.visualPlacement
-                updated.visualOrder = clip.visualPlacement?.order ?? updated.visualOrder
+                updated.visualOrder = overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? updated.visualOrder
                 updated.overlayCenter = CGPoint(x: current.renderSize.width / 2 + clip.transform.positionX, y: current.renderSize.height / 2 - clip.transform.positionY)
                 return updated
 

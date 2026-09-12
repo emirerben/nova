@@ -27,14 +27,16 @@ final class EditorUITests: XCTestCase {
         app.buttons["native-editor-redo"].tap()
 
         app.buttons["native-editor-tool-captions"].tap()
-        let captions = app.switches["native-editor-captions-toggle"]
+        app.buttons["native-editor-captions-tab-Settings"].tap()
+        let captions = app.buttons["native-editor-caption-visible"]
         XCTAssertTrue(captions.waitForExistence(timeout: 3))
         captions.tap()
-        app.buttons["native-editor-inspector-done"].tap()
+        app.buttons["Off"].tap()
+        app.buttons["native-editor-captions-done"].tap()
 
         app.buttons["native-editor-tool-visuals"].tap()
-        XCTAssertTrue(app.staticTexts["Select an existing lane to edit its timing and renderer-backed properties."].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["No visual lanes are present in this render."].exists)
+        XCTAssertTrue(app.buttons["native-editor-visuals-tab-Browse"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Your added photos and videos"].exists)
     }
 
     func testNativeEditorBackButtonReturnsToPreviousSurface() {

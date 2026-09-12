@@ -13,6 +13,11 @@ struct NativeEditorTextPanel: View {
     @FocusState private var editingSize: Bool
     @State private var sizeInput = ""
 
+    init(id: String, session: NativeEditorSession, initialTab: Tab = .style, onDone: @escaping () -> Void) {
+        self.id = id; self.session = session; self.onDone = onDone
+        _tab = State(initialValue: initialTab)
+    }
+
     private var item: EditorTextElement? { session.document.textElements.first { $0.id == id } }
     private let palette = ["#FFFFFF", "#30352C", "#FFF0A6", "#9BCAFF", "#E7DDF5"]
 
@@ -304,7 +309,7 @@ func nativeEditorColor(_ hex: String) -> Color {
     return Color(red: Double((value >> 16) & 255) / 255, green: Double((value >> 8) & 255) / 255, blue: Double(value & 255) / 255)
 }
 
-private func nativeEditorHex(_ color: Color) -> String {
+func nativeEditorHex(_ color: Color) -> String {
     var red: CGFloat = 0; var green: CGFloat = 0; var blue: CGFloat = 0; var alpha: CGFloat = 0
     UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
     return String(format: "#%02X%02X%02X", Int((red * 255).rounded()), Int((green * 255).rounded()), Int((blue * 255).rounded()))

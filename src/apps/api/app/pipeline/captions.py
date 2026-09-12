@@ -308,6 +308,12 @@ class CaptionStyleOverrides:
     highlight_color: str | None = None
     stroke_width: int | None = None
     shadow_enabled: bool | None = None
+    alignment: str | None = None
+    stroke_color: str | None = None
+    shadow_color: str | None = None
+    shadow_opacity: float | None = None
+    highlight_spoken_word: bool | None = None
+    display_style: str | None = None
 
     @classmethod
     def from_value(
@@ -321,6 +327,18 @@ class CaptionStyleOverrides:
             font_size_px=_clamp_optional_int(value.get("font_size_px"), 36, 160),
             color=color,
             highlight_color=highlight,
+            alignment=value.get("alignment")
+            if value.get("alignment") in {"left", "center", "right"}
+            else None,
+            stroke_color=_clean_hex(value.get("stroke_color")),
+            shadow_color=_clean_hex(value.get("shadow_color")),
+            shadow_opacity=max(0, min(1, float(value["shadow_opacity"])))
+            if value.get("shadow_opacity") is not None
+            else None,
+            highlight_spoken_word=value.get("highlight_spoken_word")
+            if isinstance(value.get("highlight_spoken_word"), bool)
+            else None,
+            display_style=value.get("display_style"),
             stroke_width=_clamp_optional_int(value.get("stroke_width"), 0, 12),
             shadow_enabled=value.get("shadow_enabled")
             if isinstance(value.get("shadow_enabled"), bool)
@@ -698,6 +716,17 @@ def generate_ass_from_cues(
             appearance=style_overrides,
         )
         return
+    if style_overrides and style_overrides.highlight_spoken_word is not None:
+        _write_editor_caption_cues(
+            valid,
+            output_path,
+            font_name=font_name,
+            margin_v=margin_v,
+            appearance=style_overrides,
+            pop_in=pop_in,
+            smart_policy=policy,
+        )
+        return
     if policy:
         valid = prepare_smart_caption_cues(valid, policy)
     lines = _format_cue_lines(
@@ -794,6 +823,15 @@ def generate_word_pop_ass(
     :func:`_word_windows_for_cue` (real when unedited, synthesized per edited cue).
     """
     style_overrides = CaptionStyleOverrides.from_value(appearance)
+    if style_overrides and style_overrides.highlight_spoken_word is not None:
+        _write_editor_caption_cues(
+            cues,
+            output_path,
+            font_name=font_name,
+            margin_v=margin_v if margin_v is not None else SUBTITLED_CAPTION_MARGIN_V,
+            appearance=style_overrides,
+        )
+        return
     active_ass_color = (
         _hex_to_ass(style_overrides.highlight_color)
         if style_overrides and style_overrides.highlight_color
@@ -837,6 +875,97 @@ def generate_word_pop_ass(
     )
 
 
+def _write_editor_caption_cues(
+    cues: list[dict],
+    output_path: str,
+    *,
+    font_name: str | None,
+    margin_v: int | None,
+    appearance: CaptionStyleOverrides,
+    pop_in: bool = False,
+    smart_policy: SmartCaptionRenderPolicy | None = None,
+) -> None:
+    """Independent sentence/word display and highlighting, opted into by the editor.
+
+    Cue boundaries are immutable. Word events use the same persisted/synthesized
+    windows as legacy word-pop, clamped to the cue and next event to avoid stacking.
+    """
+    if smart_policy:
+        cues = prepare_smart_caption_cues(cues, smart_policy)
+    if appearance.display_style != "word" and not appearance.highlight_spoken_word:
+        lines = _format_cue_lines(
+            cues, prefix_tags=_SENTENCE_POP_TAGS if pop_in else "", smart_policy=smart_policy
+        )
+    else:
+        lines = []
+        previous_end = 0.0
+        active = _hex_to_ass(appearance.highlight_color or "#C5F82A")
+        for cue in cues:
+            windows = _word_windows_for_cue(cue)
+            tokens = [word["text"] for word in windows]
+            for index, word in enumerate(windows):
+                start = max(previous_end, float(cue["start_s"]), float(word["start_s"]), 0)
+                end = min(
+                    float(cue["end_s"]),
+                    float(windows[index + 1]["start_s"])
+                    if index + 1 < len(windows)
+                    else float(word["end_s"]),
+                )
+                if end <= start:
+                    continue
+                previous_end = end
+                tags = _cue_style_override_tags(cue)
+                if appearance.display_style == "word":
+                    text = (
+                        tags
+                        + (f"{{\\c{active}&}}" if appearance.highlight_spoken_word else "")
+                        + sanitize_ass_text(word["text"])
+                    )
+                else:
+                    text = _compose_word_pop_text(tokens, index, active_color=active, cue_tags=tags)
+                lines.append(
+                    f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,0,,{text}"
+                )
+    _write_ass(
+        lines,
+        output_path,
+        font_name=font_name,
+        margin_v=margin_v,
+        appearance=appearance,
+        smart_policy=smart_policy,
+    )
+
+
+def _editor_caption_header(header: str, appearance: CaptionStyleOverrides | None) -> str:
+    """Apply explicit editor style to either the legacy or Smart Caption header."""
+    if appearance is None:
+        return header
+    lines = header.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if not line.startswith("Style: Default,"):
+            continue
+        fields = line.rstrip("\n").split(",")
+        if appearance.stroke_color is not None:
+            fields[5] = _hex_to_ass(appearance.stroke_color)
+        if appearance.shadow_color is not None or appearance.shadow_opacity is not None:
+            alpha = round(
+                255
+                * (
+                    1
+                    - (appearance.shadow_opacity if appearance.shadow_opacity is not None else 0.5)
+                )
+            )
+            color = _hex_to_ass(appearance.shadow_color or "#000000")
+            fields[6] = f"&H{alpha:02X}" + color[4:]
+            fields[17] = (
+                "0" if appearance.shadow_enabled is False or appearance.shadow_opacity == 0 else "1"
+            )
+        if appearance.alignment is not None:
+            fields[18] = str({"left": 1, "center": 2, "right": 3}[appearance.alignment])
+        lines[index] = ",".join(fields) + "\n"
+    return "".join(lines)
+
+
 def _write_ass(
     lines: list[str],
     output_path: str,
@@ -871,7 +1000,7 @@ def _write_ass(
     else:
         header = _ass_header_for(font_name or "TikTok Sans", appearance=appearance)
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write(header)
+        f.write(_editor_caption_header(header, appearance))
         f.write("\n[Events]\n")
         f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
         for line in lines:

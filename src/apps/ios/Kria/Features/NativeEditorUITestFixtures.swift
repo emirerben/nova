@@ -6,6 +6,7 @@ import Foundation
 /// retaining future lane data in `serverSnapshot` for characterization tests.
 enum NativeEditorUITestFixtures {
     enum Shape: String, CaseIterable, Sendable {
+        case captionVisuals = "caption-visuals"
         case projectedCaptions = "projected-captions"
         case sourceText = "source-text"
         case twoText = "two-text"
@@ -31,6 +32,7 @@ enum NativeEditorUITestFixtures {
 
     static func draft(for shape: Shape) -> EditorDraft {
         switch shape {
+        case .captionVisuals: captionVisuals
         case .projectedCaptions: projectedCaptions
         case .sourceText: sourceText
         case .twoText: twoText
@@ -40,6 +42,23 @@ enum NativeEditorUITestFixtures {
         case .unknown: unknownSections
         }
     }
+
+    static let captionVisuals: EditorDraft = {
+        let clips = [clip(0, start: 0, duration: 4)]
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "caption_cues": .array([.object(["id": .string("cue-paper"), "text": .string("One more game!"), "start_s": .number(0), "end_s": .number(2)])]),
+            "caption_meta": .object(["enabled": .bool(true), "style": .string("sentence")]),
+            "visual_blocks": .array([.object(["id": .string("paper-media"), "kind": .string("media"),
+                "version": .number(1), "start_s": .number(1), "end_s": .number(3), "media_kind": .string("video"),
+                "asset_id": .string("fixture"), "src_gcs_path": .string("fixture.mp4"), "source_duration_s": .number(4),
+                "display_mode": .string("overlay"), "scale": .number(0.35), "x_frac": .number(0.5), "y_frac": .number(0.5),
+                "editor_style": .object(NativeVisualAuthoring.defaultStyle)])])
+        ], rootExtras: ["editor_capabilities": .object([
+            "text_elements": .bool(true), "timeline": .bool(true), "visual_blocks": .bool(true),
+            "camera_effects": .bool(true), "motion_scenes": .bool(true), "caption_editor_style": .bool(true),
+            "visual_editor_style": .bool(true)])])
+    }()
 
     static let sourceText: EditorDraft = {
         let clips = [clip(0, start: 0, duration: 2), clip(1, start: 2, duration: 2)]

@@ -3,6 +3,7 @@ import Foundation
 public struct VisualMediaPlacement: Codable, Equatable, Sendable {
     public enum Motion: String, Codable, Sendable { case none, zoomIn = "zoom_in", zoomOut = "zoom_out", panLeft = "pan_left", panRight = "pan_right" }
     public var order: Int
+    public var editorStyle: VisualEditorStyle?
     public var contain: Bool
     public var focalX: Double
     public var focalY: Double
@@ -19,21 +20,24 @@ public struct VisualMediaPlacement: Codable, Equatable, Sendable {
     public init(order: Int, contain: Bool = false, focalX: Double = 0.5, focalY: Double = 0.5,
                 zoom: Double = 1, preCrop: Bool = false, motion: Motion = .none,
                 widthFraction: Double? = nil, xFraction: Double = 0.5, yFraction: Double = 0.5,
-                windowStart: Double, windowEnd: Double, fadeIn: Bool = false, fadeOut: Bool = false) {
+                windowStart: Double, windowEnd: Double, fadeIn: Bool = false, fadeOut: Bool = false, editorStyle: VisualEditorStyle? = nil) {
+        self.editorStyle = editorStyle
         self.order = order; self.contain = contain; self.focalX = focalX; self.focalY = focalY
         self.zoom = zoom; self.preCrop = preCrop; self.motion = motion; self.widthFraction = widthFraction
         self.xFraction = xFraction; self.yFraction = yFraction; self.windowStart = windowStart; self.windowEnd = windowEnd
         self.fadeIn = fadeIn; self.fadeOut = fadeOut
     }
     func validate() throws {
+        try editorStyle?.validate()
         guard (0...1000).contains(order), [focalX, focalY, xFraction, yFraction].allSatisfy({ $0.isFinite && (0...1).contains($0) }),
               zoom.isFinite, (1...4).contains(zoom), widthFraction.map({ $0.isFinite && (0.05...1).contains($0) }) ?? true,
               windowStart.isFinite, windowEnd.isFinite, windowStart >= 0, windowEnd > windowStart, windowEnd <= 1800 else { throw RecipeError.invalidTimeline }
     }
     func alpha(at time: Double) -> Double {
-        guard windowEnd - windowStart > 0.3 else { return 1 }
-        return min(fadeIn ? min(1, max(0, (time - windowStart) / 0.15)) : 1,
-                   fadeOut ? min(1, max(0, (windowEnd - time) / 0.15)) : 1)
+        let authoredAlpha = editorStyle.map { (try? $0.sample(time: time - windowStart, duration: windowEnd - windowStart).alpha) ?? 0 } ?? 1
+        guard windowEnd - windowStart > 0.3 else { return authoredAlpha }
+        return authoredAlpha * min(fadeIn ? min(1, max(0, (time - windowStart) / 0.15)) : 1,
+                                   fadeOut ? min(1, max(0, (windowEnd - time) / 0.15)) : 1)
     }
 }
 
@@ -78,11 +82,22 @@ import CoreImage
 
 extension VisualMediaPlacement {
     func position(_ source: CIImage, preferred: CGAffineTransform, canvas: CGRect, time: Double, clipStart: Double, clipEnd: Double) -> CIImage {
+        var image = basePosition(source, preferred: preferred, canvas: canvas, time: time, clipStart: clipStart, clipEnd: clipEnd)
+        guard let editorStyle, let sample = try? editorStyle.sample(time: time - windowStart, duration: windowEnd - windowStart) else { return image }
+        if widthFraction == nil && !contain { image = image.cropped(to: canvas) }
+        let center = CGPoint(x: image.extent.midX, y: image.extent.midY)
+        return image.transformed(by: CGAffineTransform(translationX: -center.x, y: -center.y)
+            .concatenating(CGAffineTransform(scaleX: sample.scale, y: sample.scale))
+            .concatenating(CGAffineTransform(rotationAngle: -editorStyle.rotationDegrees * .pi / 180))
+            .concatenating(CGAffineTransform(translationX: center.x + sample.xTranslate * canvas.width / 1080,
+                                          y: center.y - sample.yTranslate * canvas.height / 1920)))
+    }
+    private func basePosition(_ source: CIImage, preferred: CGAffineTransform, canvas: CGRect, time: Double, clipStart: Double, clipEnd: Double) -> CIImage {
         var image = source.transformed(by: preferred)
         image = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
         let size = image.extent.size
         if let widthFraction {
-            let width = (canvas.width * widthFraction).rounded(.toNearestOrEven)
+            let width = (canvas.width * widthFraction * (editorStyle?.zoom ?? 1)).rounded(.toNearestOrEven)
             let scale = width / size.width
             return image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
                 .transformed(by: CGAffineTransform(translationX: canvas.width * xFraction - width / 2,

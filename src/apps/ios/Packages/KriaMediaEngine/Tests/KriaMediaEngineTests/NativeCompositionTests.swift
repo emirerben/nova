@@ -97,6 +97,54 @@ final class NativeCompositionTests: XCTestCase {
         }
     }
 
+    @MainActor func testStyledOverlayKeepsLayerOrderAgainstLegacyPeer() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var urls: [String: URL] = [:]
+        for (id, color) in [("base", CIColor.black), ("back", CIColor.blue), ("front", CIColor.red)] {
+            let url = directory.appendingPathComponent(id + ".png")
+            try CIContext().writePNGRepresentation(of: CIImage(color: color).cropped(to: CGRect(x: 0, y: 0, width: 96, height: 160)),
+                to: url, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            urls[id] = url
+        }
+        let assets = try urls.map { MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value)) }
+        let manifest = try RenderAssetManifest(assets: assets.map {
+            RenderAssetReference(id: $0.id, fingerprint: try RenderFingerprint($0.fingerprint!), source: .original(mediaID: $0.id))
+        })
+        // The front layer starts first: temporal track sorting must not override z order.
+        var recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160), assets: assets,
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "base", sourceAssetID: "base", sourceDuration: 3)]),
+                     TimelineTrack(id: "overlays", kind: .overlay, clips: [
+                        TimelineClip(id: "back", sourceAssetID: "back", sourceDuration: 2.5, timelineStart: 0.25, overlayAboveText: true),
+                        TimelineClip(id: "front", sourceAssetID: "front", sourceDuration: 2.5, volume: 0, holdDuration: 0.5, overlayAboveText: true,
+                            visualPlacement: VisualMediaPlacement(order: 0, windowStart: 0, windowEnd: 3, editorStyle: .init(rotationDegrees: 25)))
+                     ])], assetManifest: manifest)
+        func center(_ live: LivePreviewComposition) async throws -> [UInt8] {
+            let generator = AVAssetImageGenerator(asset: live.preview.playerItem.asset)
+            generator.videoComposition = live.preview.playerItem.videoComposition
+            generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+            let pixels = rgba(try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image)
+            let index = (80 * 96 + 48) * 4
+            return Array(pixels[index..<(index + 4)])
+        }
+        let live = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
+        let initial = try await center(live)
+        XCTAssertGreaterThan(initial[0], 200); XCTAssertLessThan(initial[2], 30)
+        recipe.tracks[1].clips[1].visualPlacement = nil
+        try live.updateText(recipe: recipe)
+        let undone = try await center(live)
+        XCTAssertGreaterThan(undone[0], 200); XCTAssertLessThan(undone[2], 30)
+        recipe.tracks[1].clips[1].visualPlacement = VisualMediaPlacement(order: 0, windowStart: 0, windowEnd: 3, editorStyle: .init(rotationDegrees: 45))
+        try live.updateText(recipe: recipe)
+        let edited = try await center(live)
+        XCTAssertGreaterThan(edited[0], 200); XCTAssertLessThan(edited[2], 30)
+        recipe.tracks[1].clips.reverse()
+        let reordered = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
+        let sentBack = try await center(reordered)
+        XCTAssertLessThan(sentBack[0], 30); XCTAssertGreaterThan(sentBack[2], 200)
+    }
+
     @MainActor func testVisualFillUpdatesWithoutReplacingSources() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -171,6 +219,25 @@ final class NativeCompositionTests: XCTestCase {
         try preview.updateText(recipe: recipe)
         XCTAssertTrue(item === preview.preview.playerItem); XCTAssertTrue(source === item.asset)
         XCTAssertEqual(preview.mediaSelectionBounds(id: "overlay", time: 2.2)?.centerX ?? -1, 0.25, accuracy: 0.001)
+        recipe.tracks[1].clips[0].overlayAboveText = true
+        recipe.tracks[1].clips[0].visualPlacement = VisualMediaPlacement(order: 1, widthFraction: 0.4,
+            xFraction: 0.5, yFraction: 0.5, windowStart: 0.5, windowEnd: 2.5, editorStyle: VisualEditorStyle(rotationDegrees: 90))
+        let rotatedPreview = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
+        let rotated = try XCTUnwrap(rotatedPreview.mediaSelectionBounds(id: "overlay", time: 0.7))
+        XCTAssertEqual(rotated.rotationDegrees, 90)
+        XCTAssertEqual(rotated.width, 38.0 / 96, accuracy: 0.001, "Chrome uses the unrotated media box, then rotates once")
+        let rotatedOutput = directory.appendingPathComponent("rotated-held-overlay.mp4")
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("rotated-state")))
+            .export(recipe: recipe, assetURLs: urls, outputURL: rotatedOutput)
+        let heldPreview = AVAssetImageGenerator(asset: rotatedPreview.preview.playerItem.asset)
+        heldPreview.videoComposition = rotatedPreview.preview.playerItem.videoComposition
+        for generator in [heldPreview, AVAssetImageGenerator(asset: AVURLAsset(url: rotatedOutput))] {
+            generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+            let pixels = rgba(try await generator.image(at: CMTime(seconds: 2.2, preferredTimescale: 600)).image)
+            XCTAssertGreaterThan(stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 180 && pixels[$0 + 1] < 80 }.count, 1000,
+                "Styled video overlays retain their last frame after the trimmed source ends")
+        }
+
     }
 
     @MainActor func testPhotoOnlyTimelinePreviewsAndExportsThroughSameClock() async throws {

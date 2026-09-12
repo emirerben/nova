@@ -58,8 +58,13 @@ struct CreationVisual: Codable, Sendable, Identifiable {
     let displayURL: URL?
     let previewURL: URL?
     let retryable: Bool?
+    var gcsPath: String? = nil
+    var sourceURL: URL? = nil
+    var durationS: Double? = nil
+    var mediaStatus: String? = nil
     enum CodingKeys: String, CodingKey {
         case id, kind, status, retryable
+        case gcsPath = "gcs_path", sourceURL = "source_url", durationS = "duration_s", mediaStatus = "media_status"
         case sourceFilename = "source_filename", displayURL = "display_url", previewURL = "preview_url"
     }
 }

@@ -4,6 +4,65 @@ import KriaMediaEngine
 @testable import Kria
 
 @MainActor final class NativeEditorRenderCompilerTests: XCTestCase {
+    func testExplicitWordDisplaySeparatesWordsAndClampsEditedTiming() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        for highlighted in [false, true] {
+            let cue = EditorCaptionCue(id: "cue", startS: 1, endS: 2, text: "Hello world", raw: ["words": .array([
+                .object(["text": .string("Old"), "start_s": .number(0), "end_s": .number(5)])])])
+            let document = EditorDocument(captionMeta: ["style": .string("word"), "highlight_color": .string("#FF0000"),
+                "appearance": .object(["highlight_spoken_word": .bool(highlighted)])], captionCues: [cue])
+            let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 1, end: 2)
+            let layers = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source]).recipe.textLayers
+            XCTAssertEqual(layers.count, 2)
+            XCTAssertEqual(layers.map { $0.runs.map(\.text).joined() }, ["Hello", "world"])
+            XCTAssertEqual(layers[0].start, 1, accuracy: 0.001)
+            XCTAssertEqual(layers[0].end, layers[1].start, accuracy: 0.001)
+            XCTAssertEqual(layers[1].end, 2, accuracy: 0.001)
+            XCTAssertEqual(layers[0].runs.first?.fill, highlighted ? TextInk(red: 1, green: 0, blue: 0, alpha: 1) : TextInk(red: 1, green: 1, blue: 1, alpha: 1))
+        }
+    }
+
+    func testStyledLegacyOverlayCompilesZeroAndPositiveFrozenTail() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "base", relativePath: "base.mov", fingerprint: fingerprint),
+            url: URL(fileURLWithPath: "/fixture/base.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        for sourceDuration in [1.0, 3.0] {
+            let media = ResolvedEditorSource(clipIndex: -1, mediaID: "card", asset: MediaAsset(id: "card", relativePath: "card.mov",
+                fingerprint: fingerprint, duration: sourceDuration, naturalSize: MediaSize(width: 96, height: 160)), url: URL(fileURLWithPath: "/fixture/card.mov"))
+            let document = EditorDocument(mediaOverlays: [.init(id: "overlay", startS: 0, endS: 3,
+                raw: ["editor_style": .object(NativeVisualAuthoring.defaultStyle)])])
+            let item = NativeEditorTimelineItem(selection: .init(kind: .mediaOverlay, id: "overlay"), start: 0, end: 3)
+            var recipe = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source], mediaSources: ["overlay:overlay": media]).recipe
+            let trackIndex = try XCTUnwrap(recipe.tracks.firstIndex { $0.kind == .overlay })
+            XCTAssertEqual(recipe.tracks[trackIndex].clips[0].holdDuration, 3 - sourceDuration)
+            XCTAssertNoThrow(try recipe.validate())
+            recipe.tracks[trackIndex].clips[0].holdDuration = 4
+            XCTAssertThrowsError(try recipe.validate(), "Held time cannot exceed the placement window")
+        }
+    }
+
+    func testCaptionAlignmentMatchesFinalASSMargins() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        for (alignment, anchor) in [("left", 80.0), ("center", 540.0), ("right", 1000.0)] {
+            let document = EditorDocument(captionMeta: ["appearance": .object(["alignment": .string(alignment), "highlight_spoken_word": .bool(false)])],
+                captionCues: [.init(id: "cue", startS: 0, endS: 2, text: "One more game")])
+            let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0, end: 2)
+            let recipe = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source]).recipe
+            XCTAssertEqual(try XCTUnwrap(recipe.textLayers.first).anchorX, anchor, accuracy: 0.001)
+        }
+    }
+
     func testNarrationKeepsVoiceTrackAndSlowsShortOriginalFootage() throws {
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
