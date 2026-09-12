@@ -39,6 +39,37 @@ final class KaraokePainterTests: XCTestCase {
     }
 
     #if canImport(AVFoundation)
+    func testAuthoredWordCaptionKeepsOnlyCurrentWordHighlightedAcrossBackwardSeeks() throws {
+        let root = try XCTUnwrap(#filePath.range(of: "/src/apps/ios/"))
+        let font = URL(fileURLWithPath: String(#filePath[..<root.lowerBound])).appendingPathComponent("src/apps/api/assets/fonts/Inter-Bold.ttf")
+        let layer = try AuthoredTextLayout.compileHighlightedWords(id: "caption", text: "ONE ONE", start: 1, end: 3,
+            starts: [0, 0.5], highlight: TextInk(red: 1, green: 0, blue: 0, alpha: 1),
+            style: .init(fontAssetID: "font", size: 40, color: TextInk(red: 1, green: 1, blue: 1, alpha: 1)),
+            fontURL: font, canvas: Canvas(width: 400, height: 200))
+        let painted = try RecipeTextLayer.make(layer, assetURLs: ["font": font], canvas: CGSize(width: 400, height: 200))
+        let painter = try XCTUnwrap(painted.karaoke)
+        func bytes(_ time: Double) -> [UInt8] {
+            let image = painter.image(localTime: time)
+            let width = Int(image.extent.width), height = Int(image.extent.height)
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            CIContext().render(image, toBitmap: &pixels, rowBytes: width * 4, bounds: image.extent,
+                format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            return pixels
+        }
+        let first = bytes(0.1), second = bytes(0.6)
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(bytes(0.1), first)
+        for pixels in [first, second] {
+            let white = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 180 && pixels[$0 + 1] > 180 && pixels[$0 + 2] > 180 }
+            let red = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 180 && pixels[$0 + 1] < 100 && pixels[$0 + 2] < 100 }
+            XCTAssertGreaterThan(white.count, 100)
+            XCTAssertGreaterThan(red.count, 100)
+        }
+        let middle = try TextTransformTiming.sample(effect: .captionPop, text: "hello", localTime: 0.06, duration: 2, motion: nil)
+        XCTAssertEqual(middle.alpha, 0.5, accuracy: 0.00001)
+        XCTAssertEqual(middle.scale, 0.94 + 0.06 * (0.06 / 0.14), accuracy: 0.00001)
+    }
+
     @MainActor func testKaraokeUsesCompositionTimeInPreviewAndExport() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

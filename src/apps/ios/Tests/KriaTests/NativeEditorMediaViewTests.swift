@@ -5,6 +5,48 @@ import XCTest
 #if DEBUG
 @MainActor
 final class NativeEditorMediaViewTests: XCTestCase {
+    func testCaptionClassificationUsesSourceMarkerAndPreservesDocument() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.projectedCaptions)
+        XCTAssertEqual(session.document.textElements.filter(\.isCaption).map(\.id), ["00000000-0000-4000-8000-000000000301"])
+        XCTAssertEqual(session.document.textElements.filter { !$0.isCaption }.count, 1)
+        XCTAssertTrue(session.document.captionCues.isEmpty)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        let overlay = EditorTextElement(id: "overlay", text: "A title", role: "generative_intro")
+        XCTAssertFalse(overlay.isCaption)
+    }
+
+    func testVoiceoverAndGuidedNarrationUseRenderedVoiceTrack() {
+        for variant: [String: JSONValue] in [
+            ["resolved_archetype": .string("narrated")],
+            ["resolved_archetype": .string("voiceover")],
+            ["variant_id": .string("voiceover_only")],
+            ["variant_id": .string("voiceover_music")],
+            ["resolved_archetype": .string("guided_story"), "render_receipt": .object(["narration_applied": .bool(true)])]
+        ] { XCTAssertTrue(NativeEditorSession.usesRenderedNarration(variant)) }
+        XCTAssertFalse(NativeEditorSession.usesRenderedNarration(["resolved_archetype": .string("montage")]))
+        XCTAssertFalse(NativeEditorSession.usesRenderedNarration(["resolved_archetype": .string("guided_story"), "render_receipt": .object(["narration_applied": .bool(false)])]))
+    }
+
+    func testPreviewActivatesMediaAudioAndRestoresItAfterRecording() throws {
+        let audio = AVAudioSession.sharedInstance()
+        let category = audio.category, mode = audio.mode, options = audio.categoryOptions
+        defer {
+            try? audio.setActive(false)
+            try? audio.setCategory(category, mode: mode, options: options)
+        }
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.twoText)
+        session.player = AVPlayer()
+        for previousCategory in [AVAudioSession.Category.ambient, .playAndRecord] {
+            try audio.setActive(false)
+            try audio.setCategory(previousCategory)
+            session.togglePlayback()
+            XCTAssertEqual(audio.category, .playback)
+            XCTAssertEqual(audio.mode, .moviePlayback)
+            XCTAssertEqual(session.player?.isMuted, false)
+            session.togglePlayback()
+        }
+    }
+
     func testPlaybackTogglePausesWithoutChangingThePlayhead() {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.twoText)
         session.player = AVPlayer()

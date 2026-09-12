@@ -150,6 +150,8 @@ def test_worst_verdict_ordering():
 
 def _fixture_overlays(name: str) -> list[dict]:
     data = json.loads((FIXTURES / name).read_text())
+    if "slots" in data:
+        return [overlay for slot in data["slots"] for overlay in slot["text_overlays"]]
     return data["overlays"]
 
 

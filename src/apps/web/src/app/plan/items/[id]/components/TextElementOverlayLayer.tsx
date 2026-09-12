@@ -91,8 +91,8 @@ export function textElementContentStyle({
     textAlign,
     letterSpacing: layout.letterSpacingEm !== 0 ? `${layout.letterSpacingEm}em` : undefined,
     lineHeight: layout.lineSpacing || 1.15,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
+    whiteSpace: layout.wrapLines === false ? "pre" : "pre-wrap",
+    wordBreak: layout.wrapLines === false ? "normal" : "break-word",
     WebkitTextStroke: strokeWidth ? `${strokeWidth} #000000` : undefined,
     // CSS paints the first shadow on top: contact, ambient, then optional glow.
     textShadow: [separationShadow, ...glowShadows]
@@ -108,6 +108,7 @@ export function textElementContentStyle({
 export function smoothTypePreviewLayout(
   layout: TextElementLayout,
 ): { lines: string[]; sizePx: number } {
+  if (layout.wrapLines === false) return { lines: layout.text.replace(/\r\n?/g, "\n").split("\n"), sizePx: layout.sizePx };
   const font = resolveClusterCssFont(layout.fontFamily);
   const baseMeasureAt = makeCanvasMeasureAt(font.family, font.weight, font.style);
   const measureAt = (sizePx: number) => {
@@ -247,6 +248,7 @@ export function TextElementOverlayContent({
           revealProgress={revealProgress ?? 1}
           color={layout.color}
           maxWidthEm={layout.maxWidthPx / Math.max(1, layout.sizePx)}
+          wrapLines={layout.wrapLines}
           alignment={layout.alignment}
           letterSpacingEm={layout.letterSpacingEm}
           lineSpacing={layout.lineSpacing}

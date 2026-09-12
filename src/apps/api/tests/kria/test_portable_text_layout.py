@@ -206,3 +206,28 @@ def test_slide_in_matches_actual_cloud_static_hold():
     layer, _ = compile_text_overlay(overlay, layer_id="slide-in", canvas=canvas)
     assert layer.effect == "slide-in"
     assert layer.motion is None
+
+
+def test_authored_background_has_explicit_native_geometry():
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    layer, _ = compile_text_overlay(
+        {
+            "text": "Highlight",
+            "start_s": 0,
+            "end_s": 2,
+            "font_family": "Inter",
+            "text_size_px": 72,
+            "effect": "none",
+            "background_color": "#00FF00",
+        },
+        layer_id="highlight",
+        canvas=PORTRAIT,
+    )
+    assert layer.background is not None
+    assert layer.background.color.green == 1
+    assert layer.background.color.red == 0
+    assert layer.background.width > 16
+    assert layer.background.height > 8
+    assert layer.background.radius == 4

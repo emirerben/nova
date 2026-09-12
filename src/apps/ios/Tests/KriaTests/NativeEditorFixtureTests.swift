@@ -10,7 +10,7 @@ final class NativeEditorFixtureTests: XCTestCase {
 
     func testAllAccountFreeFixtureShapesAreDeterministic() {
         let shapes = NativeEditorUITestFixtures.Shape.allCases
-        XCTAssertEqual(shapes.map(\.rawValue), ["two-text", "boundary", "all-lanes", "stress-71", "unknown-sections"])
+        XCTAssertEqual(shapes.map(\.rawValue), ["projected-captions", "source-text", "two-text", "boundary", "all-lanes", "stress-71", "unknown-sections"])
         for shape in shapes {
             let first = NativeEditorUITestFixtures.draft(for: shape)
             let second = NativeEditorUITestFixtures.draft(for: shape)

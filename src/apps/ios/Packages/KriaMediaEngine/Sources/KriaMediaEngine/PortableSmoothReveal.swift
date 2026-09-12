@@ -5,6 +5,9 @@ public struct SmoothRevealLine: Codable, Equatable, Sendable {
     public let runIndex: Int?
     public let bounds: TextRevealBounds?
     public let firstStrongRTL: Bool
+    public init(text: String, runIndex: Int?, bounds: TextRevealBounds?, firstStrongRTL: Bool) {
+        self.text = text; self.runIndex = runIndex; self.bounds = bounds; self.firstStrongRTL = firstStrongRTL
+    }
     private enum CodingKeys: String, CodingKey { case text, runIndex, bounds, firstStrongRTL = "firstStrongRtl" }
     public init(from decoder: Decoder) throws {
         try rejectUnknownAssetFields(decoder, allowed: ["text", "runIndex", "bounds", "firstStrongRtl"])
@@ -19,6 +22,7 @@ public struct SmoothRevealLine: Codable, Equatable, Sendable {
 public struct SmoothRevealContent: Codable, Equatable, Sendable {
     public let text: String
     public let lines: [SmoothRevealLine]
+    public init(text: String, lines: [SmoothRevealLine]) { self.text = text; self.lines = lines }
     private enum CodingKeys: String, CodingKey { case text, lines }
     public init(from decoder: Decoder) throws {
         try rejectUnknownAssetFields(decoder, allowed: ["text", "lines"])

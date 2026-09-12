@@ -129,12 +129,17 @@ def layout_handwriting_text(
     max_width_em: float,
     letter_spacing_em: float = 0.0,
     line_spacing: float = 1.15,
+    wrap_lines: bool = True,
 ) -> HandwritingLayout:
     asset = handwriting_asset()
     ascent = float(asset["ascent"])
     descent = float(asset["descent"])
     stroke_width = float(asset["stroke_width"])
-    lines = wrap_handwriting_text(text, max_width_em, letter_spacing_em)
+    lines = (
+        wrap_handwriting_text(text, max_width_em, letter_spacing_em)
+        if wrap_lines
+        else text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    )
     widths = tuple(measure_handwriting_line_em(line, letter_spacing_em) for line in lines)
     line_step = (ascent + descent) * max(0.5, line_spacing)
     height = ascent + descent + line_step * max(0, len(lines) - 1)

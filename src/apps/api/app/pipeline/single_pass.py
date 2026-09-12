@@ -469,15 +469,13 @@ def _build_abs_overlay_chain(
     prev = base_label
     node_count = 0
 
+    from app.pipeline.text_overlay import overlay_png_filter  # noqa: PLC0415
+
     for i, cfg in enumerate(abs_pngs):
         node_count += 1
         out_lbl = "vout" if node_count == total_nodes else f"png{i}"
         input_idx = png_input_start_idx + i
-        fragments.append(
-            f"[{prev}][{input_idx}:v]overlay=0:0"
-            f":enable='between(t,{cfg['start_s']:.3f},{cfg['end_s']:.3f})'"
-            f"[{out_lbl}]"
-        )
+        fragments.append(f"[{prev}][{input_idx}:v]{overlay_png_filter(cfg)}[{out_lbl}]")
         prev = out_lbl
 
     fonts_escaped = fonts_dir.replace(":", "\\:").replace("'", "\\'")
@@ -607,8 +605,10 @@ def build_single_pass_command(
     # silent audio so the silent audio index shifts by len(abs_pngs). The
     # filter graph consumes PNG inputs starting at index len(spec.inputs).
     png_input_start_idx = len(spec.inputs)
+    from app.pipeline.text_overlay import overlay_png_input  # noqa: PLC0415
+
     for cfg in spec.abs_pngs:
-        input_args += ["-i", cfg["png_path"]]
+        input_args += overlay_png_input(cfg)
 
     if has_overlays:
         overlay_fragments, _ = _build_abs_overlay_chain(

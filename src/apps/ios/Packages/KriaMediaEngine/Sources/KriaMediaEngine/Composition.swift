@@ -24,6 +24,7 @@ public protocol PreviewComposing: Sendable {
 public struct PreviewComposition: @unchecked Sendable {
     public let description: CompositionDescription
 #if canImport(AVFoundation)
+    var audioBindings: [PreviewAudioBinding] = []
     public let playerItem: AVPlayerItem
     public init(description: CompositionDescription, playerItem: AVPlayerItem) { self.description = description; self.playerItem = playerItem }
 #else
@@ -32,12 +33,18 @@ public struct PreviewComposition: @unchecked Sendable {
 }
 
 #if canImport(AVFoundation)
+struct PreviewAudioBinding: Sendable {
+    let trackID: CMPersistentTrackID
+    let clipID: String
+    let usesOriginalGain: Bool
+}
+
 @MainActor public struct AVPlayerPreviewComposer: PreviewComposing {
     public init() {}
     public func makePreview(recipe: EditRecipe, assetURLs: [String: URL]) async throws -> PreviewComposition {
         try recipe.validate()
         guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)", !recipe.audio.duckOriginalDuringMusic else {
-            throw MediaEngineError.unsupportedCapability
+            throw NativePreviewFeatureError("Composition-47")
         }
         let composition = AVMutableComposition()
         let canvas = CGSize(width: recipe.canvas.width, height: recipe.canvas.height)
@@ -53,25 +60,31 @@ public struct PreviewComposition: @unchecked Sendable {
         var layers: [RecipeVideoLayer] = []
         var textLayers: [RecipeTextLayer] = []
         var audioParameters: [AVMutableAudioMixInputParameters] = []
+        var audioBindings: [PreviewAudioBinding] = []
         var stillClock: StillTimelineClock?
         func time(_ seconds: Double) -> CMTime { CMTime(value: Int64((seconds * 60_000).rounded()), timescale: 60_000) }
-        func addAudio(asset: AVURLAsset, clip: TimelineClip, gain: Double) async throws {
+        func addAudio(asset: AVURLAsset, clip: TimelineClip, gain: Double, originalGain: Bool = false) async throws {
             guard let source = try await asset.loadTracks(withMediaType: .audio).first else { return }
             guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.exportUnavailable }
             let sourceRange = CMTimeRange(start: time(clip.sourceStart), duration: time(clip.sourceDuration))
             try track.insertTimeRange(sourceRange, of: source, at: time(clip.timelineStart))
             track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration), toDuration: time(clip.duration))
             let parameter = AVMutableAudioMixInputParameters(track: track)
-            parameter.setVolume(Float(gain * clip.volume), at: time(clip.timelineStart))
+            applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows)
             audioParameters.append(parameter)
+            audioBindings.append(PreviewAudioBinding(trackID: track.trackID, clipID: clip.id, usesOriginalGain: originalGain))
         }
         for recipeTrack in recipe.tracks {
+            // A track per cut can exhaust hardware decoders on long phone
+            // timelines. Reuse tracks once their previous segment has ended;
+            // overlapping transitions still receive independent source tracks.
+            var reusableVideoTracks: [(track: AVMutableCompositionTrack, end: Double)] = []
             var previousEnd: Double?
             for clip in recipeTrack.clips.sorted(by: { $0.timelineStart < $1.timelineStart }) {
                 guard let url = assetURLs[clip.sourceAssetID] else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
                 let asset = AVURLAsset(url: url)
                 if recipeTrack.kind == .audio {
-                    guard clip.look == nil else { throw MediaEngineError.unsupportedCapability }
+                    guard clip.look == nil else { throw NativePreviewFeatureError("Composition-87") }
                     guard !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
                     try await addAudio(asset: asset, clip: clip, gain: 1)
                     continue
@@ -91,20 +104,37 @@ public struct PreviewComposition: @unchecked Sendable {
                 if stillImage == nil { videoSource = try await asset.loadTracks(withMediaType: .video).first }
                 else { videoSource = nil }
                 if let source = videoSource {
-                    guard let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.exportUnavailable }
+                    let track: AVMutableCompositionTrack
+                    if let index = reusableVideoTracks.firstIndex(where: { $0.end <= clip.timelineStart + 0.000_001 }) {
+                        track = reusableVideoTracks[index].track
+                        reusableVideoTracks[index].end = end
+                    } else {
+                        guard let created = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.exportUnavailable }
+                        track = created
+                        reusableVideoTracks.append((created, end))
+                    }
                     let sourceRange = CMTimeRange(start: time(clip.sourceStart), duration: time(clip.sourceDuration))
                     try track.insertTimeRange(sourceRange, of: source, at: time(clip.timelineStart))
-                    track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration), toDuration: time(clip.duration))
+                    let movingDuration = clip.sourceDuration / clip.rate
+                    track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration), toDuration: time(movingDuration))
+                    if let hold = clip.holdDuration, hold > 0 {
+                        let fps = Double(try await source.load(.nominalFrameRate))
+                        let frameDuration = min(clip.sourceDuration, 1 / max(1, fps.isFinite && fps > 0 ? fps : 30))
+                        let tail = CMTimeRange(start: time(clip.sourceStart + clip.sourceDuration - frameDuration), duration: time(frameDuration))
+                        let tailStart = time(clip.timelineStart + movingDuration)
+                        try track.insertTimeRange(tail, of: source, at: tailStart)
+                        track.scaleTimeRange(CMTimeRange(start: tailStart, duration: tail.duration), toDuration: time(hold))
+                    }
                     let size = try await source.load(.naturalSize)
-                    let preferred = try await source.load(.preferredTransform)
+                    let preferred = Self.coreImagePreferredTransform(try await source.load(.preferredTransform))
                     if clip.look != nil {
                         // Cloud scales/crops before grading. Until native YUV
                         // resize parity is verified, accept exact-canvas footage
                         // only; grading at source resolution would change pixels.
                         guard recipeTrack.kind == .video, size == canvas, preferred.isIdentity,
-                              clip.transform == .identity else { throw MediaEngineError.unsupportedCapability }
+                              clip.transform == .identity else { throw NativePreviewFeatureError("Composition-135") }
                         let formats = try await source.load(.formatDescriptions)
-                        guard !formats.isEmpty else { throw MediaEngineError.unsupportedCapability }
+                        guard !formats.isEmpty else { throw NativePreviewFeatureError("Composition-137") }
                         for format in formats {
                             let extensions = CMFormatDescriptionGetExtensions(format) as NSDictionary? ?? [:]
                             let transfer = extensions[kCMFormatDescriptionExtension_TransferFunction] as? String
@@ -115,55 +145,71 @@ public struct PreviewComposition: @unchecked Sendable {
                                   depth == nil || depth == 8,
                                   transfer == nil || transfer == kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String,
                                   primaries == nil || primaries == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String else {
-                                throw MediaEngineError.unsupportedCapability
+                                throw NativePreviewFeatureError("Composition-148")
                             }
                         }
                     }
                     layers.append(RecipeVideoLayer(trackID: track.trackID, image: nil,
                         transform: Self.transform(naturalSize: size, preferred: preferred, canvas: canvas, clip: clip),
-                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, look: clip.look))
-                    try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1)
+                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, look: clip.look, isPrimary: recipeTrack.kind == .video,
+                        clipID: clip.id, naturalSize: size, preferredTransform: preferred,
+                        overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true, overlayPreserveAlpha: clip.overlayPreserveAlpha,
+                        overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
+                        visualPlacement: clip.visualPlacement, visualOrder: clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
+                    if clip.visualPlacement == nil && (recipeTrack.kind == .video || clip.overlayPreserveAlpha == nil) {
+                        try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1, originalGain: recipeTrack.kind == .video)
+                    }
                 } else {
-                    guard clip.look == nil else { throw MediaEngineError.unsupportedCapability }
+                    guard clip.look == nil else { throw NativePreviewFeatureError("Composition-163") }
                     guard let imageSource, let image = stillImage else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
                     let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any]
                     let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.int32Value ?? 1
-                    guard (1...8).contains(orientation) else { throw MediaEngineError.unsupportedCapability }
+                    guard (1...8).contains(orientation) else { throw NativePreviewFeatureError("Composition-167") }
                     let oriented = CIImage(cgImage: image).oriented(forExifOrientation: orientation)
                     let normalized = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
                     layers.append(RecipeVideoLayer(trackID: nil, image: normalized,
                         transform: Self.transform(naturalSize: normalized.extent.size, preferred: .identity, canvas: canvas, clip: clip),
-                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade))
+                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, isPrimary: recipeTrack.kind == .video,
+                        clipID: clip.id, naturalSize: normalized.extent.size, overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true,
+                        overlayPreserveAlpha: clip.overlayPreserveAlpha,
+                        overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
+                        visualPlacement: clip.visualPlacement, visualOrder: clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
+                }
+                if let seed = clip.overlayDissolveSeed {
+                    layers[layers.count - 1].overlayDissolve = try NativeDissolveRenderer(width: recipe.canvas.width, height: recipe.canvas.height, seed: seed, maxBitmapBytes: 64 * 1024 * 1024, preset: .media)
                 }
                 if let text = clip.text { textLayers.append(try RecipeTextLayer.make(text, start: clip.timelineStart, end: end, canvas: canvas)) }
             }
         }
-        var textBitmapBytes = textLayers.reduce(0) { $0 + Int($1.image.extent.width * $1.image.extent.height * 4) }
-        for layer in recipe.textLayers {
-            let painted = try RecipeTextLayer.make(layer, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: 64 * 1024 * 1024 - textBitmapBytes)
-            let pixelCount = painted.image.extent.width * painted.image.extent.height
-            let bitmapBytes: Int
-            if let dissolve = painted.dissolve {
-                bitmapBytes = dissolve.bitmapBytes + Int(pixelCount * 12)
-            } else if let giantTitle = painted.giantTitle {
-                bitmapBytes = giantTitle.bitmapBytes
-            } else if let handwriting = painted.handwriting {
-                bitmapBytes = handwriting.bitmapBytes
-            } else if let karaoke = painted.karaoke {
-                bitmapBytes = karaoke.bitmapBytes
-            } else if let staggered = painted.staggered {
-                bitmapBytes = staggered.bitmapBytes
-            } else if let smoothReveal = painted.smoothReveal {
-                bitmapBytes = smoothReveal.bitmapBytes
-            } else {
-                let copies = painted.handwriting == nil && painted.discreteReveal == nil ? 1 : 2
-                bitmapBytes = Int(pixelCount * 4) * copies
+        for fill in recipe.visualFills {
+            var previous: CGImage?
+            if fill.kind == .blurPrevious {
+                var base = recipe
+                base.visualFills = []; base.textLayers = []; base.motionScenes = nil; base.audio.muteWindows = []
+                base.tracks = recipe.tracks.filter { $0.kind == .video }
+                let background = try await makePreview(recipe: base, assetURLs: assetURLs)
+                let generator = AVAssetImageGenerator(asset: background.playerItem.asset)
+                generator.videoComposition = background.playerItem.videoComposition
+                generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+                previous = try await generator.image(at: time(max(0, fill.start - 0.05))).image
             }
-            textBitmapBytes += bitmapBytes
-            textLayers.append(painted)
+            let placement = VisualMediaPlacement(order: fill.order, windowStart: fill.start, windowEnd: fill.end, fadeIn: fill.fadeIn, fadeOut: fill.fadeOut)
+            layers.append(RecipeVideoLayer(trackID: nil, image: try fill.image(canvas: canvas, previous: previous), transform: .identity,
+                start: fill.start, end: fill.end, fadeIn: 0, isPrimary: false, clipID: fill.id,
+                visualPlacement: placement, visualOrder: fill.order))
         }
-        if !layers.contains(where: { $0.trackID != nil }) {
-            guard !layers.isEmpty, total > 0 else { throw MediaEngineError.unsupportedCapability }
+        let textBitmapBytes = textLayers.reduce(0) { $0 + $1.bitmapBytes }
+        let textStore = try NativeTextLayerStore(layers: recipe.textLayers, assetURLs: assetURLs, canvas: canvas,
+                                               maxBitmapBytes: 64 * 1024 * 1024 - textBitmapBytes)
+        _ = try textStore.activeLayers(at: 0)
+        textLayers += recipe.textLayers.map(RecipeTextLayer.deferred)
+        var videoCoveredUntil = 0.0
+        for layer in layers.filter({ $0.trackID != nil }).sorted(by: { $0.start < $1.start }) {
+            if layer.start > videoCoveredUntil + 0.000_001 { break }
+            videoCoveredUntil = max(videoCoveredUntil, layer.end)
+        }
+        if videoCoveredUntil + 0.000_001 < total {
+            guard !layers.isEmpty, total > 0 else { throw NativePreviewFeatureError("Composition-213") }
             let clock = try await StillTimelineClock.make()
             stillClock = clock
             let asset = AVURLAsset(url: clock.url)
@@ -198,20 +244,33 @@ public struct PreviewComposition: @unchecked Sendable {
         }
         if composition.duration.seconds < total { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, duration: time(total - composition.duration.seconds))) }
         let boundaries = Set([0, total] + layers.flatMap { [$0.start, $0.end] }).sorted()
+        let motion = try NativeMotionPainter.make(recipe.motionScenes, assets: assetURLs, canvas: canvas, duration: total, frameRate: recipe.frameRate)
         videoComposition.instructions = zip(boundaries, boundaries.dropFirst()).map { start, end in
             RecipeVideoInstruction(timeRange: CMTimeRange(start: time(start), end: time(end)),
-                layers: layers.filter { $0.start < end && $0.end > start }, text: textLayers, canvas: canvas)
+                layers: layers.filter { $0.start < end && $0.end > start }, text: textLayers, canvas: canvas, cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore)
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters
         let item = AVPlayerItem(asset: composition)
         if let stillClock { StillClockLifetime.retain(stillClock, on: item) }
         item.videoComposition = videoComposition
+        // Coalesced paused seeks must finish only after their composed frame is displayed.
+        item.seekingWaitsForVideoCompositionRendering = true
         item.audioMix = audioMix
-        return PreviewComposition(description: CompositionDescription(duration: total, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
+        var result = PreviewComposition(description: CompositionDescription(duration: total, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
+        result.audioBindings = audioBindings
+        return result
     }
 
-    private static func transform(naturalSize: CGSize, preferred: CGAffineTransform, canvas: CGSize, clip: TimelineClip) -> CGAffineTransform {
+    /// Track matrices use top-left coordinates; decoded CIImage pixels use
+    /// bottom-left coordinates. Reflect both domains before normalizing bounds.
+    /// Without this change, a quarter-turn goes in the opposite direction.
+    static func coreImagePreferredTransform(_ trackTransform: CGAffineTransform) -> CGAffineTransform {
+        let flip = CGAffineTransform(scaleX: 1, y: -1)
+        return flip.concatenating(trackTransform).concatenating(flip)
+    }
+
+    static func transform(naturalSize: CGSize, preferred: CGAffineTransform, canvas: CGSize, clip: TimelineClip) -> CGAffineTransform {
         let rect = CGRect(origin: .zero, size: naturalSize).applying(preferred)
         let scale = max(canvas.width / max(abs(rect.width), 1), canvas.height / max(abs(rect.height), 1))
         return preferred

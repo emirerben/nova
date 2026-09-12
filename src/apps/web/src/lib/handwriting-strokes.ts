@@ -149,14 +149,16 @@ export function layoutHandwritingText(
     maxWidthEm,
     letterSpacingEm = 0,
     lineSpacing = 1.15,
+    wrapLines = true,
   }: {
     maxWidthEm: number;
     letterSpacingEm?: number;
     lineSpacing?: number;
+    wrapLines?: boolean;
   },
 ): HandwritingLayout {
   const { ascent, descent, stroke_width: strokeWidth } = HANDWRITING_ASSET;
-  const lines = wrapHandwritingText(text, maxWidthEm, letterSpacingEm);
+  const lines = wrapLines ? wrapHandwritingText(text, maxWidthEm, letterSpacingEm) : text.replace(/\r\n?/g, "\n").split("\n");
   const lineWidthsEm = lines.map((line) =>
     measureHandwritingLineEm(line, letterSpacingEm),
   );

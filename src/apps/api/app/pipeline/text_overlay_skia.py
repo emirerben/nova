@@ -130,9 +130,18 @@ class _TextShadowLayer:
     sigma: float
     dx: float
     dy: float
+    red: int = 0
+    green: int = 0
+    blue: int = 0
 
 
-_TextShadowStyle = Literal["none", "standard", "high_visibility"]
+@dataclass(frozen=True)
+class _AuthoredTextPaint:
+    shadows: tuple[_TextShadowLayer, ...]
+    outline: str
+
+
+_TextShadowStyle = Literal["none", "standard", "high_visibility"] | _AuthoredTextPaint
 
 # The pre-existing Skia default. Keeping it for absent/null values prevents a
 # renderer-wide visual change when the high-visibility effect is not selected.
@@ -149,6 +158,17 @@ _HIGH_VISIBILITY_TEXT_SHADOW_LAYERS = (
 def _text_shadow_style(overlay: dict) -> _TextShadowStyle:
     """Resolve the legacy toggle plus the editor's explicit shadow treatment."""
 
+    if any(
+        overlay.get(key) is not None for key in ("stroke_color", "shadow_color", "shadow_opacity")
+    ):
+        opacity = min(1.0, max(0.0, _finite_float(overlay.get("shadow_opacity"), 160 / 255)))
+        red, green, blue, _ = _hex_to_rgba(overlay.get("shadow_color") or "#000000")
+        shadows = (
+            ()
+            if overlay.get("shadow_enabled") is False or opacity == 0
+            else (_TextShadowLayer(round(255 * opacity), 12.0, 0.0, 6.0, red, green, blue),)
+        )
+        return _AuthoredTextPaint(shadows, overlay.get("stroke_color") or "#000000")
     if overlay.get("shadow_enabled") is False:
         return "none"
     if overlay.get("shadow_style") == "high_visibility":
@@ -157,11 +177,19 @@ def _text_shadow_style(overlay: dict) -> _TextShadowStyle:
 
 
 def _text_shadow_layers(style: _TextShadowStyle) -> tuple[_TextShadowLayer, ...]:
+    if isinstance(style, _AuthoredTextPaint):
+        return style.shadows
     if style == "none":
         return ()
     if style == "high_visibility":
         return _HIGH_VISIBILITY_TEXT_SHADOW_LAYERS
     return _STANDARD_TEXT_SHADOW_LAYERS
+
+
+def _text_outline_color(style: _TextShadowStyle, alpha: float) -> int:
+    if isinstance(style, _AuthoredTextPaint):
+        return _skia_color_from_hex(style.outline, _clamp_byte(230 * alpha))
+    return skia.ColorSetARGB(_clamp_byte(230 * alpha), 0, 0, 0)
 
 
 def _text_shadow_bleed_px(style: _TextShadowStyle) -> tuple[int, int, int, int]:
@@ -192,7 +220,9 @@ def _text_shadow_paints(
     for layer in layers:
         kwargs: dict[str, Any] = {
             "AntiAlias": True,
-            "Color": skia.ColorSetARGB(_clamp_byte(layer.alpha * layer_alpha), 0, 0, 0),
+            "Color": skia.ColorSetARGB(
+                _clamp_byte(layer.alpha * layer_alpha), layer.red, layer.green, layer.blue
+            ),
             "MaskFilter": skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, layer.sigma),
         }
         if stroke_width is not None:
@@ -404,7 +434,9 @@ def _giant_title_wipe_scale_origin(
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
     max_width = _overlay_max_width_px(overlay, render_canvas)
     initial_size = _resolve_font_size_px(overlay)
-    if overlay.get("preserve_font_size"):
+    if overlay.get("wrap_lines") is False:
+        font, size, lines = _authored_lines(text, typeface, initial_size)
+    elif overlay.get("preserve_font_size"):
         font, size, lines = _wrap_at_fixed_size(
             text, typeface, initial_size, max_width, letter_spacing_em
         )
@@ -1149,7 +1181,7 @@ def _skia_gradient_shader(
 def _resolve_font_size_px(overlay: dict) -> int:
     px = overlay.get("text_size_px")
     if px:
-        return max(_MIN_FONT_SIZE, int(px))
+        return max(8 if overlay.get("wrap_lines") is False else _MIN_FONT_SIZE, int(px))
     size_class = overlay.get("text_size", "medium")
     return max(_MIN_FONT_SIZE, _FONT_SIZE_MAP.get(size_class, 72))
 
@@ -1316,6 +1348,13 @@ def _draw_string_spaced(
     for ch in text:
         canvas.drawString(ch, cx, baseline_y, font, paint)
         cx += font.measureText(ch) + spacing_px
+
+
+def _authored_lines(text, typeface, size, max_width=None, letter_spacing_em=0, *, shape_text=False):
+    """Keep the creator's exact size and explicit line breaks, including blank rows."""
+    font = skia.Font(typeface, size)
+    font.setSubpixel(True)
+    return font, size, text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
 def _wrap_text_to_lines(
@@ -1577,6 +1616,7 @@ def measure_text_overlay_box(
             text,
             max_width_em=max_width / max(size, 1),
             letter_spacing_em=letter_spacing_em,
+            wrap_lines=overlay.get("wrap_lines", True),
             line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
         )
         width = layout.width_em * size
@@ -1594,7 +1634,8 @@ def measure_text_overlay_box(
     initial_size = _resolve_font_size_px(overlay)
     max_width = _overlay_max_width_px(overlay, render_canvas)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
-    font, size, lines = _shrink_to_fit(
+    fit = _authored_lines if overlay.get("wrap_lines") is False else _shrink_to_fit
+    font, size, lines = fit(
         text,
         typeface,
         initial_size,
@@ -1650,6 +1691,7 @@ def _draw_handwriting_strokes(
         text,
         max_width_em=max_width / max(size, 1),
         letter_spacing_em=letter_spacing_em,
+        wrap_lines=overlay.get("wrap_lines", True),
         line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
     )
     if not layout.strokes:
@@ -1696,7 +1738,7 @@ def _draw_handwriting_strokes(
     outline_paint = (
         skia.Paint(
             AntiAlias=True,
-            Color=skia.ColorSetARGB(_clamp_byte(230 * alpha), 0, 0, 0),
+            Color=_text_outline_color(shadow_style, alpha),
             Style=skia.Paint.kStroke_Style,
             StrokeWidth=ink_width + outline_px * 2.0,
             StrokeCap=skia.Paint.kRound_Cap,
@@ -1816,7 +1858,9 @@ def _draw_centered_text(
     typeface = _typeface_for_overlay(overlay)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
     max_width = _overlay_max_width_px(overlay, render_canvas)
-    if font_override is not None:
+    if overlay.get("wrap_lines") is False:
+        font, size, lines = _authored_lines(geometry_text, typeface, _resolve_font_size_px(overlay))
+    elif font_override is not None:
         font = font_override
         size = int(font.getSize())
         lines = _wrap_text_to_lines(
@@ -1936,6 +1980,18 @@ def _draw_centered_text(
     canvas.translate(x_translate, y_translate)
     canvas.scale(scale, scale)
     canvas.translate(-origin_x, -origin_y)
+    if overlay.get("background_color"):
+        block_width = max(block["widths"]) if block["widths"] else 0
+        left = _anchored_left_x(anchor, cx, block_width)
+        canvas.drawRoundRect(
+            skia.Rect.MakeXYWH(left - 8, block_top - 4, block_width + 16, block["block_h"] + 8),
+            4,
+            4,
+            skia.Paint(
+                Color=_skia_color_from_hex(overlay["background_color"], _clamp_byte(255 * alpha)),
+                AntiAlias=True,
+            ),
+        )
     blur_layer = blur_px > 0.01
     if blur_layer:
         canvas.saveLayer(
@@ -2135,7 +2191,7 @@ def _draw_line_with_layers(
     if stroke_px > 0:
         stroke_paint = skia.Paint(
             AntiAlias=True,
-            Color=skia.ColorSetARGB(_clamp_byte(230 * layer_alpha), 0, 0, 0),
+            Color=_text_outline_color(shadow_style, layer_alpha),
             Style=skia.Paint.kStroke_Style,
             StrokeWidth=stroke_px * 2.0,
             StrokeJoin=skia.Paint.kRound_Join,
@@ -2170,7 +2226,9 @@ def _draw_staggered_slice(
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
     max_width = _overlay_max_width_px(overlay, render_canvas)
     initial_size = _resolve_font_size_px(overlay)
-    if overlay.get("preserve_font_size"):
+    if overlay.get("wrap_lines") is False:
+        font, size, _ = _authored_lines(text, typeface, initial_size)
+    elif overlay.get("preserve_font_size"):
         font, size, _ = _wrap_at_fixed_size(
             text, typeface, initial_size, max_width, letter_spacing_em
         )
@@ -2180,7 +2238,11 @@ def _draw_staggered_slice(
 
     visual_rows: list[tuple[int, str]] = []
     for logical_index, logical_line in enumerate(text.split("\n")):
-        wrapped = _wrap_text_to_lines(logical_line, font, max_width, letter_spacing_px)
+        wrapped = (
+            [logical_line]
+            if overlay.get("wrap_lines") is False
+            else _wrap_text_to_lines(logical_line, font, max_width, letter_spacing_px)
+        )
         visual_rows.extend((logical_index, row) for row in wrapped)
     lines = [row for _, row in visual_rows]
     block = _measure_block(
@@ -2438,7 +2500,9 @@ def _draw_pop_in_with_suffix(
     # Lyric pop-up stages can opt into fixed typography: cumulative lines wrap
     # at the resolved size instead of shrinking as later words are added.
     # Center/right captions without that flag are capped at two lines.
-    if overlay.get("preserve_font_size"):
+    if overlay.get("wrap_lines") is False:
+        full_font, _full_size, full_lines = _authored_lines(text, typeface, initial_size)
+    elif overlay.get("preserve_font_size"):
         full_font, _full_size, full_lines = _wrap_at_fixed_size(
             text,
             typeface,
@@ -2965,6 +3029,8 @@ _ANIMATED_EFFECTS_SKIA = {
 
 
 def _is_animated(overlay: dict) -> bool:
+    if overlay.get("animation_phases") is not None:
+        return True
     effect = overlay.get("effect", "none")
     if _theme_transition_type(overlay) == "giant-title-wipe":
         return True
@@ -2999,6 +3065,35 @@ def _draw_overlay_on_canvas(
     with _theme_transition_canvas(
         canvas, overlay, t_local, duration_s, render_canvas=render_canvas
     ):
+        if overlay.get("animation_phases") is not None:
+            import regex  # noqa: PLC0415
+
+            from app.agents._schemas.text_animation_phases import (
+                TextAnimationPhases,  # noqa: PLC0415
+            )
+            from app.pipeline.text_animation_phases import (  # noqa: PLC0415
+                sample_text_phases,
+                visible_grapheme_count,
+            )
+
+            phases = TextAnimationPhases.model_validate(overlay["animation_phases"])
+            state = sample_text_phases(phases, t_local, duration_s)
+            text = _overlay_text(overlay)
+            graphemes = regex.findall(r"\X", text)
+            visible = "".join(graphemes[: visible_grapheme_count(len(graphemes), state.reveal)])
+            _draw_centered_text(
+                canvas,
+                visible,
+                overlay,
+                render_canvas=render_canvas,
+                alpha=state.alpha,
+                scale=state.scale,
+                x_translate=state.x,
+                y_translate=state.y,
+                layout_text=text,
+                shape_text=bool(overlay.get("shape_text")),
+            )
+            return
         if effect == "player-card":
             # Out of scope for Skia migration — classic templates only.
             raise NotImplementedError(

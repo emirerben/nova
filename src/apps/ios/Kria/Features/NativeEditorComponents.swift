@@ -222,40 +222,6 @@ struct NativeEditorTimeline: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 2) {
-                Text("Timeline")
-                    .font(KriaFont.body(13).weight(.semibold))
-                    .foregroundStyle(KriaColor.ink)
-                Spacer()
-
-                Button(action: session.undo) {
-                    Image(systemName: "arrow.uturn.backward")
-                        .frame(width: 44, height: 44)
-                }
-                .disabled(!session.canUndo || session.isSaving)
-                .accessibilityLabel("Undo")
-                .accessibilityIdentifier("native-editor-undo")
-
-                Button(action: session.redo) {
-                    Image(systemName: "arrow.uturn.forward")
-                        .frame(width: 44, height: 44)
-                }
-                .disabled(!session.canRedo || session.isSaving)
-                .accessibilityLabel("Redo")
-                .accessibilityIdentifier("native-editor-redo")
-
-                Button {
-                    Task { await session.save() }
-                } label: {
-                    Image(systemName: session.hasUnsavedChanges ? "square.and.arrow.down" : "checkmark")
-                        .foregroundStyle(session.hasUnsavedChanges ? KriaColor.ink : KriaColor.zinc)
-                        .frame(width: 44, height: 44)
-                }
-                .disabled(session.isSaving || !session.hasUnsavedChanges)
-                .accessibilityLabel(session.isSaving ? "Saving" : session.hasUnsavedChanges ? "Save changes" : "Saved")
-                .accessibilityIdentifier("native-editor-save")
-            }
-
             NativeMiniStrip(session: session)
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("native-editor-mini-strip")
@@ -301,6 +267,31 @@ struct NativeEditorContextStrip: View {
     }
 }
 
+struct NativeEditorTextContextStrip: View {
+    let onEdit: () -> Void
+    let onDeselect: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onEdit) {
+                Label("Edit text", systemImage: "textformat")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(NativeEditorContextButtonStyle(isAccent: true))
+            .accessibilityIdentifier("native-editor-text-edit-action")
+            Button(action: onDeselect) {
+                Label("Deselect", systemImage: "xmark")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .background(KriaColor.paper)
+        .accessibilityIdentifier("native-editor-text-context")
+    }
+}
+
 private struct NativeEditorContextButtonStyle: ButtonStyle {
     let isAccent: Bool
 
@@ -321,7 +312,7 @@ struct NativeEditorToolRail: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 2) {
-                ForEach(NativeEditorTool.allCases) { tool in
+                ForEach(NativeEditorTool.allCases.filter { $0 != .kria }) { tool in
                     Button { selected = tool; onSelect(tool) } label: {
                         VStack(spacing: 4) {
                             Image(systemName: tool.icon)

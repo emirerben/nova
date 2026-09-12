@@ -6,6 +6,8 @@ import Foundation
 /// retaining future lane data in `serverSnapshot` for characterization tests.
 enum NativeEditorUITestFixtures {
     enum Shape: String, CaseIterable, Sendable {
+        case projectedCaptions = "projected-captions"
+        case sourceText = "source-text"
         case twoText = "two-text"
         case boundary = "boundary"
         case allLanes = "all-lanes"
@@ -29,6 +31,8 @@ enum NativeEditorUITestFixtures {
 
     static func draft(for shape: Shape) -> EditorDraft {
         switch shape {
+        case .projectedCaptions: projectedCaptions
+        case .sourceText: sourceText
         case .twoText: twoText
         case .boundary: boundary
         case .allLanes: allLanes
@@ -36,6 +40,16 @@ enum NativeEditorUITestFixtures {
         case .unknown: unknownSections
         }
     }
+
+    static let sourceText: EditorDraft = {
+        let clips = [clip(0, start: 0, duration: 2), clip(1, start: 2, duration: 2)]
+        let layer = text(100, content: "Your story starts here", x: 0.5, y: 0.4)
+        return draft(clips: clips, text: [layer], captions: false, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": .array([textRecord(layer, start: 0, end: 4, z: 1,
+                extra: ["font_family": .string("Inter"), "size_px": .number(72)])]),
+        ])
+    }()
 
     static let twoText: EditorDraft = {
         var clips = [clip(0, start: 0, duration: 3), clip(1, start: 3, duration: 3)]
@@ -72,6 +86,21 @@ enum NativeEditorUITestFixtures {
                             .object(["id": .string("cue-b"), "start_s": .number(2), "end_s": .number(4), "text": .string("second")]),
                         ]),
                      ])
+    }()
+
+    static let projectedCaptions: EditorDraft = {
+        let clips = [clip(3, start: 0, duration: 4)]
+        let title = text(300, content: "Title", x: 0.5, y: 0.3)
+        let caption = text(301, content: "Spoken words", x: 0.5, y: 0.8)
+        return draft(clips: clips, text: [title, caption], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": .array([
+                textRecord(title, start: 0, end: 2, z: 3),
+                .object(["id": .string(id(301).uuidString), "text": .string("Spoken words"),
+                         "start_s": .number(0), "end_s": .number(2), "role": .string("generative_intro"),
+                         "source_params": .object(["source": .string("caption_cue")])])
+            ])
+        ])
     }()
 
     static let allLanes: EditorDraft = {

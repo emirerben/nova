@@ -17,6 +17,7 @@ export function HandwritingText({
   revealProgress,
   color,
   maxWidthEm,
+  wrapLines = true,
   alignment = "center",
   letterSpacingEm = 0,
   lineSpacing = 1.15,
@@ -32,6 +33,7 @@ export function HandwritingText({
   revealProgress: number;
   color: string;
   maxWidthEm: number;
+  wrapLines?: boolean;
   alignment?: "left" | "center" | "right";
   letterSpacingEm?: number;
   lineSpacing?: number;
@@ -49,10 +51,11 @@ export function HandwritingText({
     () =>
       layoutHandwritingText(text, {
         maxWidthEm,
+        wrapLines,
         letterSpacingEm,
         lineSpacing,
       }),
-    [letterSpacingEm, lineSpacing, maxWidthEm, text],
+    [letterSpacingEm, lineSpacing, maxWidthEm, text, wrapLines],
   );
   const progress = Math.max(0, Math.min(1, revealProgress));
   const safeFontSizePx = Math.max(1, fontSizePx);

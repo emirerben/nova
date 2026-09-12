@@ -528,9 +528,11 @@ def _build_overlay_cmd(
         input_path,
     ]
 
-    # Add each PNG as an input
+    from app.pipeline.text_overlay import overlay_png_filter, overlay_png_input  # noqa: PLC0415
+
+    # Add each static PNG or lossless authored animation as one input.
     for ov in overlay_pngs:
-        cmd.extend(["-i", ov["png_path"]])
+        cmd.extend(overlay_png_input(ov))
 
     # Silent-audio fallback input — placed AFTER PNGs so the audio map index
     # is predictable: 1 + len(overlay_pngs) + len(ass_overlay_paths-as-inputs).
@@ -550,14 +552,8 @@ def _build_overlay_cmd(
     prev_label = "base"
     for i, ov in enumerate(overlay_pngs):
         input_idx = i + 1  # PNG inputs start at index 1
-        start = ov["start_s"]
-        end = ov["end_s"]
         out_label = f"ov{i}"
-        fc_parts.append(
-            f"[{prev_label}][{input_idx}:v]overlay=0:0"
-            f":enable='between(t,{start:.3f},{end:.3f})'"
-            f"[{out_label}]"
-        )
+        fc_parts.append(f"[{prev_label}][{input_idx}:v]{overlay_png_filter(ov)}[{out_label}]")
         prev_label = out_label
 
     # Chain ASS subtitle filters for animated text overlays

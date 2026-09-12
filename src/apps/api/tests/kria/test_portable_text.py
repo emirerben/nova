@@ -159,3 +159,36 @@ def test_dissolve_rejects_missing_or_invalid_seed(effect, seed):
     document["text_layers"][0].update(effect=effect, dissolve_seed=seed)
     with pytest.raises(ValidationError):
         EditRecipeV2.model_validate(document)
+
+
+def test_legacy_text_wire_omits_unnegotiated_animation_phases():
+    recipe = EditRecipeV2.model_validate(text_document())
+    assert "animation_phases" not in recipe.model_dump(mode="json")["text_layers"][0]
+    assert "animation_phases" not in json.loads(recipe.model_dump_json())["text_layers"][0]
+
+
+def test_authored_phases_survive_recipe_round_trip():
+    document = text_document()
+    phases = {"entrance": "slide", "exit": "typewriter", "loop": "float", "speed": 1.5}
+    document["text_layers"][0]["animation_phases"] = phases
+    recipe = EditRecipeV2.model_validate(document)
+    encoded = json.loads(recipe.model_dump_json())
+    assert encoded["text_layers"][0]["animation_phases"] == phases
+    assert EditRecipeV2.model_validate(encoded) == recipe
+
+
+def test_active_word_caption_accepts_shaped_emoji_without_changing_legacy_karaoke():
+    document = text_document()
+    layer = document["text_layers"][0]
+    layer["effect"] = "karaoke-line"
+    layer["runs"][0]["text"] = "🌈"
+    layer["karaoke"] = {
+        "starts": [0],
+        "highlight": {"red": 1, "green": 1, "blue": 0, "alpha": 1},
+        "active_only": True,
+    }
+    recipe = EditRecipeV2.model_validate(document)
+    assert recipe.text_layers[0].runs[0].shaped
+    layer["karaoke"]["active_only"] = False
+    with pytest.raises(ValidationError):
+        EditRecipeV2.model_validate(document)

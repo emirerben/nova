@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
+
 
 class _RecipeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True, allow_inf_nan=False)
@@ -86,11 +88,27 @@ class TimelineClip(_RecipeModel):
     transition: Transition | None = None
     text: TextTreatment | None = None
     look: Literal["golden_hour"] | None = None
+    hold_duration: float | None = Field(default=None, ge=0, le=1800)
+    overlay_above_text: bool | None = None
+    overlay_pop_in: bool | None = None
+    overlay_preserve_alpha: bool | None = None
+    visual_placement: VisualMediaPlacement | None = None
+    overlay_dissolve_seed: int | None = Field(default=None, ge=0, le=4294967295)
     volume: float = Field(default=1, ge=0, le=2)
 
     @model_serializer(mode="wrap")
     def _optional_look(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         result = handler(self)
+        for key in (
+            "overlay_dissolve_seed",
+            "visual_placement",
+            "hold_duration",
+            "overlay_above_text",
+            "overlay_pop_in",
+            "overlay_preserve_alpha",
+        ):
+            if getattr(self, key) is None:
+                result.pop(key, None)
         if self.look is None:
             # Preserve existing persisted recipe digests when adding the field.
             result.pop("look", None)
@@ -110,12 +128,25 @@ class AudioMixRecipe(_RecipeModel):
     fade_in: float = Field(default=0, ge=0, le=60)
     fade_out: float = Field(default=0, ge=0, le=60)
     duck_original_during_music: bool = False
+    mute_windows: list[AudioMuteWindow] = Field(default_factory=list, max_length=100)
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_shape(self, handler):
+        payload = handler(self)
+        if not self.mute_windows:
+            payload.pop("mute_windows", None)
+        return payload
 
 
 MediaCapability = Literal[
     "basicComposition",
     "positionedText",
     "animatedText",
+    "authoredText",
+    "cameraEffects",
+    "editorMedia",
+    "motionScenes",
+    "visualBlocks",
     "crossfade",
     "clipTransitions",
     "goldenHourLook",
@@ -146,6 +177,42 @@ class EditRecipeV1(_RecipeModel):
         if len(ids) != len(self.assets):
             raise ValueError("asset IDs must be unique")
         clips = [clip for track in self.tracks for clip in track.clips]
+        for track in self.tracks:
+            for clip in track.clips:
+                if clip.visual_placement is not None:
+                    placement = clip.visual_placement
+                    if (
+                        self.schema_version != 2
+                        or track.kind != "overlay"
+                        or clip.volume != 0
+                        or clip.hold_duration is not None
+                        or clip.timeline_start < placement.window_start
+                        or clip.timeline_start + clip.source_duration / clip.rate
+                        > placement.window_end + 1e-6
+                    ):
+                        raise ValueError("visual placement requires a silent bounded V2 overlay")
+                    self.required_capabilities |= {"visualBlocks"}
+                if (
+                    clip.overlay_dissolve_seed is not None
+                    or clip.hold_duration is not None
+                    or clip.overlay_above_text is not None
+                    or clip.overlay_pop_in is not None
+                    or clip.overlay_preserve_alpha is not None
+                ):
+                    if self.schema_version != 2 or track.kind != "overlay":
+                        raise ValueError("editor media requires a V2 overlay track")
+                    self.required_capabilities |= {"editorMedia"}
+        if self.audio.mute_windows:
+            if self.schema_version != 2:
+                raise ValueError("mute windows require V2")
+            for window in self.audio.mute_windows:
+                if window.end > self.duration or not set(window.clip_ids).issubset(
+                    {clip.id for clip in clips}
+                ):
+                    raise ValueError(
+                        "mute window exceeds the timeline or references an unknown clip"
+                    )
+            self.required_capabilities |= {"visualBlocks"}
         if any(clip.look for clip in clips):
             self.required_capabilities = self.required_capabilities | {"goldenHourLook"}
         if any(clip.transition and clip.transition.kind != "crossfade" for clip in clips):
@@ -162,7 +229,7 @@ class EditRecipeV1(_RecipeModel):
     def duration(self) -> float:
         return max(
             (
-                clip.timeline_start + clip.source_duration / clip.rate
+                clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
                 for track in self.tracks
                 for clip in track.clips
             ),

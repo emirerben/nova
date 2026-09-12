@@ -1,0 +1,31 @@
+{
+  "Bodoni Moda": {
+    "opsz": 12.0,
+    "wght": 400.0
+  },
+  "DM Sans": {
+    "opsz": 12.0,
+    "wght": 400.0
+  },
+  "EB Garamond": {
+    "wght": 400.0
+  },
+  "Fraunces": {
+    "SOFT": 0.0,
+    "WONK": 1.0,
+    "opsz": 12.0,
+    "wght": 900.0
+  },
+  "Outfit": {
+    "wght": 100.0
+  },
+  "Playfair Display Italic": {
+    "wght": 400.0
+  },
+  "Plus Jakarta Sans": {
+    "wght": 400.0
+  },
+  "Space Grotesk": {
+    "wght": 300.0
+  }
+}

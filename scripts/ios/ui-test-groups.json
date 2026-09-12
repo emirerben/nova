@@ -26,7 +26,10 @@
       "KriaUITests/NativeEditorInspectorUITests/testCaptionSelectionOpensCaptionInspector",
       "KriaUITests/NativeEditorInspectorUITests/testAllPersistedLanesExposeStableTimelineIdentityAndInspector",
       "KriaUITests/NativeEditorInspectorUITests/testPreviewDragIsOneUndoableTextEdit",
-      "KriaUITests/NativeEditorInspectorUITests/testStressFixtureRemainsReachableAtAccessibilityTypeWithReduceMotion"
+      "KriaUITests/NativeEditorInspectorUITests/testStressFixtureRemainsReachableAtAccessibilityTypeWithReduceMotion",
+      "KriaUITests/NativeEditorInspectorUITests/testTextReturnAndDeleteKeepCanvasLinesAligned",
+      "KriaUITests/NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations",
+      "KriaUITests/NativeEditorInspectorUITests/testSlowTimelineScrubPausesPlaybackAndDisplaysMatchingClip"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -51,6 +54,11 @@
     "src/apps/ios/Tests/KriaUITests/CreationUITests.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/ProjectsUITests.swift": "projects",
     "src/apps/ios/Tests/KriaUITests/EditorUITests.swift": "editor",
-    "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift": "editor"
+    "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift": "editor",
+    "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift": "editor",
+    "src/apps/ios/Kria/Core/NativeEditorSources.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorProjectHeader.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorTextPanel.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeTextCreationPanel.swift": "editor"
   }
 }

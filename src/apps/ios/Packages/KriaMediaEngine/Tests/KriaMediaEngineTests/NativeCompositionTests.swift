@@ -7,6 +7,172 @@ import CoreImage
 import ImageIO
 
 final class NativeCompositionTests: XCTestCase {
+    @MainActor func testQuarterTurnMetadataMatchesSystemPlaybackOrientation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for turn in [0.0, 1.0, 2.0, -1.0] {
+            let url = try await makeVideo(directory: directory, name: "rotation-\(turn)", color: CGColor(red: 1, green: 0, blue: 0, alpha: 1),
+                preferred: CGAffineTransform(rotationAngle: turn * .pi / 2), asymmetric: true)
+            let system = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+            system.appliesPreferredTrackTransform = true
+            let reference = try await system.image(at: CMTime(seconds: 0.4, preferredTimescale: 600)).image
+            let recipe = EditRecipe(canvas: Canvas(width: reference.width, height: reference.height),
+                assets: [MediaAsset(id: "source", relativePath: "source.mp4")],
+                tracks: [TimelineTrack(id: "video", kind: .video, clips: [TimelineClip(id: "clip", sourceAssetID: "source", sourceDuration: 1)])])
+            let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["source": url])
+            let generated = AVAssetImageGenerator(asset: preview.playerItem.asset)
+            generated.videoComposition = preview.playerItem.videoComposition
+            let actual = try await generated.image(at: CMTime(seconds: 0.4, preferredTimescale: 600)).image
+            let expectedPixels = rgba(reference), actualPixels = rgba(actual)
+            XCTAssertEqual(actual.width, reference.width)
+            XCTAssertEqual(actual.height, reference.height)
+            // Compare dominant colors away from edges, independently of transfer curves.
+            for (x, y) in [(20, 20), (reference.width - 20, 20), (20, reference.height - 20), (reference.width - 20, reference.height - 20)] {
+                let offset = (y * reference.width + x) * 4
+                let expectedRed = expectedPixels[offset] > expectedPixels[offset + 1]
+                let actualRed = actualPixels[offset] > actualPixels[offset + 1]
+                XCTAssertEqual(actualRed, expectedRed, "rotation \(turn), sample \(x),\(y)")
+            }
+        }
+    }
+
+    @MainActor func testLongStoryDecodesWithMoreThan64MBOfTimedText() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let photo = directory.appendingPathComponent("background.png")
+        try CIContext().writePNGRepresentation(of: CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 96, height: 160)),
+            to: photo, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        let root = try XCTUnwrap(#filePath.range(of: "/src/apps/ios/"))
+        let font = URL(fileURLWithPath: String(#filePath[..<root.lowerBound])).appendingPathComponent("src/apps/api/assets/fonts/Inter-Regular.ttf")
+        let urls = ["photo": photo, "font": font]
+        let assets = try urls.map { MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value)) }
+        let manifest = try RenderAssetManifest(assets: assets.map { asset in
+            RenderAssetReference(id: asset.id, fingerprint: try RenderFingerprint(asset.fingerprint!),
+                source: asset.id == "font" ? .library(catalog: .font, catalogID: "Inter-Regular.ttf", generation: asset.fingerprint!.hex) : .original(mediaID: asset.id))
+        })
+        let canvas = Canvas(width: 1080, height: 1920)
+        let text = try (0..<80).map { index in
+            try AuthoredTextLayout.compile(id: "caption-\(index)", text: "A sunny day\nKeep going 🌈", start: Double(index), end: Double(index + 1),
+                style: .init(fontAssetID: "font", size: 160, color: .init(red: 1, green: 1, blue: 1, alpha: 1)),
+                fontURL: font, canvas: canvas)
+        }
+        let perLayer = try RecipeTextLayer.make(text[0], assetURLs: urls, canvas: CGSize(width: 1080, height: 1920)).bitmapBytes
+        XCTAssertGreaterThan(perLayer * text.count, 64 * 1024 * 1024)
+        let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas, assets: assets,
+            tracks: [TimelineTrack(id: "video", kind: .video, clips: [TimelineClip(id: "photo", sourceAssetID: "photo", sourceDuration: 80)])],
+            assetManifest: manifest, textLayers: text)
+        let live = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
+        let preview = live.preview
+        let split = try live.textInteractionLayers(id: "caption-0", time: 0.5)
+        let splitGenerator = AVAssetImageGenerator(asset: preview.playerItem.asset)
+        splitGenerator.requestedTimeToleranceBefore = .zero; splitGenerator.requestedTimeToleranceAfter = .zero
+        splitGenerator.videoComposition = split.above
+        let upper = rgba(try await splitGenerator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image)
+        XCTAssertTrue(stride(from: 3, to: upper.count, by: 4).allSatisfy { upper[$0] == 0 }, "Empty foreground must stay transparent")
+        splitGenerator.videoComposition = split.below
+        let lower = try await splitGenerator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let positioned = CIImage(cgImage: split.text).transformed(by: CGAffineTransform(
+            translationX: split.rect.minX * 1080, y: (1 - split.rect.maxY) * 1920))
+        let reunited = try XCTUnwrap(CIContext().createCGImage(positioned.composited(over: CIImage(cgImage: lower)),
+            from: CGRect(x: 0, y: 0, width: 1080, height: 1920)))
+        let splitPixels = rgba(reunited)
+        let generator = AVAssetImageGenerator(asset: preview.playerItem.asset)
+        generator.videoComposition = preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        var first: [UInt8]?
+        for seconds in [0.5, 40.5, 79.5, 0.5] {
+            let image = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image
+            XCTAssertEqual(image.width, 1080); XCTAssertEqual(image.height, 1920)
+            let pixels = rgba(image)
+            XCTAssertGreaterThan(pixels.filter { $0 > 200 }.count, 1080 * 1920)
+            if let first { XCTAssertEqual(pixels, first) } else {
+                first = pixels
+                let error = zip(pixels, splitPixels).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }
+                XCTAssertLessThan(Double(error) / Double(pixels.count), 1, "Interactive layers must reconstruct the actual compositor frame")
+            }
+            let instruction = try XCTUnwrap(preview.playerItem.videoComposition?.instructions.first as? RecipeVideoInstruction)
+            XCTAssertLessThanOrEqual(try XCTUnwrap(instruction.textStore).residentBitmapBytes, 64 * 1024 * 1024)
+        }
+    }
+
+    @MainActor func testVisualFillUpdatesWithoutReplacingSources() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let base = directory.appendingPathComponent("base.png")
+        try CIContext().writePNGRepresentation(of: CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 96, height: 160)),
+            to: base, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        let asset = MediaAsset(id: "base", relativePath: "base", fingerprint: try SHA256Fingerprinter().fingerprint(file: base))
+        let manifest = try RenderAssetManifest(assets: [RenderAssetReference(id: "base", fingerprint: RenderFingerprint(asset.fingerprint!), source: .original(mediaID: "base"))])
+        var recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160), assets: [asset],
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "base", sourceAssetID: "base", sourceDuration: 3)])],
+            assetManifest: manifest, visualFills: [VisualCanvasFill(id: "fill", start: 1, end: 2, order: 1, kind: .solid, color: TextInk(red: 1, green: 0, blue: 0, alpha: 1))])
+        let live = try await LivePreviewComposition(recipe: recipe, assetURLs: ["base": base])
+        let source = live.preview.playerItem.asset
+        func redPixels(at time: Double) async throws -> Int {
+            let generator = AVAssetImageGenerator(asset: live.preview.playerItem.asset)
+            generator.videoComposition = live.preview.playerItem.videoComposition
+            generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+            let bytes = rgba(try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image)
+            return stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 180 && bytes[$0 + 1] < 80 }.count
+        }
+        let before = try await redPixels(at: 0.5), during = try await redPixels(at: 1.5), after = try await redPixels(at: 2.5)
+        XCTAssertEqual(before, 0); XCTAssertEqual(after, 0); XCTAssertGreaterThan(during, 15000)
+        recipe.visualFills[0].start = 0.25
+        try live.updateText(recipe: recipe)
+        XCTAssertTrue(source === live.preview.playerItem.asset)
+        let moved = try await redPixels(at: 0.5)
+        XCTAssertGreaterThan(moved, 15000)
+    }
+
+    @MainActor func testOverlayPositionPopAndFrozenTailMatchPreviewAndExport() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let base = directory.appendingPathComponent("black.png")
+        try CIContext().writePNGRepresentation(of: CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 96, height: 160)),
+            to: base, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        let card = try await makeVideo(directory: directory, name: "card", color: CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        let urls = ["base": base, "card": card]
+        let assets = try urls.sorted(by: { $0.key < $1.key }).map { MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value)) }
+        let manifest = try RenderAssetManifest(assets: assets.map { RenderAssetReference(id: $0.id, fingerprint: try RenderFingerprint($0.fingerprint!), source: .original(mediaID: $0.id)) })
+        var recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160), assets: assets,
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "background", sourceAssetID: "base", sourceDuration: 3)]),
+                     TimelineTrack(id: "overlays", kind: .overlay, clips: [TimelineClip(id: "overlay", sourceAssetID: "card", sourceStart: 0.25, sourceDuration: 0.25,
+                        timelineStart: 0.5, transform: MediaTransform(scale: 0.5, positionX: 24, positionY: 40), volume: 0,
+                        holdDuration: 1.75, overlayPopIn: true, overlayPreserveAlpha: false)])], assetManifest: manifest)
+        let preview = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
+        let output = directory.appendingPathComponent("overlay.mp4")
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: urls, outputURL: output)
+        let reference = AVAssetImageGenerator(asset: preview.preview.playerItem.asset)
+        reference.videoComposition = preview.preview.playerItem.videoComposition
+        let exported = AVAssetImageGenerator(asset: AVURLAsset(url: output))
+        var series: [[Int]] = []
+        for generator in [reference, exported] {
+            generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+            var counts: [Int] = []
+            for time in [0.2, 0.5, 0.8, 2.2, 2.6, 0.8] {
+                let bytes = rgba(try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image)
+                counts.append(stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 180 && bytes[$0 + 1] < 80 }.count)
+            }
+            XCTAssertEqual(counts[0], 0); XCTAssertEqual(counts[4], 0)
+            XCTAssertGreaterThan(counts[1], 2000); XCTAssertLessThan(counts[1], counts[2])
+            XCTAssertEqual(counts[2], counts[3]); XCTAssertEqual(counts[5], counts[2])
+            series.append(counts)
+        }
+        for (a, b) in zip(series[0], series[1]) { XCTAssertLessThanOrEqual(abs(a - b), 160) }
+        let geometry = try XCTUnwrap(preview.mediaSelectionBounds(id: "overlay", time: 2.2))
+        XCTAssertEqual(geometry.centerX, 0.75, accuracy: 0.001)
+        XCTAssertEqual(geometry.centerY, 0.75, accuracy: 0.001)
+        let item = preview.preview.playerItem, source = preview.preview.playerItem.asset
+        recipe.tracks[1].clips[0].transform.positionX = -24
+        try preview.updateText(recipe: recipe)
+        XCTAssertTrue(item === preview.preview.playerItem); XCTAssertTrue(source === item.asset)
+        XCTAssertEqual(preview.mediaSelectionBounds(id: "overlay", time: 2.2)?.centerX ?? -1, 0.25, accuracy: 0.001)
+    }
+
     @MainActor func testPhotoOnlyTimelinePreviewsAndExportsThroughSameClock() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -28,6 +194,33 @@ final class NativeCompositionTests: XCTestCase {
             ])
         ])
         let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: urls)
+        let videoOutput = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ])
+        preview.playerItem.add(videoOutput)
+        let player = AVPlayer(playerItem: preview.playerItem)
+        for seconds in [0.1, 0.9, 0.11, 0.12, 0.89, 0.88, 0.13] {
+            let target = CMTime(seconds: seconds, preferredTimescale: 600)
+            let finished = await withCheckedContinuation { continuation in
+                player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) {
+                    continuation.resume(returning: $0)
+                }
+            }
+            XCTAssertTrue(finished)
+            var pixel: CVPixelBuffer?
+            for _ in 0..<100 {
+                pixel = videoOutput.copyPixelBuffer(forItemTime: target, itemTimeForDisplay: nil)
+                if pixel != nil { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let buffer = try XCTUnwrap(pixel, "No displayed frame after seek to \(seconds)")
+            let image = CIImage(cvPixelBuffer: buffer)
+            let bytes = rgba(try XCTUnwrap(CIContext().createCGImage(image, from: image.extent)))
+            let center = (80 * 96 + 48) * 4
+            XCTAssertGreaterThan(bytes[center + (seconds < 0.2 ? 0 : 2)], 220)
+            XCTAssertLessThan(bytes[center + (seconds < 0.2 ? 2 : 0)], 40)
+        }
+        player.replaceCurrentItem(with: nil)
         let output = directory.appendingPathComponent("photos.mp4")
         _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: urls, outputURL: output)
         let exported = AVURLAsset(url: output)
@@ -165,11 +358,12 @@ final class NativeCompositionTests: XCTestCase {
         XCTAssertNotEqual(try SHA256Fingerprinter().fingerprint(file: original), try SHA256Fingerprinter().fingerprint(file: destination))
     }
 
-    @MainActor private func makeVideo(directory: URL, name: String, color: CGColor) async throws -> URL {
+    @MainActor private func makeVideo(directory: URL, name: String, color: CGColor, preferred: CGAffineTransform = .identity, asymmetric: Bool = false) async throws -> URL {
         let url = directory.appendingPathComponent("\(name).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 96, AVVideoHeightKey: 160])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB, kCVPixelBufferWidthKey as String: 96, kCVPixelBufferHeightKey as String: 160])
+        input.transform = preferred
         writer.add(input)
         XCTAssertTrue(writer.startWriting())
         writer.startSession(atSourceTime: .zero)
@@ -182,6 +376,10 @@ final class NativeCompositionTests: XCTestCase {
             let context = try XCTUnwrap(CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: 96, height: 160, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue))
             context.setFillColor(color)
             context.fill(CGRect(x: 0, y: 0, width: 96, height: 160))
+            if asymmetric {
+                context.setFillColor(CGColor(red: 0, green: 1, blue: 0, alpha: 1))
+                context.fill(CGRect(x: 0, y: 80, width: 96, height: 80))
+            }
             CVPixelBufferUnlockBaseAddress(pixel, [])
             XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 30)))
         }

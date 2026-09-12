@@ -3588,8 +3588,16 @@ def _generate_single_pass_overlays(
     if not overlays:
         return [], [], ""
 
-    static_overlays = [o for o in overlays if o.get("effect") not in ASS_ANIMATED_EFFECTS]
-    animated_overlays = [o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS]
+    static_overlays = [
+        o
+        for o in overlays
+        if (o.get("animation_phases") is not None or o.get("effect") not in ASS_ANIMATED_EFFECTS)
+    ]
+    animated_overlays = [
+        o
+        for o in overlays
+        if (o.get("animation_phases") is None and o.get("effect") in ASS_ANIMATED_EFFECTS)
+    ]
 
     # ABS_PASS_TIME_S + ABS_PASS_SLOT_INDEX are the post-join sentinels.
     # _burn_text_overlays calls the same generators with the same constants;
@@ -4807,6 +4815,8 @@ def _collect_absolute_overlays(
                 entry["word_timings"] = ov["word_timings"]
             if ov.get("pop_animated_suffix"):
                 entry["pop_animated_suffix"] = ov["pop_animated_suffix"]
+            if ov.get("wrap_lines") is False:
+                entry["wrap_lines"] = False
             if ov.get("preserve_font_size"):
                 entry["preserve_font_size"] = True
             if ov.get("highlight_color"):
@@ -5430,13 +5440,12 @@ def _build_preburn_inputs_and_graph(
         # produce cycle frames on their curtain-close slot.
         per_png_inputs = png_configs
 
+    from app.pipeline.text_overlay import overlay_png_filter, overlay_png_input  # noqa: PLC0415
+
     for j, c in enumerate(per_png_inputs):
-        ffmpeg_inputs.extend(["-i", c["png_path"]])
+        ffmpeg_inputs.extend(overlay_png_input(c))
         out_lbl = f"txt{j}"
-        fc_parts.append(
-            f"[{prev}][{next_input_idx}:v]overlay=0:0"
-            f":enable='between(t,{c['start_s']:.3f},{c['end_s']:.3f})'[{out_lbl}]"
-        )
+        fc_parts.append(f"[{prev}][{next_input_idx}:v]{overlay_png_filter(c)}[{out_lbl}]")
         prev = out_lbl
         next_input_idx += 1
 
@@ -5532,6 +5541,8 @@ def _pre_burn_curtain_slot_text(
             entry["font_family"] = ov["font_family"]
         if ov.get("cycle_fonts"):
             entry["cycle_fonts"] = ov["cycle_fonts"]
+        if ov.get("wrap_lines") is False:
+            entry["wrap_lines"] = False
         if ov.get("preserve_font_size"):
             entry["preserve_font_size"] = True
 
@@ -5749,8 +5760,16 @@ def _burn_text_overlays(
         generate_text_overlay_png,
     )
 
-    static_overlays = [o for o in overlays if o.get("effect") not in ASS_ANIMATED_EFFECTS]
-    animated_overlays = [o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS]
+    static_overlays = [
+        o
+        for o in overlays
+        if (o.get("animation_phases") is not None or o.get("effect") not in ASS_ANIMATED_EFFECTS)
+    ]
+    animated_overlays = [
+        o
+        for o in overlays
+        if (o.get("animation_phases") is None and o.get("effect") in ASS_ANIMATED_EFFECTS)
+    ]
 
     png_configs = (
         generate_text_overlay_png(
@@ -5778,20 +5797,17 @@ def _burn_text_overlays(
         return
 
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
+    from app.pipeline.text_overlay import overlay_png_filter, overlay_png_input  # noqa: PLC0415
 
     cmd = ["ffmpeg", "-i", input_path]
     for cfg in png_configs:
-        cmd.extend(["-i", cfg["png_path"]])
+        cmd.extend(overlay_png_input(cfg))
 
     fc_parts = ["[0:v]null[base]"]
     prev = "base"
     for i, cfg in enumerate(png_configs):
         out = f"txt{i}"
-        fc_parts.append(
-            f"[{prev}][{i + 1}:v]overlay=0:0"
-            f":enable='between(t,{cfg['start_s']:.3f},{cfg['end_s']:.3f})'"
-            f"[{out}]"
-        )
+        fc_parts.append(f"[{prev}][{i + 1}:v]{overlay_png_filter(cfg)}[{out}]")
         prev = out
 
     # Chain subtitles filter for each ASS file. libass uses absolute times

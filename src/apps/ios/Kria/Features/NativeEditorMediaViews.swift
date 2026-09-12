@@ -2,6 +2,7 @@ import AVFoundation
 import AVKit
 import KriaMediaEngine
 import SwiftUI
+import UIKit
 
 private func nativeEffectName(_ raw: [String: JSONValue], fallback: String) -> String {
     raw["kind"]?.stringValue
@@ -15,7 +16,7 @@ private func nativeEffectName(_ raw: [String: JSONValue], fallback: String) -> S
 private func nativeTextPosition(_ layer: EditorTextElement) -> CGPoint {
     CGPoint(
         x: min(max(layer.raw["x_frac"]?.numberValue ?? 0.5, 0), 1),
-        y: min(max(layer.raw["y_frac"]?.numberValue ?? 0.5, 0), 1)
+        y: min(max(layer.raw["y_frac"]?.numberValue ?? (layer.raw["position"] == .string("top") ? 0.2 : (layer.raw["position"] == .string("bottom") ? 0.8 : 0.5)), 0), 1)
     )
 }
 
@@ -80,18 +81,23 @@ struct NativeVideoPreview: View {
     @State private var directMoveBaseline: CGPoint?
     @State private var directResizeObjectID: String?
     @State private var directResizeBaseline: CGFloat?
+    @State private var directResizeTextBaseline: EditorTextElement?
+    @State private var transformBaseline: EditorTextElement?
+    @State private var transformCenter: CGPoint?
+    @State private var transformStartVector: CGVector?
+    @State private var liveTextBaseline: EditorTextElement?
+    @State private var liveTextBounds: TextSelectionBounds?
+    @State private var liveTextFrame: NativeEditorSession.TextInteractionFrame?
+    @State private var liveTextScale: Double = 1
+    @State private var liveTextRotation: Double = 0
+    @State private var liveTextTranslation = CGPoint.zero
+    @State private var liveTextSampleCount = 0
+    @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
+    @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
     init(session: NativeEditorSession) {
         self.session = session
         _clock = ObservedObject(wrappedValue: session.playbackClock)
-    }
-
-    private var previewKind: String {
-        guard let player = session.player, let item = player.currentItem else {
-            return ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") ? "Reference frame" : "Preview unavailable"
-        }
-        guard let asset = item.asset as? AVURLAsset else { return "Cloud preview" }
-        return asset.url.isFileURL ? "Local preview" : "Cloud preview"
     }
 
     private var objects: [NativeEditorPreviewObject] {
@@ -113,7 +119,8 @@ struct NativeVideoPreview: View {
                     title: "Text",
                     render: .text,
                     detail: nil,
-                    scale: CGFloat(min(max(layer.flatMap { nativeRawNumber($0.raw, "max_width_frac") } ?? 0.84, 0.2), 1))
+                    scale: CGFloat(min(max(layer.flatMap { nativeRawNumber($0.raw, "max_width_frac") } ?? 0.84, 0.2), 1)),
+                    rotation: layer?.raw["rotation_deg"]?.numberValue ?? 0
                 )
             case .captionCue:
                 guard captionsEnabled else { return nil }
@@ -180,7 +187,76 @@ struct NativeVideoPreview: View {
         didCacheObjects = true
     }
 
+    private func resizeText(_ baseline: EditorTextElement, scale: Double, rotation: Double, canvas: CGSize) {
+        if liveTextBaseline == nil {
+            liveTextBaseline = baseline
+            liveTextBounds = session.previewSelectionBounds(for: EditorSelection(kind: .text, id: baseline.id), at: clock.currentTime)
+        }
+        if liveTextFrame == nil, let prepared = session.textInteractionFrame,
+           prepared.element == baseline, abs(prepared.time - clock.currentTime) < 0.01 {
+            liveTextFrame = prepared
+        }
+        updateTextAlignment(in: canvas)
+        let reference = liveTextBaseline ?? baseline
+        let size = NativeEditorSession.textSize(for: reference)
+        let width = reference.raw["max_width_frac"]?.numberValue ?? 0.84
+        liveTextScale = max(scale * NativeEditorSession.textSize(for: baseline) / size, max(8 / size, 0.2 / width))
+        let rawAngle = rotation + (baseline.raw["rotation_deg"]?.numberValue ?? 0)
+        let displayedAngle = transformBaseline != nil ? NativeTextRotationSnap.angle(rawAngle) : rawAngle
+        liveTextRotation = displayedAngle - (reference.raw["rotation_deg"]?.numberValue ?? 0)
+        let position = nativeTextPosition(baseline), origin = nativeTextPosition(reference)
+        liveTextTranslation = CGPoint(x: position.x - origin.x, y: position.y - origin.y)
+        if liveTextFrame != nil { liveTextSampleCount += 1 }
+    }
+
+    private func updateTextAlignment(in canvas: CGSize) {
+        guard let baseline = liveTextBaseline, let bounds = liveTextBounds else { return }
+        let anchor = nativeTextPosition(baseline)
+        let angle = liveTextRotation * .pi / 180
+        let dx = (bounds.centerX - anchor.x) * canvas.width * liveTextScale
+        let dy = (bounds.centerY - anchor.y) * canvas.height * liveTextScale
+        let center = CGPoint(x: (anchor.x + liveTextTranslation.x) * canvas.width + dx * cos(angle) - dy * sin(angle),
+                             y: (anchor.y + liveTextTranslation.y) * canvas.height + dx * sin(angle) + dy * cos(angle))
+        if textAlignmentFeedback.update(center: center,
+            size: CGSize(width: bounds.width * canvas.width * liveTextScale, height: bounds.height * canvas.height * liveTextScale),
+            rotation: (baseline.raw["rotation_deg"]?.numberValue ?? 0) + liveTextRotation, canvas: canvas) {
+            textAlignmentHaptic.selectionChanged()
+            textAlignmentHaptic.prepare()
+        }
+    }
+
+    private func commitLiveText() {
+        guard let baseline = liveTextBaseline else { return }
+        #if DEBUG
+        NativePreviewDiagnostics.record("live-text-gesture", fields: ["samples": String(liveTextSampleCount), "scale": String(liveTextScale)])
+        #endif
+        if liveTextScale != 1 || liveTextRotation != 0 {
+            session.transformText(from: baseline, scale: liveTextScale, rotationDelta: liveTextRotation)
+        }
+        if liveTextTranslation != .zero {
+            let position = nativeTextPosition(baseline)
+            session.setTextPosition(id: baseline.id, x: position.x + liveTextTranslation.x,
+                                    y: position.y + liveTextTranslation.y)
+        }
+    }
+
     private func frame(for object: NativeEditorPreviewObject, in size: CGSize) -> CGRect {
+        if object.item.id == liveTextBaseline?.id, let bounds = liveTextBounds, let baseline = liveTextBaseline {
+            let anchor = nativeTextPosition(baseline)
+            let dx = (bounds.centerX - anchor.x) * size.width * liveTextScale
+            let dy = (bounds.centerY - anchor.y) * size.height * liveTextScale
+            let angle = liveTextRotation * .pi / 180
+            let center = CGPoint(x: (anchor.x + liveTextTranslation.x) * size.width + dx * cos(angle) - dy * sin(angle),
+                                 y: (anchor.y + liveTextTranslation.y) * size.height + dx * sin(angle) + dy * cos(angle))
+            let width = bounds.width * size.width * liveTextScale
+            let height = bounds.height * size.height * liveTextScale
+            return CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
+        }
+        if let geometry = session.previewSelectionBounds(for: object.item.selection, at: clock.currentTime) {
+            return CGRect(x: (geometry.centerX - geometry.width / 2) * size.width,
+                y: (geometry.centerY - geometry.height / 2) * size.height,
+                width: geometry.width * size.width, height: geometry.height * size.height)
+        }
         if object.fullscreen {
             return CGRect(origin: .zero, size: size).insetBy(dx: 6, dy: 6)
         }
@@ -201,7 +277,7 @@ struct NativeVideoPreview: View {
             NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
         ).reversed().filter { item in
             guard let object = objects.first(where: { $0.item.selection == item.selection }) else { return false }
-            return NativeEditorInteraction.hitRect(frame(for: object, in: size)).contains(point)
+            return NativeEditorInteraction.contains(point, in: frame(for: object, in: size), rotationDegrees: object.rotation)
         }
         guard !candidates.isEmpty else {
             lastTapIDs = []
@@ -229,67 +305,130 @@ struct NativeVideoPreview: View {
         .compactMap { item in objects.first(where: { $0.item.selection == item.selection }) }
         .first { object in
             canDirectlyPosition(object)
-                && NativeEditorInteraction.hitRect(frame(for: object, in: size)).contains(point)
+                && NativeEditorInteraction.contains(point, in: frame(for: object, in: size), rotationDegrees: object.rotation)
         }
     }
 
     private func directMoveGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .local)
             .onChanged { value in
+                guard directResizeObjectID == nil else { return }
+                if directMoveObjectID == nil {
+                    textAlignmentFeedback.reset()
+                    textAlignmentHaptic.prepare()
+                    if let selection = session.selection,
+                       let selected = objects.first(where: { $0.item.selection == selection }),
+                       selected.item.kind == .text, session.canEdit(.text),
+                       let text = session.document.textElements.first(where: { $0.id == selected.item.id }) {
+                        let bounds = frame(for: selected, in: size)
+                        let radians = (text.raw["rotation_deg"]?.numberValue ?? 0) * .pi / 180
+                        let dx = bounds.width / 2, dy = bounds.height / 2
+                        let corner = CGPoint(x: bounds.midX + dx * cos(radians) - dy * sin(radians),
+                                             y: bounds.midY + dx * sin(radians) + dy * cos(radians))
+                        let cornerDistance = hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y)
+                        let centerDistance = hypot(value.startLocation.x - bounds.midX, value.startLocation.y - bounds.midY)
+                        if cornerDistance <= 22 && cornerDistance < centerDistance {
+                            directMoveObjectID = selected.id
+                            transformBaseline = text
+                            let anchor = nativeTextPosition(text)
+                            let center = CGPoint(x: anchor.x * size.width, y: anchor.y * size.height)
+                            transformCenter = center
+                            transformStartVector = CGVector(dx: value.startLocation.x - center.x,
+                                                            dy: value.startLocation.y - center.y)
+                            session.beginDirectManipulation()
+                        }
+                    }
+                }
+                if let baseline = transformBaseline, let center = transformCenter, let start = transformStartVector {
+                    let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
+                    let radius = hypot(start.dx, start.dy)
+                    guard radius > 1 else { return }
+                    let angle = atan2(next.dy, next.dx) - atan2(start.dy, start.dx)
+                    resizeText(baseline, scale: hypot(next.dx, next.dy) / radius, rotation: angle * 180 / .pi, canvas: size)
+                    updateTextAlignment(in: size)
+                    return
+                }
                 if directMoveObjectID == nil {
                     guard let object = directMoveCandidate(at: value.startLocation, in: size),
                           let position = object.position else { return }
                     directMoveObjectID = object.id
                     directMoveBaseline = position
-                    session.beginDirectManipulation()
                     session.select(object.item, seekToStart: false)
+                    session.beginDirectManipulation()
                 }
                 guard let objectID = directMoveObjectID,
                       let baseline = directMoveBaseline,
                       let object = objects.first(where: { $0.id == objectID }),
                       let onMove = positionHandler(for: object),
                       size.width > 0, size.height > 0 else { return }
-                onMove(
-                    CGPoint(
-                        x: min(max(0, baseline.x + value.translation.width / size.width), 1),
-                        y: min(max(0, baseline.y + value.translation.height / size.height), 1)
-                    )
-                )
+                let position = CGPoint(
+                    x: min(max(0, baseline.x + value.translation.width / size.width), 1),
+                    y: min(max(0, baseline.y + value.translation.height / size.height), 1))
+                if object.item.kind == .text,
+                   let text = session.document.textElements.first(where: { $0.id == object.item.id }) {
+                    resizeText(text, scale: 1, rotation: 0, canvas: size)
+                    let origin = nativeTextPosition(liveTextBaseline ?? text)
+                    liveTextTranslation = CGPoint(x: position.x - origin.x, y: position.y - origin.y)
+                    updateTextAlignment(in: size)
+                } else {
+                    onMove(position)
+                }
             }
             .onEnded { _ in
                 guard directMoveObjectID != nil else { return }
+                commitLiveText()
                 directMoveObjectID = nil
                 directMoveBaseline = nil
+                transformBaseline = nil
+                transformCenter = nil
+                transformStartVector = nil
                 if directResizeObjectID == nil { session.endDirectManipulation() }
             }
     }
 
-    private func directResizeGesture() -> some Gesture {
+    private func directResizeGesture(in size: CGSize) -> some Gesture {
         MagnificationGesture()
             .onChanged { value in
                 if directResizeObjectID == nil {
                     guard let selection = session.selection,
                           let object = objects.first(where: { $0.item.selection == selection }),
                           scaleHandler(for: object) != nil else { return }
+                    textAlignmentFeedback.reset()
+                    textAlignmentHaptic.prepare()
+                    // A two-finger pinch owns the transform; do not also
+                    // interpret its first finger as a corner drag.
+                    directMoveObjectID = nil; directMoveBaseline = nil
+                    transformBaseline = nil; transformCenter = nil; transformStartVector = nil
                     directResizeObjectID = object.id
                     directResizeBaseline = object.scale
+                    if object.item.kind == .text {
+                        directResizeTextBaseline = session.document.textElements.first { $0.id == object.item.id }
+                    }
                     session.beginDirectManipulation()
                 }
                 guard let objectID = directResizeObjectID,
                       let baseline = directResizeBaseline,
                       let object = objects.first(where: { $0.id == objectID }),
                       let onResize = scaleHandler(for: object) else { return }
-                onResize(baseline * value)
+                if let text = directResizeTextBaseline {
+                    resizeText(text, scale: value, rotation: 0, canvas: size)
+                    updateTextAlignment(in: size)
+                } else {
+                    onResize(baseline * value)
+                }
             }
             .onEnded { _ in
                 guard directResizeObjectID != nil else { return }
+                commitLiveText()
                 directResizeObjectID = nil
                 directResizeBaseline = nil
+                directResizeTextBaseline = nil
                 if directMoveObjectID == nil { session.endDirectManipulation() }
             }
     }
 
     private func canDirectlyPosition(_ object: NativeEditorPreviewObject) -> Bool {
+        guard session.sourcePreviewState == .idle || session.hasSourcePreview else { return false }
         switch object.item.kind {
         case .text:
             return session.canEdit(.text)
@@ -336,11 +475,33 @@ struct NativeVideoPreview: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.black
-            if let player = session.player {
-                VideoPlayer(player: player)
-                    .aspectRatio(9 / 16, contentMode: .fit)
+            if session.sourcePreviewState == .preparing {
+                ProgressView("Preparing preview")
+                    .tint(.white).foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityLabel("Video preview")
+            } else if case .failed(let message) = session.sourcePreviewState {
+                VStack(spacing: 12) {
+                    Text("Preview unavailable").font(KriaFont.body(14).weight(.semibold))
+                    Text(message).font(KriaFont.body(12)).multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                    Button("Retry") { Task { await session.prepareSourcePreview() } }
+                }
+                .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let player = session.player {
+                ZStack {
+                    VideoPlayer(player: player)
+                        .aspectRatio(session.previewAspectRatio, contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityLabel("Video preview")
+                    if let frame = session.scrubPreviewFrame {
+                        Image(uiImage: frame)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
             } else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 BundledPosterImage(name: "montage")
                     .scaledToFill()
@@ -364,9 +525,27 @@ struct NativeVideoPreview: View {
                 .padding(24)
             }
 
+            if let frozen = liveTextFrame, let baseline = liveTextBaseline {
+                GeometryReader { proxy in
+                    let anchor = nativeTextPosition(baseline)
+                    ZStack(alignment: .topLeading) {
+                        Image(uiImage: frozen.below).resizable().frame(width: proxy.size.width, height: proxy.size.height)
+                        ZStack(alignment: .topLeading) {
+                            Image(uiImage: frozen.text).resizable()
+                                .frame(width: frozen.rect.width * proxy.size.width, height: frozen.rect.height * proxy.size.height)
+                                .offset(x: frozen.rect.minX * proxy.size.width, y: frozen.rect.minY * proxy.size.height)
+                        }
+                        .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+                        .scaleEffect(liveTextScale, anchor: UnitPoint(x: anchor.x, y: anchor.y))
+                        .rotationEffect(.degrees(liveTextRotation), anchor: UnitPoint(x: anchor.x, y: anchor.y))
+                        .offset(x: liveTextTranslation.x * proxy.size.width, y: liveTextTranslation.y * proxy.size.height)
+                        Image(uiImage: frozen.above).resizable().frame(width: proxy.size.width, height: proxy.size.height)
+                    }
+                }.allowsHitTesting(false).accessibilityHidden(true)
+            }
             GeometryReader { proxy in
                 let visible = NativeEditorInteraction.previewOrder(
-                    NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
+                    NativeEditorInteraction.visible(session.hasSourcePreview || session.sourcePreviewState == .idle ? objects.map(\.item) : [], at: clock.currentTime)
                 )
                 ZStack(alignment: .topLeading) {
                     ForEach(visible.compactMap { item in objects.first(where: { $0.item == item }) }) { object in
@@ -376,7 +555,9 @@ struct NativeVideoPreview: View {
                             isSelected: session.selection == object.item.selection,
                             onSelect: { session.select(object.item, seekToStart: false) },
                             onMove: positionHandler(for: object),
-                            onResize: scaleHandler(for: object)
+                            onResize: scaleHandler(for: object),
+                            showsContent: !session.hasSourcePreview,
+                            rotationOverride: object.item.id == liveTextBaseline?.id ? (liveTextBaseline?.raw["rotation_deg"]?.numberValue ?? 0) + liveTextRotation : nil
                         )
                     }
                 }
@@ -386,7 +567,7 @@ struct NativeVideoPreview: View {
                 // when the editor shell changes height.
                 .contentShape(Rectangle())
                 .highPriorityGesture(directMoveGesture(in: proxy.size))
-                .simultaneousGesture(directResizeGesture())
+                .simultaneousGesture(directResizeGesture(in: proxy.size))
                 .simultaneousGesture(
                     SpatialTapGesture().onEnded { value in
                         selectPreviewObject(at: value.location, in: proxy.size)
@@ -395,48 +576,19 @@ struct NativeVideoPreview: View {
             }
             .accessibilityElement(children: .contain)
 
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(previewKind == "Preview unavailable" ? Color.orange : KriaColor.sky)
-                    .frame(width: 6, height: 6)
-                Text(previewKind)
-                    .font(KriaFont.body(10).weight(.semibold))
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 9)
-            .frame(minHeight: 26)
-            .background(KriaColor.ink.opacity(0.82), in: Capsule())
-            .padding(10)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(previewKind)
-
-            if !session.document.textElements.isEmpty || nativeBool(session.document.captionMeta["enabled"]) == true {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Label("Layout preview", systemImage: "info.circle")
-                            .font(KriaFont.body(9).weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .frame(minHeight: 24)
-                            .background(.black.opacity(0.72), in: Capsule())
-                        Spacer()
-                    }
-                    .padding(10)
-                }
-                .allowsHitTesting(false)
-            }
         }
-        .aspectRatio(9 / 16, contentMode: .fit)
+        .aspectRatio(session.previewAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(KriaColor.line, lineWidth: 1)
-        }
-        .background(Color.black, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipped()
+        .accessibilityValue(ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") ? "liveTextSamples:\(liveTextSampleCount)" : "")
         .onAppear(perform: refreshObjects)
         .onChange(of: session.document) { _, _ in refreshObjects() }
+        .onChange(of: session.scrubPreviewFrame) { _, _ in
+            if !session.isDirectManipulating {
+                liveTextBaseline = nil; liveTextFrame = nil; liveTextBounds = nil
+                liveTextScale = 1; liveTextRotation = 0; liveTextTranslation = .zero
+            }
+        }
     }
 }
 
@@ -452,6 +604,7 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
     /// the 84% legacy preview width.
     let scale: CGFloat
     let fullscreen: Bool
+    let rotation: Double
 
     init(
         item: NativeEditorTimelineItem,
@@ -462,7 +615,8 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
         render: NativePreviewRender,
         detail: String? = nil,
         scale: CGFloat = 0.84,
-        fullscreen: Bool = false
+        fullscreen: Bool = false,
+        rotation: Double = 0
     ) {
         self.item = item
         self.text = text
@@ -473,6 +627,7 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
         self.detail = detail
         self.scale = scale
         self.fullscreen = fullscreen
+        self.rotation = rotation
     }
 
     var id: String { "\(item.kind.rawValue)-\(item.id)" }
@@ -489,6 +644,8 @@ private struct NativePreviewObjectView: View {
     let onSelect: () -> Void
     let onMove: ((CGPoint) -> Void)?
     let onResize: ((CGFloat) -> Void)?
+    let showsContent: Bool
+    var rotationOverride: Double? = nil
 
     private var accessibilityValue: String {
         var parts = ["\(nativeTimecode(object.item.start)) to \(nativeTimecode(object.item.end))"]
@@ -511,7 +668,9 @@ private struct NativePreviewObjectView: View {
                 .contentShape(Rectangle())
 
             Group {
-            if object.render == .caption {
+            if !showsContent {
+                Color.clear
+            } else if object.render == .caption {
                 Text(object.text ?? "Caption")
                     .font(KriaFont.body(15).weight(.semibold))
                     .foregroundStyle(.white)
@@ -568,7 +727,20 @@ private struct NativePreviewObjectView: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(KriaColor.sky, lineWidth: 2)
-                    if onResize != nil {
+                    if onResize != nil, object.render == .text {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 22, height: 22)
+                                    .background(KriaColor.sky, in: Circle())
+                            }
+                        }
+                        .padding(-11)
+                    } else if onResize != nil {
                         VStack {
                             HStack {
                                 resizeHandle
@@ -596,6 +768,7 @@ private struct NativePreviewObjectView: View {
         .accessibilityAction(named: "Select \(object.title.lowercased())") {
             onSelect()
         }
+        .rotationEffect(.degrees(rotationOverride ?? object.rotation))
         .position(x: frame.midX, y: frame.midY)
         .zIndex(Double(object.item.zIndex))
     }
@@ -608,26 +781,41 @@ private struct NativePreviewObjectView: View {
     }
 }
 
-/// Paper's compact, touch-first timeline. The playhead stays in a stable
-/// reading position while the timeline moves underneath it as the clock is
-/// scrubbed. This means a horizontal finger movement always maps 1:1 to time.
+/// The playhead stays fixed in the viewport while every track moves beneath it.
+/// Horizontal panning seeks the preview to the time underneath the playhead.
 struct NativeMiniStrip: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var session: NativeEditorSession
     @ObservedObject private var clock: NativeEditorPlaybackClock
     @State private var zoom: CGFloat = 1
     @State private var pinchAnchor: CGFloat = 1
+    @State private var isPinching = false
     @State private var viewportWidth: CGFloat = 0
-    @State private var scrubStartTime: TimeInterval?
+    @State private var panStartTime: TimeInterval?
+    @State private var lastPanAt = Date.distantPast
+    @State private var playheadStartTime: TimeInterval?
     @State private var cachedItems: [NativeEditorTimelineItem] = []
+    @State private var cachedRows: [TrackRow] = []
+    @State private var blockBoundaries: [TimeInterval] = []
+    @State private var boundaryFeedback = 0
+    @State private var trimEdge: NativeTrimEdge?
+    @State private var trimPreviousTime: TimeInterval?
+    @State private var trimAlignment: TimeInterval?
+    @State private var trimBoundaries: [TimeInterval] = []
+    @State private var moveAlignment: TimeInterval?
+    @State private var movePreviousEdges: (start: TimeInterval, end: TimeInterval)?
+    @State private var lastAlignmentHapticAt = Date.distantPast
+    @State private var alignmentHaptic = UIImpactFeedbackGenerator(style: .medium)
+    @State private var lastBoundaryFeedbackAt = Date.distantPast
     @State private var cachedClips: [EditorClip] = []
     @State private var didCacheItems = false
 
     private let minimumZoom: CGFloat = 0.5
-    private let maximumZoom: CGFloat = 3
-    private let basePixelsPerSecond: CGFloat = 72
-    private let filmstripHeight: CGFloat = 68
+    private let maximumZoom: CGFloat = 24
+    private var basePixelsPerSecond: CGFloat { max(1, viewportWidth) / 6 }
+    private let filmstripHeight: CGFloat = 44
     private let secondaryLaneHeight: CGFloat = 44
-    private let rowGap: CGFloat = 3
+    private let rowGap: CGFloat = 6
 
     init(session: NativeEditorSession) {
         self.session = session
@@ -636,8 +824,15 @@ struct NativeMiniStrip: View {
 
     private var clips: [EditorClip] { didCacheItems ? cachedClips : [] }
     private var timelineItems: [NativeEditorTimelineItem] { didCacheItems ? cachedItems : makeItems() }
-    private var textItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .text } }
-    private var captionItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .captionCue } }
+    private var captionTextIDs: Set<String> { Set(session.document.textElements.filter(\.isCaption).map(\.id)) }
+    private var textItems: [NativeEditorTimelineItem] {
+        let ids = captionTextIDs
+        return timelineItems.filter { $0.kind == .text && !ids.contains($0.id) }
+    }
+    private var captionItems: [NativeEditorTimelineItem] {
+        let ids = captionTextIDs
+        return timelineItems.filter { $0.kind == .captionCue || ($0.kind == .text && ids.contains($0.id)) }
+    }
     private var soundEffectItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .soundEffect } }
     private var mediaOverlayItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .mediaOverlay } }
     private var visualBlockItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .visualBlock } }
@@ -655,14 +850,38 @@ struct NativeMiniStrip: View {
     private var hasCarousel: Bool { !carouselItems.isEmpty }
     private var hasMusic: Bool { !musicItems.isEmpty || session.document.music != nil }
     private var captionsExpanded: Bool { session.selection?.kind == .captionCue }
-    private var laneCount: Int {
-        1 + (hasText ? 1 : 0) + (hasCaptions ? 1 : 0) + (hasMusic ? 1 : 0)
-            + (hasSoundEffects ? 1 : 0) + (hasMediaOverlays ? 1 : 0)
-            + (hasVisualBlocks ? 1 : 0) + (hasMotionScenes ? 1 : 0)
-            + (hasCameraEffects ? 1 : 0) + (hasCarousel ? 1 : 0)
+    private struct TrackRow: Identifiable {
+        let id: String
+        let title: String
+        let items: [NativeEditorTimelineItem]
     }
+    private var rows: [TrackRow] { cachedRows }
+
+    private func makeRows() -> [TrackRow] {
+        let groups: [(String, [NativeEditorTimelineItem])] = [
+            ("TEXT", textItems), ("CAPTIONS", captionItems), ("MUSIC", musicItems),
+            ("SFX", soundEffectItems), ("OVERLAY", mediaOverlayItems),
+            ("VISUAL", visualBlockItems), ("MOTION", motionSceneItems),
+            ("CAMERA", cameraEffectItems), ("CAROUSEL", carouselItems)
+        ]
+        return groups.flatMap { title, items in
+            if title == "TEXT" {
+                return items.isEmpty ? [] : [TrackRow(id: "TEXT", title: title, items: items)]
+            }
+            let packed = NativeEditorInteraction.packLanes(items)
+            let indices = Set(packed.map(\.lane)).sorted()
+            return indices.map { index in
+                TrackRow(id: "\(title)-\(index)", title: title,
+                         items: packed.filter { $0.lane == index }.map(\.item))
+            }
+        }
+    }
+    private func rowCount(_ row: TrackRow) -> Int {
+        row.title == "TEXT" ? max(1, (NativeEditorInteraction.packLanes(row.items).map(\.lane).max() ?? 0) + 1) : 1
+    }
+    private var laneCount: Int { 1 + rows.reduce(0) { $0 + rowCount($1) } + (clips.isEmpty ? 0 : 1) }
     private var timelineHeight: CGFloat {
-        filmstripHeight + CGFloat(laneCount - 1) * secondaryLaneHeight + CGFloat(max(0, laneCount - 1)) * rowGap
+        18 + filmstripHeight + CGFloat(laneCount - 1) * secondaryLaneHeight + CGFloat(laneCount) * rowGap
     }
     /// The wrapper can use this when it needs an explicit height; leaving the
     /// view unframed is preferred so optional lanes stay visible.
@@ -681,14 +900,16 @@ struct NativeMiniStrip: View {
     var body: some View {
         VStack(spacing: 6) {
             controls
-            GeometryReader { _ in
+            GeometryReader { viewport in
                 ScrollView(.vertical, showsIndicators: laneCount > 4) {
                     HStack(alignment: .top, spacing: 6) {
                         laneLabels
-                            .frame(width: 46)
+                            .frame(width: 66, alignment: .leading)
                         timeline
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .topLeading)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(timelinePanGesture)
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .accessibilityIdentifier("native-editor-lane-scroll")
@@ -696,6 +917,7 @@ struct NativeMiniStrip: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
+        .sensoryFeedback(.selection, trigger: boundaryFeedback)
     }
 
     private var controls: some View {
@@ -735,14 +957,18 @@ struct NativeMiniStrip: View {
                 .accessibilityIdentifier("native-editor-duration")
 
             Spacer(minLength: 8)
-            zoomButton("minus", label: "Zoom out") { setZoom(zoom - 0.25) }
-            Button("Fit") { setZoom(fitZoom) }
-                .font(KriaFont.body(12).weight(.semibold))
-                .frame(minWidth: 44, minHeight: 44)
-                .buttonStyle(.plain)
-                .foregroundStyle(KriaColor.mutedInk)
-                .accessibilityLabel("Fit timeline")
-            zoomButton("plus", label: "Zoom in") { setZoom(zoom + 0.25) }
+            Button(action: session.undo) {
+                Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44)
+            }
+            .disabled(!session.canUndo || session.isSaving)
+            .accessibilityLabel("Undo")
+            .accessibilityIdentifier("native-editor-undo")
+            Button(action: session.redo) {
+                Image(systemName: "arrow.uturn.forward").frame(width: 44, height: 44)
+            }
+            .disabled(!session.canRedo || session.isSaving)
+            .accessibilityLabel("Redo")
+            .accessibilityIdentifier("native-editor-redo")
         }
         .padding(.horizontal, 4)
     }
@@ -766,7 +992,6 @@ struct NativeMiniStrip: View {
     private func setZoom(_ value: CGFloat) {
         let bounded = clampedZoom(value)
         zoom = bounded
-        pinchAnchor = bounded
     }
 
     private func clampedZoom(_ value: CGFloat) -> CGFloat {
@@ -775,17 +1000,16 @@ struct NativeMiniStrip: View {
 
     private var laneLabels: some View {
         VStack(spacing: rowGap) {
+            Color.clear.frame(height: 18)
             Text("VIDEO")
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: filmstripHeight)
-            if hasText { laneLabel("TEXT") }
-            if hasCaptions { laneLabel("CAPS") }
-            if hasSoundEffects { laneLabel("SFX") }
-            if hasMediaOverlays { laneLabel("MEDIA") }
-            if hasVisualBlocks { laneLabel("VISUAL") }
-            if hasMotionScenes { laneLabel("MOTION") }
-            if hasCameraEffects { laneLabel("CAMERA") }
-            if hasCarousel { laneLabel("CAROUSEL") }
-            if hasMusic { laneLabel("MUSIC") }
+            ForEach(rows) { row in
+                laneLabel(row.title)
+                    .frame(height: CGFloat(rowCount(row)) * secondaryLaneHeight + CGFloat(rowCount(row) - 1) * rowGap, alignment: .top)
+            }
+            if !clips.isEmpty { laneLabel("AUDIO") }
         }
         .font(.system(size: 9, weight: .bold, design: .rounded))
         .tracking(0.8)
@@ -793,7 +1017,10 @@ struct NativeMiniStrip: View {
     }
 
     private func laneLabel(_ title: String) -> some View {
-        Text(title).frame(height: secondaryLaneHeight)
+        Text(title)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: secondaryLaneHeight)
     }
 
     private var timeline: some View {
@@ -801,70 +1028,55 @@ struct NativeMiniStrip: View {
             let width = max(proxy.size.width, 1)
             let playheadX = playheadX(for: width)
             ZStack(alignment: .topLeading) {
-                // Keep scrubbing on a sibling background surface. Attaching a
-                // zero-distance drag to this container makes it compete with
-                // every nested clip/trim gesture, even when those controls are
-                // hit directly.
-                Color.clear
-                    .frame(width: width, height: timelineHeight)
-                    .contentShape(Rectangle())
-                    .gesture(scrubGesture(playheadX: playheadX))
-                    .accessibilityHidden(true)
-
                 VStack(spacing: rowGap) {
+                    ruler(width: width, playheadX: playheadX)
                     filmstrip(width: width, playheadX: playheadX)
-                    if hasText {
-                        timedLane(title: "Text", items: textItems, color: KriaColor.lilac, playheadX: playheadX)
+                    ForEach(rows) { row in
+                        timedLane(title: row.title, items: row.items, color: KriaColor.softZinc, playheadX: playheadX)
                     }
-                    if hasCaptions {
-                        if captionsExpanded {
-                            timedLane(title: "Captions", items: captionItems, color: KriaColor.lilac, playheadX: playheadX)
-                        } else {
-                            captionDensityLane(width: width, playheadX: playheadX)
-                        }
-                    }
-                    if hasSoundEffects {
-                        timedLane(title: "Sound effects", items: soundEffectItems, color: KriaColor.sage, playheadX: playheadX)
-                    }
-                    if hasMediaOverlays {
-                        timedLane(title: "Media overlays", items: mediaOverlayItems, color: KriaColor.sky, playheadX: playheadX)
-                    }
-                    if hasVisualBlocks {
-                        timedLane(title: "Visual blocks", items: visualBlockItems, color: KriaColor.sky, playheadX: playheadX)
-                    }
-                    if hasMotionScenes {
-                        timedLane(title: "Motion scenes", items: motionSceneItems, color: KriaColor.sky, playheadX: playheadX)
-                    }
-                    if hasCameraEffects {
-                        timedLane(title: "Camera effects", items: cameraEffectItems, color: KriaColor.sky, playheadX: playheadX)
-                    }
-                    if hasCarousel {
-                        timedLane(title: "Carousel", items: carouselItems, color: KriaColor.sky, playheadX: playheadX)
-                    }
-                    if hasMusic {
-                        timedLane(title: "Music", items: musicItems, color: KriaColor.sage, playheadX: playheadX)
-                    }
+                    if !clips.isEmpty { originalAudioLane(playheadX: playheadX) }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipped()
 
                 NativePlayhead(height: timelineHeight)
                     .position(x: playheadX, y: timelineHeight / 2)
                     .allowsHitTesting(false)
+                Color.clear
+                    .frame(width: 44, height: 24)
+                    .contentShape(Rectangle())
+                    .position(x: playheadX, y: 12)
+                    .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                        .onChanged { value in
+                            let start = playheadStartTime ?? clock.currentTime
+                            playheadStartTime = start
+                            seek(to: start + Double(value.translation.width / pixelsPerSecond))
+                        }
+                        .onEnded { _ in playheadStartTime = nil })
+                    .accessibilityLabel("Playhead")
+                    .accessibilityIdentifier("native-editor-playhead")
             }
-            .simultaneousGesture(
-                MagnificationGesture()
-                    .onChanged { value in setZoom(pinchAnchor * value) }
-                    .onEnded { _ in pinchAnchor = zoom }
-            )
+            .clipped()
+            .background(TimelinePinchCapture { scale, ended in
+                if ended {
+                    pinchAnchor = zoom
+                    isPinching = false
+                } else {
+                    isPinching = true
+                    setZoom(pinchAnchor * scale)
+                }
+                lastPanAt = .now
+            })
             .onAppear { viewportWidth = width }
             .onChange(of: width) { _, newWidth in viewportWidth = newWidth }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Timeline")
-            .accessibilityValue("\(timecode(clock.currentTime)) of \(timecode(timelineDuration))")
+            .accessibilityIdentifier("native-editor-timeline-content")
+            .accessibilityValue("\(timecode(clock.currentTime)) of \(timecode(timelineDuration)). Zoom \(Int((zoom * 100).rounded())) percent")
             .accessibilityAdjustableAction { direction in
                 let delta: TimeInterval = direction == .increment ? 1 : -1
                 seek(to: clock.currentTime + delta)
             }
+
         }
         .frame(height: timelineHeight)
         .onAppear { refreshItems() }
@@ -872,13 +1084,54 @@ struct NativeMiniStrip: View {
     }
 
     private func playheadX(for width: CGFloat) -> CGFloat {
-        min(max(width * 0.28, 24), max(24, width - 24))
+        width / 2
+    }
+
+    private func ruler(width: CGFloat, playheadX: CGFloat) -> some View {
+        Canvas { context, _ in
+            let step: Double = pixelsPerSecond >= 800 ? 0.05
+                : pixelsPerSecond >= 400 ? 0.1
+                : pixelsPerSecond >= 180 ? 0.5
+                : pixelsPerSecond >= 90 ? 1 : 2
+            let visibleStart = max(0, clock.currentTime - Double(playheadX / pixelsPerSecond))
+            let first = Int(floor(visibleStart / step))
+            let last = min(Int(ceil(timelineDuration / step)), first + Int(ceil(Double(width / pixelsPerSecond) / step)) + 2)
+            if first <= last {
+                for index in first...last {
+                    let second = Double(index) * step
+                    let x = playheadX + CGFloat(second - clock.currentTime) * pixelsPerSecond
+                    let label = step < 0.1 ? String(format: "%.2fs", second)
+                        : step < 1 ? String(format: "%.1fs", second) : String(format: "%.0fs", second)
+                    context.draw(Text(label).font(.system(size: 10)).foregroundColor(KriaColor.zinc),
+                                 at: CGPoint(x: x, y: 9), anchor: .center)
+                }
+            }
+        }
+        .frame(height: 18)
+        .accessibilityHidden(true)
+    }
+
+    private func originalAudioLane(playheadX: CGFloat) -> some View {
+        GeometryReader { viewport in
+            let start = max(0, playheadX - CGFloat(clock.currentTime) * pixelsPerSecond)
+            let end = min(viewport.size.width, playheadX + CGFloat(timelineDuration - clock.currentTime) * pixelsPerSecond)
+            Label("Original audio", systemImage: "waveform")
+                .font(KriaFont.body(11))
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .frame(width: max(0, end - start), height: secondaryLaneHeight, alignment: .leading)
+                .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 8))
+                .offset(x: start)
+                .accessibilityLabel("Original audio")
+                .accessibilityIdentifier("native-editor-original-audio")
+        }
+        .frame(height: secondaryLaneHeight)
+        .clipped()
     }
 
     private func filmstrip(width: CGFloat, playheadX: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             Canvas { context, size in
-                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(KriaColor.ink))
                 for (index, clip) in clips.enumerated() {
                     let frame = clipFrame(clip, playheadX: playheadX)
                     guard frame.maxX >= 0, frame.minX <= size.width else { continue }
@@ -909,10 +1162,18 @@ struct NativeMiniStrip: View {
                     frame: clipFrame(clip, playheadX: playheadX),
                     isSelected: session.selectedClipID == clip.id,
                     pixelsPerSecond: pixelsPerSecond,
-                    onSelect: { session.select(EditorSelection(kind: .clip, id: clip.id.uuidString)) },
-                    onTrimStart: { edge in session.beginTrim(clipID: clip.id, edge: edge) },
-                    onTrimChange: { _, translation in session.updateTrim(by: translation) },
-                    onTrimEnd: { session.endTrim() },
+                    onSelect: { select(clip) },
+                    onTrimStart: { edge in
+                        beginTrimHaptics(selection: EditorSelection(kind: .clip, id: clip.id.uuidString), edge: edge, start: clip.start, end: clip.end)
+                        session.beginTrim(clipID: clip.id, edge: edge)
+                    },
+                    onTrimChange: { _, translation in
+                        session.updateTrim(by: translation)
+                        if let trimmed = session.timelineClips.first(where: { $0.id == clip.id }) {
+                            updateTrimHaptics(start: trimmed.start, end: trimmed.end)
+                        }
+                    },
+                    onTrimEnd: { session.endTrim(); endTrimHaptics() },
                     onMove: { offset in
                         session.selectClip(clip.id)
                         session.moveSelected(by: offset)
@@ -934,26 +1195,55 @@ struct NativeMiniStrip: View {
         cachedClips = session.timelineClips
         cachedItems = makeItems()
         didCacheItems = true
+        if session.isTimingGestureActive, !cachedRows.isEmpty {
+            // Keep the gesture's view in the same row while its times change.
+            // Repacking an overlap mid-drag destroys the recognizer before
+            // its end callback can release the timeline's scrub lock.
+            let latest = Dictionary(uniqueKeysWithValues: cachedItems.map { ($0.selection, $0) })
+            cachedRows = cachedRows.map { row in
+                TrackRow(id: row.id, title: row.title, items: row.items.compactMap { latest[$0.selection] })
+            }
+        } else {
+            cachedRows = makeRows()
+        }
+        blockBoundaries = Array(Set(cachedClips.flatMap { [$0.start, $0.end] }
+            + cachedItems.flatMap { [$0.start, $0.end] }))
+            .filter { $0.isFinite && $0 >= 0 }.sorted()
     }
 
     private func makeItems() -> [NativeEditorTimelineItem] {
         nativePersistedTimelineItems(for: session)
     }
 
+    private var suppressTimelineSelection: Bool { session.isTimingGestureActive || isPinching || panStartTime != nil || Date().timeIntervalSince(lastPanAt) < 0.2 }
+
     private func select(_ item: NativeEditorTimelineItem) {
+        guard !suppressTimelineSelection else { return }
+        alignTimeline(to: item.start)
         session.select(item, seekToStart: false)
-        session.seek(to: item.start)
+    }
+
+    private func select(_ clip: EditorClip) {
+        guard !suppressTimelineSelection else { return }
+        alignTimeline(to: clip.start)
+        session.selectClip(clip.id)
+    }
+
+    private func alignTimeline(to start: TimeInterval) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            session.seek(to: start)
+        }
     }
 
     private func itemName(_ item: NativeEditorTimelineItem, laneTitle: String) -> String {
         switch item.kind {
         case .text:
             let content = session.document.textElements.first { $0.id == item.id }?.text
-            return content.map { "Text: \($0)" } ?? laneTitle
+            return content ?? laneTitle
         case .captionCue:
             let document = session.document
             let content = document.captionCues.first { $0.id == item.id }?.text
-            return content.map { "Caption: \($0)" } ?? laneTitle
+            return content ?? laneTitle
         case .music:
             if let title = session.document.music?.raw["title"]?.stringValue { return "Music: \(title)" }
             if let trackID = session.document.music?.trackID { return "Music: \(trackID)" }
@@ -982,6 +1272,8 @@ struct NativeMiniStrip: View {
 
     private func timedOperationKeys(for kind: EditorSelectionKind, operation: String) -> [String]? {
         switch kind {
+        case .text:
+            return ["text_elements.\(operation)", "text_elements", "text.\(operation)", "text"]
         case .soundEffect:
             return operation == "trim"
                 ? ["sound_effects.trim", "sound_effects", "lanes.sfx.trim", "sfx.trim", "lanes.sfx"]
@@ -1016,6 +1308,8 @@ struct NativeMiniStrip: View {
         }
         if let capability = keys.compactMap({ session.operationCapability($0) }).first { return capability.editable }
         switch item.kind {
+        case .text: return session.canEdit(.text)
+        case .captionCue: return session.canEdit(.captions)
         case .soundEffect: return session.canEdit(.soundEffects)
         case .mediaOverlay: return session.canEdit(.mediaOverlays)
         case .visualBlock: return session.canEdit(.visualBlocks)
@@ -1025,39 +1319,122 @@ struct NativeMiniStrip: View {
         }
     }
 
+    private func beginTrimHaptics(selection: EditorSelection, edge: NativeTrimEdge, start: TimeInterval, end: TimeInterval) {
+        trimEdge = edge
+        trimPreviousTime = edge == .leading ? start : end
+        trimAlignment = nil
+        trimBoundaries = cachedItems.filter { $0.selection != selection }.flatMap { [$0.start, $0.end] }
+            + cachedClips.filter { selection != EditorSelection(kind: .clip, id: $0.id.uuidString) }.flatMap { [$0.start, $0.end] }
+        lastAlignmentHapticAt = .distantPast
+        alignmentHaptic.prepare()
+    }
+
+    private func updateTrimHaptics(start: TimeInterval, end: TimeInterval) {
+        guard let edge = trimEdge, let previous = trimPreviousTime else { return }
+        let time = edge == .leading ? start : end
+        guard time != previous else { return }
+        let aligned = NativeEditorInteraction.alignmentBoundary(start: time, end: time,
+            boundaries: trimBoundaries, tolerance: 3 / max(1, Double(pixelsPerSecond)))
+        let crossed = NativeEditorInteraction.crossesAlignment(previousStart: previous, previousEnd: previous,
+            start: time, end: time, boundaries: trimBoundaries)
+        if (crossed || (aligned != nil && aligned != trimAlignment)),
+           Date().timeIntervalSince(lastAlignmentHapticAt) >= 0.075 {
+            alignmentHaptic.impactOccurred(intensity: 1)
+            alignmentHaptic.prepare()
+            lastAlignmentHapticAt = .now
+        }
+        trimPreviousTime = time
+        trimAlignment = aligned
+    }
+
+    private func endTrimHaptics() {
+        trimEdge = nil
+        trimPreviousTime = nil
+        trimAlignment = nil
+        trimBoundaries = []
+    }
+
+    private func alignmentBoundary(for item: NativeEditorTimelineItem) -> TimeInterval? {
+        let boundaries = cachedItems.filter { $0.selection != item.selection }.flatMap { [$0.start, $0.end] }
+            + cachedClips.flatMap { [$0.start, $0.end] }
+        return NativeEditorInteraction.alignmentBoundary(start: item.start, end: item.end,
+            boundaries: boundaries, tolerance: 3 / max(1, Double(pixelsPerSecond)))
+    }
+
     private func timedLane(title: String, items: [NativeEditorTimelineItem], color: Color, playheadX: CGFloat) -> some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(KriaColor.softZinc)
-                .allowsHitTesting(false)
+        let packed = title == "TEXT" ? NativeEditorInteraction.packLanes(items) : []
+        let lanes = Dictionary(uniqueKeysWithValues: packed.map { ($0.item.selection, $0.lane) })
+        let count = max(1, (packed.map(\.lane).max() ?? 0) + 1)
+        return ZStack(alignment: .topLeading) {
             ForEach(visibleItems(items, playheadX: playheadX), id: \.selection) { item in
-                let itemFrame = itemFrame(item, playheadX: playheadX)
+                let itemFrame = itemFrame(item, playheadX: playheadX).offsetBy(dx: 0, dy: CGFloat(lanes[item.selection] ?? 0) * (secondaryLaneHeight + rowGap))
                 NativeTimelineBar(
                     item: item,
                     frame: itemFrame,
                     name: itemName(item, laneTitle: title),
                     color: color,
                     isSelected: session.selection == item.selection,
-                    canMove: canEditTimedOperation(item, operation: "timing"),
+                    canMove: !isPinching && panStartTime == nil && canEditTimedOperation(item, operation: "timing"),
                     canTrim: canEditTimedOperation(item, operation: "trim"),
                     pixelsPerSecond: pixelsPerSecond,
                     onSelect: { select(item) },
                     onMoveStart: {
-                        session.select(item, seekToStart: false)
+                        guard !suppressTimelineSelection else { return }
+                        moveAlignment = nil
+                        movePreviousEdges = (item.start, item.end)
+                        lastAlignmentHapticAt = .distantPast
+                        alignmentHaptic.prepare()
                         session.beginTimedBodyMove(kind: item.kind, id: item.id)
+                        if session.selection != item.selection {
+                            session.select(item, seekToStart: false)
+                        }
                     },
-                    onMoveChange: { session.updateTimedBodyMove(by: $0) },
-                    onMoveEnd: { session.endTimedBodyMove() },
-                    onTrimStart: { session.beginTimedEdgeTrim(kind: item.kind, id: item.id, edge: $0) },
-                    onTrimChange: { session.updateTimedEdgeTrim(by: $0) },
-                    onTrimEnd: { session.endTimedEdgeTrim() }
+                    onMoveChange: {
+                        session.updateTimedBodyMove(by: $0)
+                        if let moved = session.timelineItems.first(where: { $0.selection == item.selection }) {
+                            let aligned = alignmentBoundary(for: moved)
+                            let boundaries = cachedItems.filter { $0.selection != item.selection }.flatMap { [$0.start, $0.end] }
+                                + cachedClips.flatMap { [$0.start, $0.end] }
+                            let crossed = movePreviousEdges.map {
+                                NativeEditorInteraction.crossesAlignment(previousStart: $0.start, previousEnd: $0.end,
+                                    start: moved.start, end: moved.end, boundaries: boundaries)
+                            } ?? false
+                            if (crossed || (aligned != nil && aligned != moveAlignment)),
+                               Date().timeIntervalSince(lastAlignmentHapticAt) >= 0.075 {
+                                alignmentHaptic.impactOccurred(intensity: 1)
+                                alignmentHaptic.prepare()
+                                lastAlignmentHapticAt = .now
+                            }
+                            movePreviousEdges = (moved.start, moved.end)
+                            moveAlignment = aligned
+                        }
+                    },
+                    onMoveEnd: {
+                        lastPanAt = .now
+                        moveAlignment = nil
+                        movePreviousEdges = nil
+                        session.endTimedBodyMove()
+                        refreshItems()
+                    },
+                    onTrimStart: { edge in
+                        beginTrimHaptics(selection: item.selection, edge: edge, start: item.start, end: item.end)
+                        session.beginTimedEdgeTrim(kind: item.kind, id: item.id, edge: edge)
+                    },
+                    onTrimChange: {
+                        session.updateTimedEdgeTrim(by: $0)
+                        if let trimmed = session.timelineItems.first(where: { $0.selection == item.selection }) {
+                            updateTrimHaptics(start: trimmed.start, end: trimmed.end)
+                        }
+                    },
+                    onTrimEnd: { session.endTimedEdgeTrim(); endTrimHaptics() }
                 )
             }
         }
-        .frame(height: secondaryLaneHeight)
+        .frame(height: CGFloat(count) * secondaryLaneHeight + CGFloat(count - 1) * rowGap)
         .clipped()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(title) lane")
+        .accessibilityIdentifier("native-editor-lane-\(title.lowercased())")
     }
 
     private func captionDensityLane(width: CGFloat, playheadX: CGFloat) -> some View {
@@ -1130,19 +1507,34 @@ struct NativeMiniStrip: View {
         return CGRect(x: start, y: 0, width: max(1, width), height: filmstripHeight)
     }
 
-    private func scrubGesture(playheadX: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+    private var timelinePanGesture: some Gesture {
+        DragGesture(minimumDistance: 10, coordinateSpace: .global)
             .onChanged { value in
-                let startTime = scrubStartTime ?? clock.currentTime
-                scrubStartTime = startTime
-                let delta = TimeInterval(value.translation.width) / TimeInterval(pixelsPerSecond)
-                seek(to: startTime - delta)
+                guard abs(value.translation.width) > abs(value.translation.height),
+                      !session.isTimingGestureActive, !isPinching, playheadStartTime == nil else { return }
+                let start = panStartTime ?? clock.currentTime
+                panStartTime = start
+                lastPanAt = .now
+                seek(to: start - Double(value.translation.width / pixelsPerSecond))
             }
-            .onEnded { _ in scrubStartTime = nil }
+            .onEnded { _ in
+                if panStartTime != nil { lastPanAt = .now }
+                panStartTime = nil
+            }
     }
 
     private func seek(to value: TimeInterval) {
-        session.seek(to: TimelineMath.clamp(value, to: 0...timelineDuration))
+        let target = TimelineMath.clamp(value, to: 0...timelineDuration)
+        let previous = clock.currentTime
+        let crossedBoundary = blockBoundaries.contains { boundary in
+            target > previous ? boundary > previous && boundary <= target
+                : boundary < previous && boundary >= target
+        }
+        if crossedBoundary, Date().timeIntervalSince(lastBoundaryFeedbackAt) >= 0.08 {
+            boundaryFeedback += 1
+            lastBoundaryFeedbackAt = .now
+        }
+        session.seek(to: target)
     }
 
     private func timecode(_ value: TimeInterval) -> String {
@@ -1188,6 +1580,8 @@ private struct NativeTimelineBar: View {
     let onTrimChange: (TimeInterval) -> Void
     let onTrimEnd: () -> Void
     @State private var isMoving = false
+    @GestureState private var moveGestureActive = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var timing: String {
         "\(nativeTimecode(item.start)) to \(nativeTimecode(item.end))"
@@ -1213,6 +1607,7 @@ private struct NativeTimelineBar: View {
                     .stroke(isSelected ? KriaColor.sky : .clear, lineWidth: isSelected ? 2 : 0)
             }
             .offset(x: (hitWidth - frame.width) / 2)
+            .allowsHitTesting(false)
 
             Button(action: onSelect) {
                 Color.clear
@@ -1233,21 +1628,17 @@ private struct NativeTimelineBar: View {
                 guard canMove else { return }
                 onMoveStart(); onMoveChange(1); onMoveEnd()
             }
-            .gesture(
-                DragGesture(minimumDistance: 4)
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.45, maximumDistance: 8)
+                    .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+                    .updating($moveGestureActive) { _, active, _ in active = true }
                     .onChanged { value in
-                        guard canMove else { return }
-                        if !isMoving {
-                            isMoving = true
-                            onMoveStart()
-                        }
-                        onMoveChange(TimeInterval(value.translation.width / max(1, pixelsPerSecond)))
+                        guard canMove, case .second(true, let drag) = value else { return }
+                        if !isMoving { isMoving = true; onMoveStart() }
+                        if let drag { onMoveChange(TimeInterval(drag.translation.width / max(1, pixelsPerSecond))) }
                     }
-                    .onEnded { value in
-                        guard canMove else { return }
-                        if !isMoving { onMoveStart() }
-                        onMoveChange(TimeInterval(value.translation.width / max(1, pixelsPerSecond)))
-                        onMoveEnd()
+                    .onEnded { _ in
+                        if isMoving { onMoveEnd() }
                         isMoving = false
                     }
             )
@@ -1257,26 +1648,45 @@ private struct NativeTimelineBar: View {
                     edge: .leading,
                     height: frame.height,
                     pixelsPerSecond: pixelsPerSecond,
-                    visualOffset: -22,
+                    visualOffset: -min(44, hitWidth / 3) / 2 + 6,
+                    touchWidth: min(44, hitWidth / 3),
                     onTrimStart: onTrimStart,
                     onTrimChange: { _, seconds in onTrimChange(seconds) },
                     onTrimEnd: onTrimEnd
                 )
+                .offset(x: -(hitWidth - min(44, hitWidth / 3)) / 2)
                 NativeTrimHandle(
                     edge: .trailing,
                     height: frame.height,
                     pixelsPerSecond: pixelsPerSecond,
-                    visualOffset: 22,
+                    visualOffset: min(44, hitWidth / 3) / 2 - 6,
+                    touchWidth: min(44, hitWidth / 3),
                     onTrimStart: onTrimStart,
                     onTrimChange: { _, seconds in onTrimChange(seconds) },
                     onTrimEnd: onTrimEnd
                 )
-                .offset(x: max(0, frame.width - 44))
+                .offset(x: (hitWidth - min(44, hitWidth / 3)) / 2)
             }
         }
         .frame(width: hitWidth, height: 44)
-        .position(x: frame.midX, y: frame.midY)
-        .zIndex(isSelected ? 1 : 0)
+        .scaleEffect(isMoving && !reduceMotion ? 1.04 : 1)
+        .offset(y: isMoving && !reduceMotion ? -5 : 0)
+        .shadow(color: .black.opacity(isMoving ? 0.22 : 0), radius: isMoving ? 5 : 0, y: 3)
+        .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.62), value: isMoving)
+        .offset(y: frame.midY)
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.86), value: frame.midY)
+        .position(x: frame.midX, y: 0)
+        .zIndex(isMoving ? 2 : isSelected ? 1 : 0)
+        .onChange(of: moveGestureActive) { _, active in
+            if !active && isMoving {
+                isMoving = false
+                onMoveEnd()
+            }
+        }
+        .onDisappear {
+            if isMoving { onMoveEnd() }
+        }
+        .sensoryFeedback(.impact(weight: .light), trigger: isMoving) { _, moving in moving }
     }
 }
 
@@ -1358,6 +1768,7 @@ private struct NativeTrimHandle: View {
     let height: CGFloat
     let pixelsPerSecond: CGFloat
     let visualOffset: CGFloat
+    var touchWidth: CGFloat = 44
     let onTrimStart: (NativeTrimEdge) -> Void
     let onTrimChange: (NativeTrimEdge, TimeInterval) -> Void
     let onTrimEnd: () -> Void
@@ -1370,14 +1781,14 @@ private struct NativeTrimHandle: View {
                 .frame(width: 12, height: min(56, max(44, height - 20)))
                 .offset(x: visualOffset)
         }
-            .frame(width: 44, height: max(44, height))
+            .frame(width: touchWidth, height: max(44, height))
             .contentShape(Rectangle())
             // The timeline owns a zero-distance scrub gesture. Give the trim
             // handle first refusal so a horizontal edge drag starts the
             // session's single baseline transaction instead of being consumed
             // as a scrub.
             .highPriorityGesture(
-                DragGesture(minimumDistance: 0)
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true
@@ -1396,13 +1807,66 @@ private struct NativeTrimHandle: View {
                         isDragging = false
                     }
             )
-            .accessibilityLabel(edge == .leading ? "Trim clip start" : "Trim clip end")
+            .accessibilityLabel(edge == .leading ? "Trim block start" : "Trim block end")
             .accessibilityIdentifier(edge == .leading ? "native-editor-trim-leading" : "native-editor-trim-trailing")
-            .accessibilityHint("Drag to adjust the selected clip")
+            .accessibilityHint("Drag to adjust the selected block")
             .accessibilityAdjustableAction { direction in
                 onTrimStart(edge)
                 onTrimChange(edge, direction == .increment ? 0.1 : -0.1)
                 onTrimEnd()
             }
+    }
+}
+
+/// A scroll-view pinch recognizer recognizes both fingers before child SwiftUI
+/// buttons and long presses can interpret them as an item edit.
+private struct TimelinePinchCapture: UIViewRepresentable {
+    var changed: (CGFloat, Bool) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(changed: changed) }
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+        view.isUserInteractionEnabled = false
+        view.attach = { [weak coordinator = context.coordinator] ancestor in coordinator?.install(on: ancestor) }
+        return view
+    }
+    func updateUIView(_ uiView: Probe, context: Context) { context.coordinator.changed = changed }
+    static func dismantleUIView(_ uiView: Probe, coordinator: Coordinator) { coordinator.detach() }
+    final class Probe: UIView {
+        var attach: ((UIScrollView) -> Void)?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            var ancestor = superview
+            while let view = ancestor {
+                if let scroll = view as? UIScrollView { attach?(scroll); return }
+                ancestor = view.superview
+            }
+        }
+    }
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var changed: (CGFloat, Bool) -> Void
+        weak var host: UIScrollView?
+        lazy var pinch: UIPinchGestureRecognizer = {
+            let gesture = UIPinchGestureRecognizer(target: self, action: #selector(handle(_:)))
+            gesture.delegate = self
+            gesture.cancelsTouchesInView = true
+            return gesture
+        }()
+        init(changed: @escaping (CGFloat, Bool) -> Void) { self.changed = changed }
+        func install(on scroll: UIScrollView) {
+            guard host !== scroll else { return }
+            detach()
+            host = scroll
+            scroll.addGestureRecognizer(pinch)
+        }
+        func detach() { host?.removeGestureRecognizer(pinch); host = nil }
+        @objc private func handle(_ gesture: UIPinchGestureRecognizer) {
+            switch gesture.state {
+            case .began, .changed: changed(gesture.scale, false)
+            case .ended, .cancelled, .failed: changed(gesture.scale, true)
+            default: break
+            }
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
     }
 }

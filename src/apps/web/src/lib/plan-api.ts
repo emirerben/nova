@@ -2134,6 +2134,7 @@ export interface TextElement {
   /** Maximum wrap-box width as a frame-width fraction, clamped [0.2, 1.0];
    * null = renderer default 0.9 (parity fixture max_width_frac.json). */
   max_width_frac?: number | null;
+  wrap_lines?: boolean;
   fade_out_ms?: number | null;
   reveal_s?: number | null;
   z?: number | null;

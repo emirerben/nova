@@ -231,12 +231,15 @@ private struct CreationWorkspaceView: View {
     @State private var errorMessage: String?
     @State private var showsAttachments = false
     @State private var showsResult = false
+    @StateObject private var editorSession: NativeEditorSession
+    @State private var conversationAcceptedID: UUID?
 
     init(project: ProjectSummary, openProjects: @escaping () -> Void, openAccount: @escaping () -> Void) {
         self.project = project
         self.openProjects = openProjects
         self.openAccount = openAccount
         _threadRevision = State(initialValue: project.serverRevision)
+        _editorSession = StateObject(wrappedValue: NativeEditorSession(project: project))
     }
 
     private var currentProject: ProjectSummary {
@@ -370,10 +373,41 @@ private struct CreationWorkspaceView: View {
         .fullScreenCover(isPresented: $showsResult) {
             NativeEditorView(
                 project: currentProject,
+                sharedSession: editorSession,
+                conversationAcceptedID: conversationAcceptedID,
+                conversation: { AnyView(editorConversation) },
                 onBack: { showsResult = false }
             )
                 .environmentObject(model)
         }
+    }
+
+    private var editorConversation: some View {
+        VStack(spacing: 0) {
+            Text("Kria").font(KriaFont.body(17).weight(.semibold)).padding(.top, 20)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        ForEach(transcript) { message in ChatMessageRow(message: message).id(message.id) }
+                        if approval != nil { stageContent }
+                        if isThinking || isSending { ThinkingRow() }
+                        if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
+                        if let errorMessage {
+                            Text(errorMessage).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
+                        }
+                        Color.clear.frame(height: 1).id("conversation-end")
+                    }.padding(16)
+                }
+                .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
+                .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
+            }
+            ChatComposer(
+                text: $prompt, isSending: isSending || isActing,
+                canAttach: false, attach: {}, send: { Task { await send() } }
+            )
+        }
+        .background(KriaColor.paper)
+        .accessibilityIdentifier("native-editor-project-conversation")
     }
 
     @ViewBuilder private var stageContent: some View {
@@ -465,15 +499,21 @@ private struct CreationWorkspaceView: View {
         guard !isSending, !isActing else { return }
         let message = (submittedMessage ?? prompt).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
-        let submission = ChatTurnSubmissionIdentity.reusing(
-            pendingTurnSubmission,
-            for: message,
-            expectedRevision: threadRevision
-        )
-        pendingTurnSubmission = submission
         isSending = true
         errorMessage = nil
         defer { isSending = false }
+        if editorSession.hasUnsavedChanges {
+            await editorSession.save()
+            guard !editorSession.hasUnsavedChanges else {
+                errorMessage = "Your message is still here. Save or resolve your editor changes before sending it."
+                return
+            }
+            await refreshNow()
+        }
+        let submission = ChatTurnSubmissionIdentity.reusing(
+            pendingTurnSubmission, for: message, expectedRevision: threadRevision
+        )
+        pendingTurnSubmission = submission
         if currentProject.runtimeVersion != 2 {
             let optimistic = PendingChatMessage(content: message)
             pendingMessages.append(optimistic)
@@ -483,6 +523,8 @@ private struct CreationWorkspaceView: View {
                 let thread = try await model.api.sendCreationMessage(threadID: project.id, message: message, expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID)
                 pendingTurnSubmission = nil
                 apply(thread, requestSequence: requestSequence)
+                conversationAcceptedID = UUID()
+                await editorSession.synchronizePromptRevision()
             } catch APIError.conflict {
                 pendingMessages.removeAll { $0.id == optimistic.id }
                 prompt = message
@@ -519,6 +561,7 @@ private struct CreationWorkspaceView: View {
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         pendingMessages.append(PendingChatMessage(content: message))
         prompt = ""
+        conversationAcceptedID = UUID()
         isThinking = true
         errorMessage = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",
@@ -698,6 +741,7 @@ private struct CreationWorkspaceView: View {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
         }
         if !fresh.isEmpty { errorMessage = nil }
+        if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
         return !fresh.isEmpty
     }
 

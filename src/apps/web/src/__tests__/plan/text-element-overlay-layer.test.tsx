@@ -457,3 +457,11 @@ describe("TextElementOverlayLayer", () => {
     );
   });
 });
+
+it("preserves manual newlines without CSS wrapping or smooth-type fitting", () => {
+  const manual = { ...element, text: "First line\n\nLast line", text_case: null, wrap_lines: false };
+  const [layout] = resolveTextElementsLayout([manual]);
+  expect(smoothTypePreviewLayout(layout)).toEqual({ lines: ["First line", "", "Last line"], sizePx: 96 });
+  render(<TextElementOverlayLayer elements={[manual]} />);
+  expect(screen.getByText("First line Last line")).toHaveStyle({ whiteSpace: "pre", wordBreak: "normal" });
+});

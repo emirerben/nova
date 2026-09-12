@@ -22,13 +22,24 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
+import struct
 import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
+
+from app.agents._schemas.text_animation_phases import TextAnimationPhases
 
 # Dependency-free (dataclasses only), so it is safe at module scope unlike the
 # heavier `app.pipeline.*` builders this module imports lazily inside functions.
@@ -318,7 +329,7 @@ class TextElement(BaseModel):
     )
     size_px: float | None = Field(
         default=None,
-        description="Font size in pixels; silently clamped to [8, 300] (A18).",
+        description="Font size in pixels; minimum 8; may extend beyond the canvas.",
     )
     size_class: Literal["small", "medium", "large", "xlarge", "xxlarge", "jumbo"] | None = Field(
         default=None,
@@ -339,6 +350,22 @@ class TextElement(BaseModel):
         default=None,
         description="Stroke width; silently clamped to [0, 20].",
     )
+    stroke_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    shadow_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    shadow_opacity: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    background_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    editor_preset: Literal["Simple", "Bold", "Highlight"] | None = None
+    animation_phases: TextAnimationPhases | None = None
+    wrap_lines: bool = True
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_wrap_shape(self, handler):
+        """The legacy default must not change persisted payloads or their hashes."""
+        payload = handler(self)
+        if self.wrap_lines:
+            payload.pop("wrap_lines", None)
+        return payload
+
     shadow_enabled: bool | None = Field(
         default=None,
         description="Explicit soft-shadow toggle. None preserves legacy renderer defaults.",
@@ -428,7 +455,7 @@ class TextElement(BaseModel):
         default=None,
         description=(
             "Maximum text wrap width as a fraction of frame width. Silently "
-            "clamped to [0.2, 1.0]; None = renderer default 0.9."
+            "minimum 0.2; may extend beyond the canvas. None = renderer default 0.9."
         ),
     )
     fade_out_ms: int | None = Field(
@@ -507,13 +534,28 @@ class TextElement(BaseModel):
     @field_validator("size_px", mode="before")
     @classmethod
     def _clamp_size_px(cls, v: object) -> float | None:
-        """Silently clamp to [8, 300] (A18 — Skia OOM guard)."""
+        """Preserve authored sizes that the renderer can represent, with an 8px minimum."""
         if v is None:
             return None
         try:
-            return max(8.0, min(300.0, float(v)))  # type: ignore[arg-type]
+            value = float(v)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(value):
+            return None
+        value = max(8.0, value)
+        # Skia's font API takes a SkScalar (IEEE-754 binary32), while JSON /
+        # Python numbers are binary64. A finite authored number can otherwise
+        # narrow to infinity and fail later when layout converts metrics to int.
+        # This is a renderer representability check, not an editor size cap:
+        # ordinary oversized/off-canvas text retains its exact authored size.
+        try:
+            struct.pack("f", value)
+        except OverflowError as exc:
+            raise ValueError(
+                "size_px cannot be represented by the text renderer; reduce the font size"
+            ) from exc
+        return value
 
     @field_validator("stroke_width", mode="before")
     @classmethod
@@ -551,11 +593,12 @@ class TextElement(BaseModel):
     @field_validator("max_width_frac", mode="before")
     @classmethod
     def _clamp_max_width_frac(cls, v: object) -> float | None:
-        """Silently clamp to [0.2, 1.0] (mirrors the TS clamp)."""
+        """Preserve finite wrap widths, including boxes beyond the canvas."""
         if v is None:
             return None
         try:
-            return max(MAX_WIDTH_FRAC_MIN, min(MAX_WIDTH_FRAC_MAX, float(v)))  # type: ignore[arg-type]
+            value = float(v)  # type: ignore[arg-type]
+            return max(MAX_WIDTH_FRAC_MIN, value) if math.isfinite(value) else None
         except (TypeError, ValueError):
             return None
 
@@ -729,8 +772,10 @@ def _burn_dict_to_text_element(
     The ``source_params`` blob preserves the key generator params for
     round-trip safety (A2).
     """
-    text = (burn_dict.get("text") or "").strip()
-    if not text:
+    text = burn_dict.get("text") or ""
+    if burn_dict.get("wrap_lines", True):
+        text = text.strip()
+    if not text.strip():
         return None
 
     start_s = float(burn_dict.get("start_s") or 0.0)
@@ -857,6 +902,13 @@ def _burn_dict_to_text_element(
             stroke_width=stroke_width,
             shadow_enabled=shadow_enabled,
             shadow_style=shadow_style,
+            stroke_color=burn_dict.get("stroke_color"),
+            shadow_color=burn_dict.get("shadow_color"),
+            shadow_opacity=burn_dict.get("shadow_opacity"),
+            background_color=burn_dict.get("background_color"),
+            editor_preset=burn_dict.get("editor_preset"),
+            animation_phases=burn_dict.get("animation_phases"),
+            wrap_lines=burn_dict.get("wrap_lines", True),
             glow_color=glow_color,
             glow_strength=glow_strength,
             letter_spacing=letter_spacing,

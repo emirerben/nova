@@ -247,7 +247,7 @@ struct EditorClip: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-struct TextLayer: Codable, Equatable, Identifiable, Sendable { let id: UUID; var content: String; var position: CGPoint; var style: String }
+struct TextLayer: Codable, Equatable, Identifiable, Sendable { let id: UUID; var content: String; var position: CGPoint; var style: String; var canonicalID: String? = nil }
 struct CaptionStyle: Codable, Equatable, Sendable { var enabled: Bool; var style: String }
 struct MusicSelection: Codable, Equatable, Sendable {
     var trackID: UUID; var title: String; var start: TimeInterval; var volume: Double
@@ -283,8 +283,8 @@ extension EditorDraft {
         })
         let oldText = Self.array(iosEditor["text"])
         iosEditor["text"] = .array(text.map { layer in
-            var value = Self.object(oldText.first { Self.uuid(Self.object($0)?["id"]) == layer.id }) ?? [:]
-            value["id"] = .string(layer.id.uuidString); value["content"] = .string(layer.content); value["x"] = .number(layer.position.x); value["y"] = .number(layer.position.y); value["style"] = .string(layer.style)
+            var value = Self.object(oldText.first { (layer.canonicalID != nil && Self.object($0)?["id"]?.stringValue == layer.canonicalID) || Self.uuid(Self.object($0)?["id"]) == layer.id }) ?? [:]
+            value["id"] = .string(layer.canonicalID ?? layer.id.uuidString); value["content"] = .string(layer.content); value["x"] = .number(layer.position.x); value["y"] = .number(layer.position.y); value["style"] = .string(layer.style)
             return .object(value)
         })
         iosEditor["captions_enabled"] = .bool(captions.enabled); iosEditor["captions_style"] = .string(captions.style)
@@ -315,9 +315,9 @@ extension EditorDraft {
             return .object(value)
         })
         sections["text_elements"] = .array(text.map { layer in
-            var value = Self.object(Self.array(sections["text_elements"]).first { Self.uuid(Self.object($0)?["id"]) == layer.id }) ?? [:]
+            var value = Self.object(Self.array(sections["text_elements"]).first { (layer.canonicalID != nil && Self.object($0)?["id"]?.stringValue == layer.canonicalID) || Self.uuid(Self.object($0)?["id"]) == layer.id }) ?? [:]
             let totalDuration = clips.map(\.end).max() ?? 0
-            value["id"] = .string(layer.id.uuidString); value["text"] = .string(layer.content); value["start_s"] = value["start_s"] ?? .number(0); value["end_s"] = value["end_s"] ?? .number(max(0.1, totalDuration)); value["role"] = value["role"] ?? .string("generative_intro"); value["position"] = value["position"] ?? .string("custom"); value["x_frac"] = .number(layer.position.x); value["y_frac"] = .number(layer.position.y); value["font_family"] = .string(layer.style)
+            value["id"] = .string(layer.canonicalID ?? layer.id.uuidString); value["text"] = .string(layer.content); value["start_s"] = value["start_s"] ?? .number(0); value["end_s"] = value["end_s"] ?? .number(max(0.1, totalDuration)); value["role"] = value["role"] ?? .string("generative_intro"); value["position"] = value["position"] ?? .string("custom"); value["x_frac"] = .number(layer.position.x); value["y_frac"] = .number(layer.position.y); value["font_family"] = .string(layer.style)
             return .object(value)
         })
         sections["captions_enabled"] = .bool(captions.enabled); sections["caption_style"] = .string(captions.style)

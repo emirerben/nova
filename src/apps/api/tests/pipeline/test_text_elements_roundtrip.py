@@ -1153,10 +1153,10 @@ class TestSecurityGuards:
         assert elem.theme_transition is not None
         assert elem.theme_transition.type == "giant-title-wipe"
 
-    def test_size_px_clamped_to_max_300(self):
-        """size_px > 300 is silently clamped to 300 (A18 — Skia OOM guard)."""
+    def test_size_px_preserves_large_authored_size(self):
+        """Large authored text survives save/reload without shrinking."""
         elem = TextElement(text="test", start_s=0, end_s=1, size_px=9999)
-        assert elem.size_px == 300.0
+        assert elem.size_px == 9999.0
 
     def test_size_px_clamped_to_min_8(self):
         """size_px < 8 is silently clamped to 8 (A18)."""
@@ -1765,3 +1765,22 @@ def test_lyric_projection_merge_dedupes_by_source_identity():
 
     assert merged is not None
     assert [e["id"] for e in merged] == ["saved-lyric"]
+
+
+def test_authored_text_paint_and_animation_survive_burn_projection():
+    authored = {
+        "stroke_color": "#FF0000",
+        "shadow_color": "#0000FF",
+        "shadow_opacity": 0.35,
+        "background_color": "#FFF0A6",
+        "editor_preset": "Highlight",
+        "animation_phases": {"entrance": "pop", "exit": "fade", "loop": "float", "speed": 1.5},
+    }
+    element = TextElement(text="Authored", start_s=0, end_s=2, **authored)
+    overlays = build_overlays_from_text_elements([element], video_duration_s=2)
+    assert len(overlays) == 1
+    restored = _burn_dict_to_text_element(overlays[0])
+    assert restored is not None
+    for key, value in authored.items():
+        assert overlays[0][key] == value
+        assert restored.model_dump()[key] == value

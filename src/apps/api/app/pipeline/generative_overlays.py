@@ -123,13 +123,14 @@ def resolve_line_spacing(value: object) -> float:
 
 
 def resolve_max_width_frac(value: object) -> float:
-    """Clamped max wrap width as a fraction of frame width; renderer default
+    """Finite wrap width (minimum 0.2), including beyond the frame; default
     (0.9) for absent/invalid. TS mirror: resolveMaxWidthFrac
     (overlay-layout.ts)."""
     if value is None:
         return DEFAULT_MAX_WIDTH_FRAC
     try:
-        return max(_MAX_WIDTH_FRAC_MIN, min(_MAX_WIDTH_FRAC_MAX, float(value)))  # type: ignore[arg-type]
+        width = float(value)  # type: ignore[arg-type]
+        return max(_MAX_WIDTH_FRAC_MIN, width) if math.isfinite(width) else DEFAULT_MAX_WIDTH_FRAC
     except (TypeError, ValueError):
         return DEFAULT_MAX_WIDTH_FRAC
 
@@ -978,9 +979,30 @@ def build_overlays_from_text_elements(
             """
             if independent_box_alignment:
                 overlay["vertical_anchor"] = "center"
+            if not elem.wrap_lines:
+                overlay["wrap_lines"] = False
+                overlay["text"] = elem_text
             attach_glow(overlay)
             attach_theme_transition(overlay)
             attach_motion(overlay)
+            for field in (
+                "stroke_color",
+                "shadow_color",
+                "shadow_opacity",
+                "background_color",
+                "editor_preset",
+            ):
+                value = getattr(elem, field, None)
+                if value is not None:
+                    overlay[field] = value
+            if elem.animation_phases is not None:
+                overlay["animation_phases"] = elem.animation_phases.model_dump()
+                # Explicit phases replace the legacy single-effect schedule.
+                overlay["effect"] = (
+                    "typewriter"
+                    if "typewriter" in (elem.animation_phases.entrance, elem.animation_phases.exit)
+                    else "none"
+                )
             if elem.effect == "smooth-type" and effect == "static":
                 overlay["shape_text"] = True
 

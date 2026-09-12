@@ -8,12 +8,17 @@ from pathlib import Path
 
 import skia
 
-from app.pipeline.dissolve_effect import _skia_image_to_rgba_array, render_dissolve_skia_image
+from app.pipeline.dissolve_effect import (
+    DEFAULT_DISSOLVE_PARAMS,
+    MEDIA_OVERLAY_DISSOLVE_PARAMS,
+    _skia_image_to_rgba_array,
+    render_dissolve_skia_image,
+)
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/phone_dissolve_composition.json"
 
 
-def reference():
+def reference(media=False):
     assert (
         Path(sys.modules[render_dissolve_skia_image.__module__].__file__)
         .resolve()
@@ -37,7 +42,14 @@ def reference():
     cases = []
     for seed in [101, 138]:
         for time in [0, 3.02, 3.1, 3.2, 3.4, 3.7, 4]:
-            image = render_dissolve_skia_image(source, time, 4, seed=seed, cap_to_webkit=True)
+            image = render_dissolve_skia_image(
+                source,
+                time,
+                4,
+                seed=seed,
+                cap_to_webkit=True,
+                params=MEDIA_OVERLAY_DISSOLVE_PARAMS if media else DEFAULT_DISSOLVE_PARAMS,
+            )
             pixels = _skia_image_to_rgba_array(image)
             if directory := os.environ.get("KRIA_DISSOLVE_DEBUG_DIR"):
                 from PIL import Image
@@ -61,5 +73,14 @@ def test_composition_fixture_matches_cloud():
     assert json.loads(FIXTURE.read_text()) == reference()
 
 
+def test_media_composition_fixture_matches_cloud():
+    assert json.loads(
+        FIXTURE.with_name("phone_media_dissolve_composition.json").read_text()
+    ) == reference(media=True)
+
+
 if __name__ == "__main__" and "--write" in sys.argv:
     FIXTURE.write_text(json.dumps(reference(), separators=(",", ":")) + "\n")
+    FIXTURE.with_name("phone_media_dissolve_composition.json").write_text(
+        json.dumps(reference(media=True), separators=(",", ":")) + "\n"
+    )

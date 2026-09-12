@@ -9,7 +9,7 @@ extension RecipeTextLayer {
         let width = Int(canvas.width), height = Int(canvas.height)
         // Two noise maps, the retained text canvas and two intermediate canvases.
         let bytes = width * height * 20
-        guard bytes <= maxBitmapBytes else { throw MediaEngineError.unsupportedCapability }
+        guard bytes <= maxBitmapBytes else { throw NativePreviewFeatureError("NativeDissolvePainter-12") }
         let extent = CGRect(origin: .zero, size: canvas)
         let drawing = NativeDiscreteRevealPainter.paintingLayer(layer, runs: layer.runs)
         let settled = try make(drawing, assetURLs: assetURLs, canvas: canvas,

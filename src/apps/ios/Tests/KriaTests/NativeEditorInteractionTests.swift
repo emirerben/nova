@@ -3,6 +3,93 @@ import XCTest
 @testable import Kria
 
 final class NativeEditorInteractionTests: XCTestCase {
+    func testRotationSnapHoldsCardinalAnglesAndSmoothlyReleases() {
+        for target in [-180.0, -90, 0, 90, 180, 270, 360] {
+            XCTAssertEqual(NativeTextRotationSnap.angle(target - 2), target)
+            XCTAssertEqual(NativeTextRotationSnap.angle(target + 2), target)
+            XCTAssertEqual(NativeTextRotationSnap.angle(target + 8), target + 8)
+            var previous = target
+            for step in 1...600 {
+                let raw = target + 2 + Double(step) / 100
+                let next = NativeTextRotationSnap.angle(raw)
+                XCTAssertGreaterThanOrEqual(next, previous)
+                XCTAssertLessThan(next - previous, 0.03, "Release must not jump")
+                previous = next
+            }
+        }
+        XCTAssertEqual(NativeTextRotationSnap.angle(37), 37)
+        XCTAssertEqual(NativeTextRotationSnap.angle(92), 90)
+    }
+
+    func testTextAlignmentHapticsForCenterLinesAndAllEdges() {
+        let canvas = CGSize(width: 300, height: 500), size = CGSize(width: 40, height: 20)
+        for target in [CGPoint(x: 150, y: 100), CGPoint(x: 90, y: 250), CGPoint(x: 150, y: 250),
+                       CGPoint(x: 20, y: 100), CGPoint(x: 280, y: 100), CGPoint(x: 90, y: 10), CGPoint(x: 90, y: 490)] {
+            var feedback = NativeTextAlignmentFeedback()
+            XCTAssertFalse(feedback.update(center: CGPoint(x: 90, y: 100), size: size, rotation: 0, canvas: canvas))
+            XCTAssertTrue(feedback.update(center: target, size: size, rotation: 0, canvas: canvas))
+            XCTAssertFalse(feedback.update(center: target, size: size, rotation: 0, canvas: canvas))
+        }
+    }
+
+    func testTextAlignmentHapticsLatchUntilClearlyLeavingTheGuide() {
+        var feedback = NativeTextAlignmentFeedback()
+        let size = CGSize(width: 40, height: 20), canvas = CGSize(width: 300, height: 500)
+        func point(_ x: Double) -> CGPoint { CGPoint(x: x, y: 100) }
+        XCTAssertFalse(feedback.update(center: point(120), size: size, rotation: 0, canvas: canvas))
+        XCTAssertTrue(feedback.update(center: point(149), size: size, rotation: 0, canvas: canvas))
+        for x in [151.0, 154, 149, 150] {
+            XCTAssertFalse(feedback.update(center: point(x), size: size, rotation: 0, canvas: canvas))
+        }
+        XCTAssertFalse(feedback.update(center: point(160), size: size, rotation: 0, canvas: canvas))
+        XCTAssertTrue(feedback.update(center: point(150), size: size, rotation: 0, canvas: canvas))
+        feedback.reset()
+        XCTAssertFalse(feedback.update(center: point(150), size: size, rotation: 0, canvas: canvas), "Picking up aligned text must not buzz")
+    }
+
+    func testTextAlignmentHapticsCatchGuidesBetweenFingerSamples() {
+        var feedback = NativeTextAlignmentFeedback()
+        let size = CGSize(width: 40, height: 20), canvas = CGSize(width: 300, height: 500)
+        XCTAssertFalse(feedback.update(center: CGPoint(x: 140, y: 100), size: size, rotation: -7, canvas: canvas))
+        XCTAssertTrue(feedback.update(center: CGPoint(x: 160, y: 100), size: size, rotation: 7, canvas: canvas))
+        XCTAssertFalse(feedback.update(center: CGPoint(x: 170, y: 100), size: size, rotation: 8, canvas: canvas))
+    }
+
+    func testTextAlignmentHapticsForHorizontalVerticalAndRotatedEdges() {
+        let center = CGPoint(x: 90, y: 100), size = CGSize(width: 40, height: 20), canvas = CGSize(width: 300, height: 500)
+        for angle in [0.0, 90, 180, 270, -90, 360] {
+            var feedback = NativeTextAlignmentFeedback()
+            XCTAssertFalse(feedback.update(center: center, size: size, rotation: angle + 12, canvas: canvas))
+            XCTAssertTrue(feedback.update(center: center, size: size, rotation: angle, canvas: canvas))
+            XCTAssertFalse(feedback.update(center: center, size: size, rotation: angle + 3, canvas: canvas))
+        }
+        var feedback = NativeTextAlignmentFeedback()
+        XCTAssertFalse(feedback.update(center: center, size: size, rotation: 90, canvas: canvas))
+        XCTAssertTrue(feedback.update(center: CGPoint(x: 10, y: 100), size: size, rotation: 90, canvas: canvas))
+    }
+
+    func testAlignmentCrossingsCatchSkippedBoundariesInBothDirections() {
+        XCTAssertTrue(NativeEditorInteraction.crossesAlignment(previousStart: 0.9, previousEnd: 1.9, start: 1.1, end: 2.1, boundaries: [1]))
+        XCTAssertTrue(NativeEditorInteraction.crossesAlignment(previousStart: 0.9, previousEnd: 1.9, start: 1.1, end: 2.1, boundaries: [2]))
+        XCTAssertTrue(NativeEditorInteraction.crossesAlignment(previousStart: 1.1, previousEnd: 2.1, start: 0.9, end: 1.9, boundaries: [1, 2]))
+        XCTAssertFalse(NativeEditorInteraction.crossesAlignment(previousStart: 1, previousEnd: 2, start: 1, end: 2, boundaries: [1, 2]))
+        XCTAssertFalse(NativeEditorInteraction.crossesAlignment(previousStart: 1, previousEnd: 2, start: 1.1, end: 2.1, boundaries: [1, 2]))
+    }
+
+    func testMovingBlockAlignmentChecksBothEdgesAndPixelTolerance() {
+        XCTAssertEqual(NativeEditorInteraction.alignmentBoundary(start: 1.98, end: 3.48, boundaries: [2, 5], tolerance: 0.03), 2)
+        XCTAssertEqual(NativeEditorInteraction.alignmentBoundary(start: 0.51, end: 2.01, boundaries: [2, 5], tolerance: 0.03), 2)
+        XCTAssertNil(NativeEditorInteraction.alignmentBoundary(start: 1.9, end: 3.4, boundaries: [2, 5], tolerance: 0.03))
+        XCTAssertNil(NativeEditorInteraction.alignmentBoundary(start: 1.98, end: 3.48, boundaries: [2], tolerance: 0.003))
+    }
+
+    func testRotatedHitTargetUsesTheObjectQuad() {
+        let rectangle = CGRect(x: 50, y: 90, width: 200, height: 44)
+        XCTAssertTrue(NativeEditorInteraction.contains(CGPoint(x: 150, y: 112), in: rectangle, rotationDegrees: 45))
+        XCTAssertFalse(NativeEditorInteraction.contains(CGPoint(x: 245, y: 112), in: rectangle, rotationDegrees: 45))
+        XCTAssertTrue(NativeEditorInteraction.contains(CGPoint(x: 210, y: 172), in: rectangle, rotationDegrees: 45))
+    }
+
     func testVisibilityIsHalfOpen() {
         XCTAssertTrue(NativeEditorInteraction.isVisible(start: 1, end: 2, at: 1))
         XCTAssertTrue(NativeEditorInteraction.isVisible(start: 1, end: 2, at: 1.99))

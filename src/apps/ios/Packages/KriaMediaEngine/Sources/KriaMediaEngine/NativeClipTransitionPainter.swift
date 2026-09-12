@@ -22,7 +22,7 @@ enum NativeClipTransitionPainter {
         }
         }}
         """)
-        guard let kernel = kernels.first else { throw MediaEngineError.unsupportedCapability }
+        guard let kernel = kernels.first else { throw NativePreviewFeatureError("NativeClipTransitionPainter-25") }
         return kernel
     }
 
@@ -39,10 +39,10 @@ enum NativeClipTransitionPainter {
             guard let blended = try fadeKernel.get().apply(extent: canvas, roiCallback: { _, rect in rect }, arguments: [
                 outgoing.applyingFilter("CILinearToSRGBToneCurve"), incoming.applyingFilter("CILinearToSRGBToneCurve"),
                 weights.outgoing, weights.incoming, kind == .fadeWhite ? 1.0 : 0.0
-            ]) else { throw MediaEngineError.unsupportedCapability }
+            ]) else { throw NativePreviewFeatureError("NativeClipTransitionPainter-42") }
             return blended.applyingFilter("CISRGBToneCurveToLinear").cropped(to: canvas)
         case .crossfade:
-            throw MediaEngineError.unsupportedCapability
+            throw NativePreviewFeatureError("NativeClipTransitionPainter-45")
         }
     }
 }

@@ -1,5 +1,12 @@
 import AVFoundation
+import KriaMediaEngine
 import SwiftUI
+import ImageIO
+import UIKit
+
+enum NativeSourcePreviewState: Equatable {
+    case idle, preparing, ready, failed(String)
+}
 
 enum NativeTrimEdge: Sendable { case leading, trailing }
 
@@ -38,11 +45,18 @@ enum NativeEditorLoadState: Equatable, Sendable {
             timelineClipsCache = nil
             timelineProjectionCache = nil
             previewTextCache = nil
+            scheduleSourcePreviewUpdate()
         }
     }
     /// Cross-kind selection is the source of truth. `selectedClipID` below is
     /// a source-compatible adapter for the first-pass clip views.
-    @Published private(set) var selection: EditorSelection?
+    @Published private(set) var selection: EditorSelection? { didSet { prepareTextInteraction() } }
+    @Published private(set) var selectionRequest = 0
+    /// A new text item is staged separately until Done. Cancel must not roll
+    /// back unrelated edits or leave a placeholder in the persisted document.
+    @Published private(set) var pendingText: EditorTextElement? {
+        didSet { scheduleSourcePreviewUpdate() }
+    }
     let playbackClock = NativeEditorPlaybackClock()
     var currentTime: TimeInterval {
         get { playbackClock.currentTime }
@@ -52,9 +66,90 @@ enum NativeEditorLoadState: Equatable, Sendable {
     @Published var isPlaying = false
     @Published var isSaving = false
     @Published var hasUnsavedChanges = false
-    @Published var saveState: NativeEditorSaveState = .idle
+    @Published var saveState: NativeEditorSaveState = .idle {
+        didSet { saveStateBeforePromptFailure = nil }
+    }
+    private var saveStateBeforePromptFailure: NativeEditorSaveState?
     @Published private(set) var loadState: NativeEditorLoadState = .loaded
     @Published var player: AVPlayer?
+    struct TextInteractionFrame {
+        let element: EditorTextElement
+        let time: Double
+        let below: UIImage
+        let above: UIImage
+        let text: UIImage
+        let rect: CGRect
+    }
+    @Published private(set) var textInteractionFrame: TextInteractionFrame?
+    private var textInteractionTask: Task<Void, Never>?
+    private var textInteractionSequence = 0
+
+    private func prepareTextInteraction() {
+        guard !isDirectManipulating, !isPlaying, let selection, selection.kind == .text,
+              let element = document.textElements.first(where: { $0.id == selection.id }),
+              let preview = sourcePreview, let item = player?.currentItem,
+              sourcePreviewState == .ready else { return }
+        textInteractionTask?.cancel()
+        textInteractionSequence += 1
+        let sequence = textInteractionSequence
+        let time = min(currentTime, max(0, duration - 1.0 / 600))
+        textInteractionTask = Task { @MainActor [weak self] in
+            do {
+                // Prepare after scrubbing settles, never for every scrub frame.
+                try await Task.sleep(for: .milliseconds(100))
+                try Task.checkCancellation()
+                let layers = try preview.textInteractionLayers(id: element.id, time: time)
+                @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
+                    let generator = AVAssetImageGenerator(asset: item.asset)
+                    generator.videoComposition = composition
+                    generator.maximumSize = CGSize(width: 1080, height: 1920)
+                    generator.requestedTimeToleranceBefore = .zero
+                    generator.requestedTimeToleranceAfter = .zero
+                    let cg: CGImage = try await withCheckedThrowingContinuation { continuation in
+                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: time, preferredTimescale: 600))]) { _, image, _, result, error in
+                            if result == .succeeded, let image { continuation.resume(returning: image) }
+                            else { continuation.resume(throwing: error ?? MediaEngineError.exportFailed) }
+                        }
+                    }
+                    return UIImage(cgImage: cg)
+                }
+                let below = try await image(layers.below)
+                let above = try await image(layers.above)
+                guard let self, !Task.isCancelled, self.textInteractionSequence == sequence,
+                      self.selection == selection, self.document.textElements.first(where: { $0.id == element.id }) == element else { return }
+                self.textInteractionFrame = TextInteractionFrame(element: element, time: time,
+                    below: below, above: above, text: UIImage(cgImage: layers.text), rect: layers.rect)
+            } catch {
+                guard !Task.isCancelled else { return }
+                #if DEBUG
+                NativePreviewDiagnostics.failure("text-interaction-prepare", error: error)
+                #endif
+            }
+        }
+    }
+
+    @Published private(set) var scrubPreviewFrame: UIImage?
+    private(set) var scrubPreviewTime: TimeInterval?
+    private var scrubFrameGenerator: AVAssetImageGenerator?
+    private weak var scrubFramePlayerItem: AVPlayerItem?
+    private var scrubFrameComposition: AVVideoComposition?
+    private var scrubFrameTask: Task<Void, Never>?
+    private var pendingScrubFrameTime: TimeInterval?
+    private var scrubFrameGeneration = 0
+    @Published private(set) var sourcePreviewState: NativeSourcePreviewState = .idle
+    private var sourcePreview: LivePreviewComposition?
+    private var sourceCompiler: NativeEditorRenderCompiler?
+    private var sourceResolver: NativeEditorSourceResolver?
+    private var resolvedAudio: [String: ResolvedEditorSource] = [:]
+    private var previewVariant: [String: JSONValue] = [:]
+    private var sourcePool: NativeEditorSourcePool?
+    private var resolvedMedia: [String: ResolvedEditorSource] = [:]
+    private var resolvedSources: [Int: ResolvedEditorSource]?
+    private var sourcePreviewTask: Task<Void, Never>?
+    private var sourcePreviewSequence = 0
+    private var sourcePreviewGeneration: String?
+    private var sourcePreviewUpdateDeferred = false
+    var hasSourcePreview: Bool { sourcePreviewState == .ready }
     @Published private(set) var isDirectManipulating = false
     @Published private(set) var canEditTimeline = true
     @Published private(set) var canEditText = true
@@ -152,6 +247,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     nonisolated(unsafe) private var observingPlayer: AVPlayer?
     nonisolated(unsafe) private var endObserver: NSObjectProtocol?
     private var durationLoadTask: Task<Void, Never>?
+    private var promptRefreshSequence: UInt64 = 0
     private let playbackEndTolerance: TimeInterval = 0.05
 
     private struct ActiveTrim {
@@ -169,6 +265,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         let kind: TimedEditKind
         let baseline: EditorDocument
         let redoBaseline: [EditorDocument]
+        let projection: NativeEditorTimelineProjection
         var recordedUndo = false
     }
 
@@ -197,6 +294,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
         if let initialPlaybackURL {
             installPlayer(url: initialPlaybackURL)
         }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
+        #endif
     }
 
     convenience init(project: ProjectSummary, operations: any EditorOperations = LocalEditorOperations()) {
@@ -213,12 +313,16 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     deinit {
         previewRefreshTask?.cancel()
+        sourcePreviewTask?.cancel()
         durationLoadTask?.cancel()
+        seekRecoveryTask?.cancel()
+        scrubFrameTask?.cancel()
         if let timeObserver, let observingPlayer { observingPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
+    var isTimingGestureActive: Bool { activeTimedEdit != nil || activeTrim != nil }
     var canRedo: Bool { !redoStack.isEmpty }
     var selectedClipID: UUID? {
         get { guard selection?.kind == .clip else { return nil }; return UUID(uuidString: selection?.id ?? "") }
@@ -270,9 +374,23 @@ enum NativeEditorLoadState: Equatable, Sendable {
             redoStack.removeFirst(redoStack.count - historyLimit)
         }
     }
+    var previewAspectRatio: CGFloat {
+        switch document.orientation {
+        case "landscape": 16.0 / 9.0
+        case "square": 1
+        default: 9.0 / 16.0
+        }
+    }
+
     func beginEditTransaction() { beginTransaction() }
     func endEditTransaction() { endTransaction() }
     func beginDirectManipulation() {
+        if isPlaying {
+            player?.pause()
+            isPlaying = false
+            if let time = player?.currentTime().seconds, time.isFinite { currentTime = time }
+            prepareTextInteraction()
+        }
         isDirectManipulating = true
         beginTransaction()
     }
@@ -286,6 +404,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     /// buttons that only changed the inspector.
     func select(_ value: EditorSelection?, seekToStart: Bool = true) {
         selection = value
+        selectionRequest &+= 1
         guard seekToStart, let value, let start = startTime(for: value) else { return }
         seek(to: start)
     }
@@ -380,7 +499,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 start: window.start,
                 end: window.end,
                 trimIn: sourceStart,
-                trimOut: sourceStart + duration,
+                trimOut: sourceStart + (Self.number(slot.raw["native_source_span_s"]) ?? duration),
                 sourceDuration: sourceDuration,
                 muted: slot.raw["muted"] == .bool(true),
                 slotID: slot.id
@@ -428,9 +547,65 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
             loadState = .loaded
+            await prepareSourcePreview()
         } catch {
+            #if DEBUG
+            NativePreviewDiagnostics.failure("editor-load-failed", error: error)
+            NativePreviewDiagnostics.record("editor-load-context", fields: ["job": jobID?.uuidString ?? "none"])
+            #endif
             saveState = .loadFailed(error.localizedDescription)
             loadState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Reconcile the same project after an agent turn. A response that arrives
+    /// after a manual edit cannot replace it; conflict resolution remains explicit.
+    func synchronizePromptRevision() async {
+        guard loadState == .loaded, !isSaving, let api, let threadID else { return }
+        promptRefreshSequence &+= 1
+        let sequence = promptRefreshSequence
+        let baseline = cleanDocument
+        do {
+            let snapshot = try await api.draft(threadID: threadID)
+            let nextJobID = snapshot.baseJobID.flatMap(UUID.init)
+            let nextVariantKey = snapshot.variantKey
+            let variant: [String: JSONValue]?
+            if let nextJobID { variant = try await api.editorVariant(jobID: nextJobID, variantID: nextVariantKey) }
+            else { variant = nil }
+            let nextDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: variant)
+            let nextDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(nextDraft))
+            guard sequence == promptRefreshSequence, !Task.isCancelled else { return }
+            // A save/load completed while this request was suspended. Its newer
+            // authority wins, even when the local document is now clean.
+            guard cleanDocument == baseline else { return }
+            if let previous = saveStateBeforePromptFailure { saveState = previous }
+            guard nextDocument != cleanDocument else { return }
+            guard !hasUnsavedChanges, pendingText == nil, !isSaving else {
+                saveState = .conflict
+                return
+            }
+            let selected = selection
+            let time = currentTime
+            draft = nextDraft
+            cleanDocument = document
+            jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
+            configureCapabilities(from: variant)
+            undoStack.removeAll(); redoStack.removeAll()
+            changedSections.removeAll(); explicitlyDirtySections.removeAll()
+            durationSourcesInvalidated = false
+            setAuthoritativeDuration(Self.number(variant?["duration_s"]))
+            refreshDuration()
+            if let selected, selectionExists(selected) { select(selected, seekToStart: false) }
+            else { select(nil) }
+            currentTime = min(time, duration)
+            await prepareSourcePreview()
+        } catch {
+            guard sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
+            // A refresh error temporarily owns the banner. Any intervening
+            // save/render status assignment relinquishes that ownership.
+            let previous = saveStateBeforePromptFailure ?? saveState
+            saveState = .failed("Your conversation changed, but the editor couldn’t refresh. Your local edit is still here. \(error.localizedDescription)")
+            saveStateBeforePromptFailure = previous
         }
     }
 
@@ -522,7 +697,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                       let variantID = variant["variant_id"]?.stringValue else {
                     throw APIError.invalidResponse
                 }
-                resolved = (variantID, variant)
+                resolved = (variantID, try await api.editorVariant(jobID: editorJobID, variantID: variantID))
             }
             let variant = resolved.variant
             let generation = variant["render_generation_id"]?.stringValue
@@ -562,17 +737,407 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
             loadState = .loaded
+            await prepareSourcePreview()
         } catch {
+            #if DEBUG
+            NativePreviewDiagnostics.failure("editor-load-failed", error: error)
+            NativePreviewDiagnostics.record("editor-load-context", fields: ["job": jobID?.uuidString ?? "none"])
+            #endif
             saveState = .loadFailed(error.localizedDescription)
             loadState = .failed(error.localizedDescription)
         }
     }
 
+    #if DEBUG
+    /// Account-free verification still uses the production compiler and compositor.
+    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false) async {
+        sourcePreviewSequence += 1
+        let sequence = sourcePreviewSequence
+        sourcePreviewState = .preparing
+        do {
+            if delayedLoad {
+                loadState = .loaded
+                try await Task.sleep(for: .milliseconds(600))
+            }
+            guard let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) else {
+                throw NativeEditorRenderError.missingFont("bundled fonts")
+            }
+            let fingerprint = try SHA256Fingerprinter().fingerprint(file: url)
+            sourceCompiler = try NativeEditorRenderCompiler(fontDirectory: fonts)
+            resolvedSources = try Dictionary(uniqueKeysWithValues: Set(timelineClips.compactMap(\.sourceClipIndex)).map { index in
+                var sourceURL = url
+                var sourceFingerprint = fingerprint
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-color-cuts") {
+                    sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent("scrub-color-\(index).png")
+                    let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 160)).image { context in
+                        (index == 0 ? UIColor.red : UIColor.blue).setFill()
+                        context.fill(CGRect(x: 0, y: 0, width: 96, height: 160))
+                    }
+                    try image.pngData()!.write(to: sourceURL)
+                    sourceFingerprint = try SHA256Fingerprinter().fingerprint(file: sourceURL)
+                }
+                return (index, ResolvedEditorSource(clipIndex: index, mediaID: "fixture-source-\(index)",
+                    asset: MediaAsset(id: "fixture-\(index)", relativePath: sourceURL.lastPathComponent, fingerprint: sourceFingerprint), url: sourceURL))
+            })
+            await rebuildSourcePreview(sequence: sequence)
+        } catch {
+            #if DEBUG
+            NativePreviewDiagnostics.failure("preview-failure", error: error)
+            #endif
+            sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+        }
+    }
+    #endif
+
+    static func sourcePreviewMessage(for error: Error) -> String {
+        switch error {
+        case APIError.conflict:
+            return "This video changed. Close and reopen the editor to load the latest version."
+        case APIError.sessionExpired:
+            return "Sign in again to load the source videos."
+        case NativeEditorRenderError.unsupportedLane:
+            return "This edit contains an effect that iPhone preview does not support yet."
+        case NativeEditorRenderError.missingFont:
+            return "A required font is missing from this app build. Update the app and try again."
+        case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal:
+            return "The original video is unavailable on this iPhone. Open the edit on the device that imported it."
+        default:
+            return "A source video or edit asset could not be loaded. Check your connection and retry."
+        }
+    }
+
+    func prepareSourcePreview() async {
+        guard let api, let jobID, let variantKey else { return }
+        sourcePreviewTask?.cancel()
+        sourcePreviewSequence += 1
+        let sequence = sourcePreviewSequence
+        let generation = document.revision.baseGeneration
+        sourcePreviewGeneration = generation
+        sourcePreviewState = .preparing
+        player?.pause()
+        isPlaying = false
+        resolvedSources = nil
+        sourcePool = nil
+        resolvedAudio = [:]
+        resolvedMedia = [:]
+        do {
+            #if DEBUG
+            NativePreviewDiagnostics.record("source-pool-request", fields: ["job": jobID.uuidString, "variant": variantKey])
+            #endif
+            var pool = try await api.editorSourcePool(jobID: jobID, variantID: variantKey)
+            #if DEBUG
+            NativePreviewDiagnostics.record("source-pool-loaded", fields: ["clips": String(pool.clips.count), "resolved": String(pool.clips.filter { $0.nativeSource != nil }.count), "required": timelineClips.compactMap(\.sourceClipIndex).map(String.init).joined(separator: ",")])
+            #endif
+            if pool.baseGeneration == nil {
+                // Older timeline responses omit the baseline. Re-read the owned
+                // variant before accepting its immutable source URLs.
+                let current = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+                let currentGeneration = current["render_generation_id"]?.stringValue
+                    ?? current["render_finished_at"]?.stringValue ?? ""
+                guard !generation.isEmpty, currentGeneration == generation else { throw APIError.conflict }
+                pool = NativeEditorSourcePool(clips: pool.clips, baseGeneration: generation, nativeAssets: pool.nativeAssets)
+            }
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
+            let resolver = sourceResolver ?? NativeEditorSourceResolver(project: BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID), jobID: jobID)
+            sourceResolver = resolver
+            guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.conflict }
+            let sources: [Int: ResolvedEditorSource]
+            if let base = NativeEditorBaseSource(variant: previewVariant, document: document) {
+                #if DEBUG
+                NativePreviewDiagnostics.record("prepare-composite-base")
+                #endif
+                let resolved = try await resolver.resolveMedia(id: base.mediaID, url: base.url, generation: generation)
+                guard sequence == sourcePreviewSequence, !Task.isCancelled,
+                      document.revision.baseGeneration == generation else { return }
+                guard let duration = resolved.asset.duration else { throw APIError.invalidResponse }
+                // Hydration is server state, not an edit. Preserve text history
+                // created while media downloaded and keep Undo's base consistent.
+                document = try base.hydrate(document, duration: duration)
+                cleanDocument = try base.hydrate(cleanDocument, duration: duration)
+                undoStack = try undoStack.map { try base.hydrate($0, duration: duration) }
+                redoStack = try redoStack.map { try base.hydrate($0, duration: duration) }
+                let source = NativeTimelineSource(mediaID: base.mediaID, sourceURL: base.url, original: nil, localRequired: false)
+                pool = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: source)], baseGeneration: generation, nativeAssets: pool.nativeAssets)
+                sources = [0: ResolvedEditorSource(clipIndex: 0, mediaID: base.mediaID, asset: resolved.asset, url: resolved.url)]
+                setAuthoritativeDuration(duration)
+                refreshDuration()
+            } else {
+                sources = try await resolver.resolve(pool, generation: generation,
+                    requiredIndices: Set(timelineClips.compactMap(\.sourceClipIndex)))
+            }
+            guard sequence == sourcePreviewSequence, !Task.isCancelled,
+                  document.revision.baseGeneration == generation else { return }
+            if previewVariant["resolved_archetype"] == .string("narrated") {
+                document = try NativeNarratedSourceTiming.hydrate(document, sources: sources)
+                cleanDocument = try NativeNarratedSourceTiming.hydrate(cleanDocument, sources: sources)
+                undoStack = try undoStack.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
+                redoStack = try redoStack.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
+                refreshDuration()
+            }
+            guard let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) else {
+                throw NativeEditorRenderError.missingFont("bundled fonts")
+            }
+            sourceCompiler = try NativeEditorRenderCompiler(fontDirectory: fonts)
+            sourcePool = pool
+            resolvedSources = sources
+            await rebuildSourcePreview(sequence: sequence)
+        } catch {
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
+            #if DEBUG
+            NativePreviewDiagnostics.failure("preview-failure", error: error)
+            #endif
+            sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+        }
+    }
+
+    /// A save acknowledgement advances the document before its render is ready.
+    /// Only an authoritative rebase replaces generation-owned preview inputs.
+    private func refreshRebasedSourcePreview() {
+        let generation = document.revision.baseGeneration
+        guard sourcePreviewGeneration != generation else { return }
+        sourcePreviewTask?.cancel()
+        sourcePreviewSequence += 1
+        resolvedSources = nil
+        sourcePool = nil
+        resolvedAudio.removeAll()
+        resolvedMedia.removeAll()
+        sourcePreview = nil
+        textInteractionTask?.cancel()
+        textInteractionSequence += 1
+        textInteractionFrame = nil
+        cancelScrubFrames()
+        player?.pause()
+        isPlaying = false
+        sourcePreviewState = .preparing
+        // prepareSourcePreview owns cancellation of the rebuild task; do not
+        // install this task there or it would cancel itself on entry.
+        Task { @MainActor [weak self] in
+            guard let self, self.document.revision.baseGeneration == generation else { return }
+            await self.prepareSourcePreview()
+        }
+    }
+
+    static func previewMusicURL(trackID: String, variant: [String: JSONValue]) -> URL? {
+        // UUID encoders use uppercase while the API serializes lowercase.
+        // Match identity across that round trip, including archived tracks that
+        // remain attached to an edit but no longer appear in the public picker.
+        if variant["music_track_id"]?.stringValue?.caseInsensitiveCompare(trackID) == .orderedSame {
+            return variant["music_preview_url"]?.stringValue.flatMap(URL.init(string:))
+        }
+        let background = Self.object(variant["background_music"])
+        if background?["track_id"]?.stringValue?.caseInsensitiveCompare(trackID) == .orderedSame {
+            return background?["preview_url"]?.stringValue.flatMap(URL.init(string:))
+        }
+        return nil
+    }
+
+    static func usesRenderedNarration(_ variant: [String: JSONValue]) -> Bool {
+        let archetype = variant["resolved_archetype"]?.stringValue ?? ""
+        let id = variant["variant_id"]?.stringValue ?? ""
+        return ["narrated", "voiceover"].contains(archetype)
+            || ["voiceover_only", "voiceover_music", "narrated"].contains(id)
+            || (archetype == "guided_story" && variant["render_receipt"]?.objectValue?["narration_applied"] == .bool(true))
+    }
+
+    private func preparePreviewAudio(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
+        guard let resolver = sourceResolver else { return [:] }
+        if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
+            // Legacy narrated renders persist the exact cleaned voice + bed in
+            // their caption-free base. Use its audio with original visual cuts;
+            // never replay the finished video's burned captions.
+            guard previewVariant["base_video_path"]?.stringValue?.isEmpty == false,
+                  let value = previewVariant["base_video_url"]?.stringValue,
+                  let url = URL(string: value),
+                  url.path != previewVariant["output_url"]?.stringValue.flatMap({ URL(string: $0)?.path }) else {
+                throw MediaEngineError.missingAsset("narration")
+            }
+            let resolved = try await resolver.resolveAudio(id: "narration", url: url, generation: document.revision.baseGeneration)
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+            resolvedAudio["narration"] = resolved
+        }
+        let ids = Set([Self.usesRenderedNarration(previewVariant) ? nil : document.music?.trackID,
+                       document.backgroundMusic?.enabled == true && document.backgroundMusic?.muted != true
+                        ? document.backgroundMusic?.trackID : nil].compactMap { $0 })
+        for id in ids where resolvedAudio[id] == nil {
+            sourcePreviewState = .preparing
+            var url = Self.previewMusicURL(trackID: id, variant: previewVariant)
+            if url == nil {
+                let tracks = try await api?.editorMusicTracks() ?? []
+                let track = tracks.first(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame })
+                url = track?.previewAudioURL
+                #if DEBUG
+                NativePreviewDiagnostics.record("music-source-lookup", fields: ["tracks": String(tracks.count), "matched": String(track != nil), "url": String(url != nil)])
+                #endif
+            }
+            guard let url else { throw MediaEngineError.missingAsset(id) }
+            let resolved = try await resolver.resolveAudio(id: id, url: url, generation: document.revision.baseGeneration)
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+            resolvedAudio[id] = resolved
+        }
+        for effect in document.soundEffects {
+            let key = "sfx:" + effect.id
+            guard resolvedAudio[key] == nil else { continue }
+            guard let asset = sourcePool?.nativeAssets.first(where: { $0.kind == "sound_effect" && $0.id == effect.id }) else {
+                throw MediaEngineError.missingAsset(key)
+            }
+            sourcePreviewState = .preparing
+            let resolved = try await resolver.resolveAudio(id: asset.mediaID, url: asset.sourceURL, generation: document.revision.baseGeneration)
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+            resolvedAudio[key] = resolved
+        }
+        return resolvedAudio
+    }
+
+    private func preparePreviewMedia(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
+        guard let resolver = sourceResolver else { return [:] }
+        for overlay in document.mediaOverlays {
+            let key = "overlay:" + overlay.id
+            guard resolvedMedia[key] == nil else { continue }
+            guard let asset = sourcePool?.nativeAssets.first(where: { $0.kind == "media_overlay" && $0.id == overlay.id }) else {
+                throw MediaEngineError.missingAsset(key)
+            }
+            sourcePreviewState = .preparing
+            var resolved = try await resolver.resolveMedia(id: asset.mediaID, url: asset.sourceURL, generation: document.revision.baseGeneration)
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+            resolved.preserveAlpha = asset.preserveAlpha == true
+            resolvedMedia[key] = resolved
+        }
+        if !document.motionScenes.isEmpty {
+            for asset in sourcePool?.nativeAssets.filter({ $0.kind == "motion_scene" }) ?? [] {
+                let key = "motion:" + asset.id
+                if resolvedMedia[key] != nil { continue }
+                sourcePreviewState = .preparing
+                let resolved = try await resolver.resolveMedia(id: asset.mediaID, url: asset.sourceURL, generation: document.revision.baseGeneration)
+                guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+                resolvedMedia[key] = resolved
+            }
+        }
+        if !document.visualBlocks.isEmpty {
+            for asset in sourcePool?.nativeAssets.filter({ $0.kind == "visual_block" }) ?? [] {
+                let key = "visual:" + asset.id
+                if resolvedMedia[key] != nil { continue }
+                sourcePreviewState = .preparing
+                let resolved = try await resolver.resolveMedia(id: asset.mediaID, url: asset.sourceURL, generation: document.revision.baseGeneration)
+                guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+                resolvedMedia[key] = resolved
+            }
+        }
+        return resolvedMedia
+    }
+
+    private func scheduleSourcePreviewUpdate() {
+        guard resolvedSources != nil, sourceCompiler != nil else { return }
+        sourcePreviewTask?.cancel()
+        sourcePreviewSequence += 1
+        guard !isTimingGestureActive else {
+            sourcePreviewUpdateDeferred = true
+            return
+        }
+        sourcePreviewUpdateDeferred = false
+        let sequence = sourcePreviewSequence
+        sourcePreviewTask = Task { [weak self] in
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            await self?.rebuildSourcePreview(sequence: sequence)
+        }
+    }
+
+    private func rebuildSourcePreview(sequence: Int) async {
+        guard let compiler = sourceCompiler, var sources = resolvedSources else { return }
+        let baseline = document
+        let pending = pendingText
+        var snapshot = baseline
+        var items = timelineItems
+        let clips = timelineClips
+        if let pending, !pending.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            snapshot.textElements.append(pending)
+            let projection = timelineProjection
+            items.append(NativeEditorTimelineItem(selection: EditorSelection(kind: .text, id: pending.id),
+                start: projection.projectBaseTime(pending.startS), end: projection.projectBaseTime(pending.endS), zIndex: 999, sourceIndex: items.count))
+        }
+        do {
+            let needed = Set(clips.compactMap(\.sourceClipIndex))
+            if !needed.isSubset(of: Set(sources.keys)), let pool = sourcePool, let resolver = sourceResolver {
+                sourcePreviewState = .preparing
+                sources = try await resolver.resolve(pool, generation: baseline.revision.baseGeneration, requiredIndices: needed)
+                guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline else { return }
+                resolvedSources = sources
+            }
+            #if DEBUG
+            NativePreviewDiagnostics.record("prepare-audio")
+            #endif
+            let audio = try await preparePreviewAudio(document: snapshot, sequence: sequence)
+            #if DEBUG
+            NativePreviewDiagnostics.record("prepare-media")
+            #endif
+            let media = try await preparePreviewMedia(document: snapshot, sequence: sequence)
+            guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            #if DEBUG
+            NativePreviewDiagnostics.record("compile", fields: [
+                "textCount": String(snapshot.textElements.count),
+                "uniqueTextIDs": String(Set(snapshot.textElements.map(\.id)).count),
+                "rawActiveText": String(snapshot.textElements.filter { $0.startS <= 0 && $0.endS > 0 }.count),
+                "captionCount": String(snapshot.captionCues.count),
+                "rawActiveCaptions": String(snapshot.captionCues.filter { $0.startS <= 0 && $0.endS > 0 }.count),
+                "projectedActiveText": String(items.filter { ($0.kind == .text || $0.kind == .captionCue) && $0.start <= 0 && $0.end > 0 }.count),
+                "textWindows": snapshot.textElements.prefix(8).map { "\($0.startS):\($0.endS)" }.joined(separator: ",")])
+            #endif
+            let program = try compiler.compile(document: snapshot, clips: clips, items: items,
+                                               sources: sources, audioSources: audio, mediaSources: media)
+            if let preview = sourcePreview, (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
+                sourcePreviewState = .ready
+                if !isPlaying { seek(to: currentTime) }
+                return
+            }
+            #if DEBUG
+            NativePreviewDiagnostics.record("composition-start")
+            #endif
+            let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs)
+            guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            let latestTime = currentTime
+            let resumePlayback = isPlaying
+            sourcePreview = preview
+            installPlayer(item: preview.preview.playerItem, preferredDuration: preview.preview.description.duration)
+            sourcePreviewState = .ready
+            if resumePlayback {
+                player?.seek(to: CMTime(seconds: min(latestTime, max(0, duration - 1.0 / 600)), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
+                activatePreviewAudio()
+                player?.play()
+            } else {
+                seek(to: latestTime)
+            }
+            #if DEBUG
+            NativePreviewDiagnostics.record("preview-ready")
+            #endif
+        } catch {
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
+            player?.pause()
+            isPlaying = false
+            #if DEBUG
+            NativePreviewDiagnostics.failure("preview-failure", error: error)
+            #endif
+            sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+        }
+    }
+
+    func previewSelectionBounds(for selection: EditorSelection, at time: Double) -> TextSelectionBounds? {
+        guard sourcePreviewState == .ready else { return nil }
+        if selection.kind == .mediaOverlay { return sourcePreview?.mediaSelectionBounds(id: "overlay:" + selection.id, time: time) }
+        let id = selection.kind == .captionCue ? "caption-" + selection.id : selection.id
+        return sourcePreview?.textSelectionBounds(id: id, time: time)
+    }
+
     func togglePlayback() {
+        guard sourcePreviewState == .idle || sourcePreviewState == .ready else {
+            player?.pause()
+            isPlaying = false
+            return
+        }
         guard let player else { isPlaying = false; return }
         if isPlaying {
             player.pause()
             isPlaying = false
+            _ = requestScrubFrame(at: currentTime)
             return
         }
         // AVPlayer does not automatically restart after an end notification.
@@ -581,15 +1146,222 @@ enum NativeEditorLoadState: Equatable, Sendable {
             player.seek(to: .zero)
             currentTime = 0
         }
+        let target = min(currentTime, max(0, duration - 1.0 / 600))
+        let hadScrubFrame = scrubPreviewFrame != nil
+        cancelScrubFrames(clearImage: false)
+        if hadScrubFrame || player.currentItem?.videoComposition != nil {
+            let generation = scrubFrameGeneration
+            player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak player] _ in
+                Task { @MainActor [weak self, weak player] in
+                    guard let self, self.player === player, self.scrubFrameGeneration == generation, self.isPlaying else { return }
+                    self.scrubPreviewFrame = nil
+                    self.scrubPreviewTime = nil
+                }
+            }
+        }
+        activatePreviewAudio()
         player.play()
         isPlaying = true
     }
 
+    /// Editor playback is media audio, including when the silent switch is on.
+    /// Reassert on play because narration recording changes the shared session.
+    private func activatePreviewAudio() {
+        do {
+            let audio = AVAudioSession.sharedInstance()
+            try audio.setCategory(.playback, mode: .moviePlayback)
+            try audio.setActive(true)
+        } catch {
+            #if DEBUG
+            NativePreviewDiagnostics.failure("preview-audio-session", error: error)
+            #endif
+        }
+    }
+
+    private var pendingSeekTime: TimeInterval?
+    private var seekInFlight = false
+    private var seekSequence = 0
+    private var seekRecoveryTask: Task<Void, Never>?
+
     func seek(to time: TimeInterval) {
+        // A timeline gesture owns the clock. Continuing playback can advance
+        // the displayed frame between finger samples and race the next seek.
+        if isPlaying || (player?.rate ?? 0) != 0 {
+            player?.pause()
+            isPlaying = false
+        }
         let clamped = min(max(0, time), max(0, duration))
         currentTime = clamped
-        player?.seek(to: CMTime(seconds: clamped, preferredTimescale: 600))
+        if requestScrubFrame(at: clamped) {
+            seekRecoveryTask?.cancel()
+            seekSequence += 1
+            seekInFlight = false
+            pendingSeekTime = nil
+            return
+        }
+        pendingSeekTime = clamped
+        drainPendingSeek()
     }
+
+    /// Paused composition seeks can retain a previous cut's frame. Generate
+    /// the still from the same immutable composition instead; AVPlayer remains
+    /// responsible for continuous playback. Keep one render in flight and
+    /// coalesce finger events into the latest requested position.
+    private func requestScrubFrame(at time: TimeInterval) -> Bool {
+        guard let item = player?.currentItem, let composition = item.videoComposition else { return false }
+        if scrubFramePlayerItem !== item || scrubFrameComposition !== composition {
+            cancelScrubFrames(clearImage: false)
+            let generator = AVAssetImageGenerator(asset: item.asset)
+            generator.videoComposition = composition
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            generator.maximumSize = composition.renderSize.width > composition.renderSize.height
+                ? CGSize(width: 1280, height: 720) : CGSize(width: 720, height: 1280)
+            scrubFrameGenerator = generator
+            scrubFramePlayerItem = item
+            scrubFrameComposition = composition
+        }
+        pendingScrubFrameTime = min(time, max(0, duration - 1.0 / 600))
+        guard scrubFrameTask == nil, let generator = scrubFrameGenerator else { return true }
+        let generation = scrubFrameGeneration
+        scrubFrameTask = Task { @MainActor [weak self, generator] in
+            while !Task.isCancelled, let target = self?.pendingScrubFrameTime {
+                self?.pendingScrubFrameTime = nil
+                do {
+                    let frame: (image: CGImage, actualTime: CMTime) = try await withCheckedThrowingContinuation { continuation in
+                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: target, preferredTimescale: 600))]) { _, image, actualTime, result, error in
+                            if result == .succeeded, let image {
+                                continuation.resume(returning: (image, actualTime))
+                            } else {
+                                continuation.resume(throwing: error ?? MediaEngineError.exportFailed)
+                            }
+                        }
+                    }
+                    guard !Task.isCancelled, let self, self.scrubFrameGeneration == generation else { return }
+                    self.scrubPreviewTime = frame.actualTime.seconds
+                    self.scrubPreviewFrame = UIImage(cgImage: frame.image)
+                    self.prepareTextInteraction()
+                } catch {
+                    guard !Task.isCancelled, let self, self.scrubFrameGeneration == generation else { return }
+                    #if DEBUG
+                    NativePreviewDiagnostics.failure("scrub-frame-failure", error: error)
+                    #endif
+                    self.scrubPreviewFrame = nil
+                    self.scrubPreviewTime = nil
+                    break
+                }
+            }
+            guard let self, self.scrubFrameGeneration == generation else { return }
+            self.scrubFrameTask = nil
+        }
+        return true
+    }
+
+    private func cancelScrubFrames(clearImage: Bool = true) {
+        scrubFrameGeneration += 1
+        scrubFrameTask?.cancel()
+        scrubFrameTask = nil
+        scrubFrameGenerator?.cancelAllCGImageGeneration()
+        scrubFrameGenerator = nil
+        scrubFramePlayerItem = nil
+        scrubFrameComposition = nil
+        pendingScrubFrameTime = nil
+        if clearImage {
+            scrubPreviewFrame = nil
+            scrubPreviewTime = nil
+        }
+    }
+
+    /// AVPlayer cancels an outstanding seek when another is submitted. Keep
+    /// one in flight and replace queued positions with the newest finger sample.
+    private func drainPendingSeek() {
+        guard !seekInFlight, let target = pendingSeekTime else { return }
+        guard let player else { pendingSeekTime = nil; return }
+        pendingSeekTime = nil
+        seekInFlight = true
+        seekSequence += 1
+        let sequence = seekSequence
+        // The timeline's end is exclusive in the compositor. Keep the ruler
+        // at the requested end while displaying the final valid video frame.
+        let playableTarget = min(target, max(0, duration - 1.0 / 600))
+        seekRecoveryTask?.cancel()
+        seekRecoveryTask = Task { @MainActor [weak self, weak player] in
+            do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+            guard let self, let player, self.player === player,
+                  self.seekSequence == sequence, self.seekInFlight else { return }
+            // AVPlayer can omit a paused composition seek's completion at a
+            // cut. Submitting the newest seek cancels that stalled request;
+            // the sequence check prevents its late callback from reopening it.
+            self.seekInFlight = false
+            guard player.status != .failed, player.currentItem?.status != .failed else {
+                self.pendingSeekTime = nil
+                return
+            }
+            self.pendingSeekTime = self.pendingSeekTime ?? target
+            self.drainPendingSeek()
+        }
+        player.seek(to: CMTime(seconds: playableTarget, preferredTimescale: 600),
+                    toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak player] _ in
+            Task { @MainActor [weak self, weak player] in
+                guard let self, self.seekSequence == sequence else { return }
+                self.seekRecoveryTask?.cancel()
+                self.seekRecoveryTask = nil
+                self.seekInFlight = false
+                guard self.player === player else { self.pendingSeekTime = nil; return }
+                self.drainPendingSeek()
+            }
+        }
+    }
+
+    #if DEBUG
+    func auditPreviewWindow() async -> [[String: String]] {
+        var rows: [[String: String]] = []
+        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        for clip in timelineClips where clip.start < 20.5 && clip.end > 17.5 {
+            var row = ["stage": "window-source", "start": String(clip.start), "end": String(clip.end),
+                       "sourceIndex": String(clip.sourceClipIndex ?? -1), "sourceIn": String(clip.trimIn)]
+            if let index = clip.sourceClipIndex, let source = resolvedSources?[index] {
+                row["file"] = source.url.lastPathComponent
+                if let image = CGImageSourceCreateWithURL(source.url as CFURL, nil) {
+                    let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any] ?? [:]
+                    row["orientation"] = String((properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1)
+                    row["width"] = String((properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0)
+                    row["height"] = String((properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0)
+                    if let decoded = CGImageSourceCreateImageAtIndex(image, 0, nil) {
+                        row["decoded"] = "\(decoded.width)x\(decoded.height)"
+                    }
+                } else if let track = try? await AVURLAsset(url: source.url).loadTracks(withMediaType: .video).first {
+                    if let size = try? await track.load(.naturalSize) { row["decoded"] = "\(size.width)x\(size.height)" }
+                    if let transform = try? await track.load(.preferredTransform) { row["transform"] = "\(transform)" }
+                }
+            }
+            rows.append(row)
+        }
+        if let item = player?.currentItem {
+            let generator = AVAssetImageGenerator(asset: item.asset)
+            generator.videoComposition = item.videoComposition
+            generator.maximumSize = CGSize(width: 360, height: 640)
+            for second in [17.9, 18.5, 19.5, 20.1] where second < duration {
+                do {
+                    let frame = try await generator.image(at: CMTime(seconds: second, preferredTimescale: 600))
+                    let name = "native-window-\(second).jpg"
+                    try UIImage(cgImage: frame.image).jpegData(compressionQuality: 0.85)?.write(to: cache.appendingPathComponent(name))
+                    rows.append(["stage": "window-frame", "time": String(second), "file": name])
+                } catch { rows.append(["stage": "window-frame-error", "time": String(second), "code": String((error as NSError).code)]) }
+            }
+            let targets = [19.0, 3.0, 28.0, 18.5, 1.0, 20.0, 5.0, 19.5]
+            for target in targets {
+                let started = Date()
+                seek(to: min(target, duration))
+                for _ in 0..<100 where seekInFlight || pendingSeekTime != nil { try? await Task.sleep(for: .milliseconds(50)) }
+                rows.append(["stage": "window-seek", "target": String(target), "actual": String(player?.currentTime().seconds ?? -1),
+                             "elapsed": String(Date().timeIntervalSince(started)), "pending": String(seekInFlight),
+                             "status": String(item.status.rawValue), "error": String((item.error as NSError?)?.code ?? 0)])
+            }
+        }
+        return rows
+    }
+    #endif
 
     func selectClip(_ clipID: UUID?) { select(clipID.map { EditorSelection(kind: .clip, id: $0.uuidString) }, seekToStart: false) }
     func selectClip(_ clip: EditorClip?) { selectClip(clip?.id) }
@@ -664,6 +1436,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     func endTrim() {
         activeTrim = nil
+        flushDeferredSourcePreviewUpdate()
     }
 
     func moveSelected(by offset: TimeInterval) {
@@ -759,6 +1532,34 @@ enum NativeEditorLoadState: Equatable, Sendable {
         transact(section: .text) { $0.text.append(TextLayer(id: UUID(), content: value, position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")) }
     }
 
+    func beginTextCreation() {
+        guard canEditSection(.text), pendingText == nil, duration > 0 else { return }
+        player?.pause()
+        isPlaying = false
+        let start = min(max(0, currentTime), max(0, duration - 0.1))
+        pendingText = EditorTextElement(
+            id: UUID().uuidString, text: "", startS: timelineProjection.unprojectOutputTime(start),
+            endS: timelineProjection.unprojectOutputTime(min(duration, start + 2)),
+            raw: ["font_family": .string("Inter Regular"), "size_px": .number(72),
+                  "x_frac": .number(0.5), "y_frac": .number(0.5), "position": .string("custom"),
+                  "color": .string("#FFFFFF"), "effect": .string("none"), "wrap_lines": .bool(false)]
+        )
+    }
+
+    func updatePendingText(_ content: String) { pendingText?.text = content }
+
+    func cancelTextCreation() { pendingText = nil }
+
+    @discardableResult func finishTextCreation() -> EditorSelection? {
+        guard let item = pendingText else { return nil }
+        pendingText = nil
+        guard !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, canEditSection(.text) else { return nil }
+        transactDocument(section: .text) { $0.textElements.append(item) }
+        let selected = EditorSelection(kind: .text, id: item.id)
+        select(selected, seekToStart: false)
+        return selected
+    }
+
     func updateText(id: UUID, content: String) {
         updateTextContent(id: id.uuidString, content: content)
     }
@@ -772,7 +1573,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     func updateTextContent(id: String, content: String) {
         guard canEditSection(.text) else { return }
-        mutateText(id: id) { $0.text = content }
+        mutateText(id: id) { $0.text = content; $0.raw["wrap_lines"] = .bool(false) }
     }
     func updateTextContent(id: UUID, content: String) { updateTextContent(id: id.uuidString, content: content) }
     func updateTextTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
@@ -786,9 +1587,78 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
     func setTextPosition(id: String, x: Double, y: Double) {
         guard canEditSection(.text) else { return }
-        mutateText(id: id) { $0.raw["x_frac"] = .number(min(max(0, x), 1)); $0.raw["y_frac"] = .number(min(max(0, y), 1)) }
+        mutateText(id: id) {
+            $0.raw["position"] = .string("custom")
+            $0.raw["x_frac"] = .number(min(max(0, x), 1)); $0.raw["y_frac"] = .number(min(max(0, y), 1))
+        }
     }
-    func setTextSize(id: String, sizePX: Double?) { setTextRaw(id: id, key: "size_px", value: sizePX.map(JSONValue.number) ?? .null) }
+    /// Apply every sample against the gesture's immutable starting element.
+    /// Font size and wrapping width scale together, preserving the text layout.
+    func transformText(from baseline: EditorTextElement, scale: Double, rotationDelta: Double) {
+        guard canEditSection(.text), scale.isFinite, scale > 0, rotationDelta.isFinite else { return }
+        let size = Self.textSize(for: baseline)
+        let width = baseline.raw["max_width_frac"]?.numberValue ?? 0.84
+        let rotation = baseline.raw["rotation_deg"]?.numberValue ?? 0
+        let ratio = max(scale, max(8 / size, 0.2 / width))
+        guard (size * ratio).isFinite, (width * ratio).isFinite else { return }
+        mutateText(id: baseline.id) {
+            $0.raw["size_px"] = .number(size * ratio)
+            $0.raw["max_width_frac"] = .number(width * ratio)
+            $0.raw["rotation_deg"] = .number((rotation + rotationDelta).truncatingRemainder(dividingBy: 360))
+        }
+    }
+
+    func applyTextPreset(id: String, preset: String) {
+        guard canEditSection(.text), ["Simple", "Bold", "Highlight"].contains(preset) else { return }
+        mutateText(id: id) {
+            $0.raw["editor_preset"] = .string(preset)
+            $0.raw["font_family"] = .string(preset == "Simple" ? "Inter Regular" : "Inter")
+            $0.raw["color"] = .string(preset == "Highlight" ? "#30352C" : "#FFFFFF")
+            $0.raw["background_color"] = preset == "Highlight" ? .string("#FFF0A6") : .null
+        }
+    }
+    func setTextPhase(id: String, phase: String, effect: String) {
+        guard canEditSection(.text), ["entrance", "exit", "loop"].contains(phase),
+              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : ["none", "fade", "pop", "slide", "typewriter"]).contains(effect) else { return }
+        mutateText(id: id) {
+            var phases = Self.textPhases(for: $0)
+            phases[phase] = .string(effect)
+            $0.raw["animation_phases"] = .object(phases)
+        }
+    }
+    func setTextAnimationSpeed(id: String, speed: Double) {
+        guard canEditSection(.text), speed.isFinite else { return }
+        mutateText(id: id) {
+            var phases = Self.textPhases(for: $0)
+            phases["speed"] = .number(min(3, max(0.25, speed)))
+            $0.raw["animation_phases"] = .object(phases)
+        }
+    }
+    static func textPhases(for item: EditorTextElement) -> [String: JSONValue] {
+        if let phases = object(item.raw["animation_phases"]) { return phases }
+        let entrance: String
+        switch item.raw["effect"]?.stringValue {
+        case "fade-in": entrance = "fade"
+        case "pop-in": entrance = "pop"
+        case "slide-in": entrance = "slide"
+        case "typewriter": entrance = "typewriter"
+        default: entrance = "none"
+        }
+        return ["entrance": .string(entrance), "exit": .string("none"), "loop": .string("none"), "speed": .number(1)]
+    }
+    static func textSize(for element: EditorTextElement) -> Double {
+        if let size = element.raw["size_px"]?.numberValue { return size }
+        let sizes: [String: Double] = ["small": 36, "medium": 72, "large": 120,
+                                      "xlarge": 150, "xxlarge": 250, "jumbo": 199]
+        return sizes[element.raw["size_class"]?.stringValue ?? "jumbo"] ?? 199
+    }
+
+    func setTextSize(id: String, sizePX: Double?) {
+        guard let sizePX else { setTextRaw(id: id, key: "size_px", value: .null); return }
+        guard sizePX.isFinite, sizePX >= 8,
+              let baseline = document.textElements.first(where: { $0.id == id }) else { return }
+        transformText(from: baseline, scale: sizePX / Self.textSize(for: baseline), rotationDelta: 0)
+    }
     func setTextWidth(id: String, width: Double?) { setTextRaw(id: id, key: "max_width_frac", value: width.map { .number(min(max(0.2, $0), 1)) } ?? .null) }
     func setTextAlignment(id: String, alignment: String?) { setTextRaw(id: id, key: "alignment", value: alignment.map(JSONValue.string) ?? .null) }
     func setTextAnimation(id: String, animation: String?) {
@@ -1181,6 +2051,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             explicitlyDirtySections = localExplicitSections.intersection(localSections)
             redoStack.removeAll()
             configureCapabilities(from: variant)
+            refreshRebasedSourcePreview()
             refreshDirtyState()
             undoStack = hasUnsavedChanges ? [latestClean] : []
             if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
@@ -1265,6 +2136,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private func section(for kind: EditorSelectionKind) -> EditorSection? {
         switch kind {
         case .text: return .text
+        case .captionCue: return .captions
         case .soundEffect: return .soundEffects
         case .visualBlock: return .visualBlocks
         case .mediaOverlay: return .mediaOverlays
@@ -1293,7 +2165,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
               canEditOperation(["\(section.rawValue).\(operation)", section.rawValue], section: section),
               timedObjectExists(selection),
               supportsTimedGesture(selection) else { return }
-        activeTimedEdit = ActiveTimedEdit(selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack)
+        activeTimedEdit = ActiveTimedEdit(selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack, projection: timelineProjection)
     }
 
     private func updateTimedEdit(by translation: TimeInterval) {
@@ -1302,20 +2174,25 @@ enum NativeEditorLoadState: Equatable, Sendable {
         guard let section = section(for: active.selection.kind) else { return }
         guard let bounds = timedBounds(active.selection, in: next) else { return }
         let minimum = minimumClipDuration
-        let totalDuration = max(duration, 0)
+        let projection = active.projection
+        let totalDuration = max(projection.unprojectOutputTime(projection.totalDuration), 0)
         var start = bounds.start; var end = bounds.end
+        let anchor = active.edge == .trailing ? end : start
+        let baseTranslation = projection.downstreamShift > 0
+            ? ((projection.unprojectOutputTime(projection.projectBaseTime(anchor) + translation) - anchor) * 1_000).rounded() / 1_000
+            : translation
         switch active.kind {
         case .move:
             let length = max(minimum, end - start)
             let maxStart = totalDuration > 0 ? max(0, totalDuration - length) : .greatestFiniteMagnitude
-            start = min(max(0, start + translation), maxStart); end = start + length
+            start = min(max(0, start + baseTranslation), maxStart); end = start + length
         case .trim:
             guard let edge = active.edge else { return }
-            if edge == .leading { start = min(max(0, start + translation), end - minimum) }
-            else { end = max(start + minimum, min(totalDuration > 0 ? totalDuration : .greatestFiniteMagnitude, end + translation)) }
+            if edge == .leading { start = min(max(0, start + baseTranslation), end - minimum) }
+            else { end = max(start + minimum, min(totalDuration > 0 ? totalDuration : .greatestFiniteMagnitude, end + baseTranslation)) }
         }
         if active.kind == .trim, active.selection.kind == .soundEffect {
-            setSoundEffectTrimBounds(active.selection.id, edge: active.edge ?? .trailing, translation: translation, in: &next)
+            setSoundEffectTrimBounds(active.selection.id, edge: active.edge ?? .trailing, translation: baseTranslation, in: &next)
         } else {
             setTimedBounds(active.selection, start: start, end: end, in: &next)
         }
@@ -1335,12 +2212,21 @@ enum NativeEditorLoadState: Equatable, Sendable {
         document = next; changedSections.insert(section); refreshDirtyState(); refreshDuration(); activeTimedEdit = active
     }
 
-    private func endTimedEdit() { activeTimedEdit = nil }
+    private func endTimedEdit() {
+        activeTimedEdit = nil
+        flushDeferredSourcePreviewUpdate()
+    }
+
+    private func flushDeferredSourcePreviewUpdate() {
+        if sourcePreviewUpdateDeferred { scheduleSourcePreviewUpdate() }
+    }
 
     private func timedObjectExists(_ selection: EditorSelection) -> Bool { timedBounds(selection, in: document) != nil }
 
     private func timedBounds(_ selection: EditorSelection, in document: EditorDocument) -> (start: Double, end: Double)? {
         switch selection.kind {
+        case .text: guard let item = document.textElements.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
+        case .captionCue: guard let item = document.captionCues.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .soundEffect: guard let item = document.soundEffects.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .mediaOverlay: guard let item = document.mediaOverlays.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .visualBlock: guard let item = document.visualBlocks.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
@@ -1352,6 +2238,12 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     private func setTimedBounds(_ selection: EditorSelection, start: Double, end: Double, in document: inout EditorDocument) {
         switch selection.kind {
+        case .text:
+            guard let index = document.textElements.firstIndex(where: { $0.id == selection.id }) else { return }
+            document.textElements[index].startS = start; document.textElements[index].endS = end
+        case .captionCue:
+            guard let index = document.captionCues.firstIndex(where: { $0.id == selection.id }) else { return }
+            document.captionCues[index].startS = start; document.captionCues[index].endS = end
         case .soundEffect:
             guard let index = document.soundEffects.firstIndex(where: { $0.id == selection.id }) else { return }; document.soundEffects[index].startS = start; document.soundEffects[index].endS = end; if document.soundEffects[index].pointS != nil { document.soundEffects[index].pointS = start }
         case .mediaOverlay: guard let index = document.mediaOverlays.firstIndex(where: { $0.id == selection.id }) else { return }; document.mediaOverlays[index].startS = start; document.mediaOverlays[index].endS = end
@@ -1652,13 +2544,23 @@ enum NativeEditorLoadState: Equatable, Sendable {
         _ = clips; _ = index
     }
     private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil) {
+        guard sourcePreviewState == .idle else { return }
+        installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
+    }
+
+    private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {
+        cancelScrubFrames()
+        seekRecoveryTask?.cancel()
+        seekRecoveryTask = nil
+        seekSequence += 1
+        seekInFlight = false
+        pendingSeekTime = nil
         if let timeObserver, let observingPlayer { observingPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         durationLoadTask?.cancel()
         mediaDuration = nil
         durationSourcesInvalidated = false
 
-        let item = AVPlayerItem(url: url)
         let next = AVPlayer(playerItem: item)
         player = next
         observingPlayer = next
@@ -1682,7 +2584,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             MainActor.assumeIsolated {
                 guard let self, self.player === next else { return }
                 let seconds = time.seconds
-                if seconds.isFinite {
+                if seconds.isFinite && self.isPlaying && !self.seekInFlight && self.pendingSeekTime == nil {
                     self.currentTime = min(max(0, seconds), max(0, self.duration))
                 }
                 self.reconcilePlaybackState(next.timeControlStatus == .playing)
@@ -1752,6 +2654,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
 
     private func configureCapabilities(from variant: [String: JSONValue]?) {
+        previewVariant = variant ?? [:]
         rendersOnDevice = variant?["render_destination"]?.stringValue == "device"
         guidedRevisionNumber = Self.number(variant?["editor_revision_number"]).flatMap { $0 >= 1 && $0 <= Double(Int32.max) ? Int($0) : nil }
         guard let variant else {
@@ -1863,6 +2766,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         hasUnsavedChanges = false
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
         configureCapabilities(from: variant)
+        refreshRebasedSourcePreview()
         durationSourcesInvalidated = false
         setAuthoritativeDuration(Self.number(variant["duration_s"]))
         refreshDuration()

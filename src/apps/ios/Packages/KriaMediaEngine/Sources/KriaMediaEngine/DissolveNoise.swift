@@ -71,8 +71,8 @@ struct DissolveNoise: Sendable {
     /// Premultiplied map consumed by Skia's text displacement filter.
     /// The production matrix passes -2 * 255 as its offset. Skia's normalized
     /// matrix clamps both coarse R/G channels to zero; preserve that behavior.
-    func textMapPixel(x: Int, y: Int) -> SIMD4<Float> {
-        let coarse = pixel(x: x, y: y, frequency: 0.004)
+    func textMapPixel(x: Int, y: Int, frequency: Float = 0.004) -> SIMD4<Float> {
+        let coarse = pixel(x: x, y: y, frequency: frequency)
         func byte(_ value: Float) -> Float { (value * 255).rounded() / 255 }
         let alpha = byte(coarse.w)
         // The fine frequency is exactly 1. Integer lattice coordinates yield

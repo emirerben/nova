@@ -5,6 +5,9 @@ public struct DiscreteRevealLine: Codable, Equatable, Sendable {
     public let runIndex: Int?
     public let cursorOffsets: [Double]
     public let cursorRun: PositionedTextRun
+    public init(text: String, runIndex: Int?, cursorOffsets: [Double], cursorRun: PositionedTextRun) {
+        self.text = text; self.runIndex = runIndex; self.cursorOffsets = cursorOffsets; self.cursorRun = cursorRun
+    }
     private enum CodingKeys: String, CodingKey { case text, runIndex, cursorOffsets, cursorRun }
     public init(from decoder: Decoder) throws {
         try rejectUnknownAssetFields(decoder, allowed: ["text", "runIndex", "cursorOffsets", "cursorRun"])
@@ -19,6 +22,9 @@ public struct DiscreteRevealContent: Codable, Equatable, Sendable {
     public let text: String
     public let schedule: [Double]?
     public let lines: [DiscreteRevealLine]
+    public init(text: String, schedule: [Double]?, lines: [DiscreteRevealLine]) {
+        self.text = text; self.schedule = schedule; self.lines = lines
+    }
     private enum CodingKeys: String, CodingKey { case text, schedule, lines }
     public init(from decoder: Decoder) throws {
         try rejectUnknownAssetFields(decoder, allowed: ["text", "schedule", "lines"])
@@ -69,6 +75,6 @@ extension PositionedTextRun {
     func replacing(text: String, x: Double? = nil, glyphs: [PositionedGlyph]?) -> Self {
         Self(text: text, fontAssetID: fontAssetID, fontSize: fontSize, x: x ?? self.x, baselineY: baselineY,
              letterSpacing: letterSpacing, shaped: shaped, fill: fill, stroke: stroke, strokeWidth: strokeWidth,
-             blurLayers: blurLayers, gradient: gradient, glyphs: glyphs)
+             blurLayers: blurLayers, gradient: gradient, glyphs: glyphs, fontVariations: fontVariations)
     }
 }
