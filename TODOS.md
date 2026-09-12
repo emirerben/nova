@@ -8,6 +8,50 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## KRI-37 native editor — deferred release qualification (2026-09-12)
+
+The creator explicitly approved shipping the verified subset with existing capability gates closed. These P1 items are deferred from the full KRI-37 realtime-parity plan; this release does not establish universal native rendering coverage.
+
+### Complete looks and adjustments
+**Priority:** P1
+**What:** Implement and verify the remaining looks and nonempty adjustments in the native editor compiler.
+**Acceptance:** Keep the relevant native capability gates closed until the implementation and qualification evidence are complete.
+
+### Compile carousel and supporting cards
+**Priority:** P1
+**What:** Replace the explicit unsupported cases with verified native composition and editing behavior.
+**Acceptance:** Keep the relevant native capability gates closed until the implementation and qualification evidence are complete.
+
+### Complete advanced audio parity
+**Priority:** P1
+**What:** Match production normalization, music-bed looping/ducking and beat-aligned behavior. Rendered voiceover preview support does not establish editable audio parity.
+**Acceptance:** Keep the relevant native capability gates closed until the implementation and qualification evidence are complete.
+
+### Complete specialized text parity
+**Priority:** P1
+**What:** Implement grouped/lyric/staggered text, subject occlusion and theme transitions through the editor compiler.
+**Acceptance:** Keep the relevant native capability gates closed until the implementation and qualification evidence are complete.
+
+### Finish native/cloud comparison matrix
+**Priority:** P1
+**What:** Compare frames and audio across all editable families and combinations, including backward seeks.
+**Acceptance:** Keep the relevant native capability gates closed until the implementation and qualification evidence are complete.
+
+### Finish design and live creation qualification
+**Priority:** P1
+**What:** Verify all requested Paper states/configurations and the live prompt-to-preview flow.
+**Acceptance:** Keep the relevant native capability gates closed until the implementation and qualification evidence are complete.
+
+### Qualify target devices and accessibility
+**Priority:** P1
+**What:** Measure sustained playback, seek/export budgets, memory and thermals on iPhone 13 and a current iPhone; verify VoiceOver, Dynamic Type and Reduce Motion.
+**Acceptance:** Keep the relevant native capability gates closed until the implementation and qualification evidence are complete.
+
+### Bound native preview cache retention
+**Priority:** P2
+**What:** Define an eviction budget and low-storage behavior for downloaded originals and VP9 preview transcodes; the current caches retain immutable inputs across projects.
+**Acceptance:** Exercise repeated large-project opens and storage pressure, preserving assets referenced by active previews while reclaiming unused entries.
+
 ## Google Cloud cost controls — ship-review follow-ups (2026-09-08)
 
 ### Consolidate the paid-call lifecycle adapters
