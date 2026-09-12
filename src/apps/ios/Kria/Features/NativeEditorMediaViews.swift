@@ -311,79 +311,90 @@ struct NativeVideoPreview: View {
 
     private func directMoveGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .local)
-            .onChanged { value in
-                guard directResizeObjectID == nil else { return }
-                if directMoveObjectID == nil {
-                    textAlignmentFeedback.reset()
-                    textAlignmentHaptic.prepare()
-                    if let selection = session.selection,
-                       let selected = objects.first(where: { $0.item.selection == selection }),
-                       selected.item.kind == .text, session.canEdit(.text),
-                       let text = session.document.textElements.first(where: { $0.id == selected.item.id }) {
-                        let bounds = frame(for: selected, in: size)
-                        let radians = (text.raw["rotation_deg"]?.numberValue ?? 0) * .pi / 180
-                        let dx = bounds.width / 2, dy = bounds.height / 2
-                        let corner = CGPoint(x: bounds.midX + dx * cos(radians) - dy * sin(radians),
-                                             y: bounds.midY + dx * sin(radians) + dy * cos(radians))
-                        let cornerDistance = hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y)
-                        let centerDistance = hypot(value.startLocation.x - bounds.midX, value.startLocation.y - bounds.midY)
-                        if cornerDistance <= 22 && cornerDistance < centerDistance {
-                            directMoveObjectID = selected.id
-                            transformBaseline = text
-                            let anchor = nativeTextPosition(text)
-                            let center = CGPoint(x: anchor.x * size.width, y: anchor.y * size.height)
-                            transformCenter = center
-                            transformStartVector = CGVector(dx: value.startLocation.x - center.x,
-                                                            dy: value.startLocation.y - center.y)
-                            session.beginDirectManipulation()
-                        }
-                    }
-                }
-                if let baseline = transformBaseline, let center = transformCenter, let start = transformStartVector {
-                    let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
-                    let radius = hypot(start.dx, start.dy)
-                    guard radius > 1 else { return }
-                    let angle = atan2(next.dy, next.dx) - atan2(start.dy, start.dx)
-                    resizeText(baseline, scale: hypot(next.dx, next.dy) / radius, rotation: angle * 180 / .pi, canvas: size)
-                    updateTextAlignment(in: size)
-                    return
-                }
-                if directMoveObjectID == nil {
-                    guard let object = directMoveCandidate(at: value.startLocation, in: size),
-                          let position = object.position else { return }
-                    directMoveObjectID = object.id
-                    directMoveBaseline = position
-                    session.select(object.item, seekToStart: false)
+            .onChanged { (value: DragGesture.Value) in
+                handleDirectMoveChanged(value, in: size)
+            }
+            .onEnded { (_: DragGesture.Value) in
+                finishDirectMove()
+            }
+    }
+
+    private func handleDirectMoveChanged(_ value: DragGesture.Value, in size: CGSize) {
+        guard directResizeObjectID == nil else { return }
+        if directMoveObjectID == nil {
+            textAlignmentFeedback.reset()
+            textAlignmentHaptic.prepare()
+            if let selection = session.selection,
+               let selected = objects.first(where: { $0.item.selection == selection }),
+               selected.item.kind == .text, session.canEdit(.text),
+               let text = session.document.textElements.first(where: { $0.id == selected.item.id }) {
+                let bounds = frame(for: selected, in: size)
+                let radians: CGFloat = CGFloat(text.raw["rotation_deg"]?.numberValue ?? 0) * .pi / 180
+                let dx: CGFloat = bounds.width / 2
+                let dy: CGFloat = bounds.height / 2
+                let cosine: CGFloat = cos(radians)
+                let sine: CGFloat = sin(radians)
+                let corner = CGPoint(x: bounds.midX + dx * cosine - dy * sine,
+                                     y: bounds.midY + dx * sine + dy * cosine)
+                let cornerDistance = hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y)
+                let centerDistance = hypot(value.startLocation.x - bounds.midX, value.startLocation.y - bounds.midY)
+                if cornerDistance <= 22 && cornerDistance < centerDistance {
+                    directMoveObjectID = selected.id
+                    transformBaseline = text
+                    let anchor = nativeTextPosition(text)
+                    let center = CGPoint(x: anchor.x * size.width, y: anchor.y * size.height)
+                    transformCenter = center
+                    transformStartVector = CGVector(dx: value.startLocation.x - center.x,
+                                                    dy: value.startLocation.y - center.y)
                     session.beginDirectManipulation()
                 }
-                guard let objectID = directMoveObjectID,
-                      let baseline = directMoveBaseline,
-                      let object = objects.first(where: { $0.id == objectID }),
-                      let onMove = positionHandler(for: object),
-                      size.width > 0, size.height > 0 else { return }
-                let position = CGPoint(
-                    x: min(max(0, baseline.x + value.translation.width / size.width), 1),
-                    y: min(max(0, baseline.y + value.translation.height / size.height), 1))
-                if object.item.kind == .text,
-                   let text = session.document.textElements.first(where: { $0.id == object.item.id }) {
-                    resizeText(text, scale: 1, rotation: 0, canvas: size)
-                    let origin = nativeTextPosition(liveTextBaseline ?? text)
-                    liveTextTranslation = CGPoint(x: position.x - origin.x, y: position.y - origin.y)
-                    updateTextAlignment(in: size)
-                } else {
-                    onMove(position)
-                }
             }
-            .onEnded { _ in
-                guard directMoveObjectID != nil else { return }
-                commitLiveText()
-                directMoveObjectID = nil
-                directMoveBaseline = nil
-                transformBaseline = nil
-                transformCenter = nil
-                transformStartVector = nil
-                if directResizeObjectID == nil { session.endDirectManipulation() }
-            }
+        }
+        if let baseline = transformBaseline, let center = transformCenter, let start = transformStartVector {
+            let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
+            let radius = hypot(start.dx, start.dy)
+            guard radius > 1 else { return }
+            let angle = atan2(next.dy, next.dx) - atan2(start.dy, start.dx)
+            resizeText(baseline, scale: hypot(next.dx, next.dy) / radius, rotation: angle * 180 / .pi, canvas: size)
+            updateTextAlignment(in: size)
+            return
+        }
+        if directMoveObjectID == nil {
+            guard let object = directMoveCandidate(at: value.startLocation, in: size),
+                  let position = object.position else { return }
+            directMoveObjectID = object.id
+            directMoveBaseline = position
+            session.select(object.item, seekToStart: false)
+            session.beginDirectManipulation()
+        }
+        guard let objectID = directMoveObjectID,
+              let baseline = directMoveBaseline,
+              let object = objects.first(where: { $0.id == objectID }),
+              let onMove = positionHandler(for: object),
+              size.width > 0, size.height > 0 else { return }
+        let position = CGPoint(
+            x: min(max(0, baseline.x + value.translation.width / size.width), 1),
+            y: min(max(0, baseline.y + value.translation.height / size.height), 1))
+        if object.item.kind == .text,
+           let text = session.document.textElements.first(where: { $0.id == object.item.id }) {
+            resizeText(text, scale: 1, rotation: 0, canvas: size)
+            let origin = nativeTextPosition(liveTextBaseline ?? text)
+            liveTextTranslation = CGPoint(x: position.x - origin.x, y: position.y - origin.y)
+            updateTextAlignment(in: size)
+        } else {
+            onMove(position)
+        }
+    }
+
+    private func finishDirectMove() {
+        guard directMoveObjectID != nil else { return }
+        commitLiveText()
+        directMoveObjectID = nil
+        directMoveBaseline = nil
+        transformBaseline = nil
+        transformCenter = nil
+        transformStartVector = nil
+        if directResizeObjectID == nil { session.endDirectManipulation() }
     }
 
     private func directResizeGesture(in size: CGSize) -> some Gesture {

@@ -199,21 +199,29 @@ struct NativeEditorTextPanel: View {
     }
 
     private func positionControl(_ title: String, key: String, fallback: Double) -> some View {
-        let value = item?.raw[key]?.numberValue ?? fallback
-        return Stepper(value: Binding(
+        let value: Double = item?.raw[key]?.numberValue ?? fallback
+        let percent: Int = Int((value * 100).rounded())
+        let label: String = "\(title) \(percent)%"
+        let axis: String = key == "x_frac" ? "x" : "y"
+        let position: Binding<Double> = Binding<Double>(
             get: { item?.raw[key]?.numberValue ?? fallback },
-            set: { next in
-                session.setTextPosition(id: id,
-                    x: key == "x_frac" ? next : (item?.raw["x_frac"]?.numberValue ?? 0.5),
-                    y: key == "y_frac" ? next : (item?.raw["y_frac"]?.numberValue ?? defaultVerticalPosition))
+            set: { (next: Double) in
+                setPositionCoordinate(next, for: key)
             }
-        ), in: 0...1, step: 0.05) {
-            Text("\(title) \(Int((value * 100).rounded()))%")
+        )
+        return Stepper(value: position, in: 0.0...1.0, step: 0.05) {
+            Text(label)
         }
         .frame(minHeight: 44)
         .accessibilityLabel("Text \(title.lowercased())")
-        .accessibilityValue("\(Int((value * 100).rounded())) percent")
-        .accessibilityIdentifier("native-editor-text-position-" + (key == "x_frac" ? "x" : "y"))
+        .accessibilityValue("\(percent) percent")
+        .accessibilityIdentifier("native-editor-text-position-" + axis)
+    }
+
+    private func setPositionCoordinate(_ next: Double, for key: String) {
+        let x: Double = key == "x_frac" ? next : (item?.raw["x_frac"]?.numberValue ?? 0.5)
+        let y: Double = key == "y_frac" ? next : (item?.raw["y_frac"]?.numberValue ?? defaultVerticalPosition)
+        session.setTextPosition(id: id, x: x, y: y)
     }
 
     private var animationControls: some View {

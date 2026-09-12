@@ -1,28 +1,25 @@
-"""Pin the cloud renderer's variable-font instances for native authored text."""
+"""Pin variable-font defaults used by the Linux cloud renderer for native text."""
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
+from fontTools.ttLib import TTFont
+
 API_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(API_ROOT))
-from app.pipeline.text_overlay_skia import _FONT_REGISTRY, _typeface_for_overlay  # noqa: E402
 
 
 def generate() -> str:
+    # FreeType/Skia on production Linux uses the fvar defaults. CoreText on
+    # macOS overrides optical size with 12pt when opening the same font, so
+    # querying the host typeface would produce a different native contract.
+    fonts_dir = API_ROOT / "assets/fonts"
+    registry = json.loads((fonts_dir / "font-registry.json").read_text())
     instances = {}
-    for name in sorted(_FONT_REGISTRY["fonts"]):
-        face = _typeface_for_overlay({"font_family": name})
-        try:
-            coordinates = face.getVariationDesignPosition()
-        except RuntimeError:
-            continue
-        if coordinates:
-            instances[name] = {
-                int(coordinate.axis).to_bytes(4, "big").decode("ascii"): coordinate.value
-                for coordinate in coordinates
-            }
+    for name, metadata in sorted(registry["fonts"].items()):
+        with TTFont(fonts_dir / metadata["file"]) as font:
+            if "fvar" in font:
+                instances[name] = {axis.axisTag: axis.defaultValue for axis in font["fvar"].axes}
     return json.dumps(instances, sort_keys=True, indent=2) + "\n"
 
 

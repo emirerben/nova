@@ -19,6 +19,9 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         let outlinedGlyphs: [Glyph]
         let line: CTLine; let stroke: CTLine?; let mask: CTLine; let origin: CGPoint
         let blurs: [TextBlurLayer]; let gradient: TextGradient?
+        // Variable CTFont instances can retain references into the source CGFont
+        // tables. Keep that source alive for every deferred draw.
+        let sourceFont: CGFont
         let font: CTFont; let glyphs: [CGGlyph]?; let positions: [CGPoint]
         let fill: CGColor; let strokeColor: CGColor; let strokeWidth: Double
         let outline: CGPath?
@@ -162,7 +165,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                 }
                 outline = path
             }
-            runs.append(Run(outlinedGlyphs: outlines, line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers, gradient: run.gradient, font: font, glyphs: glyphIDs, positions: positions,
+            runs.append(Run(outlinedGlyphs: outlines, line: line, stroke: stroke, mask: mask, origin: origin, blurs: run.blurLayers, gradient: run.gradient, sourceFont: graphicsFont, font: font, glyphs: glyphIDs, positions: positions,
                             fill: run.fill.cgColor, strokeColor: run.stroke.cgColor, strokeWidth: run.strokeWidth, outline: outline))
         }
         if let background = layer.background {

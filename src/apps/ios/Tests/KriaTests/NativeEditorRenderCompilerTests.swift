@@ -96,7 +96,7 @@ import KriaMediaEngine
         })
         let program = try compiler.compile(document: session.document, clips: session.timelineClips, items: session.timelineItems, sources: sources)
         XCTAssertFalse(program.recipe.textLayers.isEmpty)
-        XCTAssertEqual(program.recipe.textLayers.first?.runs.first?.fontVariations["opsz"], 12)
+        XCTAssertEqual(program.recipe.textLayers.first?.runs.first?.fontVariations["opsz"], 9)
         _ = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs)
         let textID = try XCTUnwrap(session.document.textElements.first?.id)
         XCTAssertEqual(session.document.textElements.first?.raw["position"], .string("custom"))

@@ -550,7 +550,9 @@ class TextElement(BaseModel):
         # This is a renderer representability check, not an editor size cap:
         # ordinary oversized/off-canvas text retains its exact authored size.
         try:
-            struct.pack("f", value)
+            narrowed = struct.unpack("f", struct.pack("f", value))[0]
+            if not math.isfinite(narrowed):
+                raise OverflowError("font size narrows to infinity")
         except OverflowError as exc:
             raise ValueError(
                 "size_px cannot be represented by the text renderer; reduce the font size"

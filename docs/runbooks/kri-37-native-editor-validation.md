@@ -70,6 +70,15 @@ through both classic and Skia paths passed, including authored blank rows, produ
 `6f49f4c0-3637-423d-8b92-fa7dc791b05a`. No paid LLM tests ran. These results do not
 qualify complete native/cloud parity or the outstanding physical-device matrix.
 
+Native variable-font instances are generated from the font files’ `fvar` defaults,
+which match production Linux FreeType/Skia. Do not generate them from macOS
+CoreText typefaces: CoreText substitutes a 12pt optical size. The Linux contract
+test compares the checked-in values against the actual cloud typefaces. Font-size
+validation also checks the narrowed binary32 result, since native float packing
+can return infinity instead of raising on Linux. Deferred native text draws retain
+the source `CGFont` alongside the variable `CTFont`; releasing the source after
+preparation caused a CoreText font-table access crash at the production optical sizes.
+
 ## iPhone source-preview compatibility fix (2026-09-11)
 
 The production OpenAPI schema was checked directly: `TimelineClipOut` exposes
