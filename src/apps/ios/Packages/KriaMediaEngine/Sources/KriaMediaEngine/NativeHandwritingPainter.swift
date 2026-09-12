@@ -41,7 +41,7 @@ struct NativeHandwritingPainter: @unchecked Sendable {
         // Keep room for both the settled bitmap and a live partial frame.
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0,
               bounds.width * bounds.height * 8 <= Double(maxBitmapBytes) else {
-            throw MediaEngineError.unsupportedCapability
+            throw NativePreviewFeatureError("NativeHandwritingPainter-44")
         }
         bitmapBytes = Int(bounds.width * bounds.height * 8)
         if cacheShadows {

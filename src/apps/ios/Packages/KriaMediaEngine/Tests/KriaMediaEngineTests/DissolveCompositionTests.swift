@@ -10,9 +10,11 @@ final class DissolveCompositionTests: XCTestCase {
     private struct Fixture: Decodable { let width: Int; let height: Int; let rectangles: [[Int]]; let cases: [Case] }
     private struct Case: Decodable { let seed: UInt32; let time: Double; let alphaRuns: [[Int]]; let totalAlpha: Int }
 
-    func testFullDissolveMatchesCloudComposition() throws {
+    func testFullDissolveMatchesCloudComposition() throws { try compare(preset: .text) }
+    func testMediaDissolveMatchesCloudComposition() throws { try compare(preset: .media) }
+    private func compare(preset: DissolveTiming.Preset) throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .appendingPathComponent("../../../../../api/tests/fixtures/phone_dissolve_composition.json").standardizedFileURL
+            .appendingPathComponent("../../../../../api/tests/fixtures/" + (preset == .media ? "phone_media_dissolve_composition.json" : "phone_dissolve_composition.json")).standardizedFileURL
         let fixture = try RecipeJSON.decoder().decode(Fixture.self, from: Data(contentsOf: url))
         let width = fixture.width, height = fixture.height
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
@@ -27,7 +29,7 @@ final class DissolveCompositionTests: XCTestCase {
         let input = CIImage(bitmapData: Data(bytes), bytesPerRow: width * 4, size: CGSize(width: width, height: height), format: .RGBA8, colorSpace: nil)
         let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
         for seed in Set(fixture.cases.map(\.seed)) {
-            let painter = try NativeDissolveRenderer(width: width, height: height, seed: seed, maxBitmapBytes: width * height * 8)
+            let painter = try NativeDissolveRenderer(width: width, height: height, seed: seed, maxBitmapBytes: width * height * 8, preset: preset)
             for test in fixture.cases where test.seed == seed {
                 let image = try painter.image(source: input, localTime: test.time, duration: 4)
                 var output = [UInt8](repeating: 0, count: bytes.count)

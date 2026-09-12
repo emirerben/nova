@@ -99,7 +99,7 @@ def apply_overlay_constraints(
 
     for ov in overlays:
         text = ov.get("text") or ""
-        if not text.strip():
+        if ov.get("wrap_lines") is False or not text.strip():
             continue
 
         font_family = ov.get("font_family")

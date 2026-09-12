@@ -467,6 +467,30 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(variant["render_generation_id"], .string("generation-live"))
     }
 
+    func testCloudGuidedStoryLoadsActualCutsAndRejectsStaleTimeline() async throws {
+        for stale in [false, true] {
+            URLProtocolStub.handler = { request in
+                if request.url?.path.hasSuffix("/status") == true {
+                    return (200, Data(#"{"variants":[{"variant_id":"initial","render_destination":"cloud","resolved_archetype":"guided_story","render_generation_id":null,"render_finished_at":"generation-live","editor_capabilities":{"timeline":true}}]}"#.utf8))
+                }
+                XCTAssertTrue(request.url?.path.hasSuffix("/variants/initial/timeline") == true)
+                let generation = stale ? "generation-old" : "generation-live"
+                return (200, Data("{\"base_generation\":\"\(generation)\",\"revision_number\":7,\"slots\":[{\"clip_index\":2,\"source_start_s\":1,\"duration_s\":3}]}".utf8))
+            }
+            let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+            do {
+                let variant = try await api.editorVariant(jobID: PreviewFixtures.projectID, variantID: "initial")
+                XCTAssertFalse(stale)
+                XCTAssertEqual(variant["editor_revision_number"], .number(7))
+                guard case let .object(timeline) = variant["user_timeline"],
+                      case let .array(slots) = timeline["slots"] else { return XCTFail("Missing authoritative cuts") }
+                XCTAssertEqual(slots.count, 1)
+            } catch APIError.conflict {
+                XCTAssertTrue(stale)
+            }
+        }
+    }
+
     func testOpenLibraryJobUsesIdempotentEditorPromotionRoute() async throws {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.httpMethod, "POST")

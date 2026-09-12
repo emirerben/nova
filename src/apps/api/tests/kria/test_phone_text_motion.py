@@ -21,7 +21,10 @@ FIXTURE = Path(__file__).parents[1] / "fixtures/phone_text_motion_v2.json"
 
 
 def reference_cases():
-    inputs = [(effect, "Hello\nworld", {}) for effect in sorted(_ALLOWED_EFFECTS | {"lyric-line"})]
+    inputs = [
+        (effect, "Hello\nworld", {})
+        for effect in sorted(_ALLOWED_EFFECTS | {"lyric-line", "caption-pop"})
+    ]
     for index, text in enumerate(
         ["İstanbul\nçok güzel", "مرحبا\nبالعالم", "नमस्ते दुनिया", "👩🏽‍🚀 café\ne\u0301", "", "\n\n"]
     ):

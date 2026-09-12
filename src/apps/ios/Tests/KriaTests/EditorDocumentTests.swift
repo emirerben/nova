@@ -2,6 +2,27 @@ import XCTest
 @testable import Kria
 
 final class EditorDocumentTests: XCTestCase {
+    func testServerCaptionsWithoutIDsRemainEditableAndDoNotDuplicateOnSave() {
+        let cue: JSONValue = .object(["text": .string("Hello"), "start_s": .number(0), "end_s": .number(2), "words": .array([])])
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object(["caption_cues": .array([cue, cue])])])]
+        var document = EditorDocument.decode(snapshot: snapshot)
+        XCTAssertEqual(document.captionCues.count, 2)
+        XCTAssertEqual(Set(document.captionCues.map(\.id)).count, 2)
+        XCTAssertTrue(document.opaqueRecords[.captions, default: []].isEmpty)
+        XCTAssertEqual(document.encodeSnapshot(), snapshot)
+        document.captionCues[0].text = "Edited"
+        let result = document.encodeSnapshot()
+        guard case .object(let payload) = result["editor_payload"],
+              case .object(let sections) = payload["sections"],
+              case .array(let cues) = sections["caption_cues"] else { return XCTFail("Missing captions") }
+        XCTAssertEqual(cues.count, 2)
+        guard case .object(let first) = cues[0] else { return XCTFail("Missing first cue") }
+        XCTAssertEqual(first["text"], .string("Edited"))
+        XCTAssertEqual(first["words"], .array([]))
+        XCTAssertNil(first["id"])
+        XCTAssertEqual(cues[1], cue)
+    }
+
     func testCanonicalNoOpRoundTripIsByteASTEquivalent() {
         let snapshot: [String: JSONValue] = [
             "schema_version": .number(2), "kind": .string("editor"), "future_root": .object(["enabled": .bool(true)]),

@@ -76,6 +76,24 @@ struct NativeEditorTimelineProjection: Equatable, Sendable {
 }
 
 enum NativeEditorInteraction {
+    /// Detect edge crossings even when a drag event skips the alignment pixel.
+    static func crossesAlignment(previousStart: TimeInterval, previousEnd: TimeInterval,
+                                 start: TimeInterval, end: TimeInterval, boundaries: [TimeInterval]) -> Bool {
+        boundaries.filter(\.isFinite).contains { boundary in
+            [(previousStart, start), (previousEnd, end)].contains { previous, current in
+                (previous < boundary && current >= boundary) || (previous > boundary && current <= boundary)
+            }
+        }
+    }
+
+    static func alignmentBoundary(start: TimeInterval, end: TimeInterval,
+                                  boundaries: [TimeInterval], tolerance: TimeInterval) -> TimeInterval? {
+        guard start.isFinite, end.isFinite, tolerance.isFinite, tolerance >= 0 else { return nil }
+        return boundaries.filter(\.isFinite)
+            .filter { min(abs(start - $0), abs(end - $0)) <= tolerance }
+            .min { min(abs(start - $0), abs(end - $0)) < min(abs(start - $1), abs(end - $1)) }
+    }
+
     static let minimumHitTarget: CGFloat = 44
 
     /// Timeline intervals are half-open. An item ending exactly at the clock
@@ -124,6 +142,14 @@ enum NativeEditorInteraction {
         let dx = max(0, (minimum - rect.width) / 2)
         let dy = max(0, (minimum - rect.height) / 2)
         return rect.insetBy(dx: -dx, dy: -dy)
+    }
+
+    static func contains(_ point: CGPoint, in rect: CGRect, rotationDegrees: Double) -> Bool {
+        let angle = -rotationDegrees * .pi / 180
+        let x = point.x - rect.midX, y = point.y - rect.midY
+        let unrotated = CGPoint(x: rect.midX + x * cos(angle) - y * sin(angle),
+                                y: rect.midY + x * sin(angle) + y * cos(angle))
+        return hitRect(rect).contains(unrotated)
     }
 
     /// Greedy interval coloring. Half-open intervals that touch at a boundary
@@ -282,5 +308,61 @@ enum NativeEditorInteraction {
 
     private static func roundedMillis(_ value: TimeInterval) -> TimeInterval {
         (value * 1_000).rounded() / 1_000
+    }
+}
+
+/// Alignment cues have a narrow entry band and a wider release band so a
+/// finger resting near a guide does not repeatedly trigger feedback.
+struct NativeTextAlignmentFeedback {
+    private var active: Set<String>?
+    private var previousDistances: [String: Double] = [:]
+
+    mutating func reset() { active = nil; previousDistances = [:] }
+
+    mutating func update(center: CGPoint, size: CGSize, rotation: Double, canvas: CGSize) -> Bool {
+        guard canvas.width > 0, canvas.height > 0,
+              [center.x, center.y, size.width, size.height, rotation].allSatisfy(\.isFinite) else { return false }
+        let radians = rotation * .pi / 180
+        let halfWidth = (abs(cos(radians)) * size.width + abs(sin(radians)) * size.height) / 2
+        let halfHeight = (abs(sin(radians)) * size.width + abs(cos(radians)) * size.height) / 2
+        var distances: [String: Double] = [
+            "center-x": center.x - canvas.width / 2, "center-y": center.y - canvas.height / 2,
+            "left": center.x - halfWidth, "right": center.x + halfWidth - canvas.width,
+            "top": center.y - halfHeight, "bottom": center.y + halfHeight - canvas.height
+        ]
+        for angle in [0, 90, 180, 270] {
+            let delta = (rotation - Double(angle)).truncatingRemainder(dividingBy: 360)
+            distances["angle-\(angle)"] = delta > 180 ? delta - 360 : delta < -180 ? delta + 360 : delta
+        }
+        let previous = active ?? []
+        let next = Set(distances.compactMap { key, distance in
+            abs(distance) <= (previous.contains(key) ? 5.0 : 2.0) ? key : nil
+        })
+        let crossings = Set(distances.compactMap { key, value -> String? in
+            guard !previous.contains(key), let old = previousDistances[key], old * value < 0,
+                  !key.hasPrefix("angle-") || abs(old - value) < 180 else { return nil }
+            return key
+        })
+        let entering = active != nil && (!next.subtracting(previous).isEmpty || !crossings.isEmpty)
+        active = next.union(crossings)
+        previousDistances = distances
+        return entering
+    }
+}
+
+/// A small angular detent, followed by a smooth return to one-to-one motion.
+/// No timer or input blocking: continuing the gesture always breaks through.
+enum NativeTextRotationSnap {
+    static func angle(_ raw: Double) -> Double {
+        guard raw.isFinite else { return raw }
+        let target = (raw / 90).rounded() * 90
+        let offset = raw - target
+        let distance = abs(offset)
+        let hold = 2.0, release = 8.0
+        if distance <= hold { return target }
+        if distance >= release { return raw }
+        let progress = (distance - hold) / (release - hold)
+        let blend = progress * progress * (3 - 2 * progress)
+        return target + offset * blend
     }
 }

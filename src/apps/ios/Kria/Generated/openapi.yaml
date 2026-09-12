@@ -377,6 +377,14 @@
             "title": "Music Volume",
             "type": "number"
           },
+          "mute_windows": {
+            "items": {
+              "$ref": "#/components/schemas/AudioMuteWindow"
+            },
+            "maxItems": 100,
+            "title": "Mute Windows",
+            "type": "array"
+          },
           "original_volume": {
             "default": 1,
             "maximum": 2,
@@ -386,6 +394,40 @@
           }
         },
         "title": "AudioMixRecipe",
+        "type": "object"
+      },
+      "AudioMuteWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "clip_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Clip Ids",
+            "type": "array"
+          },
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "start": {
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "clip_ids"
+        ],
+        "title": "AudioMuteWindow",
         "type": "object"
       },
       "AudioPolicy": {
@@ -433,6 +475,44 @@
           "type"
         ],
         "title": "BlurPreviousBackground",
+        "type": "object"
+      },
+      "CameraPulse": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "intensity": {
+            "maximum": 0.08,
+            "minimum": 0,
+            "title": "Intensity",
+            "type": "number"
+          },
+          "start": {
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "end",
+          "intensity"
+        ],
+        "title": "CameraPulse",
         "type": "object"
       },
       "Canvas": {
@@ -1473,6 +1553,11 @@
                 "basicComposition",
                 "positionedText",
                 "animatedText",
+                "authoredText",
+                "cameraEffects",
+                "editorMedia",
+                "motionScenes",
+                "visualBlocks",
                 "crossfade",
                 "clipTransitions",
                 "goldenHourLook",
@@ -1527,6 +1612,14 @@
           "audio": {
             "$ref": "#/components/schemas/AudioMixRecipe"
           },
+          "camera_pulses": {
+            "items": {
+              "$ref": "#/components/schemas/CameraPulse"
+            },
+            "maxItems": 100,
+            "title": "Camera Pulses",
+            "type": "array"
+          },
           "canvas": {
             "$ref": "#/components/schemas/Canvas"
           },
@@ -1537,6 +1630,11 @@
             "minimum": 0,
             "title": "Frame Rate",
             "type": "number"
+          },
+          "motion_scenes": {
+            "$ref": "#/components/schemas/MotionSceneProgram",
+            "default": null,
+            "nullable": true
           },
           "renderer_version": {
             "default": "kria-ios-2",
@@ -1552,6 +1650,11 @@
                 "basicComposition",
                 "positionedText",
                 "animatedText",
+                "authoredText",
+                "cameraEffects",
+                "editorMedia",
+                "motionScenes",
+                "visualBlocks",
                 "crossfade",
                 "clipTransitions",
                 "goldenHourLook",
@@ -1590,6 +1693,14 @@
             },
             "maxItems": 20,
             "title": "Tracks",
+            "type": "array"
+          },
+          "visual_fills": {
+            "items": {
+              "$ref": "#/components/schemas/VisualCanvasFill"
+            },
+            "maxItems": 100,
+            "title": "Visual Fills",
             "type": "array"
           }
         },
@@ -2494,6 +2605,12 @@
       "KaraokeContent": {
         "additionalProperties": false,
         "properties": {
+          "active_only": {
+            "default": null,
+            "nullable": true,
+            "title": "Active Only",
+            "type": "boolean"
+          },
           "highlight": {
             "$ref": "#/components/schemas/TextInk"
           },
@@ -3678,6 +3795,48 @@
         "title": "MontageBlock",
         "type": "object"
       },
+      "MotionSceneProgram": {
+        "additionalProperties": false,
+        "properties": {
+          "font_asset_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Font Asset Id",
+            "type": "string"
+          },
+          "image_asset_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 100,
+            "title": "Image Asset Ids",
+            "type": "object"
+          },
+          "instances": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Instances",
+            "type": "array"
+          },
+          "runtime_hash": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Runtime Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instances",
+          "runtime_hash",
+          "font_asset_id"
+        ],
+        "title": "MotionSceneProgram",
+        "type": "object"
+      },
       "NovaStep": {
         "description": "One user-facing row in the Nova activity feed.\n\n``id`` is derived from ``stage:event:index`` (or ``agent:<name>:<run\nid>`` for agent milestones) -- NEVER random -- so it stays stable across\npolls of the same, append-only ``pipeline_trace``/``phase_log``/\n``AgentRun`` sources.",
         "properties": {
@@ -4297,6 +4456,16 @@
             "title": "Anchor Y",
             "type": "number"
           },
+          "animation_phases": {
+            "$ref": "#/components/schemas/TextAnimationPhases",
+            "default": null,
+            "nullable": true
+          },
+          "background": {
+            "$ref": "#/components/schemas/TextBackground",
+            "default": null,
+            "nullable": true
+          },
           "discrete_reveal": {
             "$ref": "#/components/schemas/DiscreteRevealContent",
             "default": null,
@@ -4330,7 +4499,8 @@
               "staggered-slice",
               "dissolve-out",
               "karaoke-line",
-              "lyric-line"
+              "lyric-line",
+              "caption-pop"
             ],
             "title": "Effect",
             "type": "string"
@@ -4478,10 +4648,17 @@
           },
           "font_size": {
             "exclusiveMinimum": true,
-            "maximum": 1000,
             "minimum": 0,
             "title": "Font Size",
             "type": "number"
+          },
+          "font_variations": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "maxProperties": 16,
+            "title": "Font Variations",
+            "type": "object"
           },
           "glyphs": {
             "default": null,
@@ -5050,6 +5227,105 @@
         "title": "TemporaryUploadCancellationResponse",
         "type": "object"
       },
+      "TextAnimationPhases": {
+        "additionalProperties": false,
+        "properties": {
+          "entrance": {
+            "default": "none",
+            "enum": [
+              "none",
+              "fade",
+              "pop",
+              "slide",
+              "typewriter"
+            ],
+            "title": "Entrance",
+            "type": "string"
+          },
+          "exit": {
+            "default": "none",
+            "enum": [
+              "none",
+              "fade",
+              "pop",
+              "slide",
+              "typewriter"
+            ],
+            "title": "Exit",
+            "type": "string"
+          },
+          "loop": {
+            "default": "none",
+            "enum": [
+              "none",
+              "pulse",
+              "bounce",
+              "float"
+            ],
+            "title": "Loop",
+            "type": "string"
+          },
+          "speed": {
+            "default": 1,
+            "maximum": 3,
+            "minimum": 0.25,
+            "title": "Speed",
+            "type": "number"
+          }
+        },
+        "title": "TextAnimationPhases",
+        "type": "object"
+      },
+      "TextBackground": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 20000,
+            "minimum": 0,
+            "title": "Height",
+            "type": "number"
+          },
+          "left": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Left",
+            "type": "number"
+          },
+          "radius": {
+            "maximum": 1000,
+            "minimum": 0,
+            "title": "Radius",
+            "type": "number"
+          },
+          "top": {
+            "maximum": 10000,
+            "minimum": -10000,
+            "title": "Top",
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "maximum": 20000,
+            "minimum": 0,
+            "title": "Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "color",
+          "left",
+          "top",
+          "width",
+          "height",
+          "radius"
+        ],
+        "title": "TextBackground",
+        "type": "object"
+      },
       "TextBlurLayer": {
         "additionalProperties": false,
         "properties": {
@@ -5614,6 +5890,14 @@
       "TimelineClip": {
         "additionalProperties": false,
         "properties": {
+          "hold_duration": {
+            "default": null,
+            "maximum": 1800,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Hold Duration",
+            "type": "number"
+          },
           "id": {
             "maxLength": 160,
             "minLength": 1,
@@ -5628,6 +5912,32 @@
             "nullable": true,
             "title": "Look",
             "type": "string"
+          },
+          "overlay_above_text": {
+            "default": null,
+            "nullable": true,
+            "title": "Overlay Above Text",
+            "type": "boolean"
+          },
+          "overlay_dissolve_seed": {
+            "default": null,
+            "maximum": 4294967295,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Overlay Dissolve Seed",
+            "type": "integer"
+          },
+          "overlay_pop_in": {
+            "default": null,
+            "nullable": true,
+            "title": "Overlay Pop In",
+            "type": "boolean"
+          },
+          "overlay_preserve_alpha": {
+            "default": null,
+            "nullable": true,
+            "title": "Overlay Preserve Alpha",
+            "type": "boolean"
           },
           "rate": {
             "exclusiveMinimum": true,
@@ -5669,6 +5979,11 @@
           },
           "transition": {
             "$ref": "#/components/schemas/Transition",
+            "default": null,
+            "nullable": true
+          },
+          "visual_placement": {
+            "$ref": "#/components/schemas/VisualMediaPlacement",
             "default": null,
             "nullable": true
           },
@@ -6030,6 +6345,193 @@
           "upload_headers"
         ],
         "title": "UploadTarget",
+        "type": "object"
+      },
+      "VisualCanvasFill": {
+        "additionalProperties": false,
+        "properties": {
+          "angle": {
+            "default": 180,
+            "maximum": 360,
+            "minimum": 0,
+            "title": "Angle",
+            "type": "number"
+          },
+          "blur_radius": {
+            "default": 24,
+            "maximum": 80,
+            "minimum": 1,
+            "title": "Blur Radius",
+            "type": "number"
+          },
+          "color": {
+            "$ref": "#/components/schemas/TextInk"
+          },
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "end_color": {
+            "$ref": "#/components/schemas/TextInk",
+            "default": null,
+            "nullable": true
+          },
+          "fade_in": {
+            "default": false,
+            "title": "Fade In",
+            "type": "boolean"
+          },
+          "fade_out": {
+            "default": false,
+            "title": "Fade Out",
+            "type": "boolean"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "solid",
+              "gradient",
+              "blur_previous"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "order": {
+            "maximum": 1000,
+            "minimum": 0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "end",
+          "order",
+          "kind",
+          "color"
+        ],
+        "title": "VisualCanvasFill",
+        "type": "object"
+      },
+      "VisualMediaPlacement": {
+        "additionalProperties": false,
+        "properties": {
+          "contain": {
+            "default": false,
+            "title": "Contain",
+            "type": "boolean"
+          },
+          "fade_in": {
+            "default": false,
+            "title": "Fade In",
+            "type": "boolean"
+          },
+          "fade_out": {
+            "default": false,
+            "title": "Fade Out",
+            "type": "boolean"
+          },
+          "focal_x": {
+            "default": 0.5,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Focal X",
+            "type": "number"
+          },
+          "focal_y": {
+            "default": 0.5,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Focal Y",
+            "type": "number"
+          },
+          "motion": {
+            "default": "none",
+            "enum": [
+              "none",
+              "zoom_in",
+              "zoom_out",
+              "pan_left",
+              "pan_right"
+            ],
+            "title": "Motion",
+            "type": "string"
+          },
+          "order": {
+            "maximum": 1000,
+            "minimum": 0,
+            "title": "Order",
+            "type": "integer"
+          },
+          "pre_crop": {
+            "default": false,
+            "title": "Pre Crop",
+            "type": "boolean"
+          },
+          "width_fraction": {
+            "default": null,
+            "maximum": 1,
+            "minimum": 0.05,
+            "nullable": true,
+            "title": "Width Fraction",
+            "type": "number"
+          },
+          "window_end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Window End",
+            "type": "number"
+          },
+          "window_start": {
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Window Start",
+            "type": "number"
+          },
+          "x_fraction": {
+            "default": 0.5,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "X Fraction",
+            "type": "number"
+          },
+          "y_fraction": {
+            "default": 0.5,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Y Fraction",
+            "type": "number"
+          },
+          "zoom": {
+            "default": 1,
+            "maximum": 4,
+            "minimum": 1,
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "required": [
+          "order",
+          "window_start",
+          "window_end"
+        ],
+        "title": "VisualMediaPlacement",
         "type": "object"
       },
       "VisualShot": {

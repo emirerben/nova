@@ -4,6 +4,8 @@ struct NativeEditorView: View {
     let project: ProjectSummary
     let libraryJobID: UUID?
     let onBack: () -> Void
+    private let conversation: (() -> AnyView)?
+    private let conversationAcceptedID: UUID?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var session: NativeEditorSession
@@ -11,6 +13,13 @@ struct NativeEditorView: View {
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
+    @State private var showsConversation = false
+    @State private var textInspectorID: String?
+    @State private var selectedTextForActions: String?
+    @State private var keyboardVisible = false
+    @State private var timelineExpansion: CGFloat = 0
+    @State private var timelineDragOrigin: CGFloat?
+    @State private var timelineResizeFeedback = 0
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
@@ -21,13 +30,18 @@ struct NativeEditorView: View {
         initialDraft: EditorDraft? = nil,
         initialPlaybackURL: URL? = nil,
         libraryJobID: UUID? = nil,
+        sharedSession: NativeEditorSession? = nil,
+        conversationAcceptedID: UUID? = nil,
+        conversation: (() -> AnyView)? = nil,
         onBack: @escaping () -> Void
     ) {
         self.project = project
         self.libraryJobID = libraryJobID
         self.onBack = onBack
+        self.conversation = conversation
+        self.conversationAcceptedID = conversationAcceptedID
         _session = StateObject(
-            wrappedValue: initialDraft.map {
+            wrappedValue: sharedSession ?? initialDraft.map {
                 NativeEditorSession(
                     draft: $0,
                     operations: LocalEditorOperations(),
@@ -72,12 +86,25 @@ struct NativeEditorView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
-            .onChange(of: session.selection) { _, selection in
-                // Timeline taps are an explicit request to inspect that object.
-                // Keep tool-driven sheets intact while the user edits; a later
-                // selection then routes to the matching object inspector.
-                guard let selection else { return }
-                guard !session.isDirectManipulating else { return }
+            .onChange(of: session.selectionRequest) { _, _ in
+                guard let selection = session.selection else {
+                    textInspectorID = nil
+                    selectedTextForActions = nil
+                    return
+                }
+                guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
+                if selection.kind == .text {
+                    if selectedTextForActions == selection.id {
+                        textInspectorID = selection.id
+                    } else {
+                        selectedTextForActions = selection.id
+                        textInspectorID = nil
+                    }
+                    inspector = nil
+                    return
+                }
+                selectedTextForActions = nil
+                textInspectorID = nil
                 // Clip selection keeps the timeline handles and context strip
                 // directly reachable. The explicit Adjust action presents the
                 // clip inspector without covering the trim gesture surface.
@@ -96,6 +123,16 @@ struct NativeEditorView: View {
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
             }
+            .sheet(isPresented: $showsConversation) {
+                if let conversation {
+                    conversation()
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
+            .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
             .interactiveDismissDisabled(session.hasUnsavedChanges)
             .confirmationDialog(
                 "Save your changes before leaving?",
@@ -113,9 +150,20 @@ struct NativeEditorView: View {
     }
 
     @ViewBuilder private func editor(viewport: GeometryProxy) -> some View {
-        let previewHeight = min(260, max(196, viewport.size.height * 0.29))
+        let referenceHeight = session.pendingText == nil && !keyboardVisible
+            ? viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
+            : viewport.size.height
+        let portraitHeight = min(338, max(150, referenceHeight * 0.40))
+        let defaultPreviewHeight = session.previewAspectRatio > 1 ? min(124, portraitHeight) : portraitHeight
+        let resizeRange = max(0, defaultPreviewHeight - 80)
+        let showsTimeline = session.pendingText == nil && textInspectorID == nil
+        let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
+        let previewHeight = max(80, defaultPreviewHeight - (showsTimeline ? timelineExpansion * resizeRange : 0) - (showsContext ? 52 : 0))
         VStack(spacing: 0) {
-            NativeEditorTopBar(onBack: requestBack)
+            NativeEditorProjectHeader(
+                title: project.workspaceTitle, session: session,
+                onBack: requestBack, onChat: conversation == nil ? requestBack : onBack
+            )
             NativeEditorSaveBanner(session: session)
             if session.deviceRenderKey != nil {
                 Button("Rendering on iPhone") { showsDeviceRender = true }
@@ -125,25 +173,102 @@ struct NativeEditorView: View {
             }
 
             NativeVideoPreview(session: session)
-                .frame(width: previewHeight * 9 / 16, height: previewHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
+                .clipped()
                 .accessibilityIdentifier("native-editor-preview")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
+                .overlay(alignment: .bottomTrailing) {
+                    if conversation != nil, session.pendingText == nil {
+                        Button { showsConversation = true } label: {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 23))
+                                .foregroundStyle(.white)
+                                .frame(width: 52, height: 52)
+                                .background(KriaColor.ink, in: Circle())
+                        }
+                        .accessibilityLabel("Open Kria conversation")
+                        .accessibilityIdentifier("native-editor-conversation")
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 14)
+                    }
+                }
 
+            if session.pendingText != nil {
+                Spacer(minLength: 0)
+                NativeTextCreationPanel(session: session) { selection in
+                    selectedTextForActions = selection.id
+                    textInspectorID = selection.id
+                }
+            } else if let id = textInspectorID {
+                NativeEditorTextPanel(id: id, session: session) { textInspectorID = nil }
+                    .id(id)
+            } else {
+            timelineResizeHandle(range: resizeRange)
             NativeEditorTimeline(session: session)
                 .frame(maxHeight: .infinity)
                 .layoutPriority(1)
 
-            if session.selectedClipID != nil {
+            if let selection = session.selection, selection.kind == .text {
+                NativeEditorTextContextStrip(
+                    onEdit: { textInspectorID = selection.id },
+                    onDeselect: { session.select(nil) }
+                )
+                .transition(shouldReduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
+            } else if session.selectedClipID != nil {
                 NativeEditorContextStrip(session: session, onAdjust: { inspector = .adjust })
                     .transition(shouldReduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
             }
 
             NativeEditorToolRail(selected: $selectedTool) { tool in
-                inspector = .tool(tool)
+                if tool == .text { session.beginTextCreation() }
+                else { inspector = .tool(tool) }
+            }
             }
         }
+    }
+
+    private func timelineResizeHandle(range: CGFloat) -> some View {
+        Capsule()
+            .fill(KriaColor.ink.opacity(0.28))
+            .frame(width: 36, height: 4)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                    .onChanged { value in
+                        guard range > 0 else { return }
+                        if timelineDragOrigin == nil {
+                            timelineDragOrigin = timelineExpansion
+                            timelineResizeFeedback += 1
+                        }
+                        let next = min(1, max(0, (timelineDragOrigin ?? 0) - value.translation.height / range))
+                        if next != timelineExpansion && (next == 0 || next == 1) {
+                            timelineResizeFeedback += 1
+                        }
+                        timelineExpansion = next
+                    }
+                    .onEnded { _ in
+                        timelineDragOrigin = nil
+                        timelineResizeFeedback += 1
+                    }
+            )
+            .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: timelineResizeFeedback)
+            .accessibilityElement()
+            .accessibilityLabel("Timeline size")
+            .accessibilityValue("\(Int(timelineExpansion * 100)) percent expanded")
+            .accessibilityHint("Swipe up or down to resize the timeline and preview")
+            .accessibilityAdjustableAction { direction in
+                let step: CGFloat = direction == .increment ? 0.25 : -0.25
+                let next = min(1, max(0, timelineExpansion + step))
+                guard next != timelineExpansion else { return }
+                withAnimation(shouldReduceMotion ? nil : .easeOut(duration: 0.18)) {
+                    timelineExpansion = next
+                }
+                timelineResizeFeedback += 1
+            }
+            .accessibilityIdentifier("native-editor-timeline-resize")
     }
 
     private var deviceLocalFile: URL? {
@@ -153,9 +278,17 @@ struct NativeEditorView: View {
 
     private func loadEditor() async {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-source-text"),
+           let url = Bundle.main.url(forResource: "montage", withExtension: "mp4") {
+            let delayed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source")
+            if delayed, session.loadState == .loaded { return }
+            await session.prepareFixtureSourcePreview(url: url, delayedLoad: delayed)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
         session.useDeviceRendering(model.deviceRenders)
+        guard session.loadState != .loaded else { return }
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)
         } else {
@@ -166,6 +299,8 @@ struct NativeEditorView: View {
     }
 
     private func requestBack() {
+        if session.pendingText != nil { session.cancelTextCreation(); return }
+        if textInspectorID != nil { textInspectorID = nil; return }
         if session.hasUnsavedChanges { showsUnsavedExit = true }
         else { onBack() }
     }

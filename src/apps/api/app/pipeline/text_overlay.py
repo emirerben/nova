@@ -469,7 +469,16 @@ def generate_text_overlay_png(
         effect = overlay.get("effect", "none")
         spans = overlay.get("spans")
 
-        if effect == "font-cycle":
+        if overlay.get("animation_phases") is not None:
+            text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
+            if text is None:
+                continue
+            results.append(
+                _render_authored_phase_sequence(
+                    overlay, text, position, start_s, end_s, output_dir, slot_index, i
+                )
+            )
+        elif effect == "font-cycle":
             configs = _render_font_cycle(
                 overlay,
                 slot_duration_s,
@@ -537,10 +546,96 @@ def generate_text_overlay_png(
                 shadow_enabled=overlay.get("shadow_enabled") is not False,
                 emoji_prefix=overlay.get("emoji_prefix", ""),
                 text_gradient=overlay.get("text_gradient"),
+                **_authored_pillow_paint(overlay),
             )
             results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
 
     return results if results else None
+
+
+def overlay_png_input(config: dict) -> list[str]:
+    """One decoder per authored animation, regardless of its frame count."""
+    if config.get("animated"):
+        return ["-itsoffset", str(config["start_s"]), "-i", config["png_path"]]
+    return ["-i", config["png_path"]]
+
+
+def overlay_png_filter(config: dict) -> str:
+    start, end = config["start_s"], config["end_s"]
+    if config.get("animated"):
+        return (
+            f"overlay=0:0:eof_action=pass:repeatlast=0:enable='gte(t,{start:.6f})*lt(t,{end:.6f})'"
+        )
+    return f"overlay=0:0:enable='between(t,{start:.3f},{end:.3f})'"
+
+
+def _render_authored_phase_sequence(
+    overlay: dict,
+    text: str,
+    position: str,
+    start: float,
+    end: float,
+    output_dir: str,
+    slot_index: int,
+    overlay_index: int,
+) -> dict:
+    import math  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    fps = 30
+    output = os.path.join(output_dir, f"slot_{slot_index}_overlay_{overlay_index}_phases.mov")
+    # Lossless RGBA intermediate retains alpha; the final video encoder is unchanged.
+    with tempfile.TemporaryDirectory(dir=output_dir) as frames, tempfile.TemporaryFile() as errors:
+        frame = os.path.join(frames, "frame.png")
+        process = subprocess.Popen(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "image2pipe",
+                "-framerate",
+                str(fps),
+                "-i",
+                "pipe:0",
+                "-an",
+                "-c:v",
+                "qtrle",
+                "-pix_fmt",
+                "argb",
+                "-threads",
+                "1",
+                output,
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=errors,
+        )
+        try:
+            assert process.stdin is not None
+            for index in range(max(1, math.ceil((end - start) * fps))):
+                _render_authored_phase_frame(
+                    overlay, text, position, frame, index / fps, end - start
+                )
+                process.stdin.write(Path(frame).read_bytes())
+            process.stdin.close()
+            if process.wait(timeout=60) != 0:
+                errors.seek(0)
+                raise RuntimeError(
+                    f"Authored text encoding failed: {errors.read(2000).decode(errors='replace')}"
+                )
+        except BaseException:
+            process.kill()
+            process.wait()
+            if process.stdin is not None:
+                process.stdin.close()
+            if os.path.exists(output):
+                os.unlink(output)
+            raise
+    return {"png_path": output, "start_s": start, "end_s": end, "animated": True}
 
 
 def generate_animated_overlay_ass(
@@ -559,7 +654,7 @@ def generate_animated_overlay_ass(
 
     for i, overlay in enumerate(overlays):
         effect = overlay.get("effect", "none")
-        if effect not in ASS_ANIMATED_EFFECTS:
+        if overlay.get("animation_phases") is not None or effect not in ASS_ANIMATED_EFFECTS:
             continue
 
         text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
@@ -581,6 +676,7 @@ def generate_animated_overlay_ass(
                 position_y_frac=overlay.get("position_y_frac"),
                 text_anchor=overlay.get("text_anchor", "center"),
                 max_width_frac=overlay.get("max_width_frac"),
+                wrap_lines=overlay.get("wrap_lines", True),
                 line_spacing=overlay.get("line_spacing"),
                 outline_px=(
                     overlay.get("outline_px")
@@ -753,6 +849,11 @@ def _render_single_overlay_at_time(
     spans = overlay.get("spans")
     png_path = os.path.join(output_dir, f"overlay_{overlay_index}.png")
 
+    if overlay.get("animation_phases") is not None:
+        return _render_authored_phase_frame(
+            overlay, text, position, png_path, t - start_s, end_s - start_s
+        )
+
     if effect == "font-cycle":
         text_size = overlay.get("text_size", "medium")
         pixel_size = overlay.get("text_size_px") or _FONT_SIZE_MAP.get(text_size, 72)
@@ -852,7 +953,42 @@ def _render_static_overlay_layer(
         shadow_enabled=overlay.get("shadow_enabled") is not False,
         emoji_prefix=overlay.get("emoji_prefix", ""),
         text_gradient=overlay.get("text_gradient"),
+        **_authored_pillow_paint(overlay),
+        reveal_progress=overlay.get("_reveal_progress"),
     )
+    return png_path
+
+
+def _render_authored_phase_frame(
+    overlay: dict, text: str, position: str, png_path: str, local_time: float, duration: float
+) -> str:
+    from math import cos, radians, sin  # noqa: PLC0415
+
+    from PIL import Image  # noqa: PLC0415
+
+    from app.agents._schemas.text_animation_phases import TextAnimationPhases  # noqa: PLC0415
+    from app.pipeline.text_animation_phases import sample_text_phases  # noqa: PLC0415
+
+    phases = TextAnimationPhases.model_validate(overlay["animation_phases"])
+    state = sample_text_phases(phases, local_time, duration)
+    _render_static_overlay_layer(
+        {**overlay, "_reveal_progress": state.reveal, "rotation_deg": 0}, text, position, png_path
+    )
+    with Image.open(png_path) as original:
+        frame = original.convert("RGBA")
+    anchor_x = float(overlay.get("position_x_frac", 0.5)) * CANVAS_W
+    anchor_y = float(overlay.get("position_y_frac", _POSITION_Y.get(position, 0.5))) * CANVAS_H
+    angle = radians(float(overlay.get("rotation_deg") or 0))
+    c, s = cos(angle) / state.scale, sin(angle) / state.scale
+    # Pillow maps output coordinates back to the source image.
+    tx, ty = anchor_x + state.x, anchor_y + state.y
+    matrix = (c, s, anchor_x - c * tx - s * ty, -s, c, anchor_y + s * tx - c * ty)
+    frame = frame.transform(
+        frame.size, Image.Transform.AFFINE, matrix, resample=Image.Resampling.BICUBIC
+    )
+    if state.alpha < 1:
+        frame.putalpha(frame.getchannel("A").point(lambda value: round(value * state.alpha)))
+    frame.save(png_path, "PNG")
     return png_path
 
 
@@ -876,6 +1012,7 @@ def _pre_wrap_for_scale_animation(
     font_family: str | None,
     *,
     max_scale_pct: int = 100,
+    wrap_lines: bool = True,
 ) -> str:
     """Insert ASS line breaks (`\\N`) so libass doesn't re-wrap during scale.
 
@@ -894,6 +1031,8 @@ def _pre_wrap_for_scale_animation(
     animation still plays correctly, only the wrap stays at libass's auto-wrap
     default.
     """
+    if not wrap_lines:
+        return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", r"\N")
     if not text:
         return text
     from PIL import Image, ImageDraw  # noqa: PLC0415
@@ -1306,6 +1445,7 @@ def _write_animated_ass(
     position_y_frac: float | None = None,
     text_anchor: str = "center",
     max_width_frac: float | None = None,
+    wrap_lines: bool = True,
     line_spacing: float | None = None,
     outline_px: int | None = None,
     # Karaoke-only: per-word timings relative to overlay start, and the
@@ -1445,6 +1585,7 @@ def _write_animated_ass(
                 stripped_text,
                 font_family,
                 max_scale_pct=max(_POP_IN_SCALES),
+                wrap_lines=wrap_lines,
             ).rstrip()
             # Trim the suffix from the right; whatever's left (minus its
             # trailing whitespace) is the static prefix. If text is "I got
@@ -1470,6 +1611,7 @@ def _write_animated_ass(
                 text,
                 font_family,
                 max_scale_pct=max(_POP_IN_SCALES),
+                wrap_lines=wrap_lines,
             )
             dialogue_text = f"{{{pos_or_align}\\q2{outline_tag}{scale_anim}}}{wrapped}"
 
@@ -1540,7 +1682,11 @@ def _write_animated_ass(
         # second line of defence when even the wrapped longest line is wider
         # than the safe budget.
         base_size = int(text_size_px) if text_size_px else _LYRIC_LINE_STYLE_FONT_SIZE
-        wrapped_text, fit_size = _wrap_and_shrink_for_lyric_line(text, font_family, base_size)
+        wrapped_text, fit_size = (
+            _wrap_and_shrink_for_lyric_line(text, font_family, base_size)
+            if wrap_lines
+            else (text, base_size)
+        )
         fs_tag = f"\\fs{fit_size}" if fit_size != _LYRIC_LINE_STYLE_FONT_SIZE else ""
 
         inline = alpha_tags[:-1] + pos_or_align + r"\q2" + fs_tag + outline_tag + color_tag + "}"
@@ -1555,6 +1701,7 @@ def _write_animated_ass(
             text,
             font_family,
             max_scale_pct=max(_BOUNCE_SCALES),
+            wrap_lines=wrap_lines,
         )
         duration_ms = int((end_s - start_s) * 1000)
         k0, k1, k2, k3 = _clamp_keyframes(_BOUNCE_KEYFRAMES_MS, duration_ms)
@@ -1629,6 +1776,14 @@ def _write_animated_ass(
         f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
         rows = dialogue_events or [(start_s, end_s, dialogue_text)]
         for row_start_s, row_end_s, row_text in rows:
+            if not wrap_lines:
+                size_tag = f"\\fs{text_size_px}" if text_size_px else ""
+                row_text = (
+                    "{\\q2"
+                    + size_tag
+                    + "}"
+                    + row_text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", r"\N")
+                )
             f.write(
                 "Dialogue: "
                 f"0,{format_ass_time(row_start_s)},{format_ass_time(row_end_s)},"
@@ -1697,6 +1852,7 @@ def _draw_frame(
             shadow_enabled=overlay.get("shadow_enabled") is not False,
             emoji_prefix=overlay.get("emoji_prefix", ""),
             text_gradient=overlay.get("text_gradient"),
+            **_authored_pillow_paint(overlay),
         )
 
 
@@ -2141,6 +2297,8 @@ def _validate_overlay(
         return None, 0.0, 0.0, ""
 
     text = sanitize_ass_text(text)
+    if overlay.get("wrap_lines") is False:
+        text = text.replace(r"\N", "\n")
     if not text and not has_spans:
         return None, 0.0, 0.0, ""
     # Skip truncation when spans are present — each span is short individually
@@ -2345,6 +2503,25 @@ def wrap_and_measure(
     return (lines, widest)
 
 
+def _authored_pillow_paint(overlay: dict) -> dict:
+    """Explicit editor paint overrides; omitted fields retain legacy pixels."""
+    paint: dict = {"wrap_lines": overlay.get("wrap_lines", True)}
+    if overlay.get("stroke_color"):
+        paint["stroke_color"] = (*_hex_to_rgba(overlay["stroke_color"])[:3], 230)
+    if overlay.get("shadow_color") or overlay.get("shadow_opacity") is not None:
+        rgb = _hex_to_rgba(overlay.get("shadow_color") or "#000000")[:3]
+        opacity = overlay.get("shadow_opacity")
+        alpha = 160 if opacity is None else round(255 * min(1, max(0, float(opacity))))
+        paint["shadow_color"] = (*rgb, alpha)
+    if overlay.get("background_color"):
+        paint["background_color"] = _hex_to_rgba(overlay["background_color"])
+    if overlay.get("rotation_deg") is not None:
+        paint["rotation_degrees"] = float(overlay["rotation_deg"])
+    if overlay.get("max_width_frac") is not None:
+        paint["max_width_frac"] = float(overlay["max_width_frac"])
+    return paint
+
+
 def _draw_text_png(
     text: str,
     position: str,
@@ -2365,6 +2542,12 @@ def _draw_text_png(
     shadow_enabled: bool = True,
     emoji_prefix: str = "",
     text_gradient: dict | None = None,
+    shadow_color: tuple[int, int, int, int] = (0, 0, 0, 160),
+    background_color: tuple[int, int, int, int] | None = None,
+    reveal_progress: float | None = None,
+    rotation_degrees: float = 0,
+    max_width_frac: float | None = None,
+    wrap_lines: bool = True,
 ) -> None:
     """Draw styled text on a transparent 1080x1920 canvas.
 
@@ -2410,14 +2593,19 @@ def _draw_text_png(
     else:
         size = getattr(font, "size", text_size_px or _FONT_SIZE_MAP.get(text_size, 72))
 
-    max_width = int(CANVAS_W * _TEXT_MAX_LINE_W)
-    lines = _wrap_text_to_lines(text, font, max_width, draw)
+    width_fraction = _TEXT_MAX_LINE_W if max_width_frac is None else max(0.2, max_width_frac)
+    max_width = int(CANVAS_W * width_fraction)
+    lines = (
+        _wrap_text_to_lines(text, font, max_width, draw)
+        if wrap_lines
+        else text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    )
 
     # Safety: if a single word can't be word-wrapped to fit (no spaces, very
     # long URL), shrink the font until the widest line fits. Caps iterations
     # to avoid pathological inputs blowing render time. Skip when we don't
     # own the font (font-cycle case: caller is responsible for sizing).
-    if own_font:
+    if own_font and wrap_lines:
 
         def _max_line_w(ls: list[str]) -> int:
             widest = 0
@@ -2463,7 +2651,7 @@ def _draw_text_png(
         if vertical_anchor in ("top", "center")
         else ("top" if text_anchor == "left" else "center")
     )
-    if resolved_vertical_anchor == "top" and line_heights:
+    if (not wrap_lines or resolved_vertical_anchor == "top") and line_heights:
         try:
             ascent, descent = font.getmetrics()
             line_step = int((ascent + descent) * _TEXT_LINE_SPACING)
@@ -2481,6 +2669,12 @@ def _draw_text_png(
     )
     # Simpler/predictable: stack each line at top + i*line_step.
     block_h = line_step * (len(lines) - 1) + (line_heights[-1] if line_heights else 0)
+    if not wrap_lines and hasattr(font, "getmetrics"):
+        # Manual rows use font metrics, including empty leading/trailing rows.
+        # Glyph bounds vary with text and are zero for blank rows; they cannot
+        # define the vertical extent of a creator-authored line box.
+        ascent, descent = font.getmetrics()
+        block_h = line_step * (len(lines) - 1) + ascent + descent
 
     y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
     # Vertical anchor semantics mirror horizontal:
@@ -2568,7 +2762,22 @@ def _draw_text_png(
         font_ascent = 0  # bitmap/default font — anchor handling falls back to default
     use_baseline_anchor = font_ascent > 0
 
-    for i, ln in enumerate(lines):
+    visible_lines = lines
+    if reveal_progress is not None:
+        import regex  # noqa: PLC0415
+
+        from app.pipeline.text_animation_phases import visible_grapheme_count  # noqa: PLC0415
+
+        full = " ".join(lines)
+        remaining = visible_grapheme_count(len(regex.findall(r"\X", full)), reveal_progress)
+        visible_lines = []
+        for line in lines:
+            clusters = regex.findall(r"\X", line)
+            visible_lines.append("".join(clusters[: max(0, remaining)]))
+            remaining -= len(clusters) + 1
+
+    background_bounds = []
+    for i, ln in enumerate(visible_lines):
         if i == 0 and emoji_metrics:
             # Position emoji + line 1 as a single unit. For center anchor we
             # center the combined block; for left/right anchor we align the
@@ -2603,13 +2812,17 @@ def _draw_text_png(
             text_anchor_arg = None  # PIL default
             shadow_xy = (x, y + 6)
             fg_xy = (x, y)
+        if background_color is not None:
+            background_bounds.append(
+                fg_draw.textbbox(fg_xy, lines[i], font=font, anchor=text_anchor_arg)
+            )
         if shadow_enabled:
             if text_anchor_arg:
                 shadow_draw.text(
-                    shadow_xy, ln, font=font, fill=(0, 0, 0, 160), anchor=text_anchor_arg
+                    shadow_xy, ln, font=font, fill=shadow_color, anchor=text_anchor_arg
                 )
             else:
-                shadow_draw.text(shadow_xy, ln, font=font, fill=(0, 0, 0, 160))
+                shadow_draw.text(shadow_xy, ln, font=font, fill=shadow_color)
         # Foreground: optional crisp stroke (TikTok caption look) + fill.
         # Pillow renders stroke + fill in a single pass when stroke_width > 0,
         # so glyph anti-aliasing stays clean.
@@ -2639,6 +2852,14 @@ def _draw_text_png(
             else:
                 fg_draw.text(fg_xy, ln, font=font, fill=text_color)
 
+    if background_color is not None and background_bounds and any(visible_lines):
+        left = min(bounds[0] for bounds in background_bounds)
+        top = min(bounds[1] for bounds in background_bounds)
+        right = max(bounds[2] for bounds in background_bounds)
+        bottom = max(bounds[3] for bounds in background_bounds)
+        ImageDraw.Draw(img).rounded_rectangle(
+            (left - 8, top - 4, right + 8, bottom + 4), radius=4, fill=background_color
+        )
     if shadow_enabled:
         shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
         img = Image.alpha_composite(img, shadow_layer)
@@ -2654,7 +2875,7 @@ def _draw_text_png(
         # can use them as the gradient's alpha channel.
         mask_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
         mask_draw = ImageDraw.Draw(mask_layer)
-        for i, ln in enumerate(lines):
+        for i, ln in enumerate(visible_lines):
             if text_anchor == "left":
                 mx = anchor_x
             elif text_anchor == "right":
@@ -2695,6 +2916,12 @@ def _draw_text_png(
         emoji_y = block_top + (first_line_h - emoji_metrics["size"]) // 2
         img.alpha_composite(emoji_metrics["img"], dest=(emoji_x, emoji_y))
 
+    if rotation_degrees:
+        img = img.rotate(
+            -rotation_degrees,
+            resample=Image.Resampling.BICUBIC,
+            center=(anchor_x, CANVAS_H * y_frac),
+        )
     img.save(png_path, "PNG")
 
 
@@ -2832,6 +3059,23 @@ def _draw_spans_png(
     if not span_data:
         return
 
+    # Keep full-span measurements while progressively painting their glyphs.
+    reveal = overlay.get("_reveal_progress")
+    if reveal is not None:
+        import regex  # noqa: PLC0415
+
+        from app.pipeline.text_animation_phases import visible_grapheme_count  # noqa: PLC0415
+
+        count = sum(len(regex.findall(r"\X", sd["text"])) for sd in span_data)
+        remaining = visible_grapheme_count(count, reveal)
+        for sd in span_data:
+            graphemes = regex.findall(r"\X", sd["text"])
+            sd["paint_text"] = "".join(graphemes[:remaining])
+            remaining = max(0, remaining - len(graphemes))
+    else:
+        for sd in span_data:
+            sd["paint_text"] = sd["text"]
+
     # 2. Line wrapping — break between spans when line exceeds max width
     lines: list[list[dict]] = [[]]
     line_w = 0
@@ -2878,19 +3122,26 @@ def _draw_spans_png(
             draw_y = cur_y + baseline_offset
 
             # Shadow
-            shadow_draw.text((x, draw_y + 6), sd["text"], font=sd["font"], fill=(0, 0, 0, 160))
+            if overlay.get("shadow_enabled") is not False:
+                shadow_draw.text(
+                    (x, draw_y + 6),
+                    sd["paint_text"],
+                    font=sd["font"],
+                    fill=_hex_to_rgba(overlay.get("shadow_color", "#000000"))[:3]
+                    + (round(255 * overlay.get("shadow_opacity", 160 / 255)),),
+                )
             # Foreground — optional black stroke when overlay sets outline_px
             if outline_px and outline_px > 0:
                 fg_draw.text(
                     (x, draw_y),
-                    sd["text"],
+                    sd["paint_text"],
                     font=sd["font"],
                     fill=sd["color"],
                     stroke_width=outline_px,
-                    stroke_fill=(0, 0, 0, 255),
+                    stroke_fill=_hex_to_rgba(overlay.get("stroke_color", "#000000")),
                 )
             else:
-                fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"])
+                fg_draw.text((x, draw_y), sd["paint_text"], font=sd["font"], fill=sd["color"])
 
             x += sd["w"] + _SPAN_WORD_GAP
 

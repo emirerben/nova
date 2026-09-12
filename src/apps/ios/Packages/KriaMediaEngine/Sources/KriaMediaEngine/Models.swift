@@ -15,13 +15,16 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     public var audio: AudioMixRecipe
     public var requiredCapabilities: Set<MediaCapability>
     public var assetManifest: RenderAssetManifest?
+    public var motionScenes: MotionSceneProgram?
+    public var cameraPulses: [CameraPulse]
     public var textLayers: [PortableTextLayer]
+    public var visualFills: [VisualCanvasFill]
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest, textLayers
+        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest, textLayers, cameraPulses, motionScenes, visualFills
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest", "textLayers"])
+        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest", "textLayers", "cameraPulses", "motionScenes", "visualFills"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
         rendererVersion = try c.decode(String.self, forKey: .rendererVersion)
@@ -32,6 +35,12 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         audio = try c.decode(AudioMixRecipe.self, forKey: .audio)
         requiredCapabilities = try c.decode(Set<MediaCapability>.self, forKey: .requiredCapabilities)
         assetManifest = try c.decodeIfPresent(RenderAssetManifest.self, forKey: .assetManifest)
+        visualFills = try c.decodeIfPresent([VisualCanvasFill].self, forKey: .visualFills) ?? []
+        if schemaVersion == 1 && c.contains(.visualFills) { throw RecipeError.invalidTimeline }
+        motionScenes = try c.decodeIfPresent(MotionSceneProgram.self, forKey: .motionScenes)
+        if schemaVersion == 1 && c.contains(.motionScenes) { throw RecipeError.invalidTimeline }
+        cameraPulses = try c.decodeIfPresent([CameraPulse].self, forKey: .cameraPulses) ?? []
+        if schemaVersion == 1 && c.contains(.cameraPulses) { throw RecipeError.invalidTimeline }
         textLayers = try c.decodeIfPresent([PortableTextLayer].self, forKey: .textLayers) ?? []
         if schemaVersion == 1 && c.contains(.textLayers) { throw RecipeError.invalidTimeline }
     }
@@ -42,11 +51,11 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 frameRate: Double = 30,
                 assets: [MediaAsset] = [], tracks: [TimelineTrack] = [],
                 audio: AudioMixRecipe = .default, requiredCapabilities: Set<MediaCapability> = [],
-                assetManifest: RenderAssetManifest? = nil, textLayers: [PortableTextLayer] = []) {
+                assetManifest: RenderAssetManifest? = nil, textLayers: [PortableTextLayer] = [], cameraPulses: [CameraPulse] = [], motionScenes: MotionSceneProgram? = nil, visualFills: [VisualCanvasFill] = []) {
         self.schemaVersion = schemaVersion; self.rendererVersion = rendererVersion
         self.canvas = canvas; self.frameRate = frameRate; self.assets = assets
         self.tracks = tracks; self.audio = audio; self.requiredCapabilities = requiredCapabilities
-        self.assetManifest = assetManifest; self.textLayers = textLayers
+        self.assetManifest = assetManifest; self.textLayers = textLayers; self.cameraPulses = cameraPulses; self.motionScenes = motionScenes; self.visualFills = visualFills
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -56,6 +65,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         try c.encode(assets, forKey: .assets); try c.encode(tracks, forKey: .tracks)
         try c.encode(audio, forKey: .audio); try c.encode(requiredCapabilities, forKey: .requiredCapabilities)
         try c.encodeIfPresent(assetManifest, forKey: .assetManifest)
+        try c.encodeIfPresent(motionScenes, forKey: .motionScenes)
+        if !visualFills.isEmpty { try c.encode(visualFills, forKey: .visualFills) }
+        if !cameraPulses.isEmpty { try c.encode(cameraPulses, forKey: .cameraPulses) }
         if schemaVersion == 2 { try c.encode(textLayers, forKey: .textLayers) }
     }
 
@@ -70,7 +82,14 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                       let expected = manifest.assets.first(where: { $0.id == asset.id }),
                       asset.fingerprint == expected.fingerprint.assetFingerprint else { throw RecipeError.invalidTimeline }
             }
-        } else if assetManifest != nil || !textLayers.isEmpty { throw RecipeError.invalidTimeline }
+        } else if assetManifest != nil || !textLayers.isEmpty || !cameraPulses.isEmpty || motionScenes != nil || !visualFills.isEmpty { throw RecipeError.invalidTimeline }
+        guard visualFills.count <= 100, Set(visualFills.map(\.id)).count == visualFills.count else { throw RecipeError.invalidTimeline }
+        for fill in visualFills { try fill.validate(duration: TimelineMath.totalDuration(of: self)) }
+        guard cameraPulses.count <= 100, Set(cameraPulses.map(\.id)).count == cameraPulses.count else { throw RecipeError.invalidTimeline }
+        for pulse in cameraPulses {
+            try pulse.validate()
+            guard pulse.end <= TimelineMath.totalDuration(of: self) else { throw RecipeError.invalidTimeline }
+        }
         guard textLayers.count <= 500, Set(textLayers.map(\.id)).count == textLayers.count else { throw RecipeError.invalidTimeline }
         for layer in textLayers { try layer.validate(duration: TimelineMath.totalDuration(of: self), manifest: assetManifest) }
         guard frameRate.isFinite && frameRate > 0 && frameRate <= 240 else { throw RecipeError.invalidFrameRate(frameRate) }
@@ -89,8 +108,20 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         let ids = Set(assets.map(\.id))
         guard clips.allSatisfy({ ids.contains($0.sourceAssetID) }),
               audio.musicAssetID.map({ ids.contains($0) }) ?? true else { throw RecipeError.missingAssetReference }
+        try motionScenes?.validate(assets: ids, manifest: assetManifest)
         guard ids.count == assets.count else { throw RecipeError.invalidTimeline }
+        for track in tracks {
+            for clip in track.clips where clip.overlayDissolveSeed != nil || clip.overlayAboveText != nil || clip.holdDuration != nil || clip.overlayPopIn != nil || clip.overlayPreserveAlpha != nil {
+                guard schemaVersion == 2, track.kind == .overlay, (clip.holdDuration ?? 0).isFinite,
+                      (0...1800).contains(clip.holdDuration ?? 0) else { throw RecipeError.invalidTimeline }
+            }
+        }
         for clip in clips {
+            if let placement = clip.visualPlacement {
+                guard schemaVersion == 2, tracks.contains(where: { $0.kind == .overlay && $0.clips.contains(where: { $0.id == clip.id }) }), clip.volume == 0, clip.holdDuration == nil else { throw RecipeError.invalidTimeline }
+                try placement.validate()
+                guard clip.timelineStart >= placement.windowStart, clip.timelineStart + clip.duration <= placement.windowEnd + 0.000_001 else { throw RecipeError.invalidTimeline }
+            }
             let values = [clip.timelineStart, clip.sourceStart, clip.sourceDuration, clip.rate, clip.volume,
                           clip.transform.scale, clip.transform.rotationDegrees, clip.transform.positionX, clip.transform.positionY]
             guard values.allSatisfy(\.isFinite), clip.timelineStart >= 0, clip.sourceStart >= 0,
@@ -113,6 +144,12 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 }
             }
         }
+        guard audio.muteWindows.count <= 100, schemaVersion == 2 || audio.muteWindows.isEmpty else { throw RecipeError.invalidTimeline }
+        for window in audio.muteWindows {
+            guard window.start.isFinite, window.end.isFinite, window.start >= 0, window.end > window.start,
+                  window.end <= TimelineMath.totalDuration(of: self), !window.clipIDs.isEmpty,
+                  Set(window.clipIDs).isSubset(of: Set(clips.map(\.id))) else { throw RecipeError.invalidTimeline }
+        }
         let levels = [audio.musicVolume, audio.originalVolume, audio.fadeIn, audio.fadeOut]
         guard levels.allSatisfy(\.isFinite), (0...2).contains(audio.musicVolume),
               (0...2).contains(audio.originalVolume), (0...60).contains(audio.fadeIn),
@@ -125,11 +162,16 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         let clips = tracks.flatMap(\.clips)
         if !clips.isEmpty { result.formUnion([.basicComposition, .local1080Export]) }
         if !textLayers.isEmpty { result.insert(.positionedText) }
+        if motionScenes != nil { result.insert(.motionScenes) }
+        if !audio.muteWindows.isEmpty || !visualFills.isEmpty || clips.contains(where: { $0.visualPlacement != nil }) { result.insert(.visualBlocks) }
+        if !cameraPulses.isEmpty { result.insert(.cameraEffects) }
+        if textLayers.contains(where: { $0.runs.contains(where: { !$0.fontVariations.isEmpty }) || $0.animationPhases != nil || $0.background != nil || $0.effect == .captionPop || $0.karaoke?.activeOnly != nil }) { result.insert(.authoredText) }
         if textLayers.contains(where: { $0.effect != .static && $0.effect != .none }) { result.insert(.animatedText) }
         if clips.contains(where: { $0.text != nil }) { result.insert(.animatedText) }
         if clips.contains(where: { $0.rate != 1 }) { result.insert(.variableSpeed) }
         if clips.contains(where: { $0.transition?.kind == .crossfade }) { result.insert(.crossfade) }
         if clips.contains(where: { $0.transition != nil && $0.transition?.kind != .crossfade }) { result.insert(.clipTransitions) }
+        if clips.contains(where: { $0.overlayDissolveSeed != nil || $0.overlayAboveText != nil || $0.holdDuration != nil || $0.overlayPopIn != nil || $0.overlayPreserveAlpha != nil }) { result.insert(.editorMedia) }
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
@@ -224,16 +266,22 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var transform: MediaTransform; public var transition: Transition?
     public var text: TextTreatment?
     public var look: SourceLook?
+    public var holdDuration: Double?
+    public var overlayAboveText: Bool?
+    public var overlayPopIn: Bool?
+    public var overlayPreserveAlpha: Bool?
+    public var visualPlacement: VisualMediaPlacement?
+    public var overlayDissolveSeed: UInt32?
     public var volume: Double
-    public var duration: TimeInterval { sourceDuration / rate }
+    public var duration: TimeInterval { sourceDuration / rate + (holdDuration ?? 0) }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
-        self.look = look
+        self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed
     }
 }
 
@@ -270,11 +318,29 @@ public enum TextAnimation: String, Codable, Sendable {
 public struct AudioMixRecipe: Codable, Equatable, Sendable {
     public var musicAssetID: String?; public var musicVolume: Double; public var originalVolume: Double
     public var fadeIn: TimeInterval; public var fadeOut: TimeInterval; public var duckOriginalDuringMusic: Bool
-    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false) { self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic }
+    public var muteWindows: [AudioMuteWindow] = []
+    private enum CodingKeys: String, CodingKey { case musicAssetID = "musicAssetId", musicVolume, originalVolume, fadeIn, fadeOut, duckOriginalDuringMusic, muteWindows }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        musicAssetID = try c.decodeIfPresent(String.self, forKey: .musicAssetID)
+        musicVolume = try c.decode(Double.self, forKey: .musicVolume); originalVolume = try c.decode(Double.self, forKey: .originalVolume)
+        fadeIn = try c.decode(Double.self, forKey: .fadeIn); fadeOut = try c.decode(Double.self, forKey: .fadeOut)
+        duckOriginalDuringMusic = try c.decode(Bool.self, forKey: .duckOriginalDuringMusic)
+        muteWindows = try c.decodeIfPresent([AudioMuteWindow].self, forKey: .muteWindows) ?? []
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(musicAssetID, forKey: .musicAssetID)
+        try c.encode(musicVolume, forKey: .musicVolume); try c.encode(originalVolume, forKey: .originalVolume)
+        try c.encode(fadeIn, forKey: .fadeIn); try c.encode(fadeOut, forKey: .fadeOut)
+        try c.encode(duckOriginalDuringMusic, forKey: .duckOriginalDuringMusic)
+        if !muteWindows.isEmpty { try c.encode(muteWindows, forKey: .muteWindows) }
+    }
+    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false, muteWindows: [AudioMuteWindow] = []) { self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic; self.muteWindows = muteWindows }
     public static let `default` = AudioMixRecipe()
 }
 
-public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable { case basicComposition, positionedText, animatedText, crossfade, clipTransitions, goldenHourLook, audioMix, variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export }
+public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable { case visualBlocks, motionScenes, editorMedia, cameraEffects, basicComposition, positionedText, animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix, variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
 public struct ThumbnailSample: Codable, Equatable, Sendable { public var time: TimeInterval; public var fileURL: URL; private enum CodingKeys: String, CodingKey { case time, fileURL = "fileUrl" }; public init(time: TimeInterval, fileURL: URL) { self.time = time; self.fileURL = fileURL } }

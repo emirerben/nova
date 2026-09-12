@@ -4,6 +4,295 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+    func testRenderedRebaseRefreshesGenerationSourcesButLocalEditsDoNot() async {
+        let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        XCTAssertEqual(fake.sourcePoolCallCount, 1)
+        let clip = try! XCTUnwrap(session.timelineClips.first)
+        session.setClipTiming(clipID: clip.id, durationS: 1.5)
+        session.undo()
+        XCTAssertEqual(fake.sourcePoolCallCount, 1, "Local edit and undo retain immutable inputs")
+
+        let refresh = expectation(description: "Resolve sources for rendered generation")
+        fake.sourcePoolExpectation = refresh
+        XCTAssertTrue(session.rebaseCleanDraft(from: Self.variant(duration: 2, generation: "g2")))
+        XCTAssertEqual(session.sourcePreviewState, .preparing, "Old preview must not remain ready")
+        await fulfillment(of: [refresh], timeout: 3)
+        XCTAssertEqual(fake.sourcePoolCallCount, 2)
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertTrue(session.rebaseCleanDraft(from: Self.variant(duration: 2, generation: "g2")))
+        XCTAssertEqual(fake.sourcePoolCallCount, 2, "Repeated authority keeps the same generation inputs")
+    }
+
+    func testPromptRefreshRecoveryClearsFailureForUnchangedDocument() async {
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: nil, baseGenerationID: nil,
+            snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        let baseline = session.document
+        fake.draftError = .requestFailed
+        await session.synchronizePromptRevision()
+        guard case .failed = session.saveState else { return XCTFail("Expected refresh failure") }
+        // Repeated failures must retain the original state, not the last error.
+        await session.synchronizePromptRevision()
+        fake.draftError = nil
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document, baseline)
+        XCTAssertEqual(session.saveState, .idle)
+    }
+
+    func testPromptRefreshRecoveryPreservesUnrelatedSaveAndRenderFailures() async {
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: nil, baseGenerationID: nil,
+            snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        let failures: [NativeEditorSaveState] = [.failed("Save failed"), .renderRetryNeeded("Render failed")]
+        for failure in failures {
+            session.saveState = failure
+            fake.draftError = .requestFailed
+            await session.synchronizePromptRevision()
+            fake.draftError = nil
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.saveState, failure, "Restore the failure that preceded the refresh")
+
+            session.saveState = .idle
+            fake.draftError = .requestFailed
+            await session.synchronizePromptRevision()
+            session.saveState = failure
+            fake.draftError = nil
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.saveState, failure, "Keep a newer save/render failure")
+        }
+    }
+
+    func testStalledPausedSeekRecoversNewestTargetAndIgnoresLateCompletion() async {
+        let session = NativeEditorSession()
+        session.duration = 60
+        let player = DelayedSeekPlayer()
+        session.player = player
+        session.seek(to: 18)
+        let recovery = player.expectSeek(to: 17)
+        session.seek(to: 17)
+        await fulfillment(of: [recovery], timeout: 3)
+        XCTAssertEqual(player.targets, [18, 17])
+        session.seek(to: 16)
+        let newest = player.expectSeek(to: 16)
+        player.completeSeek() // The stalled request completes after replacement.
+        player.completeSeek()
+        await fulfillment(of: [newest], timeout: 3)
+        XCTAssertEqual(player.targets, [18, 17, 16])
+        XCTAssertEqual(session.currentTime, 16)
+        let noFurtherSeek = player.expectNoSeek()
+        player.completeSeek()
+        await fulfillment(of: [noFurtherSeek], timeout: 0.5)
+    }
+
+    func testStalledFinalScrubSampleRetriesWithoutAnotherFingerEvent() async {
+        let session = NativeEditorSession()
+        session.duration = 60
+        let player = DelayedSeekPlayer()
+        session.player = player
+        session.seek(to: 18)
+        let recovery = player.expectSeek(to: 18)
+        await fulfillment(of: [recovery], timeout: 3)
+        XCTAssertEqual(player.targets, [18, 18])
+        let noFurtherSeek = player.expectNoSeek()
+        player.completeSeek()
+        player.completeSeek()
+        await fulfillment(of: [noFurtherSeek], timeout: 0.5)
+        XCTAssertEqual(player.targets, [18, 18])
+    }
+
+    func testRapidScrubbingCoalescesDecoderSeeksAndKeepsLatestClock() async {
+        let session = NativeEditorSession()
+        session.duration = 60
+        let player = DelayedSeekPlayer()
+        session.player = player
+        for step in 1...100 { session.seek(to: Double(step) / 10) }
+        XCTAssertEqual(session.currentTime, 10)
+        XCTAssertEqual(player.targets, [0.1])
+        let latest = player.expectSeek(to: 10)
+        player.completeSeek()
+        await fulfillment(of: [latest], timeout: 3)
+        XCTAssertEqual(player.targets, [0.1, 10])
+        XCTAssertEqual(session.currentTime, 10)
+        let next = player.expectSeek(to: 2)
+        player.completeSeek()
+        session.seek(to: 2)
+        await fulfillment(of: [next], timeout: 3)
+        XCTAssertEqual(player.targets, [0.1, 10, 2])
+        let noFurtherSeek = player.expectNoSeek()
+        player.completeSeek()
+        await fulfillment(of: [noFurtherSeek], timeout: 0.5)
+    }
+
+    func testMusicSourceSurvivesUUIDCaseRoundTripWithoutPublicCatalog() {
+        let id = UUID().uuidString
+        let url = "https://media.example.test/owned-track.m4a"
+        XCTAssertEqual(NativeEditorSession.previewMusicURL(trackID: id, variant: [
+            "music_track_id": .string(id.lowercased()), "music_preview_url": .string(url)
+        ]), URL(string: url))
+        XCTAssertEqual(NativeEditorSession.previewMusicURL(trackID: id, variant: [
+            "background_music": .object(["track_id": .string(id.lowercased()), "preview_url": .string(url)])
+        ]), URL(string: url))
+        XCTAssertNil(NativeEditorSession.previewMusicURL(trackID: UUID().uuidString, variant: [
+            "music_track_id": .string(id.lowercased()), "music_preview_url": .string(url)
+        ]))
+    }
+
+    func testCanonicalTextIdentityPreservesTimedStoryLayersAcrossDraftBridge() throws {
+        let rows: [JSONValue] = (0..<172).map { index in
+            .object(["id": .string("story-label-\(index)"), "text": .string("Caption \(index)"),
+                     "start_s": .number(Double(index) * 0.25), "end_s": .number(Double(index + 1) * 0.25),
+                     "font_family": .string("Fraunces"), "size_px": .number(64), "effect": .string("pop-in")])
+        }
+        let snapshot = DraftSnapshot(draftID: "draft", itemID: "item", variantKey: "guided_story",
+            draftRevision: 0, snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
+            snapshot: ["editor_payload": .object(["sections": .object(["text_elements": .array(rows)])])],
+            canUndo: false, createdAt: .now)
+        let draft = snapshot.editorDraft(projectID: UUID())
+        let session = NativeEditorSession(draft: draft)
+        XCTAssertEqual(session.document.textElements.count, 172)
+        XCTAssertEqual(session.document.textElements.filter { $0.startS <= 0 && $0.endS > 0 }.count, 1)
+        for (index, layer) in session.document.textElements.enumerated() {
+            XCTAssertEqual(layer.id, "story-label-\(index)")
+            XCTAssertEqual(layer.startS, Double(index) * 0.25)
+            XCTAssertEqual(layer.endS, Double(index + 1) * 0.25)
+            XCTAssertEqual(layer.raw["size_px"], .number(64))
+            XCTAssertEqual(layer.raw["effect"], .string("pop-in"))
+        }
+        let roundTrip = try JSONDecoder().decode(EditorDraft.self, from: JSONEncoder().encode(draft))
+        XCTAssertEqual(roundTrip.text.first?.canonicalID, "story-label-0")
+    }
+
+    func testTextTransformUsesGestureBaselineAndSingleUndo() {
+        let session = NativeEditorSession()
+        session.addText(content: "Scale and rotate")
+        let id = session.document.textElements[0].id
+        session.setTextSize(id: id, sizePX: 80)
+        session.setTextWidth(id: id, width: 0.5)
+        let baseline = session.document.textElements[0]
+        let before = session.document
+        session.beginDirectManipulation()
+        session.transformText(from: baseline, scale: 1.2, rotationDelta: 10)
+        session.transformText(from: baseline, scale: 1.5, rotationDelta: 35)
+        session.endDirectManipulation()
+        let result = session.document.textElements[0]
+        XCTAssertEqual(result.raw["size_px"], .number(120))
+        XCTAssertEqual(result.raw["max_width_frac"], .number(0.75))
+        XCTAssertEqual(result.raw["rotation_deg"], .number(35))
+        session.undo()
+        XCTAssertEqual(session.document, before)
+        session.redo()
+        XCTAssertEqual(session.document.textElements[0], result)
+    }
+
+    func testTextScalingContinuesBeyondCanvasAndFormerSizeLimit() {
+        let session = NativeEditorSession()
+        session.addText(content: "Large text")
+        let id = session.document.textElements[0].id
+        session.setTextSize(id: id, sizePX: 100)
+        let baseline = session.document.textElements[0]
+        session.transformText(from: baseline, scale: 12, rotationDelta: 0)
+        XCTAssertEqual(session.document.textElements[0].raw["size_px"]?.numberValue ?? 0, 1200, accuracy: 0.001)
+        XCTAssertGreaterThan(session.document.textElements[0].raw["max_width_frac"]?.numberValue ?? 0, 1)
+        session.setTextSize(id: id, sizePX: 1600)
+        XCTAssertEqual(session.document.textElements[0].raw["size_px"]?.numberValue ?? 0, 1600, accuracy: 0.001)
+        session.setTextSize(id: id, sizePX: .infinity)
+        XCTAssertEqual(session.document.textElements[0].raw["size_px"]?.numberValue ?? 0, 1600, accuracy: 0.001)
+    }
+
+    func testPhaseEditsPreserveLegacyEntranceAndUndoTogether() {
+        let session = NativeEditorSession()
+        session.addText(content: "Motion")
+        let id = session.document.textElements[0].id
+        session.setTextAnimation(id: id, animation: "pop-in")
+        let baseline = session.document
+        session.beginTransaction()
+        session.setTextPhase(id: id, phase: "exit", effect: "typewriter")
+        session.setTextAnimationSpeed(id: id, speed: 2)
+        session.endTransaction()
+        let phases = NativeEditorSession.textPhases(for: session.document.textElements[0])
+        XCTAssertEqual(phases["entrance"], .string("pop"))
+        XCTAssertEqual(phases["exit"], .string("typewriter"))
+        XCTAssertEqual(phases["speed"], .number(2))
+        session.undo()
+        XCTAssertEqual(session.document, baseline)
+    }
+
+    func testTextDragCrossingCarouselUsesOutputDeltaAndKeepsBaseDuration() {
+        let clips: [EditorClip] = [
+            EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 4, trimIn: 0, trimOut: 4, sourceDuration: 4),
+            EditorClip(id: UUID(), assetID: UUID(), start: 4, end: 8, trimIn: 0, trimOut: 4, sourceDuration: 4),
+        ]
+        let snapshot: [String: JSONValue] = ["carousel_moment": .object(["position": .string("middle"), "duration_s": .number(3)])]
+        let draft = EditorDraft(projectID: UUID(), clips: clips, text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0, serverSnapshot: snapshot)
+        let session = NativeEditorSession(draft: draft)
+        session.addText(content: "Move")
+        let id = session.document.textElements[0].id
+        session.updateTextTiming(id: id, startS: 2, endS: 3)
+        let baseline = session.document
+        session.beginTimedBodyMove(kind: .text, id: id)
+        session.updateTimedBodyMove(by: 2)
+        session.updateTimedBodyMove(by: 6)
+        session.endTimedBodyMove()
+        XCTAssertEqual(session.document.textElements[0].startS, 5)
+        XCTAssertEqual(session.document.textElements[0].endS, 6)
+        session.undo()
+        XCTAssertEqual(session.document, baseline)
+    }
+
+    func testPendingTextOnlyCommitsOnDoneAtPlayheadAsOneUndoStep() {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 6, trimIn: 0, trimOut: 6, sourceDuration: 6)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        session.currentTime = 4.5
+        session.beginTextCreation()
+        session.updatePendingText("One")
+        session.updatePendingText("One more game")
+        XCTAssertTrue(session.document.textElements.isEmpty)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertFalse(session.canUndo)
+        let selection = session.finishTextCreation()
+        XCTAssertEqual(selection, session.selection)
+        XCTAssertEqual(session.document.textElements.first?.text, "One more game")
+        XCTAssertEqual(session.document.textElements.first?.startS, 4.5)
+        XCTAssertEqual(session.document.textElements.first?.endS, 6)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        session.undo()
+        XCTAssertTrue(session.document.textElements.isEmpty)
+        XCTAssertFalse(session.canUndo)
+        session.redo()
+        XCTAssertEqual(session.document.textElements.first?.text, "One more game")
+    }
+
+    func testCancelAndEmptyDonePreserveExistingTextAndHistory() {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 6, trimIn: 0, trimOut: 6, sourceDuration: 6)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        session.addText(content: "Keep me")
+        let baseline = session.document
+        session.beginTextCreation()
+        session.updatePendingText("Discard me")
+        session.cancelTextCreation()
+        XCTAssertEqual(session.document, baseline)
+        session.beginTextCreation()
+        session.updatePendingText(" \n ")
+        XCTAssertNil(session.finishTextCreation())
+        XCTAssertEqual(session.document, baseline)
+        session.undo()
+        XCTAssertTrue(session.document.textElements.isEmpty)
+        XCTAssertFalse(session.canUndo)
+    }
+
     func testProductionSessionStartsFailClosedUntilCapabilitiesLoad() {
         let project = ProjectSummary(id: UUID(), title: "Ready", status: .ready, updatedAt: .now, posterURL: nil)
         let session = NativeEditorSession(project: project)
@@ -161,6 +450,13 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(draft.captions.enabled)
         XCTAssertEqual(draft.captions.style, "sentence")
         XCTAssertEqual(Self.object(draft.serverSnapshot["editor_payload"])?["base_generation"], .string("live"))
+        for absentGeneration in [JSONValue.null, .string("")] {
+            var legacy = authoritative
+            legacy["render_generation_id"] = absentGeneration
+            legacy["render_finished_at"] = .string("live-finished")
+            let restored = server.editorDraft(projectID: UUID(), authoritativeVariant: legacy)
+            XCTAssertEqual(Self.object(restored.serverSnapshot["editor_payload"])?["base_generation"], .string("live-finished"))
+        }
     }
 
     func testNarratedVariantProjectsPersistedVisualCutIntoTimeline() {
@@ -419,7 +715,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.saveState, .loadFailed("Kria couldn’t complete that request. Check your connection and try again."))
     }
 
-    func testHydratedProjectPlaybackFallbackUsesRefreshedProjection() async throws {
+    func testHydratedProjectDoesNotSubstituteFinishedOutputForMissingSources() async throws {
         let threadID = UUID()
         let jobID = UUID()
         let fallbackURL = URL(fileURLWithPath: "/tmp/kria-refreshed-fallback.mp4")
@@ -458,8 +754,8 @@ final class NativeEditorSessionTests: XCTestCase {
 
         await session.load(project: project, api: fake)
 
-        let asset = try XCTUnwrap(session.player?.currentItem?.asset as? AVURLAsset)
-        XCTAssertEqual(asset.url, fallbackURL)
+        XCTAssertNil(session.player)
+        guard case .failed = session.sourcePreviewState else { return XCTFail("Missing sources must remain explicit") }
         XCTAssertEqual(fake.lastVariantID, "original_text")
     }
 
@@ -689,7 +985,7 @@ final class NativeEditorSessionTests: XCTestCase {
         ]
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
-            authoritativeVariant: latestVariant,
+            authoritativeVariant: latestVariant.merging(["render_generation_id": .string("g1")]) { _, new in new },
             commitError: .conflict
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
@@ -699,7 +995,12 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.save()
         XCTAssertEqual(session.saveState, .conflict)
 
+        fake.authoritativeVariant = latestVariant
+        let sourceRefresh = expectation(description: "Conflict rebase resolves new generation sources")
+        fake.sourcePoolExpectation = sourceRefresh
         await session.rebaseAfterConflict()
+        await fulfillment(of: [sourceRefresh], timeout: 3)
+        XCTAssertEqual(fake.sourcePoolCallCount, 2)
 
         XCTAssertEqual(session.document.revision.baseGeneration, "g2")
         XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
@@ -953,9 +1254,9 @@ final class NativeEditorSessionTests: XCTestCase {
 
 private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     let draftSnapshot: DraftSnapshot
-    let draftError: APIError?
+    var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
-    let authoritativeVariant: [String: JSONValue]?
+    var authoritativeVariant: [String: JSONValue]?
     let editorVariantError: APIError?
     var commitResponse: EditorCommitResponse?
     let commitError: APIError?
@@ -974,6 +1275,8 @@ private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var lastVariantID: String?
     var projectCallCount = 0
     var editorVariantsCallCount = 0
+    var sourcePoolCallCount = 0
+    var sourcePoolExpectation: XCTestExpectation?
     init(draftSnapshot: DraftSnapshot, draftError: APIError? = nil, openReceipt: OpenInEditorResponse? = nil, authoritativeVariant: [String: JSONValue]? = nil, editorVariantError: APIError? = nil, commitResponse: EditorCommitResponse? = nil, commitError: APIError? = nil, refreshedThread: CreationThread? = nil, suspendNextCommit: Bool = false) {
         self.draftSnapshot = draftSnapshot
         self.draftError = draftError
@@ -1015,6 +1318,12 @@ private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         if let editorVariantError { throw editorVariantError }
         return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
     }
+    func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool {
+        sourcePoolCallCount += 1
+        sourcePoolExpectation?.fulfill()
+        sourcePoolExpectation = nil
+        throw APIError.unsupported
+    }
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]] {
         editorVariantsCallCount += 1
         return [authoritativeVariant ?? ["variant_id": .string("initial"), "render_status": .string("ready")]]
@@ -1054,4 +1363,37 @@ private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func cancelUpload(reservationID: UUID) async throws { throw APIError.unsupported }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation { throw APIError.unsupported }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
+}
+
+private final class DelayedSeekPlayer: AVPlayer, @unchecked Sendable {
+    var targets: [Double] = []
+    private var completions: [@Sendable (Bool) -> Void] = []
+    private var seekExpectation: (target: Double?, expectation: XCTestExpectation)?
+
+    func expectSeek(to target: Double) -> XCTestExpectation {
+        let expectation = XCTestExpectation(description: "Seek to \(target)")
+        seekExpectation = (target, expectation)
+        return expectation
+    }
+
+    func expectNoSeek() -> XCTestExpectation {
+        let expectation = XCTestExpectation(description: "Completed seek must not retry")
+        expectation.isInverted = true
+        seekExpectation = (nil, expectation)
+        return expectation
+    }
+    override func seek(to time: CMTime, toleranceBefore: CMTime, toleranceAfter: CMTime,
+                       completionHandler: @escaping @Sendable (Bool) -> Void) {
+        targets.append(time.seconds)
+        completions.append(completionHandler)
+        if let pending = seekExpectation,
+           pending.target == nil || abs(pending.target! - time.seconds) < 0.001 {
+            seekExpectation = nil
+            pending.expectation.fulfill()
+        }
+    }
+    func completeSeek() {
+        guard !completions.isEmpty else { return }
+        completions.removeFirst()(true)
+    }
 }

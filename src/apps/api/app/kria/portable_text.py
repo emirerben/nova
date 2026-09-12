@@ -6,7 +6,9 @@ bytes and paints text locally. No rendered glyph images cross this boundary.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+
+from app.agents._schemas.text_animation_phases import TextAnimationPhases
 
 
 class _TextModel(BaseModel):
@@ -59,7 +61,8 @@ class PositionedGlyph(_TextModel):
 class PositionedTextRun(_TextModel):
     text: str = Field(min_length=1, max_length=2000)
     font_asset_id: str = Field(min_length=1, max_length=160)
-    font_size: float = Field(gt=0, le=1000)
+    font_size: float = Field(gt=0)
+    font_variations: dict[str, float] = Field(default_factory=dict, max_length=16)
     x: float = Field(ge=-10000, le=10000)
     baseline_y: float = Field(ge=-10000, le=10000)
     letter_spacing: float = Field(ge=-100, le=1000)
@@ -74,9 +77,24 @@ class PositionedTextRun(_TextModel):
 
     @model_validator(mode="after")
     def valid_glyph_layout(self):
+        if any(
+            len(key) != 4
+            or not key.isascii()
+            or not all(32 <= ord(char) <= 126 for char in key)
+            or abs(value) > 65536
+            for key, value in self.font_variations.items()
+        ):
+            raise ValueError("invalid font variation axes")
         if not self.shaped and self.glyphs is None:
             raise ValueError("unshaped text requires resolved glyph positions")
         return self
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_font_shape(self, handler):
+        payload = handler(self)
+        if not self.font_variations:
+            payload.pop("font_variations", None)
+        return payload
 
 
 class ResolvedTextMotion(_TextModel):
@@ -240,6 +258,15 @@ class TextFadeEnvelope(_TextModel):
 
 
 class KaraokeContent(_TextModel):
+    active_only: bool | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_wire_shape(self, handler):
+        payload = handler(self)
+        if self.active_only is None:
+            payload.pop("active_only", None)
+        return payload
+
     starts: list[float] = Field(min_length=1, max_length=100)
     highlight: TextInk
 
@@ -249,12 +276,23 @@ class KaraokeContent(_TextModel):
 
         if any(not math.isfinite(start) or start < 0 or start > 1800 for start in self.starts):
             raise ValueError("karaoke starts must be finite local timestamps")
+        if self.active_only and self.starts != sorted(self.starts):
+            raise ValueError("active-word starts must be ordered")
         return self
 
 
 class GiantTitleTransition(_TextModel):
     origin_x: float = Field(ge=-30000, le=30000)
     origin_y: float = Field(ge=-30000, le=30000)
+
+
+class TextBackground(_TextModel):
+    color: TextInk
+    left: float = Field(ge=-10000, le=10000)
+    top: float = Field(ge=-10000, le=10000)
+    width: float = Field(gt=0, le=20000)
+    height: float = Field(gt=0, le=20000)
+    radius: float = Field(ge=0, le=1000)
 
 
 class PortableTextLayer(_TextModel):
@@ -264,6 +302,8 @@ class PortableTextLayer(_TextModel):
     anchor_x: float = Field(ge=-10000, le=10000)
     anchor_y: float = Field(ge=-10000, le=10000)
     rotation_degrees: float = Field(ge=-3600, le=3600)
+    animation_phases: TextAnimationPhases | None = None
+    background: TextBackground | None = None
     runs: list[PositionedTextRun] = Field(default_factory=list, max_length=100)
     effect: Literal[
         "static",
@@ -284,6 +324,7 @@ class PortableTextLayer(_TextModel):
         "dissolve-out",
         "karaoke-line",
         "lyric-line",
+        "caption-pop",
     ] = "static"
     motion: ResolvedTextMotion | None = None
     reveal_bounds: TextRevealBounds | None = None
@@ -295,6 +336,15 @@ class PortableTextLayer(_TextModel):
     fade: TextFadeEnvelope | None = None
     giant_title: GiantTitleTransition | None = None
     dissolve_seed: int | None = Field(default=None, strict=True, ge=0, le=4294967295)
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_wire_shape(self, handler):
+        payload = handler(self)
+        if self.animation_phases is None:
+            payload.pop("animation_phases", None)
+        if self.background is None:
+            payload.pop("background", None)
+        return payload
 
     @model_validator(mode="after")
     def valid_window(self):
@@ -330,9 +380,15 @@ class PortableTextLayer(_TextModel):
             raise ValueError("karaoke requires timed word geometry")
         if self.karaoke and (
             len(self.karaoke.starts) != len(self.runs)
-            or any(run.shaped or run.gradient is not None for run in self.runs)
+            or any(
+                (run.shaped and not self.karaoke.active_only) or run.gradient is not None
+                for run in self.runs
+            )
         ):
-            raise ValueError("karaoke requires one unshaped solid-color run per timestamp")
+            raise ValueError(
+                "karaoke requires one solid-color run per timestamp; "
+                "shaping requires active-only mode"
+            )
         if (self.effect == "dissolve-out") != (self.dissolve_seed is not None):
             raise ValueError("dissolve requires an explicit renderer seed")
         if (self.effect == "staggered-slice") != (self.staggered is not None):

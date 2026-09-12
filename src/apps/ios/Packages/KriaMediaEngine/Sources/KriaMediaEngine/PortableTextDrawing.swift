@@ -34,7 +34,7 @@ extension RecipeTextLayer {
         let bounds = fixedBounds ?? painter.bounds
         return Self(image: try painter.image(bounds: bounds, maxBitmapBytes: maxBitmapBytes),
                     frame: bounds, start: layer.start, end: layer.end, animation: .none,
-                    portable: layer, portableAnchor: painter.anchor)
+                    selectionBounds: painter.selectionBounds, portable: layer, portableAnchor: painter.anchor)
     }
 }
 #endif

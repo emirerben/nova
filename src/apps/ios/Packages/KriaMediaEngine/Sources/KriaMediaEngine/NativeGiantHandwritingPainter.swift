@@ -12,7 +12,7 @@ struct NativeGiantHandwritingPainter {
               let context = CGContext(data: nil, width: Int(bounds.width), height: Int(bounds.height),
                 bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            throw MediaEngineError.unsupportedCapability
+            throw NativePreviewFeatureError("NativeGiantHandwritingPainter-15")
         }
         context.translateBy(x: -bounds.minX, y: -bounds.minY)
         let paths = content.strokes.compactMap { stroke -> CGPath? in

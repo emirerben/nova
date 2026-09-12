@@ -11,16 +11,15 @@ final class EditorUITests: XCTestCase {
         XCTAssertTrue(app.buttons["native-editor-back"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-project-title"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-workspace-switcher"].exists)
-        XCTAssertTrue(app.staticTexts["Local preview"].exists)
         XCTAssertTrue(app.buttons["native-editor-tool-text"].exists)
 
         app.buttons["native-editor-tool-text"].tap()
-        let input = app.textFields["native-editor-text-input"]
+        let input = app.descendants(matching: .any)["native-editor-new-text-input"]
         XCTAssertTrue(input.waitForExistence(timeout: 3))
         input.tap()
         input.typeText(" ritual")
-        app.buttons["native-editor-add-text"].tap()
-        app.buttons["native-editor-inspector-done"].tap()
+        app.buttons["native-editor-text-done"].tap()
+        app.buttons["native-editor-text-inspector-done"].tap()
 
         XCTAssertTrue(app.buttons["native-editor-undo"].isEnabled)
         app.buttons["native-editor-undo"].tap()
@@ -124,13 +123,13 @@ final class EditorUITests: XCTestCase {
         let text = app.descendants(matching: .any)["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"]
         XCTAssertTrue(text.waitForExistence(timeout: 3))
         text.tap()
-
-        let input = app.textFields["native-editor-selected-text-input"]
+        app.buttons["Edit text"].tap()
+        app.buttons["Edit text"].tap()
+        let input = app.descendants(matching: .any)["native-editor-text-content"]
         XCTAssertTrue(input.waitForExistence(timeout: 3))
         input.tap()
         input.typeText(" that becomes a much longer multi-line title without changing the cut")
-        app.buttons["native-editor-selected-text-apply"].tap()
-        app.buttons["native-editor-inspector-done"].tap()
+        app.buttons["native-editor-text-inspector-done"].tap()
 
         let updatedText = app.descendants(matching: .any)["native-editor-preview-text-00000000-0000-4000-8000-000000000100"]
         expectation(

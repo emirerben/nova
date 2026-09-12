@@ -347,7 +347,7 @@ export function resolveLineSpacing(value: number | null | undefined): number {
  */
 export function resolveMaxWidthFrac(value: number | null | undefined): number {
   if (value == null || !Number.isFinite(value)) return MAX_LINE_W_FRAC;
-  return Math.max(MAX_WIDTH_FRAC_MIN, Math.min(MAX_WIDTH_FRAC_MAX, value));
+  return Math.max(MAX_WIDTH_FRAC_MIN, value);
 }
 
 /** Fraction of a text box's width that sits to the left of its renderer anchor. */
@@ -506,6 +506,7 @@ export interface TextElementLayout {
   maxWidthFrac: number;
   /** Maximum wrap-box width in 1080px-canvas coordinates. */
   maxWidthPx: number;
+  wrapLines?: boolean;
   /** Clockwise text rotation in degrees. */
   rotationDeg: number;
   /** Stroke width in 1080x1920 canvas pixels. */
@@ -552,6 +553,7 @@ export function resolveTextElementsLayout(
       alignment: (el.alignment ?? "center") as "left" | "center" | "right",
       letterSpacingEm: resolveLetterSpacingEm(el.letter_spacing),
       lineSpacing: resolveLineSpacing(el.line_spacing),
+      wrapLines: el.wrap_lines ?? true,
       maxWidthFrac: resolveMaxWidthFrac(el.max_width_frac),
       maxWidthPx: canvas.w * resolveMaxWidthFrac(el.max_width_frac),
       rotationDeg: Number.isFinite(el.rotation_deg ?? NaN) ? Number(el.rotation_deg) : 0,

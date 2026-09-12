@@ -106,6 +106,8 @@ protocol KriaAPIClient: Sendable {
     func draft(threadID: UUID) async throws -> DraftSnapshot
     func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse
+    func editorMusicTracks() async throws -> [NativeEditorMusicTrack]
+    func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]]
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue]
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
@@ -152,6 +154,8 @@ extension KriaAPIClient {
         throw APIError.unsupported
     }
 
+    func editorMusicTracks() async throws -> [NativeEditorMusicTrack] { throw APIError.unsupported }
+    func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool { throw APIError.unsupported }
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]] {
         _ = jobID
         throw APIError.unsupported
@@ -688,11 +692,12 @@ struct KriaAPI: KriaAPIClient {
     }
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
         guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
-        if variant["render_destination"] == .string("device"),
-           variant["resolved_archetype"] == .string("guided_story"),
+        if variant["resolved_archetype"] == .string("guided_story"),
            case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) {
             let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
-            guard timeline["base_generation"] == variant["render_generation_id"] else { throw APIError.conflict }
+            let generation = [variant["render_generation_id"], variant["render_finished_at"]]
+                .compactMap { $0?.stringValue }.first { !$0.isEmpty }
+            guard let generation, timeline["base_generation"] == .string(generation) else { throw APIError.conflict }
             variant["user_timeline"] = .object(timeline)
             variant["editor_revision_number"] = timeline["revision_number"]
         }
@@ -755,8 +760,28 @@ struct KriaAPI: KriaAPIClient {
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         if http.statusCode == 401 { clearExpiredSession(); throw APIError.sessionExpired }
-        if http.statusCode == 409 || http.statusCode == 412 { throw APIError.conflict }
-        guard (200..<300).contains(http.statusCode) else { throw APIError.requestFailed }
+        if http.statusCode == 409 || http.statusCode == 412 {
+            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let detail = body?["detail"] as? String
+            #if DEBUG
+            let code: String = switch detail {
+            case "Content plan is unavailable": "plan_unavailable"
+            case "Video is not ready to open in the editor.": "editor_not_ready"
+            case "baseline_conflict": "baseline_conflict"
+            default: "other_conflict"
+            }
+            NativePreviewDiagnostics.record("http-conflict", fields: ["code": code])
+            #endif
+            if detail == "Content plan is unavailable" { throw APIError.contentPlanUnavailable }
+            if detail == "Video is not ready to open in the editor." { throw APIError.editorNotReady }
+            throw APIError.conflict
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            #if DEBUG
+            NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
+            #endif
+            throw APIError.requestFailed
+        }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
     }
@@ -793,7 +818,7 @@ private struct ProjectMediaInput: Encodable { let mediaID: String; let gcsPath: 
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
 private struct DraftUndoRequest: Encodable { let expectedRevision: Int; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision" } }
-enum APIError: Error, LocalizedError, Equatable { case requestFailed, offline, invalidResponse, sessionExpired, conflict, unsupported; var errorDescription: String? { switch self { case .sessionExpired: "Your session expired. Please sign in again."; case .conflict: "This edit changed elsewhere. Review your local changes before saving again."; case .unsupported: "This API client does not support native editor saves."; default: "Kria couldn’t complete that request. Check your connection and try again." } } }
+enum APIError: Error, LocalizedError, Equatable { case requestFailed, offline, invalidResponse, sessionExpired, conflict, unsupported, contentPlanUnavailable, editorNotReady; var errorDescription: String? { switch self { case .sessionExpired: "Your session expired. Please sign in again."; case .conflict: "This edit changed elsewhere. Review your local changes before saving again."; case .contentPlanUnavailable: "This video’s content plan is unavailable. Its editor cannot be opened."; case .editorNotReady: "This video has no ready edit to open."; case .unsupported: "This API client does not support native editor saves."; default: "Kria couldn’t complete that request. Check your connection and try again." } } }
 
 protocol AuthProvider { func signIn() async throws -> AuthCredential }
 struct AuthCredential: Sendable { let token: String; let displayName: String?; let nonce: String; init(token: String, displayName: String?, nonce: String = "") { self.token = token; self.displayName = displayName; self.nonce = nonce } }
@@ -976,6 +1001,9 @@ extension DraftSnapshot {
             for key in directKeys where authoritativeVariant[key] != nil {
                 sections[key] = authoritativeVariant[key]
             }
+            if sections["music_window"] == nil, let start = authoritativeVariant["music_preview_start_s"] {
+                sections["music_window"] = .object(["start_s": start, "alignment": .string("preserve_cuts")])
+            }
             if let style = authoritativeVariant["voiceover_caption_style"] ?? authoritativeVariant["caption_style"] {
                 sections["caption_style"] = style
             }
@@ -1009,12 +1037,10 @@ extension DraftSnapshot {
                 let slots = Self.narratedTimelineSlots(authoritativeVariant)
                 if !slots.isEmpty { sections["timeline_slots"] = .array(slots) }
             }
-            editorPayload["base_generation"] =
-                authoritativeVariant["render_generation_id"]
-                ?? authoritativeVariant["render_finished_at"]
-                ?? baseGenerationID.map(JSONValue.string)
-                ?? editorPayload["base_generation"]
-                ?? .string("")
+            let baseline = [authoritativeVariant["render_generation_id"]?.stringValue,
+                authoritativeVariant["render_finished_at"]?.stringValue, baseGenerationID,
+                editorPayload["base_generation"]?.stringValue].compactMap { $0 }.first { !$0.isEmpty } ?? ""
+            editorPayload["base_generation"] = .string(baseline)
             editorPayload["sections"] = .object(sections)
             document["editor_payload"] = .object(editorPayload)
             // Capabilities are status-time policy, not draft state. Always
@@ -1051,7 +1077,7 @@ extension DraftSnapshot {
             let id = Self.uuid(object["id"]) ?? UUID()
             let x = Self.number(object["x_frac"] ?? object["x"]) ?? 0.5; let y = Self.number(object["y_frac"] ?? object["y"]) ?? 0.5
             let style = (object["font_family"] ?? object["style"])?.stringValue ?? "Fraunces"
-            return TextLayer(id: id, content: content, position: CGPoint(x: x, y: y), style: style)
+            return TextLayer(id: id, content: content, position: CGPoint(x: x, y: y), style: style, canonicalID: object["id"]?.stringValue)
         }
         let music: MusicSelection?
         if let object = Self.object(legacy["music"]), let trackID = Self.uuid(object["track_id"]) {

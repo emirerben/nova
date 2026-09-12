@@ -35,6 +35,10 @@ public enum TextTransformTiming {
     private static func baseSample(effect: PortableTextEffect, text: String, localTime: Double,
                                    duration: Double, motion: TextMotionParameters?, fade: TextFadeEnvelope?) throws -> TextTransformSample {
         guard duration.isFinite, duration > 0, localTime.isFinite else { throw RecipeError.invalidTimeline }
+        if effect == .captionPop {
+            return TextTransformSample(alpha: min(1, max(0, localTime / 0.12)),
+                scale: 0.94 + 0.06 * min(1, max(0, localTime / 0.14)), xTranslate: 0, yTranslate: 0)
+        }
         // The current cloud renderer treats slide-in as a static hold.
         if effect == .staggeredSlice || effect == .dissolveOut || effect == .slideIn || effect == .karaokeLine { return TextTransformSample(alpha: 1, scale: 1, xTranslate: 0, yTranslate: 0, revealProgress: 1) }
         guard let motion else { return try legacySample(effect: effect, localTime: localTime, duration: duration, fade: fade) }
@@ -73,7 +77,7 @@ public enum TextTransformTiming {
             else if p < 0.72 { scale = 1.25 - 0.35 * (p - 0.36) / 0.36 }
             else if p < 1 { scale = 0.90 + 0.10 * (p - 0.72) / 0.28 }
             if scale > 1 { scale = 1 + (scale - 1) * motion.overshoot / 0.15 }
-        default: throw MediaEngineError.unsupportedCapability
+        default: throw NativePreviewFeatureError("TextTransformTiming-80")
         }
         if effect != .smoothType {
             scale = 1 + (scale - 1) * motion.intensity
@@ -118,7 +122,7 @@ public enum TextTransformTiming {
             if p < 0.36 { scale = 1 + 0.25 * p / 0.36 }
             else if p < 0.72 { scale = 1.25 - 0.35 * (p - 0.36) / 0.36 }
             else if p < 1 { scale = 0.90 + 0.10 * (p - 0.72) / 0.28 }
-        default: throw MediaEngineError.unsupportedCapability
+        default: throw NativePreviewFeatureError("TextTransformTiming-125")
         }
         return TextTransformSample(alpha: alpha, scale: scale, xTranslate: 0, yTranslate: y, revealProgress: reveal)
     }

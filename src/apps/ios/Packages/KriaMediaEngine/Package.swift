@@ -11,7 +11,8 @@ let package = Package(
         .library(name: "KriaMediaEngine", targets: ["KriaMediaEngine"])
     ],
     targets: [
-        .target(name: "KriaMediaEngine"),
-        .testTarget(name: "KriaMediaEngineTests", dependencies: ["KriaMediaEngine"])
+        .target(name: "CVPX", exclude: ["vendor/LICENSE", "vendor/PATENTS", "vendor/AUTHORS", "vendor/README.kria.md"], publicHeadersPath: "include", cSettings: [.headerSearchPath("vendor"), .unsafeFlags(["-O2"])]),
+        .target(name: "KriaMediaEngine", dependencies: ["CVPX"], resources: [.process("Resources")]),
+        .testTarget(name: "KriaMediaEngineTests", dependencies: ["KriaMediaEngine"], resources: [.copy("Fixtures")])
     ]
 )

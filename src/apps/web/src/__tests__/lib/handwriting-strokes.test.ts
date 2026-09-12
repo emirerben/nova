@@ -45,3 +45,10 @@ describe("handwriting stroke font", () => {
     expect(handwritingPathD(stroke.points)).toContain("L");
   });
 });
+
+it("keeps explicit blank handwriting rows without automatic wrapping", () => {
+  const text = "THIS IS A LONG MANUAL LINE\n\nLAST";
+  const layout = layoutHandwritingText(text, { maxWidthEm: 1, wrapLines: false });
+  expect(layout.lines).toEqual(text.split("\n"));
+  expect(layout.widthEm).toBeGreaterThan(1);
+});

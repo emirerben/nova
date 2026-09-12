@@ -53,7 +53,7 @@ public struct TextMotionParameters: Codable, Equatable, Sendable {
 }
 
 public enum PortableTextEffect: String, Codable, CaseIterable, Sendable {
-    case `static`, none, fadeIn = "fade-in", slideUp = "slide-up", slideDown = "slide-down"
+    case captionPop = "caption-pop", `static`, none, fadeIn = "fade-in", slideUp = "slide-up", slideDown = "slide-down"
     case lyricLine = "lyric-line", karaokeLine = "karaoke-line", popIn = "pop-in", scaleUp = "scale-up", typewriter
     case streamIn = "stream-in", staggeredSlice = "staggered-slice", inkReveal = "ink-reveal"
     case handwriting, dissolveOut = "dissolve-out", bounce, slideIn = "slide-in", smoothType = "smooth-type"

@@ -33,6 +33,16 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## libvpx native preview decoder
+
+KriaMediaEngine bundles the libvpx 1.17.0 decoder for local VP9 source preparation.
+The vendored [source provenance](src/apps/ios/Packages/KriaMediaEngine/Sources/CVPX/vendor/README.kria.md),
+[license](src/apps/ios/Packages/KriaMediaEngine/Sources/CVPX/vendor/LICENSE), and
+[patent notice](src/apps/ios/Packages/KriaMediaEngine/Sources/CVPX/vendor/PATENTS)
+are preserved with the source. The package also includes the
+[distribution notices](src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Resources/libvpx-notices.txt)
+as a processed resource.
+
 ## Third-Party Font Licenses
 
 Nova bundles the following fonts. All are free-licensed under OFL 1.1 or Apache 2.0.

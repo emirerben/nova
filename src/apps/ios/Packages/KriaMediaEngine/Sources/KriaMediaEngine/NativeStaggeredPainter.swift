@@ -61,7 +61,7 @@ extension RecipeTextLayer {
                                max(abs(bitmap.frame.minY - pivot.y), abs(bitmap.frame.maxY - pivot.y)))
             bounds = bounds.union(CGRect(x: pivot.x - radius, y: pivot.y - radius - entry.run.fontSize * 0.18,
                                          width: 2 * radius, height: 2 * radius + entry.run.fontSize * 0.18)).integral
-            guard retainedBytes + Int(bounds.width * bounds.height * 4) * 2 <= maxBitmapBytes else { throw MediaEngineError.unsupportedCapability }
+            guard retainedBytes + Int(bounds.width * bounds.height * 4) * 2 <= maxBitmapBytes else { throw NativePreviewFeatureError("NativeStaggeredPainter-64") }
             glyphs.append(bitmap)
         }
         let extent = CGRect(origin: .zero, size: bounds.size)

@@ -7,6 +7,14 @@ import skia
 from app.kria.portable_text import PositionedGlyph
 
 
+def resolved_font_variations(font: skia.Font) -> dict[str, float]:
+    try:
+        coordinates = font.getTypeface().getVariationDesignPosition()
+    except RuntimeError:
+        return {}
+    return {int(axis.axis).to_bytes(4, "big").decode("ascii"): axis.value for axis in coordinates}
+
+
 def resolve_legacy_glyphs(font: skia.Font, text: str, spacing_px: float) -> list[PositionedGlyph]:
     """Match Skia drawString's unshaped glyph/advance model, including tracking.
 
@@ -27,6 +35,19 @@ def resolve_legacy_glyphs(font: skia.Font, text: str, spacing_px: float) -> list
 
 class UnsupportedPortableText(ValueError):
     """The caller must keep the recipe gated instead of dropping a treatment."""
+
+
+def _outline_ink(overlay: dict):
+    from app.kria.portable_text import TextInk
+    from app.pipeline import text_overlay_skia as cloud
+
+    color = cloud._text_outline_color(cloud._text_shadow_style(overlay), 1)
+    return TextInk(
+        red=skia.ColorGetR(color) / 255,
+        green=skia.ColorGetG(color) / 255,
+        blue=skia.ColorGetB(color) / 255,
+        alpha=skia.ColorGetA(color) / 255,
+    )
 
 
 def _resolve_paints(overlay: dict, *, width: float, height: float, left: float, top: float):
@@ -64,7 +85,12 @@ def _resolve_paints(overlay: dict, *, width: float, height: float, left: float, 
     for shadow in cloud._text_shadow_layers(cloud._text_shadow_style(overlay)):
         blurs.append(
             TextBlurLayer(
-                color=TextInk(red=0, green=0, blue=0, alpha=shadow.alpha / 255),
+                color=TextInk(
+                    red=shadow.red / 255,
+                    green=shadow.green / 255,
+                    blue=shadow.blue / 255,
+                    alpha=shadow.alpha / 255,
+                ),
                 sigma=shadow.sigma,
                 dx=shadow.dx,
                 dy=shadow.dy,
@@ -178,7 +204,6 @@ def _compile_text_overlay(
         ResolvedTextMotion,
         SmoothRevealContent,
         SmoothRevealLine,
-        TextInk,
         TextRevealBounds,
     )
     from app.pipeline import text_overlay_skia as cloud
@@ -253,7 +278,13 @@ def _compile_text_overlay(
     resolved = cloud._resolve_typeface_for_overlay(overlay)
     font_asset = bundled_font_asset(resolved.file, asset_id="font-" + resolved.file)
     spacing_em = cloud.resolve_letter_spacing_em(overlay.get("letter_spacing"))
-    wrap = cloud._wrap_at_fixed_size if overlay.get("preserve_font_size") else cloud._shrink_to_fit
+    wrap = (
+        cloud._authored_lines
+        if overlay.get("wrap_lines") is False
+        else cloud._wrap_at_fixed_size
+        if overlay.get("preserve_font_size")
+        else cloud._shrink_to_fit
+    )
     font, size, lines = wrap(
         text,
         resolved.typeface,
@@ -285,6 +316,7 @@ def _compile_text_overlay(
         PositionedTextRun(
             text=line,
             font_asset_id=font_asset.id,
+            font_variations=resolved_font_variations(font),
             font_size=size,
             x=cloud._anchored_left_x(anchor, cx, block["widths"][index]),
             baseline_y=top + block["ascent_offset"] + index * block["line_step"],
@@ -292,7 +324,7 @@ def _compile_text_overlay(
             shaped=shaped,
             glyphs=None if shaped else resolve_legacy_glyphs(font, line, spacing),
             fill=fill,
-            stroke=TextInk(red=0, green=0, blue=0, alpha=230 / 255),
+            stroke=_outline_ink(overlay),
             stroke_width=max(0, stroke * 2),
             blur_layers=blurs,
             gradient=gradient,
@@ -396,15 +428,36 @@ def _compile_text_overlay(
             right=right + max(stroke_bleed, shadow_right, glow_bleed),
             bottom=top + block["block_h"] + max(stroke_bleed, shadow_bottom, glow_bleed),
         )
+    background = None
+    if overlay.get("background_color"):
+        from app.kria.portable_text import TextBackground, TextInk
+
+        width = max(block["widths"])
+        color = cloud._skia_color_from_hex(overlay["background_color"], 255)
+        background = TextBackground(
+            color=TextInk(
+                red=skia.ColorGetR(color) / 255,
+                green=skia.ColorGetG(color) / 255,
+                blue=skia.ColorGetB(color) / 255,
+                alpha=1,
+            ),
+            left=cloud._anchored_left_x(anchor, cx, width) - 8,
+            top=top - 4,
+            width=width + 16,
+            height=block["block_h"] + 8,
+            radius=4,
+        )
     return PortableTextLayer(
         id=layer_id,
         start=overlay["start_s"],
         end=overlay["end_s"],
+        background=background,
         anchor_x=cx,
         anchor_y=cy,
         rotation_degrees=cloud._finite_float(overlay.get("rotation_deg"), 0),
         runs=runs,
         effect=effect,
+        animation_phases=overlay.get("animation_phases"),
         dissolve_seed=dissolve_seed if effect == "dissolve-out" else None,
         motion=motion,
         fade=fade,
@@ -429,7 +482,6 @@ def _compile_handwriting_overlay(overlay: dict, *, layer_id: str, canvas, motion
     from app.kria.portable_text import (
         HandwritingContent,
         PortableTextLayer,
-        TextInk,
         TextPenStroke,
         TextStrokePoint,
     )
@@ -442,6 +494,7 @@ def _compile_handwriting_overlay(overlay: dict, *, layer_id: str, canvas, motion
         text,
         max_width_em=cloud._overlay_max_width_px(overlay, canvas) / max(size, 1),
         letter_spacing_em=cloud.resolve_letter_spacing_em(overlay.get("letter_spacing")),
+        wrap_lines=overlay.get("wrap_lines", True),
         line_spacing=cloud.resolve_line_spacing(overlay.get("line_spacing")),
     )
     if not layout.strokes:
@@ -485,7 +538,7 @@ def _compile_handwriting_overlay(overlay: dict, *, layer_id: str, canvas, motion
             strokes=strokes,
             ink_width=max(1, layout.stroke_width_em * size),
             fill=fill,
-            outline=TextInk(red=0, green=0, blue=0, alpha=230 / 255),
+            outline=_outline_ink(overlay),
             outline_width=max(
                 0, float(overlay.get("outline_px") or overlay.get("stroke_width") or 0) * 2
             ),
@@ -496,14 +549,18 @@ def _compile_handwriting_overlay(overlay: dict, *, layer_id: str, canvas, motion
 
 
 def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset, spacing):
-    from app.kria.portable_text import PositionedTextRun, StaggeredContent, StaggeredGlyph, TextInk
+    from app.kria.portable_text import PositionedTextRun, StaggeredContent, StaggeredGlyph
     from app.pipeline import text_overlay_skia as cloud
 
     max_width = cloud._overlay_max_width_px(overlay, canvas)
     rows = [
         (index, row)
         for index, line in enumerate(text.split("\n"))
-        for row in cloud._wrap_text_to_lines(line, font, max_width, spacing)
+        for row in (
+            [line]
+            if overlay.get("wrap_lines") is False
+            else cloud._wrap_text_to_lines(line, font, max_width, spacing)
+        )
     ]
     block = cloud._measure_block(
         font,
@@ -551,6 +608,7 @@ def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset,
                     run=PositionedTextRun(
                         text=grapheme,
                         font_asset_id=font_asset.id,
+                        font_variations=resolved_font_variations(font),
                         font_size=size,
                         x=x,
                         baseline_y=baseline,
@@ -558,7 +616,7 @@ def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset,
                         shaped=False,
                         glyphs=resolve_legacy_glyphs(font, grapheme, spacing),
                         fill=fill,
-                        stroke=TextInk(red=0, green=0, blue=0, alpha=230 / 255),
+                        stroke=_outline_ink(overlay),
                         stroke_width=max(
                             0,
                             int(overlay.get("outline_px") or overlay.get("stroke_width") or 0) * 2,
@@ -575,7 +633,7 @@ def _compile_staggered_content(overlay, *, text, canvas, font, size, font_asset,
 
 
 def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
-    from app.kria.portable_text import KaraokeContent, PortableTextLayer, PositionedTextRun, TextInk
+    from app.kria.portable_text import KaraokeContent, PortableTextLayer, PositionedTextRun
     from app.pipeline import text_overlay_skia as cloud
     from app.services.render_library import bundled_font_asset
 
@@ -636,6 +694,7 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
                 PositionedTextRun(
                     text=words[i],
                     font_asset_id=asset.id,
+                    font_variations=resolved_font_variations(font),
                     font_size=size,
                     x=x,
                     baseline_y=top + block["ascent_offset"] + row_index * block["line_step"],
@@ -643,7 +702,7 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
                     shaped=False,
                     glyphs=resolve_legacy_glyphs(font, words[i], spacing),
                     fill=fill,
-                    stroke=TextInk(red=0, green=0, blue=0, alpha=230 / 255),
+                    stroke=_outline_ink(overlay),
                     stroke_width=max(
                         0, int(overlay.get("outline_px") or overlay.get("stroke_width") or 0) * 2
                     ),
@@ -692,7 +751,7 @@ def _compile_fade_envelope(overlay: dict):
 
 def _compile_pop_suffix_overlay(overlay: dict, *, layer_id: str, canvas):
     """The cloud suffix handler is a settled split line, with no entrance motion."""
-    from app.kria.portable_text import PortableTextLayer, PositionedTextRun, TextInk
+    from app.kria.portable_text import PortableTextLayer, PositionedTextRun
     from app.pipeline import text_overlay_skia as cloud
     from app.services.render_library import bundled_font_asset
 
@@ -706,7 +765,9 @@ def _compile_pop_suffix_overlay(overlay: dict, *, layer_id: str, canvas):
     width = cloud._overlay_max_width_px(overlay, canvas)
     anchor = cloud._resolve_text_anchor(overlay)
     args = (text, resolved.typeface, size, width)
-    if overlay.get("preserve_font_size"):
+    if overlay.get("wrap_lines") is False:
+        font, size, lines = cloud._authored_lines(*args)
+    elif overlay.get("preserve_font_size"):
         font, size, lines = cloud._wrap_at_fixed_size(*args)
     elif anchor == "left":
         font, size, lines = cloud._shrink_to_fit(*args)
@@ -736,6 +797,7 @@ def _compile_pop_suffix_overlay(overlay: dict, *, layer_id: str, canvas):
         PositionedTextRun(
             text=line,
             font_asset_id=asset.id,
+            font_variations=resolved_font_variations(font),
             font_size=size,
             x=x,
             baseline_y=top + block["ascent_offset"] + index * block["line_step"],
@@ -743,7 +805,7 @@ def _compile_pop_suffix_overlay(overlay: dict, *, layer_id: str, canvas):
             shaped=False,
             glyphs=resolve_legacy_glyphs(font, line, 0),
             fill=fill,
-            stroke=TextInk(red=0, green=0, blue=0, alpha=230 / 255),
+            stroke=_outline_ink(overlay),
             stroke_width=max(
                 0, int(overlay.get("outline_px") or overlay.get("stroke_width") or 0) * 2
             ),

@@ -59,7 +59,7 @@ extension GoldenHourGrade {
         guard format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
               width >= 2, height >= 2, width <= 7680, height <= 7680,
               width.isMultiple(of: 2), height.isMultiple(of: 2),
-              CVPixelBufferGetPlaneCount(source) == 2 else { throw MediaEngineError.unsupportedCapability }
+              CVPixelBufferGetPlaneCount(source) == 2 else { throw NativePreviewFeatureError("GoldenHourGrade-62") }
         var destination: CVPixelBuffer?
         guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, format,
             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &destination) == kCVReturnSuccess,

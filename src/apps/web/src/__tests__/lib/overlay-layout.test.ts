@@ -16,6 +16,7 @@ import {
   layoutIntroHold,
   resolveAnchorFrac,
   resolveFontSizePx,
+  resolveMaxWidthFrac,
   inferTextBoxPosition,
   resolveTextElementYFrac,
   resolveTextElementsLayout,
@@ -351,5 +352,17 @@ describe("block metrics + vertical anchoring", () => {
     expect(verticalBlockTop("left", 900, 200)).toBe(900);
     expect(verticalBlockTop("center", 900, 200)).toBe(800);
     expect(verticalBlockTop("right", 900, 200)).toBe(800);
+  });
+});
+
+
+describe("authored text width", () => {
+  it("retains widths larger than the canvas while rejecting invalid widths", () => {
+    expect(resolveMaxWidthFrac(2.5)).toBe(2.5);
+    expect(resolveMaxWidthFrac(0.5)).toBe(0.5);
+    expect(resolveMaxWidthFrac(-1)).toBeGreaterThan(0);
+    for (const width of [undefined, null, Number.NaN, Infinity]) {
+      expect(resolveMaxWidthFrac(width)).toBe(MAX_LINE_W_FRAC);
+    }
   });
 });

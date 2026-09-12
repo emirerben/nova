@@ -1,0 +1,159 @@
+{
+  "slots": [
+    {
+      "name": "authored-none",
+      "text_overlays": [
+        {
+          "text": "CREATE WITH\nYOUR OWN STYLE",
+          "effect": "none",
+          "animation_phases": {
+            "entrance": "none",
+            "exit": "none",
+            "loop": "none",
+            "speed": 1.25
+          },
+          "font_family": "Inter",
+          "text_size_px": 94,
+          "position_x_frac": 0.5,
+          "position_y_frac": 0.5,
+          "text_anchor": "center",
+          "text_color": "#30352C",
+          "background_color": "#FFF0A6",
+          "stroke_color": "#FFFFFF",
+          "stroke_width": 1,
+          "shadow_color": "#202020",
+          "shadow_opacity": 0.35,
+          "shadow_enabled": true,
+          "alignment": "center",
+          "rotation_deg": 5,
+          "start_s": 0,
+          "end_s": 3
+        }
+      ]
+    },
+    {
+      "name": "authored-fade",
+      "text_overlays": [
+        {
+          "text": "CREATE WITH\nYOUR OWN STYLE",
+          "effect": "none",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "pulse",
+            "speed": 1.25
+          },
+          "font_family": "Inter",
+          "text_size_px": 94,
+          "position_x_frac": 0.5,
+          "position_y_frac": 0.5,
+          "text_anchor": "center",
+          "text_color": "#30352C",
+          "background_color": "#FFF0A6",
+          "stroke_color": "#FFFFFF",
+          "stroke_width": 1,
+          "shadow_color": "#202020",
+          "shadow_opacity": 0.35,
+          "shadow_enabled": true,
+          "alignment": "center",
+          "rotation_deg": 5,
+          "start_s": 0,
+          "end_s": 3
+        }
+      ]
+    },
+    {
+      "name": "authored-pop",
+      "text_overlays": [
+        {
+          "text": "CREATE WITH\nYOUR OWN STYLE",
+          "effect": "none",
+          "animation_phases": {
+            "entrance": "pop",
+            "exit": "pop",
+            "loop": "bounce",
+            "speed": 1.25
+          },
+          "font_family": "Inter",
+          "text_size_px": 94,
+          "position_x_frac": 0.5,
+          "position_y_frac": 0.5,
+          "text_anchor": "center",
+          "text_color": "#30352C",
+          "background_color": "#FFF0A6",
+          "stroke_color": "#FFFFFF",
+          "stroke_width": 1,
+          "shadow_color": "#202020",
+          "shadow_opacity": 0.35,
+          "shadow_enabled": true,
+          "alignment": "center",
+          "rotation_deg": 5,
+          "start_s": 0,
+          "end_s": 3
+        }
+      ]
+    },
+    {
+      "name": "authored-slide",
+      "text_overlays": [
+        {
+          "text": "CREATE WITH\nYOUR OWN STYLE",
+          "effect": "none",
+          "animation_phases": {
+            "entrance": "slide",
+            "exit": "slide",
+            "loop": "float",
+            "speed": 1.25
+          },
+          "font_family": "Inter",
+          "text_size_px": 94,
+          "position_x_frac": 0.5,
+          "position_y_frac": 0.5,
+          "text_anchor": "center",
+          "text_color": "#30352C",
+          "background_color": "#FFF0A6",
+          "stroke_color": "#FFFFFF",
+          "stroke_width": 1,
+          "shadow_color": "#202020",
+          "shadow_opacity": 0.35,
+          "shadow_enabled": true,
+          "alignment": "center",
+          "rotation_deg": 5,
+          "start_s": 0,
+          "end_s": 3
+        }
+      ]
+    },
+    {
+      "name": "authored-typewriter",
+      "text_overlays": [
+        {
+          "text": "CREATE WITH\nYOUR OWN STYLE",
+          "effect": "none",
+          "animation_phases": {
+            "entrance": "typewriter",
+            "exit": "typewriter",
+            "loop": "none",
+            "speed": 1.25
+          },
+          "font_family": "Inter",
+          "text_size_px": 94,
+          "position_x_frac": 0.5,
+          "position_y_frac": 0.5,
+          "text_anchor": "center",
+          "text_color": "#30352C",
+          "background_color": "#FFF0A6",
+          "stroke_color": "#FFFFFF",
+          "stroke_width": 1,
+          "shadow_color": "#202020",
+          "shadow_opacity": 0.35,
+          "shadow_enabled": true,
+          "alignment": "center",
+          "rotation_deg": 5,
+          "start_s": 0,
+          "end_s": 3
+        }
+      ]
+    }
+  ]
+}

@@ -106,6 +106,7 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
     public let text: String
     public let fontAssetID: String
     public let fontSize: Double
+    public let fontVariations: [String: Double]
     public let x: Double
     public let baselineY: Double
     public let letterSpacing: Double
@@ -117,17 +118,19 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
     public let blurLayers: [TextBlurLayer]
     public let gradient: TextGradient?
     private enum CodingKeys: String, CodingKey {
-        case text, fontAssetID = "fontAssetId", fontSize, x, baselineY, letterSpacing, shaped, fill, stroke, strokeWidth, blurLayers, gradient, glyphs
+        case text, fontAssetID = "fontAssetId", fontSize, fontVariations, x, baselineY, letterSpacing, shaped, fill, stroke, strokeWidth, blurLayers, gradient, glyphs
     }
     public init(text: String, fontAssetID: String, fontSize: Double, x: Double, baselineY: Double,
-                letterSpacing: Double, shaped: Bool, fill: TextInk, stroke: TextInk, strokeWidth: Double, blurLayers: [TextBlurLayer] = [], gradient: TextGradient? = nil, glyphs: [PositionedGlyph]? = nil) {
+                letterSpacing: Double, shaped: Bool, fill: TextInk, stroke: TextInk, strokeWidth: Double, blurLayers: [TextBlurLayer] = [], gradient: TextGradient? = nil, glyphs: [PositionedGlyph]? = nil, fontVariations: [String: Double] = [:]) {
+        self.fontVariations = fontVariations
         self.text = text; self.fontAssetID = fontAssetID; self.fontSize = fontSize; self.x = x; self.baselineY = baselineY
         self.letterSpacing = letterSpacing; self.shaped = shaped; self.fill = fill; self.stroke = stroke; self.strokeWidth = strokeWidth; self.blurLayers = blurLayers; self.gradient = gradient; self.glyphs = glyphs
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["text", "fontAssetId", "fontSize", "x", "baselineY", "letterSpacing", "shaped", "fill", "stroke", "strokeWidth", "blurLayers", "gradient", "glyphs"])
+        try rejectUnknownAssetFields(decoder, allowed: ["text", "fontAssetId", "fontSize", "fontVariations", "x", "baselineY", "letterSpacing", "shaped", "fill", "stroke", "strokeWidth", "blurLayers", "gradient", "glyphs"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = try c.decode(String.self, forKey: .text); fontAssetID = try c.decode(String.self, forKey: .fontAssetID)
+        fontVariations = try c.decodeIfPresent([String: Double].self, forKey: .fontVariations) ?? [:]
         fontSize = try c.decode(Double.self, forKey: .fontSize); x = try c.decode(Double.self, forKey: .x)
         baselineY = try c.decode(Double.self, forKey: .baselineY); letterSpacing = try c.decode(Double.self, forKey: .letterSpacing)
         shaped = try c.decode(Bool.self, forKey: .shaped); fill = try c.decode(TextInk.self, forKey: .fill)
@@ -136,10 +139,21 @@ public struct PositionedTextRun: Codable, Equatable, Sendable {
         blurLayers = try c.decodeIfPresent([TextBlurLayer].self, forKey: .blurLayers) ?? []
         stroke = try c.decode(TextInk.self, forKey: .stroke); strokeWidth = try c.decode(Double.self, forKey: .strokeWidth)
     }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(text, forKey: .text); try c.encode(fontAssetID, forKey: .fontAssetID)
+        try c.encode(fontSize, forKey: .fontSize); try c.encode(x, forKey: .x); try c.encode(baselineY, forKey: .baselineY)
+        try c.encode(letterSpacing, forKey: .letterSpacing); try c.encode(shaped, forKey: .shaped)
+        try c.encode(fill, forKey: .fill); try c.encode(stroke, forKey: .stroke); try c.encode(strokeWidth, forKey: .strokeWidth)
+        try c.encode(blurLayers, forKey: .blurLayers); try c.encodeIfPresent(gradient, forKey: .gradient); try c.encodeIfPresent(glyphs, forKey: .glyphs)
+        if !fontVariations.isEmpty { try c.encode(fontVariations, forKey: .fontVariations) }
+    }
     func validate() throws {
+        guard fontVariations.count <= 16,
+              fontVariations.allSatisfy({ $0.key.utf8.count == 4 && $0.key.utf8.allSatisfy { (32...126).contains($0) } && $0.value.isFinite && abs($0.value) <= 65536 }) else { throw RecipeError.invalidTimeline }
         guard (shaped || glyphs != nil), !text.isEmpty, text.unicodeScalars.count <= 2000, !fontAssetID.isEmpty, fontAssetID.count <= 160,
               [fontSize, x, baselineY, letterSpacing, strokeWidth].allSatisfy(\.isFinite),
-              fontSize > 0, fontSize <= 1000, abs(x) <= 10000, abs(baselineY) <= 10000,
+              fontSize > 0, abs(x) <= 10000, abs(baselineY) <= 10000,
               (-100...1000).contains(letterSpacing), (0...100).contains(strokeWidth) else { throw RecipeError.invalidTimeline }
         try fill.validate(); try stroke.validate()
         guard blurLayers.count <= 8 else { throw RecipeError.invalidTimeline }
@@ -176,24 +190,29 @@ public struct TextRevealBounds: Codable, Equatable, Sendable {
 public struct KaraokeContent: Codable, Equatable, Sendable {
     public let starts: [Double]
     public let highlight: TextInk
-    public init(starts: [Double], highlight: TextInk) { self.starts = starts; self.highlight = highlight }
-    private enum CodingKeys: String, CodingKey { case starts, highlight }
+    public let activeOnly: Bool?
+    public init(starts: [Double], highlight: TextInk, activeOnly: Bool? = nil) {
+        self.starts = starts; self.highlight = highlight; self.activeOnly = activeOnly
+    }
+    private enum CodingKeys: String, CodingKey { case starts, highlight, activeOnly }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["starts", "highlight"])
+        try rejectUnknownAssetFields(decoder, allowed: ["starts", "highlight", "activeOnly"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         starts = try c.decode([Double].self, forKey: .starts)
         highlight = try c.decode(TextInk.self, forKey: .highlight)
+        activeOnly = try c.decodeIfPresent(Bool.self, forKey: .activeOnly)
     }
     func validate(runs: [PositionedTextRun]) throws {
         try highlight.validate()
+        if activeOnly == true && starts != starts.sorted() { throw RecipeError.invalidTimeline }
         guard (1...100).contains(starts.count), starts.count == runs.count,
               starts.allSatisfy({ $0.isFinite && (0...1800).contains($0) }),
-              runs.allSatisfy({ !$0.shaped && $0.gradient == nil }) else { throw RecipeError.invalidTimeline }
+              runs.allSatisfy({ (!$0.shaped || activeOnly == true) && $0.gradient == nil }) else { throw RecipeError.invalidTimeline }
     }
 }
 
 public struct PortableTextLayer: Codable, Equatable, Sendable {
-    public enum Effect: String, Codable, Sendable { case `static`, none, fadeIn = "fade-in", scaleUp = "scale-up", slideUp = "slide-up", slideDown = "slide-down", slideIn = "slide-in", popIn = "pop-in", bounce, inkReveal = "ink-reveal", handwriting, typewriter, streamIn = "stream-in", smoothType = "smooth-type", staggeredSlice = "staggered-slice", dissolveOut = "dissolve-out", karaokeLine = "karaoke-line", lyricLine = "lyric-line" }
+    public enum Effect: String, Codable, Sendable { case captionPop = "caption-pop", `static`, none, fadeIn = "fade-in", scaleUp = "scale-up", slideUp = "slide-up", slideDown = "slide-down", slideIn = "slide-in", popIn = "pop-in", bounce, inkReveal = "ink-reveal", handwriting, typewriter, streamIn = "stream-in", smoothType = "smooth-type", staggeredSlice = "staggered-slice", dissolveOut = "dissolve-out", karaokeLine = "karaoke-line", lyricLine = "lyric-line" }
     public let id: String
     public let start: Double
     public let end: Double
@@ -212,18 +231,22 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
     public let karaoke: KaraokeContent?
     public let dissolveSeed: UInt32?
     public let effect: Effect
-    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle }
+    public let animationPhases: TextAnimationPhases?
+    public let background: TextBackground?
+    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle, animationPhases, background }
     public init(id: String, start: Double, end: Double, anchorX: Double, anchorY: Double,
-                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil) {
+                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil, animationPhases: TextAnimationPhases? = nil, background: TextBackground? = nil) {
         self.id = id; self.start = start; self.end = end; self.anchorX = anchorX; self.anchorY = anchorY
-        self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered; self.dissolveSeed = dissolveSeed; self.karaoke = karaoke; self.fade = fade; self.giantTitle = giantTitle
+        self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered; self.dissolveSeed = dissolveSeed; self.karaoke = karaoke; self.fade = fade; self.giantTitle = giantTitle; self.animationPhases = animationPhases; self.background = background
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle"])
+        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle", "animationPhases", "background"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id); start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end); anchorX = try c.decode(Double.self, forKey: .anchorX)
         anchorY = try c.decode(Double.self, forKey: .anchorY); rotationDegrees = try c.decode(Double.self, forKey: .rotationDegrees)
+        animationPhases = try c.decodeIfPresent(TextAnimationPhases.self, forKey: .animationPhases)
+        background = try c.decodeIfPresent(TextBackground.self, forKey: .background)
         motion = try c.decodeIfPresent(TextMotionParameters.self, forKey: .motion)
         revealBounds = try c.decodeIfPresent(TextRevealBounds.self, forKey: .revealBounds)
         handwriting = try c.decodeIfPresent(HandwritingContent.self, forKey: .handwriting)
@@ -265,6 +288,8 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         guard (effect == .inkReveal) == (revealBounds != nil) else { throw RecipeError.invalidTimeline }
         try revealBounds?.validate()
         try motion?.validate()
+        try animationPhases?.validate()
+        try background?.validate()
         for run in runs + (discreteReveal?.lines.map(\.cursorRun) ?? []) + (staggered?.glyphs.map(\.run) ?? []) {
             try run.validate()
             guard let font = manifest?.assets.first(where: { $0.id == run.fontAssetID }),

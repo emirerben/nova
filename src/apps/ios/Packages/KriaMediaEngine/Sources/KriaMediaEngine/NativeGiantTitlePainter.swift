@@ -47,7 +47,7 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         let shadowBytes = hasShadows ? Int(width * height * 4 + (width + 256) * (height + 256) * 4) : 0
         let liveBytes = Int(width * height * (padding > 0 || layer.staggered != nil ? 8 : 4))
         bitmapBytes = Int(canvas.width * canvas.height * 4) + liveBytes + shadowBytes
-        guard bitmapBytes <= maxBitmapBytes else { throw MediaEngineError.unsupportedCapability }
+        guard bitmapBytes <= maxBitmapBytes else { throw NativePreviewFeatureError("NativeGiantTitlePainter-50") }
         self.maxBitmapBytes = maxBitmapBytes
     }
 
@@ -71,7 +71,7 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
                 active ? PositionedTextRun(text: run.text, fontAssetID: run.fontAssetID, fontSize: run.fontSize,
                     x: run.x, baselineY: run.baselineY, letterSpacing: run.letterSpacing, shaped: false,
                     fill: content.highlight, stroke: run.stroke, strokeWidth: run.strokeWidth,
-                    blurLayers: run.blurLayers, glyphs: run.glyphs) : run
+                    blurLayers: run.blurLayers, glyphs: run.glyphs, fontVariations: run.fontVariations) : run
             }
             let colored = try PortableTextVectorPainter(layer: NativeDiscreteRevealPainter.paintingLayer(layer, runs: runs),
                 assetURLs: assetURLs, canvas: canvas, outlineGlyphs: true)

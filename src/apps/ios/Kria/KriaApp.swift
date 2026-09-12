@@ -48,7 +48,12 @@ struct RootView: View {
     var body: some View {
         Group {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-device-effects") { DeviceEffectsView() }
+            if ProcessInfo.processInfo.arguments.contains("-native-library-audit"), auth.isSignedIn {
+                ProgressView("Checking video formats…").task { await NativeLibraryAudit.run(api: KriaAPI()) }
+                    .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+                    .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+            }
+            else if ProcessInfo.processInfo.arguments.contains("-device-effects") { DeviceEffectsView() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { BrandPreviewHost() }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 NativeEditorUITestHost()
@@ -154,7 +159,7 @@ private struct NativeEditorUITestHost: View {
                     NativeEditorView(
                         project: PreviewFixtures.editorProject,
                         initialDraft: fixture.draft,
-                        initialPlaybackURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"),
+                        initialPlaybackURL: fixture.shape == .sourceText ? nil : Bundle.main.url(forResource: "montage", withExtension: "mp4"),
                         onBack: {
                             showsEditor = false
                             showsProjects = true

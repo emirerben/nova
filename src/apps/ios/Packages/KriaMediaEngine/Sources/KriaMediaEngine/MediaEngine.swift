@@ -216,3 +216,8 @@ public struct AVFoundationWaveformExtractor: WaveformExtracting { public init() 
 #endif
 
 public enum MediaEngineError: Error, Equatable, Sendable { case avFoundationUnavailable, exportUnavailable, exportFailed, thumbnailWriteFailed, waveformFailed, insufficientStorage, unsupportedCapability, missingAsset(String), cancelled }
+
+public struct NativePreviewFeatureError: Error, Sendable {
+    public let feature: String
+    public init(_ feature: String) { self.feature = feature }
+}

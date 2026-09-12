@@ -59,3 +59,30 @@ def test_slow_giant_handwriting_stays_blocked_with_animated_text_enabled(monkeyp
     )
     with pytest.raises(ValueError, match="Giant-title handwriting"):
         validate_phone_pilot_recipe(recipe)
+
+
+def test_authored_phases_stay_blocked_until_device_parity_is_verified(monkeypatch):
+    from app.agents._schemas.text_animation_phases import TextAnimationPhases
+    from app.kria.recipes_v2 import EditRecipeV2
+    from tests.kria.test_portable_text import text_document
+
+    recipe = EditRecipeV2.model_validate(text_document())
+    recipe.text_layers[0].animation_phases = TextAnimationPhases(loop="float")
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    with pytest.raises(ValueError, match="phases"):
+        validate_phone_pilot_recipe(recipe)
+
+
+def test_camera_program_cannot_bypass_device_qualification(monkeypatch):
+    from app.kria.portable_camera import CameraPulse
+
+    plan, sources = fixture()
+    recipe = compile_phone_guided_plan(plan, sources)
+    recipe.camera_pulses = [CameraPulse(id="pulse", start=0, end=1, intensity=0.04)]
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", ["cameraEffects", *recipe.required_capabilities]
+    )
+    with pytest.raises(ValueError, match="Camera effects"):
+        validate_phone_pilot_recipe(recipe)

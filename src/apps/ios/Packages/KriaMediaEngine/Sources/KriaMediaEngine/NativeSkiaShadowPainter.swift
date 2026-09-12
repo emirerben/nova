@@ -16,7 +16,7 @@ enum NativeSkiaShadowPainter {
         }
         }}
         """)
-        guard let kernel = kernels.first else { throw MediaEngineError.unsupportedCapability }
+        guard let kernel = kernels.first else { throw NativePreviewFeatureError("NativeSkiaShadowPainter-19") }
         return kernel
     }
     /// Skia's raster source-over truncates each destination product to bytes.
@@ -71,7 +71,7 @@ enum NativeSkiaShadowPainter {
             guard maskBounds.width * maskBounds.height * 4 <= Double(maxBitmapBytes),
                   let mask = CGContext(data: nil, width: Int(maskBounds.width), height: Int(maskBounds.height),
                       bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw MediaEngineError.unsupportedCapability }
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw NativePreviewFeatureError("NativeSkiaShadowPainter-74") }
             mask.translateBy(x: -maskBounds.minX, y: -maskBounds.minY)
             mask.concatenate(placement)
             drawMask(mask)
@@ -92,7 +92,7 @@ enum NativeSkiaShadowPainter {
             let color = CIVector(x: premultiplied(tint.red), y: premultiplied(tint.green),
                 z: premultiplied(tint.blue), w: CGFloat(alphaByte))
             guard let tinted = try Self.glyphTintKernel.get().apply(extent: shadow.extent,
-                roiCallback: { _, rect in rect }, arguments: [shadow, color]) else { throw MediaEngineError.unsupportedCapability }
+                roiCallback: { _, rect in rect }, arguments: [shadow, color]) else { throw NativePreviewFeatureError("NativeSkiaShadowPainter-95") }
             shadow = tinted.transformed(by: CGAffineTransform(translationX: maskBounds.minX, y: maskBounds.minY))
             let crop = shadow.extent.intersection(bounds).integral
             if crop.isNull || crop.isEmpty { return }

@@ -7,6 +7,138 @@ import CoreImage
 import ImageIO
 
 final class PortableTextTests: XCTestCase {
+    func testSelectionAcrossCaptionBoundariesNeverAllocatesBitmaps() throws {
+        let font = try fontURL()
+        let layers = try (0..<80).map { index in
+            try AuthoredTextLayout.compile(id: "cue-\(index)", text: "Caption \(index)",
+                start: Double(index), end: Double(index + 1),
+                style: .init(fontAssetID: "font", size: 96, color: white),
+                fontURL: font, canvas: Canvas(width: 600, height: 400))
+        }
+        let store = try NativeTextLayerStore(layers: layers, assetURLs: ["font": font],
+            canvas: CGSize(width: 600, height: 400), maxBitmapBytes: 0)
+        for index in (0..<80).reversed() {
+            let bounds = try XCTUnwrap(store.selectionBounds(id: "cue-\(index)", at: Double(index) + 0.2))
+            XCTAssertGreaterThan(bounds.width, 0)
+            XCTAssertGreaterThan(bounds.height, 0)
+            XCTAssertEqual(store.residentBitmapBytes, 0)
+        }
+        XCTAssertNil(store.selectionBounds(id: "cue-0", at: 1))
+    }
+
+    func testLongCaptionTimelineRetainsOnlyActiveBitmapsAndSupportsBackwardSeeks() throws {
+        let font = try fontURL()
+        let canvas = CGSize(width: 600, height: 400)
+        let layers = try (0..<40).map { index in
+            try AuthoredTextLayout.compile(id: "cue-\(index)", text: "Caption number \(index)",
+                start: Double(index), end: Double(index + 1),
+                style: .init(fontAssetID: "font", size: 96, widthFraction: 0.7, color: white),
+                fontURL: font, canvas: Canvas(width: 600, height: 400))
+        }
+        let budget = 1024 * 1024
+        let store = try NativeTextLayerStore(layers: layers, assetURLs: ["font": font], canvas: canvas, maxBitmapBytes: budget)
+        XCTAssertEqual(store.residentBitmapBytes, 0)
+        var firstPixels: [UInt8]?
+        for time in [0.2, 20.2, 39.2, 0.2] {
+            let visible = try store.activeLayers(at: time)
+            XCTAssertEqual(visible.count, 1)
+            XCTAssertEqual(visible.first?.portable?.id, "cue-\(Int(time))")
+            XCTAssertGreaterThan(store.residentBitmapBytes, 0)
+            XCTAssertLessThanOrEqual(store.residentBitmapBytes, budget)
+            if time == 0.2 {
+                let image = try XCTUnwrap(visible.first?.image)
+                let rect = image.extent.integral
+                var pixels = [UInt8](repeating: 0, count: Int(rect.width * rect.height) * 4)
+                CIContext().render(image, toBitmap: &pixels, rowBytes: Int(rect.width) * 4, bounds: rect,
+                                   format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+                if let firstPixels { XCTAssertEqual(pixels, firstPixels) } else { firstPixels = pixels }
+            }
+        }
+        XCTAssertTrue(try store.activeLayers(at: 40).isEmpty)
+        XCTAssertEqual(store.residentBitmapBytes, 0)
+    }
+
+    func testAuthoredEmojiKeepsColorAndDoesNotRejectWholePreview() throws {
+        let font = try fontURL()
+        let canvas = CGSize(width: 600, height: 300)
+        for effect in [PortableTextLayer.Effect.none, .typewriter] {
+            let layer = try AuthoredTextLayout.compile(id: "emoji", text: "A sunny day ☀️ 🌈",
+                start: 0, end: 3, style: .init(fontAssetID: "font", size: 48, color: white),
+                fontURL: font, canvas: Canvas(width: 600, height: 300), legacyEffect: effect)
+            let painter = try PortableTextVectorPainter(layer: layer, assetURLs: ["font": font], canvas: canvas, outlineGlyphs: true)
+            let image = try painter.image(maxBitmapBytes: 8 * 1024 * 1024)
+            let bounds = image.extent.integral
+            var pixels = [UInt8](repeating: 0, count: Int(bounds.width * bounds.height) * 4)
+            CIContext().render(image, toBitmap: &pixels, rowBytes: Int(bounds.width) * 4, bounds: bounds,
+                               format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            var colored = 0
+            for index in stride(from: 0, to: pixels.count, by: 4) {
+                let channels = [pixels[index], pixels[index + 1], pixels[index + 2]]
+                let spread = Int(channels.max()!) - Int(channels.min()!)
+                if pixels[index + 3] > 100 && spread > 40 { colored += 1 }
+            }
+            XCTAssertGreaterThan(colored, 20, "Emoji must render in color, not disappear or become primary-font glyph IDs")
+        }
+    }
+
+    func testHighlightedEmojiWordKeepsItsFallbackFontAndPosition() throws {
+        let font = try fontURL()
+        let layer = try AuthoredTextLayout.compileHighlightedWords(id: "emoji-words", text: "Hello 🌈 world", start: 0, end: 3,
+            starts: [0, 1, 2], highlight: white, style: .init(fontAssetID: "font", size: 48, color: white),
+            fontURL: font, canvas: Canvas(width: 600, height: 300))
+        XCTAssertEqual(layer.runs.map(\.text), ["Hello", "🌈", "world"])
+        XCTAssertNil(layer.runs[1].glyphs)
+        XCTAssertTrue(layer.runs[1].shaped)
+        XCTAssertGreaterThan(layer.runs[1].x, layer.runs[0].x)
+        XCTAssertNoThrow(try RecipeTextLayer.make(layer, assetURLs: ["font": font], canvas: CGSize(width: 600, height: 300)))
+    }
+
+    func testAuthoredLayoutWrapsLocallyAndCompilesGraphemeReveal() throws {
+        let font = try fontURL()
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: font)
+        let manifest = RenderAssetManifest(assets: [RenderAssetReference(id: "font",
+            fingerprint: try RenderFingerprint(fingerprint),
+            source: .library(catalog: .font, catalogID: "Inter-Regular.ttf", generation: fingerprint.hex))])
+        let style = AuthoredTextLayout.Style(fontAssetID: "font", size: 36, widthFraction: 0.6,
+                                            color: .init(red: 1, green: 1, blue: 1, alpha: 1))
+        let layer = try AuthoredTextLayout.compile(id: "edited", text: "Hello world from the editor",
+            start: 0, end: 3, style: style, fontURL: font, canvas: Canvas(width: 300, height: 300),
+            phases: TextAnimationPhases(entrance: .typewriter, exit: .fade, loop: .float))
+        try layer.validate(duration: 3, manifest: manifest)
+        XCTAssertGreaterThan(layer.runs.count, 1)
+        XCTAssertEqual(layer.discreteReveal?.text, "Hello world from the editor")
+        let paint = try RecipeTextLayer.make(layer, assetURLs: ["font": font], canvas: CGSize(width: 300, height: 300))
+        XCTAssertNotNil(paint.discreteReveal)
+        XCTAssertGreaterThan(paint.frame.width, 50)
+        XCTAssertEqual(layer.animationPhases?.exit, .fade)
+    }
+
+    func testAuthoredLegacyStreamUsesWordTimingAndMeasuredCursorOffsets() throws {
+        let font = try fontURL()
+        let layer = try AuthoredTextLayout.compile(id: "stream", text: "Hello world", start: 0, end: 3,
+            style: .init(fontAssetID: "font", size: 36, color: .init(red: 1, green: 1, blue: 1, alpha: 1)),
+            fontURL: font, canvas: Canvas(width: 600, height: 600), legacyEffect: .streamIn)
+        XCTAssertNil(layer.animationPhases)
+        XCTAssertEqual(layer.effect, .streamIn)
+        let content = try XCTUnwrap(layer.discreteReveal)
+        let sample = try TextRevealTiming.sample(effect: .streamIn, text: content.text, localTime: 0, motion: nil)
+        XCTAssertEqual(sample.visibleText, "Hello")
+        XCTAssertTrue(sample.showCursor)
+        XCTAssertGreaterThan(content.lines[0].cursorOffsets[5], 60)
+        let paint = try RecipeTextLayer.make(layer, assetURLs: ["font": font], canvas: CGSize(width: 600, height: 600))
+        XCTAssertNotNil(paint.discreteReveal)
+    }
+
+    func testAuthoredAlignmentUsesCloudAnchorAndOutlineRadius() throws {
+        let font = try fontURL()
+        let layer = try AuthoredTextLayout.compile(id: "left", text: "Left anchor", start: 0, end: 3,
+            style: .init(fontAssetID: "font", size: 36, xFraction: 0.2, alignment: .left,
+                         color: .init(red: 1, green: 1, blue: 1, alpha: 1), strokeWidth: 3),
+            fontURL: font, canvas: Canvas(width: 600, height: 600))
+        XCTAssertEqual(layer.runs[0].x, 120)
+        XCTAssertEqual(layer.runs[0].strokeWidth, 6)
+    }
+
     func testTintPreservesColorAndAppliesCoverageOnlyOnce() {
         let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
         let context = CIContext(options: [.workingColorSpace: colorSpace, .outputColorSpace: colorSpace])
@@ -173,6 +305,58 @@ final class PortableTextTests: XCTestCase {
         }
     }
 
+    @MainActor func testLiveTextUpdateReusesSourcesAndUnchangedBitmapsAtomically() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let photo = directory.appendingPathComponent("black.png")
+        try CIContext().writePNGRepresentation(
+            of: CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 200)),
+            to: photo, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        let urls = ["photo": photo, "font": try fontURL()]
+        let assets = try urls.sorted(by: { $0.key < $1.key }).map {
+            MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value))
+        }
+        let references = try assets.map { asset in
+            RenderAssetReference(id: asset.id, fingerprint: try RenderFingerprint(asset.fingerprint!),
+                source: asset.id == "font" ? .library(catalog: .font, catalogID: "Inter-Regular.ttf", generation: asset.fingerprint!.hex) : .original(mediaID: "photo"))
+        }
+        let cue = layer()
+        var recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 200, height: 200),
+            assets: assets, tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "photo", sourceDuration: 5)])],
+            assetManifest: RenderAssetManifest(assets: references), textLayers: [cue])
+        let live = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
+        let item = live.preview.playerItem
+        let source = item.asset
+        let geometry = try XCTUnwrap(live.textSelectionBounds(id: cue.id, time: cue.start + 0.1))
+        XCTAssertGreaterThan(geometry.width, 0)
+        XCTAssertGreaterThan(geometry.height, 0)
+        XCTAssertNil(live.textSelectionBounds(id: cue.id, time: cue.end))
+        let before = try XCTUnwrap(item.videoComposition?.instructions.first as? RecipeVideoInstruction)
+        try live.updateText(recipe: recipe)
+        let unchanged = try XCTUnwrap(item.videoComposition?.instructions.first as? RecipeVideoInstruction)
+        XCTAssertTrue(before.text[0].image === unchanged.text[0].image)
+        recipe.textLayers = []
+        recipe.assets.removeAll { $0.id == "font" }
+        recipe.assetManifest = RenderAssetManifest(assets: references.filter { $0.id != "font" })
+        try live.updateText(recipe: recipe, assetURLs: ["photo": photo])
+        XCTAssertTrue(item === live.preview.playerItem)
+        XCTAssertTrue(source === item.asset)
+        XCTAssertTrue(try XCTUnwrap(item.videoComposition?.instructions.first as? RecipeVideoInstruction).text.isEmpty)
+        recipe.assets = assets
+        recipe.assetManifest = RenderAssetManifest(assets: references)
+        recipe.textLayers = [cue]
+        try live.updateText(recipe: recipe, assetURLs: urls)
+        XCTAssertTrue(source === item.asset)
+        XCTAssertEqual(try XCTUnwrap(item.videoComposition?.instructions.first as? RecipeVideoInstruction).text.count, 1)
+        let committed = item.videoComposition
+        var invalid = recipe
+        invalid.canvas = Canvas(width: 400, height: 400)
+        XCTAssertThrowsError(try live.updateText(recipe: invalid))
+        XCTAssertTrue(item.videoComposition === committed)
+        XCTAssertEqual(live.recipe, recipe)
+    }
+
     @MainActor func testIndependentTextAppearsOnlyInsideItsWindowInPreviewAndExport() async throws {
         try await verifyTextWindow(animated: false)
     }
@@ -243,10 +427,10 @@ final class PortableTextTests: XCTestCase {
         """.utf8))
     }
 
-    func testRejectsMissingFontAndUnlicensedFallback() throws {
+    func testRejectsMissingFontAndUnrelatedFontFallback() throws {
         XCTAssertThrowsError(try RecipeTextLayer.make(layer(), assetURLs: ["font": fontURL()], canvas: CGSize(width: 200, height: 200), maxBitmapBytes: 1))
         XCTAssertThrowsError(try RecipeTextLayer.make(layer(), assetURLs: [:], canvas: CGSize(width: 200, height: 200)))
-        XCTAssertThrowsError(try RecipeTextLayer.make(layer(text: "Hello 🦖"), assetURLs: ["font": fontURL()], canvas: CGSize(width: 200, height: 200)))
+        XCTAssertThrowsError(try RecipeTextLayer.make(layer(text: "Hello 漢字"), assetURLs: ["font": fontURL()], canvas: CGSize(width: 200, height: 200)))
     }
     func testRotationUsesResolvedAnchor() throws {
         let plain = try RecipeTextLayer.make(layer(), assetURLs: ["font": fontURL()], canvas: CGSize(width: 200, height: 200))

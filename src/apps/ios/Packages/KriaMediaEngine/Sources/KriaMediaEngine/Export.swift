@@ -41,14 +41,14 @@ public protocol LocalExporting: Sendable {
         let resolvedOutput = outputURL.resolvingSymlinksInPath().standardizedFileURL
         guard outputURL.isFileURL, !assetURLs.values.contains(where: {
             $0.resolvingSymlinksInPath().standardizedFileURL == resolvedOutput
-        }) else { throw MediaEngineError.unsupportedCapability }
+        }) else { throw NativePreviewFeatureError("Export-44") }
         var checkpoint = ExportCheckpoint(exportID: exportID, status: .exporting); try stateStore.save(checkpoint); progress?(0)
         let startedAt = Date()
         do {
             traceDeviceExportPhase("prepare")
             let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: assetURLs)
             traceDeviceExportPhase("prepared")
-            guard preset.videoCodec == "h264", preset.audioCodec == "aac", preset.videoBitrate > 0 else { throw MediaEngineError.unsupportedCapability }
+            guard preset.videoCodec == "h264", preset.audioCodec == "aac", preset.videoBitrate > 0 else { throw NativePreviewFeatureError("Export-51") }
             try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: outputURL.path) { try FileManager.default.removeItem(at: outputURL) }
             let writer = try await RecipeWriter(preview: preview, outputURL: outputURL, bitrate: preset.videoBitrate)
