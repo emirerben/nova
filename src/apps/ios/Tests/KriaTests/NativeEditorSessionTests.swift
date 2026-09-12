@@ -1252,7 +1252,7 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 }
 
-private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
+final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     let draftSnapshot: DraftSnapshot
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?

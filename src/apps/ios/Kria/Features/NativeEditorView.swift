@@ -14,6 +14,7 @@ struct NativeEditorView: View {
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
     @State private var showsConversation = false
+    @State private var lanePanel: NativeEditorTool?
     @State private var textInspectorID: String?
     @State private var selectedTextForActions: String?
     @State private var keyboardVisible = false
@@ -93,6 +94,14 @@ struct NativeEditorView: View {
                     return
                 }
                 guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
+                if [.visualBlock, .motionScene, .cameraEffect].contains(selection.kind) || (selection.kind == .mediaOverlay && lanePanel == .visuals) {
+                    lanePanel = .visuals; inspector = nil; textInspectorID = nil
+                    return
+                }
+                if selection.kind == .captionCue {
+                    lanePanel = .captions; inspector = nil; textInspectorID = nil
+                    return
+                }
                 if selection.kind == .text {
                     if selectedTextForActions == selection.id {
                         textInspectorID = selection.id
@@ -100,6 +109,7 @@ struct NativeEditorView: View {
                         selectedTextForActions = selection.id
                         textInspectorID = nil
                     }
+                    lanePanel = nil
                     inspector = nil
                     return
                 }
@@ -156,7 +166,7 @@ struct NativeEditorView: View {
         let portraitHeight = min(338, max(150, referenceHeight * 0.40))
         let defaultPreviewHeight = session.previewAspectRatio > 1 ? min(124, portraitHeight) : portraitHeight
         let resizeRange = max(0, defaultPreviewHeight - 80)
-        let showsTimeline = session.pendingText == nil && textInspectorID == nil
+        let showsTimeline = session.pendingText == nil && textInspectorID == nil && lanePanel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
         let previewHeight = max(80, defaultPreviewHeight - (showsTimeline ? timelineExpansion * resizeRange : 0) - (showsContext ? 52 : 0))
         VStack(spacing: 0) {
@@ -200,6 +210,10 @@ struct NativeEditorView: View {
                     selectedTextForActions = selection.id
                     textInspectorID = selection.id
                 }
+            } else if lanePanel == .visuals {
+                NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id) { lanePanel = nil }
+            } else if lanePanel == .captions {
+                NativeCaptionPanel(session: session) { lanePanel = nil }
             } else if let id = textInspectorID {
                 NativeEditorTextPanel(id: id, session: session) { textInspectorID = nil }
                     .id(id)
@@ -221,7 +235,8 @@ struct NativeEditorView: View {
             }
 
             NativeEditorToolRail(selected: $selectedTool) { tool in
-                if tool == .text { session.beginTextCreation() }
+                if tool == .captions || tool == .visuals { lanePanel = tool }
+                else if tool == .text { session.beginTextCreation() }
                 else { inspector = .tool(tool) }
             }
             }
@@ -299,6 +314,7 @@ struct NativeEditorView: View {
     }
 
     private func requestBack() {
+        if lanePanel != nil { lanePanel = nil; return }
         if session.pendingText != nil { session.cancelTextCreation(); return }
         if textInspectorID != nil { textInspectorID = nil; return }
         if session.hasUnsavedChanges { showsUnsavedExit = true }

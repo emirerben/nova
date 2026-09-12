@@ -215,6 +215,13 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var api: (any KriaAPIClient)?
     private var threadID: UUID?
     private var itemID: String?
+    var visualItemID: String? { itemID }
+    @Published private(set) var visualLibrary: [CreationVisual] = []
+    @Published private(set) var visualLibraryLimit = 20
+    @Published private(set) var visualLibraryLoading = false
+    @Published private(set) var isAddingVisual = false
+    @Published var visualError: String?
+    private var authoredVisualSources: [String: ResolvedEditorSource] = [:]
     private var variantKey: String?
     private var jobID: UUID?
     private var previewRefreshTask: Task<Void, Never>?
@@ -779,6 +786,10 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 return (index, ResolvedEditorSource(clipIndex: index, mediaID: "fixture-source-\(index)",
                     asset: MediaAsset(id: "fixture-\(index)", relativePath: sourceURL.lastPathComponent, fingerprint: sourceFingerprint), url: sourceURL))
             })
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-caption-visuals") {
+                let source = ResolvedEditorSource(clipIndex: -1, mediaID: "fixture", asset: MediaAsset(id: "fixture", relativePath: url.lastPathComponent, fingerprint: fingerprint, duration: 4), url: url)
+                authoredVisualSources["visual:paper-media:paper-media"] = source
+            }
             await rebuildSourcePreview(sequence: sequence)
         } catch {
             #if DEBUG
@@ -989,7 +1000,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
 
     private func preparePreviewMedia(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
-        guard let resolver = sourceResolver else { return [:] }
+        guard let resolver = sourceResolver else { return resolvedMedia.merging(authoredVisualSources) { _, authored in authored } }
         for overlay in document.mediaOverlays {
             let key = "overlay:" + overlay.id
             guard resolvedMedia[key] == nil else { continue }
@@ -1022,7 +1033,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 resolvedMedia[key] = resolved
             }
         }
-        return resolvedMedia
+        return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }
     }
 
     private func scheduleSourcePreviewUpdate() {
@@ -1684,6 +1695,224 @@ enum NativeEditorLoadState: Equatable, Sendable {
         transactDocument(section: .text) { doc in var item = doc.textElements[index]; body(&item); doc.textElements[index] = item }
     }
 
+    func refreshVisualLibrary() async {
+        guard let api, let itemID, !visualLibraryLoading else { return }
+        visualLibraryLoading = true
+        defer { visualLibraryLoading = false }
+        do {
+            let library = try await api.visuals(itemID: itemID)
+            guard self.itemID == itemID, !Task.isCancelled else { return }
+            visualLibrary = library.assets
+            visualLibraryLimit = library.maxAssets
+            visualError = nil
+        } catch { if !Task.isCancelled { visualError = "Your visuals couldn’t load. Try again. " + error.localizedDescription } }
+    }
+
+    func retryLibraryVisual(_ id: String) async {
+        guard let api, let itemID else { return }
+        do { _ = try await api.retryVisual(itemID: itemID, assetID: id); await refreshVisualLibrary() }
+        catch { visualError = error.localizedDescription }
+    }
+
+    var canAuthorVisuals: Bool { canEdit("visual_editor_style") && canEditSection(.visualBlocks) }
+
+    func addLibraryVisual(_ asset: CreationVisual) async {
+        guard canAuthorVisuals, !isAddingVisual, document.visualBlocks.count < 20,
+              let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection,
+                preferred: min(3, asset.kind == "video" ? asset.durationS ?? 0 : 3)),
+              let block = NativeVisualAuthoring.media(asset: asset, start: window.start, end: window.end,
+                z: Int(document.visualBlocks.compactMap { $0.raw["z"]?.numberValue }.max() ?? 0) + 1) else {
+            visualError = "This visual isn’t ready, or there isn’t enough room at the playhead."
+            return
+        }
+        isAddingVisual = true
+        let generation = document.revision.baseGeneration
+        defer { isAddingVisual = false }
+        do {
+            guard let sourceResolver, let url = asset.sourceURL else { throw MediaEngineError.missingAsset(asset.id) }
+            let source = try await sourceResolver.resolveMedia(id: asset.id, url: url, generation: generation)
+            guard !Task.isCancelled, generation == document.revision.baseGeneration, canAuthorVisuals else { return }
+            authoredVisualSources["visual:" + block.id + ":" + block.id] = source
+            transactDocument(section: .visualBlocks) { $0.visualBlocks.append(block) }
+            visualError = nil
+            select(.init(kind: .visualBlock, id: block.id))
+        } catch { visualError = "This visual couldn’t be opened. Your edit is unchanged. " + error.localizedDescription }
+    }
+
+    @discardableResult func addTextCard(text: String, bold: Bool) -> EditorSelection? {
+        guard canAuthorVisuals, canEditSection(.text), document.visualBlocks.count < 20,
+              let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection),
+              let (block, element) = NativeVisualAuthoring.card(text: text, bold: bold, start: window.start, end: window.end) else {
+            visualError = "Enter some text and move the playhead inside the edit."
+            return nil
+        }
+        transactDocument(sections: [.visualBlocks, .text]) {
+            $0.visualBlocks.append(block); $0.textElements.append(element)
+        }
+        let selected = EditorSelection(kind: .visualBlock, id: block.id)
+        select(selected)
+        return selected
+    }
+
+    func addMotionComposition(preset: String, assets: [CreationVisual]) async {
+        guard canEditSection(.motionScenes), !runtimeMismatch(), !isAddingVisual, document.motionScenes.count < 12,
+              let hash = Self.object(previewVariant["editor_capabilities"])?["motion_runtime_hash"]?.stringValue ?? document.motionRuntimeHash,
+              let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection),
+              let scene = NativeVisualAuthoring.motion(preset: preset, assets: assets, start: window.start, end: window.end) else {
+            visualError = "Choose the required ready photos and move the playhead inside the edit."
+            return
+        }
+        let generation = document.revision.baseGeneration
+        isAddingVisual = true
+        defer { isAddingVisual = false }
+        do {
+            guard let sourceResolver else { throw APIError.unsupported }
+            var sources: [String: ResolvedEditorSource] = [:]
+            for asset in assets {
+                guard let url = asset.sourceURL else { throw MediaEngineError.missingAsset(asset.id) }
+                sources["motion:" + asset.id] = try await sourceResolver.resolveMedia(id: asset.id, url: url, generation: generation)
+            }
+            guard !Task.isCancelled, generation == document.revision.baseGeneration else { return }
+            authoredVisualSources.merge(sources) { _, new in new }
+            transactDocument(section: .motionScenes) { $0.motionScenes.append(scene); $0.motionRuntimeHash = hash }
+            visualError = nil
+            select(.init(kind: .motionScene, id: scene.id))
+        } catch { visualError = "The composition couldn’t be opened. " + error.localizedDescription }
+    }
+
+    func addCameraPulse(intensity: Double = 0.04) {
+        guard intensity.isFinite, canEditSection(.cameraEffects),
+              let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection, preferred: 1.2, minimum: 0.4) else {
+            visualError = "Zoom pulse isn’t available at this position in the edit."
+            return
+        }
+        let effect = EditorCameraEffect(id: UUID().uuidString, startS: window.start, endS: window.end, effect: "semantic_crop_pulse",
+            raw: ["token": .string("semantic_crop_pulse"), "intensity": .number(min(0.08, max(0.01, intensity))), "easing": .string("sine_pulse"), "source": .string("user")])
+        transactDocument(section: .cameraEffects) { $0.cameraEffects.append(effect) }
+        select(.init(kind: .cameraEffect, id: effect.id))
+    }
+
+    func visualRaw(_ selection: EditorSelection) -> [String: JSONValue]? {
+        switch selection.kind {
+        case .mediaOverlay: return document.mediaOverlays.first { $0.id == selection.id }?.raw
+        case .visualBlock: return document.visualBlocks.first { $0.id == selection.id }?.raw
+        case .motionScene: return document.motionScenes.first { $0.id == selection.id }?.raw
+        case .cameraEffect: return document.cameraEffects.first { $0.id == selection.id }?.raw
+        default: return nil
+        }
+    }
+
+    func setVisualEditorStyle(_ selected: EditorSelection, key: String, value: JSONValue, animationPhase: String? = nil) {
+        guard canEdit("visual_editor_style"), let raw = visualRaw(selected) else { return }
+        var style = NativeVisualAuthoring.style(for: raw)
+        style[key] = value
+        guard (try? NativeEditorRenderCompiler.visualEditorStyle(.object(style))) != nil else { return }
+        switch selected.kind {
+        case .mediaOverlay:
+            mutateTimedEffect(kind: .mediaOverlay, id: selected.id, section: .mediaOverlays, operationKeys: ["media_overlays", "overlays"]) {
+                $0.raw["editor_style"] = .object(style)
+                if key == "animation" {
+                    if animationPhase == nil || animationPhase == "entrance" { $0.raw["entrance_token"] = .string("none") }
+                    if animationPhase == nil || animationPhase == "exit" { $0.raw["exit_token"] = .string("none") }
+                }
+            }
+        case .visualBlock:
+            mutateVisualBlock(id: selected.id, operationKeys: ["visual_blocks"]) {
+                $0.raw["editor_style"] = .object(style)
+                if key == "animation" {
+                    if animationPhase == nil || animationPhase == "entrance" { $0.raw["transition_in"] = .string("cut") }
+                    if animationPhase == nil || animationPhase == "exit" { $0.raw["transition_out"] = .string("cut") }
+                }
+                if key == "fit_mode" || key == "zoom" {
+                    var transform = $0.raw["transform"]?.objectValue ?? [:]
+                    transform[key] = value
+                    $0.raw["transform"] = .object(transform)
+                }
+            }
+        default: break
+        }
+    }
+
+    /// Renderer passes are fixed; z orders peer media within the same pass.
+    func visualLayerSelections(for selected: EditorSelection) -> [EditorSelection] {
+        if selected.kind == .mediaOverlay {
+            return document.mediaOverlays.sorted { ($0.raw["z"]?.numberValue ?? 0) < ($1.raw["z"]?.numberValue ?? 0) }
+                .map { .init(kind: .mediaOverlay, id: $0.id) }
+        }
+        if selected.kind == .visualBlock {
+            return document.visualBlocks.filter { $0.kind == "media" }.sorted {
+                let a = $0.raw["z"]?.numberValue ?? 0, b = $1.raw["z"]?.numberValue ?? 0
+                return a == b ? ($0.startS == $1.startS ? $0.id < $1.id : $0.startS < $1.startS) : a < b
+            }.map { .init(kind: .visualBlock, id: $0.id) }
+        }
+        return []
+    }
+
+    func moveVisualLayer(_ selected: EditorSelection, by offset: Int) {
+        guard let section = section(for: selected.kind), canEditSection(section) else { return }
+        var peers = visualLayerSelections(for: selected)
+        guard let current = peers.firstIndex(of: selected) else { return }
+        let target = min(max(0, current + offset), peers.count - 1)
+        guard current != target else { return }
+        peers.remove(at: current); peers.insert(selected, at: target)
+        transactDocument(section: section) { document in
+            for (z, peer) in peers.enumerated() { setLayerZ(peer, z: Double(z), in: &document) }
+        }
+    }
+
+    func canAdjustMotionSpeed(id: String) -> Bool {
+        guard canEditMotionScene(id: id, keys: ["motion_scenes"]),
+              let scene = document.motionScenes.first(where: { $0.id == id }) else { return false }
+        return scene.raw["preset_version"] == .number(2) && scene.raw["motion"]?.objectValue?["version"] == .number(2)
+    }
+
+    func setMotionSpeed(id: String, speed: Double) {
+        guard speed.isFinite, canAdjustMotionSpeed(id: id),
+              let index = document.motionScenes.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .motionScenes) {
+            var motion = $0.motionScenes[index].raw["motion"]?.objectValue ?? [:]
+            motion["speed"] = .number((min(4, max(0.5, speed)) * 20).rounded() / 20)
+            $0.motionScenes[index].raw["motion"] = .object(motion)
+        }
+    }
+
+    func setVisualTiming(_ selected: EditorSelection, outputTime: Double, isStart: Bool) {
+        guard outputTime.isFinite, let bounds = timedBounds(selected, in: document) else { return }
+        let total = timelineProjection.unprojectOutputTime(duration)
+        let minimum = selected.kind == .cameraEffect ? 0.4 : selected.kind == .motionScene ? 1.0 / 30 : minimumClipDuration
+        let value = timelineProjection.unprojectOutputTime(min(duration, max(0, outputTime)))
+        let start = isStart ? min(max(0, value), max(0, min(total, bounds.end) - minimum)) : bounds.start
+        let end = isStart ? min(total, bounds.end) : min(total, max(start + minimum, value))
+        guard end > start else { return }
+        switch selected.kind {
+        case .mediaOverlay: setMediaOverlayTiming(id: selected.id, startS: start, endS: end)
+        case .visualBlock: setVisualBlockTiming(id: selected.id, startS: start, endS: end)
+        case .motionScene: setMotionSceneTiming(id: selected.id, startS: start, endS: end)
+        case .cameraEffect: setCameraEffectTiming(id: selected.id, startS: start, endS: end)
+        default: break
+        }
+    }
+
+    func removeVisualSelection(_ selected: EditorSelection) {
+        switch selected.kind {
+        case .mediaOverlay: removeMediaOverlay(id: selected.id)
+        case .visualBlock:
+            guard canEditSection(.visualBlocks) else { return }
+            transactDocument(sections: [.visualBlocks, .text]) {
+                $0.visualBlocks.removeAll { $0.id == selected.id }
+                $0.textElements.removeAll { $0.raw["visual_block_id"] == .string(selected.id) }
+            }
+        case .motionScene:
+            guard canEditSection(.motionScenes) else { return }
+            transactDocument(section: .motionScenes) { $0.motionScenes.removeAll { $0.id == selected.id } }
+        case .cameraEffect:
+            guard canEditSection(.cameraEffects) else { return }
+            transactDocument(section: .cameraEffects) { $0.cameraEffects.removeAll { $0.id == selected.id } }
+        default: return
+        }
+        select(nil)
+    }
+
     func toggleCaptions() {
         guard canEditSection(.captionMeta) else { return }
         let enabled = Self.bool(document.captionMeta["enabled"]) ?? draft.captions.enabled
@@ -1702,6 +1931,36 @@ enum NativeEditorLoadState: Equatable, Sendable {
         guard canEditSection(.captionMeta) else { return }
         transactDocument(section: .captionMeta) { $0.captionMeta[key] = value ?? .null }
     }
+    var canEditCaptionAppearance: Bool { canEditCaptions && canEdit("caption_editor_style") }
+
+    func setCaptionAppearance(key: String, value: JSONValue) {
+        guard canEditCaptionAppearance else { return }
+        switch (key, value) {
+        case ("alignment", .string(let value)) where ["left", "center", "right"].contains(value): break
+        case ("stroke_color", .string(let value)), ("shadow_color", .string(let value)):
+            guard value.range(of: "^#[0-9A-Fa-f]{6}$", options: .regularExpression) != nil else { return }
+        case ("shadow_opacity", .number(let value)) where value.isFinite && (0...1).contains(value): break
+        case ("highlight_spoken_word", .bool): break
+        default: return
+        }
+        transactDocument(section: .captionMeta) {
+            var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
+            appearance[key] = value
+            $0.captionMeta["appearance"] = .object(appearance)
+        }
+    }
+
+    /// Opening a new display mode explicitly decouples display and highlighting.
+    func setCaptionDisplay(_ style: String) {
+        guard canEditCaptionAppearance, ["sentence", "word"].contains(style) else { return }
+        transactDocument(section: .captionMeta) {
+            var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
+            if appearance["highlight_spoken_word"] == nil { appearance["highlight_spoken_word"] = .bool(false) }
+            $0.captionMeta["appearance"] = .object(appearance)
+            $0.captionMeta["style"] = .string(style)
+        }
+    }
+
     func setCaptionFont(_ font: String?) {
         if let font, !NativeEditorWireContract.captionFonts.contains(font) { return }
         guard canEditSection(.captionMeta) else { return }
@@ -1781,7 +2040,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         guard canEditOperation(["lanes.visual_blocks.timing", "visual_blocks.timing", "lanes.visual_blocks"], section: .visualBlocks),
               let index = document.visualBlocks.firstIndex(where: { $0.id == id }),
               document.visualBlocks[index].kind != "montage" else { return }
-        transactDocument(section: .visualBlocks) { document in
+        transactDocument(sections: document.visualBlocks[index].kind == "text_card" ? [.visualBlocks, .text] : [.visualBlocks]) { document in
             var value = document.visualBlocks[index]
             if let startS { value.startS = max(0, startS) }
             if let endS { value.endS = max(value.startS + minimumClipDuration, endS) }
@@ -1797,6 +2056,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 }
             }
             document.visualBlocks[index] = value
+            Self.syncCardTextTiming(value, in: &document)
         }
     }
     func setVisualBlockPreset(id: String, preset: String?) {
@@ -2209,7 +2469,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
             return
         }
         if !active.recordedUndo { appendUndo(active.baseline); redoStack.removeAll(); active.recordedUndo = true }
-        document = next; changedSections.insert(section); refreshDirtyState(); refreshDuration(); activeTimedEdit = active
+        document = next; changedSections.insert(section)
+        if next.textElements != active.baseline.textElements { changedSections.insert(.text) }
+        refreshDirtyState(); refreshDuration(); activeTimedEdit = active
     }
 
     private func endTimedEdit() {
@@ -2236,6 +2498,14 @@ enum NativeEditorLoadState: Equatable, Sendable {
         }
     }
 
+    private static func syncCardTextTiming(_ block: EditorVisualBlock, in document: inout EditorDocument) {
+        guard block.kind == "text_card" else { return }
+        for index in document.textElements.indices where document.textElements[index].raw["visual_block_id"] == .string(block.id) {
+            document.textElements[index].startS = block.startS
+            document.textElements[index].endS = block.endS
+        }
+    }
+
     private func setTimedBounds(_ selection: EditorSelection, start: Double, end: Double, in document: inout EditorDocument) {
         switch selection.kind {
         case .text:
@@ -2259,6 +2529,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 if let trimEnd { value.endS = min(value.endS, value.startS + max(minimumClipDuration, trimEnd - trimStart)) }
             }
             document.visualBlocks[index] = value
+            Self.syncCardTextTiming(value, in: &document)
         case .motionScene:
             guard let index = document.motionScenes.firstIndex(where: { $0.id == selection.id }) else { return }
             document.motionScenes[index].startS = Self.roundToMotionFrame(start)

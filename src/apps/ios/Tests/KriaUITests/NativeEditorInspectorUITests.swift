@@ -459,8 +459,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(captions.waitForExistence(timeout: 8))
         captions.tap()
 
-        XCTAssertTrue(app.textFields["native-editor-selected-caption-input"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Caption settings"].exists)
+        XCTAssertTrue(app.buttons["native-editor-captions-tab-Style"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-caption-row-cue-all"].firstMatch.exists)
     }
 
     func testAllPersistedLanesExposeStableTimelineIdentityAndInspector() {
@@ -473,9 +473,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
             ("native-editor-timeline-sound_effect-sfx-1", "native-editor-selected-sfx-placement"),
             ("native-editor-timeline-media_overlay-overlay-1", "native-editor-selected-overlay-display-mode"),
             ("native-editor-timeline-carousel-carousel-1", "native-editor-selected-carousel-position"),
-            ("native-editor-timeline-visual_block-visual-1", "native-editor-selected-visual-preset"),
-            ("native-editor-timeline-motion_scene-motion-1", "native-editor-capability-reason"),
-            ("native-editor-timeline-camera_effect-camera-1", "native-editor-selected-camera-intensity"),
+            ("native-editor-timeline-visual_block-visual-1", "native-editor-visuals-panel"),
+            ("native-editor-timeline-motion_scene-motion-1", "native-editor-visuals-panel"),
+            ("native-editor-timeline-camera_effect-camera-1", "native-editor-visuals-panel"),
         ]
 
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
@@ -490,7 +490,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
                 inspectorElement.waitForExistence(timeout: 3),
                 "Inspector \(value.inspectorID) did not follow \(value.timelineID)"
             )
-            let done = app.buttons["native-editor-inspector-done"]
+            let done = app.buttons[value.inspectorID == "native-editor-visuals-panel" ? "native-editor-visuals-done" : "native-editor-inspector-done"]
             XCTAssertTrue(done.exists)
             done.tap()
         }
