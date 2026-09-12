@@ -55,6 +55,21 @@ The production overlay verification includes `authored_animation_phases.json`, c
 
 With Colima's default mounts, a worktree under `/private/tmp` may not appear inside Docker bind mounts. The production image can still be verified by creating a disposable container, copying `src/apps/api/tests/.` into `/app/tests`, running the same `app.cli.verify_overlays --fixtures` command, and copying its output back. Do not describe an empty-fixture run as a pass.
 
+### Final release verification (2026-09-12)
+
+The full backend run passed 13,397 tests, with 33 skipped and two expected failures;
+the web suite passed 3,924 tests. The media-engine run reported 122 tests with four
+skipped, and the iOS app run reported 235 tests with one skipped plus 35 passing UI
+tests. After the final new-text custom-position correction, the 235-test app suite
+and both affected UI tests passed again. The signed generic-device build passed;
+the physical device was disconnected at the final verification point.
+
+The production Docker overlay suite passed all 39 cases. Real-footage final burns
+through both classic and Skia paths passed, including authored blank rows, producing
+13.407-second 1080×1920 H.264/AAC output. Local verification run:
+`6f49f4c0-3637-423d-8b92-fa7dc791b05a`. No paid LLM tests ran. These results do not
+qualify complete native/cloud parity or the outstanding physical-device matrix.
+
 ## iPhone source-preview compatibility fix (2026-09-11)
 
 The production OpenAPI schema was checked directly: `TimelineClipOut` exposes
@@ -219,6 +234,13 @@ hysteresis; rotation gently holds at cardinal angles and smoothly releases.
 Enter and deletion control authored line breaks, including blank lines. The
 `wrap_lines` property preserves that choice across native and cloud rendering;
 legacy elements retain their existing wrapping policy until manually edited.
+`TextElement.animation_phases` accepts entrance/exit `none`, `fade`, `pop`,
+`slide`, or `typewriter`; loop accepts `none`, `pulse`, `bounce`, or `float`,
+with speed from 0.25 to 3. `stroke_color`, `shadow_color`, `shadow_opacity`,
+`background_color`, and `editor_preset` persist the authored paint choices.
+`wrap_lines=false` preserves manual rows; the legacy true default is omitted
+from serialized payloads. Font size has an 8px minimum and must be representable
+by the renderer; finite wrap widths have a 0.2 minimum and can extend off-canvas.
 
 Preview playback activates the media audio session. Narrated, voiceover, and
 narrated guided-story variants use their caption-free rendered narration mix,
