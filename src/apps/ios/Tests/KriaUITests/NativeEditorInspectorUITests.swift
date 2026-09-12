@@ -12,8 +12,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 12))
         let play = app.buttons["native-editor-play-pause"]
         play.tap()
-        // Scrub on the ruler so a selected clip's trim handles cannot
-        // turn the gesture into a duration edit on a smaller viewport.
+        // The ruler is clear of trim handles while no clip is selected.
         let first = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.05))
         first.press(forDuration: 0.05, thenDragTo: first.withOffset(CGVector(dx: -20, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.1)
         XCTAssertEqual(play.label, "Play preview", "Scrubbing must stop the playback clock")
@@ -42,10 +41,29 @@ final class NativeEditorInspectorUITests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: index < 4 ? -45 : 45, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.3)
         }
         app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
-        let nearCut = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.05))
+        // Selection animates the action tray and moves the timeline. Wait for
+        // the audio row to settle, then target its visible area well below
+        // the selected clip's trim handles.
+        let audioRow = app.staticTexts["native-editor-original-audio"]
+        var previousY: CGFloat?
+        let settled = NSPredicate { _, _ in
+            let y = audioRow.frame.minY
+            defer { previousY = y }
+            return previousY == y
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: audioRow)], timeout: 5), .completed)
+        func audioScrubPoint() -> XCUICoordinate {
+            let visible = audioRow.frame.intersection(timeline.frame)
+            XCTAssertFalse(visible.isNull)
+            XCTAssertGreaterThan(visible.height, 10)
+            return app.coordinate(withNormalizedOffset: .zero).withOffset(
+                CGVector(dx: visible.midX, dy: visible.midY)
+            )
+        }
+        let nearCut = audioScrubPoint()
         nearCut.press(forDuration: 0.05, thenDragTo: nearCut.withOffset(CGVector(dx: -15, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.3)
         for index in 0..<6 {
-            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.05))
+            let start = audioScrubPoint()
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: index.isMultiple(of: 2) ? 30 : -30, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.3)
             assertDisplayedClip()
         }
@@ -250,9 +268,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(app.textFields["native-editor-text-size"].value as? String, resizedSize, "Moving immediately after resizing must preserve size")
         let size = app.textFields["native-editor-text-size"]
         XCTAssertTrue(size.waitForExistence(timeout: 3))
-        size.doubleTap()
-        if app.menuItems["Select All"].waitForExistence(timeout: 1) { app.menuItems["Select All"].tap() }
+        // Focus at the end and clear explicitly: double-tap does not
+        // reliably select the whole decimal value on every iOS version.
+        size.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let previousSize = size.value as? String ?? ""
+        size.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previousSize.count + 1))
+        XCTAssertTrue(["", "Size"].contains(size.value as? String ?? ""), "The prior numeric value must be cleared")
         size.typeText("600")
+        XCTAssertEqual(size.value as? String, "600")
         app.buttons["Increase text size"].tap()
         XCTAssertEqual(size.value as? String, "604")
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
