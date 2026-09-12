@@ -12,7 +12,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 12))
         let play = app.buttons["native-editor-play-pause"]
         play.tap()
-        let first = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.23))
+        // Scrub on the ruler so a selected clip's trim handles cannot
+        // turn the gesture into a duration edit on a smaller viewport.
+        let first = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.05))
         first.press(forDuration: 0.05, thenDragTo: first.withOffset(CGVector(dx: -20, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.1)
         XCTAssertEqual(play.label, "Play preview", "Scrubbing must stop the playback clock")
         func assertDisplayedClip() {
@@ -36,18 +38,20 @@ final class NativeEditorInspectorUITests: XCTestCase {
         }
         for index in 0..<8 {
             assertDisplayedClip()
-            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.23))
+            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.05))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: index < 4 ? -45 : 45, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.3)
         }
         app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
-        let nearCut = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.23))
+        let nearCut = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.78, dy: 0.05))
         nearCut.press(forDuration: 0.05, thenDragTo: nearCut.withOffset(CGVector(dx: -15, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.3)
         for index in 0..<6 {
-            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.23))
+            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.05))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: index.isMultiple(of: 2) ? 30 : -30, dy: 0)), withVelocity: 20, thenHoldForDuration: 0.3)
             assertDisplayedClip()
         }
         app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.tap()
+        XCTAssertEqual(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.value as? String, "2.000")
+        XCTAssertEqual(app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.value as? String, "2.000")
         play.tap()
         let time = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
         let advanced = NSPredicate { _, _ in
@@ -55,7 +59,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
             return (Double(label.split(separator: ":").last ?? "0") ?? 0) >= 2.4
         }
         expectation(for: advanced, evaluatedWith: time)
-        waitForExpectations(timeout: 5)
+        // Hosted simulator snapshots can take several seconds; the target
+        // remains observable at the end, so wait for progress rather than
+        // requiring a second snapshot inside a five-second window.
+        waitForExpectations(timeout: 15)
         assertDisplayedClip()
     }
 
