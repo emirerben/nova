@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.8.0] - 2026-09-12
+
+### Changed
+- v0.76.8.0 feat: add gated native source editing and authored text previews (#1017) <!-- release-pr: 1017 -->
+
 ## [0.76.7.0] - 2026-09-11
 
 ### Changed
