@@ -1619,7 +1619,8 @@ def test_asset_out_image_prefers_preview_over_raw():
         out = routes._asset_out(asset)
 
     assert out.display_url == "https://signed/x.png.preview.jpg"
-    assert signed == ["x.png.preview.jpg"]
+    assert out.source_url == f"https://signed/{asset.gcs_path}"
+    assert signed == [asset.gcs_path, "x.png.preview.jpg"]
     # Images fold the preview into display_url — preview_url is video-only.
     assert out.preview_url is None
 
@@ -1639,7 +1640,8 @@ def test_asset_out_video_emits_preview_url_and_keeps_raw_display():
 
     assert out.display_url == f"https://signed/{asset.gcs_path}"
     assert out.preview_url == "https://signed/x.mp4.preview.jpg"
-    assert signed == [asset.gcs_path, "x.mp4.preview.jpg"]
+    assert out.source_url == f"https://signed/{asset.gcs_path}"
+    assert signed == [asset.gcs_path, asset.gcs_path, "x.mp4.preview.jpg"]
 
 
 def test_asset_out_empty_string_preview_treated_as_absent():
@@ -1662,7 +1664,14 @@ def test_asset_out_empty_string_preview_treated_as_absent():
     assert image_out.display_url == f"https://signed/{image_asset.gcs_path}"
     assert video_out.display_url == f"https://signed/{video_asset.gcs_path}"
     assert video_out.preview_url is None
-    assert signed == [image_asset.gcs_path, video_asset.gcs_path]
+    assert image_out.source_url == image_out.display_url
+    assert video_out.source_url == video_out.display_url
+    assert signed == [
+        image_asset.gcs_path,
+        image_asset.gcs_path,
+        video_asset.gcs_path,
+        video_asset.gcs_path,
+    ]
 
 
 def test_list_exposes_authoritative_hidden_reservation_capacity(client: TestClient):
@@ -2267,3 +2276,18 @@ def test_list_404_when_not_owner(client: TestClient):
     with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
         resp = client.get(f"/plan-items/{item.id}/assets")
     assert resp.status_code == 404
+
+
+def test_asset_out_source_signing_failure_preserves_image_preview():
+    from app.routes import plan_items as routes
+
+    user = _user()
+    item, _plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id, kind="image", preview_gcs_path="preview.jpg")
+    with patch(
+        "app.routes.plan_items.storage.signed_get_url",
+        side_effect=[RuntimeError("source unavailable"), "https://signed/preview.jpg"],
+    ):
+        out = routes._asset_out(asset)
+    assert out.source_url is None
+    assert out.display_url == "https://signed/preview.jpg"

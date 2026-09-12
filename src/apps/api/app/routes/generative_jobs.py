@@ -618,6 +618,7 @@ class GenerativeVariant(BaseModel):
     caption_highlight_color: str | None = None
     caption_stroke_width: int | None = None
     caption_shadow_enabled: bool | None = None
+    caption_editor_style: dict | None = None
     intro_font_family: str | None = None
     intro_effect: str | None = None
     intro_text_color: str | None = None
@@ -1086,7 +1087,26 @@ class EditorCommitBackgroundMusic(BaseModel):
         return value
 
 
+class EditorCaptionAppearance(BaseModel):
+    """Explicit native-editor appearance; missing values retain legacy renders."""
+
+    model_config = {"extra": "forbid"}
+    alignment: Literal["left", "center", "right"] | None = None
+    stroke_color: str | None = None
+    shadow_color: str | None = None
+    shadow_opacity: float | None = Field(None, ge=0, le=1, allow_inf_nan=False)
+    highlight_spoken_word: bool | None = None
+
+    @field_validator("stroke_color", "shadow_color")
+    @classmethod
+    def validate_color(cls, value: str | None) -> str | None:
+        if value is not None and not _HEX_COLOR_RE.fullmatch(value):
+            raise ValueError("Caption colors must be #RRGGBB hex colors.")
+        return value.upper() if value is not None else None
+
+
 class EditorCommitCaptionMeta(BaseModel):
+    appearance: EditorCaptionAppearance | None = None
     enabled: bool | None = None
     style: Literal["sentence", "word"] | None = None
     font: str | None = None
@@ -6281,6 +6301,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             )
             and _text_elements_allowed(variant)
         ),
+        "caption_editor_style": archetype in CAPTION_EDIT_ARCHETYPES,
+        "visual_editor_style": visual_blocks_reason is None or overlays_reason is None,
         "timeline": timeline_ok,
         "timeline_max_slots": _TIMELINE_MAX_SLOTS,
         "copilot_snapshot_wire_version": 1,
@@ -8906,6 +8928,11 @@ def _prepare_editor_commit(
                     detail="Unknown caption font.",
                 )
         caption_meta_patch = {}
+        if meta.appearance is not None:
+            caption_meta_patch["caption_editor_style"] = {
+                **(variant.get("caption_editor_style") or {}),
+                **meta.appearance.model_dump(exclude_unset=True),
+            }
         if meta.enabled is not None:
             caption_meta_patch["captions_enabled"] = bool(meta.enabled)
         if meta.style is not None:

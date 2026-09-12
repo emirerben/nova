@@ -2816,6 +2816,13 @@ def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeyp
                 highlight_color="#A3E635",
                 stroke_width=7,
                 shadow_enabled=False,
+                appearance=gj.EditorCaptionAppearance(
+                    alignment="left",
+                    stroke_color="#123456",
+                    shadow_color="#654321",
+                    shadow_opacity=0.25,
+                    highlight_spoken_word=False,
+                ),
             )
         ),
     )
@@ -2829,6 +2836,13 @@ def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeyp
     assert v["caption_highlight_color"] == "#A3E635"
     assert v["caption_stroke_width"] == 7
     assert v["caption_shadow_enabled"] is False
+    assert v["caption_editor_style"] == {
+        "alignment": "left",
+        "stroke_color": "#123456",
+        "shadow_color": "#654321",
+        "shadow_opacity": 0.25,
+        "highlight_spoken_word": False,
+    }
     # Without these flags the smart-caption policy ignores the committed
     # font/position — the edit would silently no-op on Smart Captions.
     assert v["caption_font_user_edited"] is True
@@ -5453,6 +5467,8 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
     caps = _caps(_job(), "song_text")
     assert caps == {
         "overlay_upload_mode": "legacy",
+        "caption_editor_style": False,
+        "visual_editor_style": True,
         "text_elements": True,
         "timeline": True,
         "timeline_max_slots": 120,

@@ -280,3 +280,100 @@ def test_trimmed_video_media_composites(composited: str, tmp_path) -> None:
 def test_cover_media_honors_focal_point_in_rendered_pixels(composited: str, tmp_path) -> None:
     center = _rgb_at(composited, 2.85, 540, 960, str(tmp_path))
     assert center[1] > center[0] + 30 and center[1] > center[2] + 20, center
+
+
+def test_authored_rotation_and_phase_render_in_final_compositor(tmp_path):
+    from app.agents._schemas.visual_editor import VisualAnimation, VisualEditorStyle
+
+    base, source, output = [str(tmp_path / name) for name in ("base.mp4", "red.png", "out.mp4")]
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=blue:s=1080x1920:d=1:r=30",
+            "-pix_fmt",
+            "yuv420p",
+            base,
+        ]
+    )
+    _make_image(source, "red")
+    block = MediaBlock(
+        kind="media",
+        asset_id="authored",
+        src_gcs_path=source,
+        media_kind="image",
+        display_mode="overlay",
+        start_s=0.1,
+        end_s=0.9,
+        scale=0.4,
+        x_frac=0.5,
+        y_frac=0.5,
+        editor_style=VisualEditorStyle(
+            rotation_deg=90, animation=VisualAnimation(entrance="fade", exit="fade", speed=3)
+        ),
+    )
+    _run(
+        build_visual_block_composite_command(base, [block], [source], output, base_has_audio=False)
+    )
+    assert _dimensions(output) == (1080, 1920)
+    center = _rgb_at(output, 0.5, 540, 960, str(tmp_path))
+    assert center[0] > 200 and center[2] < 40
+    # The landscape card becomes portrait: tall point is red, wide point is blue.
+    tall = _rgb_at(output, 0.5, 540, 1130, str(tmp_path))
+    wide = _rgb_at(output, 0.5, 710, 960, str(tmp_path))
+    assert tall[0] > 200 and wide[2] > 200
+    outside = _rgb_at(output, 0.95, 540, 960, str(tmp_path))
+    assert outside[2] > 200
+
+
+@pytest.mark.parametrize("zoom", [1.0, 1.1])
+def test_rotated_contain_retains_its_focal_center(tmp_path, zoom):
+    from PIL import Image
+
+    from app.agents._schemas.visual_editor import VisualEditorStyle
+
+    base, source, output = [str(tmp_path / name) for name in ("base.mp4", "red.png", "out.mp4")]
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=blue:s=1080x1920:d=0.3:r=30",
+            "-pix_fmt",
+            "yuv420p",
+            base,
+        ]
+    )
+    _make_image(source, "red")
+    block = MediaBlock(
+        kind="media",
+        asset_id="focal",
+        src_gcs_path=source,
+        media_kind="image",
+        display_mode="fullscreen",
+        start_s=0,
+        end_s=0.3,
+        transform=MediaTransform(fit_mode="contain", focal_x=0.5, focal_y=0.25, zoom=zoom),
+        editor_style=VisualEditorStyle(rotation_deg=90, fit_mode="contain", zoom=zoom),
+    )
+    _run(
+        build_visual_block_composite_command(base, [block], [source], output, base_has_audio=False)
+    )
+    frame = str(tmp_path / "frame.png")
+    _run(["ffmpeg", "-y", "-ss", "0.1", "-i", output, "-frames:v", "1", frame])
+    image = Image.open(frame).convert("RGB")
+    mask = Image.new("L", image.size)
+    mask.putdata([255 if red > 180 and blue < 60 else 0 for red, _, blue in image.getdata()])
+    left, top, right, bottom = mask.getbbox()
+    fitted_width = round(1080 * zoom)
+    fitted_height = int(fitted_width * 360 / 640 + 0.5)
+    expected_center_y = (1920 - fitted_height) * 0.25 + fitted_height / 2
+    assert (left + right) / 2 == pytest.approx(540, abs=2)
+    assert (top + bottom) / 2 == pytest.approx(expected_center_y, abs=2)
+    assert right - left == pytest.approx(fitted_height, abs=3)
+    assert bottom - top == pytest.approx(fitted_width, abs=3)
