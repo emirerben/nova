@@ -146,3 +146,59 @@ def test_burn_dict_adapter_keeps_a_zero_valued_frac() -> None:
 
     assert elem is not None
     assert (elem.x_frac, elem.y_frac) == (0.0, 0.0)
+
+
+def test_authored_text_contract_survives_projection_and_serialization() -> None:
+    """Editor-authored rows and paint survive the shared agent schema boundary."""
+    authored = {
+        "text": "\nFirst row\n\nLast row\n",
+        "start_s": 0.0,
+        "end_s": 3.0,
+        "position": "center",
+        "wrap_lines": False,
+        "size_px": 420.0,
+        "max_width_frac": 1.4,
+        "stroke_color": "#123456",
+        "shadow_color": "#654321",
+        "shadow_opacity": 0.35,
+        "background_color": "#ABCDEF",
+        "editor_preset": "Highlight",
+        "animation_phases": {
+            "entrance": "pop",
+            "exit": "fade",
+            "loop": "float",
+            "speed": 1.5,
+        },
+    }
+    elem = _burn_dict_to_text_element({**authored, "text_size_px": authored["size_px"]})
+    assert elem is not None
+    payload = TextElement.model_validate_json(elem.model_dump_json()).model_dump()
+    for field in (
+        "text",
+        "wrap_lines",
+        "size_px",
+        "max_width_frac",
+        "stroke_color",
+        "shadow_color",
+        "shadow_opacity",
+        "background_color",
+        "editor_preset",
+        "animation_phases",
+    ):
+        assert payload[field] == authored[field], field
+
+
+def test_legacy_agent_text_keeps_implicit_wrapping() -> None:
+    elem = TextElement.model_validate(
+        {
+            "id": "legacy",
+            "role": "generative_intro",
+            "text": "Legacy title",
+            "start_s": 0,
+            "end_s": 2,
+            "size_px": 48,
+        }
+    )
+    assert elem.wrap_lines is True
+    assert "wrap_lines" not in elem.model_dump()
+    assert TextElement.model_validate_json(elem.model_dump_json()).wrap_lines is True
