@@ -81,6 +81,12 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // remains observable at the end, so wait for progress rather than
         // requiring a second snapshot inside a five-second window.
         waitForExpectations(timeout: 15)
+        let previewState = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let finalFrame = NSPredicate { _, _ in
+            time.value as? String == "0:04.0" && play.label == "Play preview"
+                && (previewState.value as? String ?? "").contains("stillFrameReady:true")
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: finalFrame, object: previewState)], timeout: 15), .completed)
         assertDisplayedClip()
     }
 
@@ -247,20 +253,23 @@ final class NativeEditorInspectorUITests: XCTestCase {
         keyboard.name = "Live text keyboard"; keyboard.lifetime = .keepAlways; add(keyboard)
         app.buttons["native-editor-text-done"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-panel"].waitForExistence(timeout: 3))
-        Thread.sleep(forTimeInterval: 1)
+        let textReady = NSPredicate { _, _ in
+            (preview.value as? String ?? "").contains("liveTextReady:true")
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: textReady, object: preview)], timeout: 15), .completed)
         let textObject = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: Live text")).firstMatch
         XCTAssertTrue(textObject.waitForExistence(timeout: 3))
         let initialCenter = CGPoint(x: textObject.frame.midX, y: textObject.frame.midY)
         let center = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: initialCenter.x, dy: initialCenter.y))
         center.press(forDuration: 0.1, thenDragTo: center.withOffset(CGVector(dx: -24, dy: -30)), withVelocity: 20, thenHoldForDuration: 0.1)
-        let moveSamples = (preview.value as? String)?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
+        let moveSamples = (preview.value as? String)?.components(separatedBy: ";").first?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
         XCTAssertGreaterThan(Int(moveSamples) ?? 0, 4, "Moving must use the immediate text layer")
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertLessThan(textObject.frame.midX, initialCenter.x - 15)
         XCTAssertLessThan(textObject.frame.midY, initialCenter.y - 20)
         let corner = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: textObject.frame.maxX, dy: textObject.frame.maxY))
         corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: 24, dy: 18)), withVelocity: 20, thenHoldForDuration: 0.1)
-        let cornerSamples = (preview.value as? String)?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
+        let cornerSamples = (preview.value as? String)?.components(separatedBy: ";").first?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
         XCTAssertGreaterThan(Int(cornerSamples) ?? 0, 4, "Corner resizing must use the immediate text layer")
         let resizedSize = app.textFields["native-editor-text-size"].value as? String
         let movedCenter = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: textObject.frame.midX, dy: textObject.frame.midY))
@@ -282,13 +291,13 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
         let largeText = XCTAttachment(screenshot: app.screenshot())
         largeText.name = "Large text size control"; largeText.lifetime = .keepAlways; add(largeText)
-        // The source renderer has finished preparing the isolated text layer.
-        // Finger samples must use that layer, not mutate/recompile the document.
-        Thread.sleep(forTimeInterval: 1)
+        // Finger samples must use the prepared layer, not mutate/recompile
+        // the document. Preparation is asynchronous on hosted simulators.
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: textReady, object: preview)], timeout: 15), .completed)
         preview.pinch(withScale: 1.4, velocity: 0.4)
         Thread.sleep(forTimeInterval: 0.5)
         preview.pinch(withScale: 0.75, velocity: -0.4)
-        let samples = (preview.value as? String)?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
+        let samples = (preview.value as? String)?.components(separatedBy: ";").first?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
         XCTAssertGreaterThan(Int(samples) ?? 0, 4)
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
         app.buttons["Animation"].tap()

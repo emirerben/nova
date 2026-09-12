@@ -2651,6 +2651,10 @@ enum NativeEditorLoadState: Equatable, Sendable {
         endedPlayer.pause()
         currentTime = max(0, duration)
         isPlaying = false
+        // A composition has no active layers at its half-open end time.
+        // Retain a generated frame from just inside the endpoint instead of
+        // relying on VideoPlayer to keep its last surface after natural EOF.
+        _ = requestScrubFrame(at: duration)
     }
 
     private func configureCapabilities(from variant: [String: JSONValue]?) {

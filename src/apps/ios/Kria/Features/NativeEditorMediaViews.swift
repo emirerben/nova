@@ -182,6 +182,18 @@ struct NativeVideoPreview: View {
         }
     }
 
+    private var uiTestingPreviewValue: String {
+        guard ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") else { return "" }
+        let selectedText = session.document.textElements.first { $0.id == session.selection?.id }
+        let textReady = session.textInteractionFrame.map {
+            $0.element == selectedText && abs($0.time - clock.currentTime) < 0.01
+        } ?? false
+        let target = min(clock.currentTime, max(0, session.duration - 1.0 / 600))
+        let stillReady = !session.isPlaying && session.scrubPreviewFrame != nil
+            && session.scrubPreviewTime.map { abs($0 - target) < 0.05 } == true
+        return "liveTextSamples:\(liveTextSampleCount);liveTextReady:\(textReady);stillFrameReady:\(stillReady)"
+    }
+
     private func refreshObjects() {
         cachedObjects = makeObjects()
         didCacheObjects = true
@@ -591,7 +603,7 @@ struct NativeVideoPreview: View {
         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
         .clipped()
-        .accessibilityValue(ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") ? "liveTextSamples:\(liveTextSampleCount)" : "")
+        .accessibilityValue(uiTestingPreviewValue)
         .onAppear(perform: refreshObjects)
         .onChange(of: session.document) { _, _ in refreshObjects() }
         .onChange(of: session.scrubPreviewFrame) { _, _ in
