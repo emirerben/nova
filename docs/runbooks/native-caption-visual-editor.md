@@ -66,7 +66,9 @@ still apply. No database migration is required.
    create no timeline records; failed source resolution leaves the edit intact.
 6. **Parity:** `VisualEditorStyleTests` and `test_visual_editor.py` pin paired
    animation samples; `test_visual_blocks_smoke.py` exercises rotated media and
-   phase windows through FFmpeg. `NativeEditorRenderCompilerTests` pins caption
+   phase windows through FFmpeg, including retained focal placement after rotation
+   and zoom. Native placement tests preserve existing fades when an editor style
+   is added. `NativeEditorRenderCompilerTests` pins caption
    alignment to the final ASS margins. Existing timeline tests cover inserted
    boundaries, removed entries, overlaps, inverse mapping, and music exclusion.
 
