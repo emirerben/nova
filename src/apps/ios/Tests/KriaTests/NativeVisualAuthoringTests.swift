@@ -160,6 +160,34 @@ final class NativeVisualAuthoringTests: XCTestCase {
         XCTAssertEqual(legacy.document, before)
     }
 
+    func testVideosHaveSourceThumbnailsBeforeAnalysisFinishes() {
+        for status in ["pending", "analyzing", "processing", "failed"] {
+            let asset = CreationVisual(id: "video", kind: "video", status: status,
+                sourceFilename: nil, displayURL: URL(string: "https://example.com/original.mp4"),
+                previewURL: nil, retryable: nil)
+            XCTAssertEqual(NativeVisualThumbnail.thumbnailURL(for: asset), asset.displayURL)
+        }
+    }
+
+    func testVideoImagePreviewIsNeverSentToVideoDecoder() {
+        let asset = CreationVisual(id: "video", kind: "video", status: "analyzing", sourceFilename: nil,
+            displayURL: URL(string: "https://example.com/original.mp4"),
+            previewURL: URL(string: "https://example.com/preview.jpg"), retryable: nil)
+        XCTAssertEqual(NativeVisualThumbnail.thumbnailURL(for: asset), asset.displayURL)
+        XCTAssertNotEqual(NativeVisualThumbnail.thumbnailURL(for: asset), asset.previewURL)
+    }
+
+    func testThumbnailIdentityIgnoresSignedURLRenewalButTracksNewMedia() {
+        func asset(_ path: String, _ signature: String) -> CreationVisual {
+            CreationVisual(id: "video", kind: "video", status: "ready", sourceFilename: nil,
+                displayURL: URL(string: "https://example.com/\(path)?signature=\(signature)"), previewURL: nil, retryable: nil)
+        }
+        XCTAssertEqual(NativeVisualThumbnail.thumbnailIdentity(for: asset("preview.mp4", "old")),
+                       NativeVisualThumbnail.thumbnailIdentity(for: asset("preview.mp4", "new")))
+        XCTAssertNotEqual(NativeVisualThumbnail.thumbnailIdentity(for: asset("preview.mp4", "old")),
+                          NativeVisualThumbnail.thumbnailIdentity(for: asset("replacement.mp4", "new")))
+    }
+
     func testVideoThumbnailUsesTheImportedMedia() async throws {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         let image = try await NativeVisualThumbnail.videoThumbnail(url: url)

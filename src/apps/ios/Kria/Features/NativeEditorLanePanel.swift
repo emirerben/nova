@@ -6,16 +6,26 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
     let tabs: [Tab]
     @Binding var tab: Tab
     let onDone: () -> Void
+    var heading: String? = nil
+    var onAdd: (() -> Void)? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         VStack(spacing: 6) {
             HStack {
-                Text(title).font(KriaFont.body(15).weight(.semibold))
+                Text(heading ?? title).font(KriaFont.body(15).weight(.semibold))
                 Spacer()
+                if let onAdd {
+                    Button(action: onAdd) {
+                        Label("Add visual", systemImage: "plus").font(KriaFont.body(13))
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("native-editor-add-another-visual")
+                }
                 Button("Done", action: onDone).frame(minWidth: 64, minHeight: 44)
                     .accessibilityIdentifier("native-editor-\(title.lowercased())-done")
             }
+            if tabs.count > 1 {
             HStack(spacing: 4) {
                 ForEach(tabs, id: \.self) { value in
                     Button { tab = value } label: {
@@ -28,11 +38,25 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
                     .accessibilityIdentifier("native-editor-\(title.lowercased())-tab-\(value.rawValue)")
                 }
             }
+            }
             ScrollView { content().padding(.top, 8).padding(.bottom, 12) }
                 .scrollDismissesKeyboard(.interactively)
+                .accessibilityIdentifier("native-editor-\(title.lowercased())-scroll")
+                .onScrollPhaseChange { _, phase, context in
+                    #if DEBUG
+                    guard title == "Visuals" else { return }
+                    let geometry = context.geometry
+                    NativePreviewDiagnostics.record("gallery-scroll", fields: [
+                        "phase": String(describing: phase),
+                        "offset": String(Double(geometry.contentOffset.y)),
+                        "contentHeight": String(Double(geometry.contentSize.height)),
+                        "viewportHeight": String(Double(geometry.containerSize.height))
+                    ])
+                    #endif
+                }
         }
         .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, maxHeight: 352)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(KriaColor.paper)
         .overlay(alignment: .top) { KriaColor.line.opacity(0.4).frame(height: 1) }
         .font(KriaFont.body(14))

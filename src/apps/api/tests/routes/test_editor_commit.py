@@ -5462,6 +5462,26 @@ def test_guided_story_direct_text_write_cannot_drop_approved_layer(monkeypatch, 
     assert job.assembly_plan == before
 
 
+@pytest.mark.parametrize("has_revision", [False, True])
+@pytest.mark.parametrize(
+    "visuals_enabled,overlays_enabled", [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_guided_visual_styling_capability_tracks_editable_lanes(
+    monkeypatch, has_revision, visuals_enabled, overlays_enabled
+):
+    _arm(monkeypatch)
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj.settings, "visual_blocks_enabled", visuals_enabled)
+    monkeypatch.setattr(gj.settings, "media_overlays_enabled", overlays_enabled)
+    monkeypatch.setattr(
+        gj, "_guided_v2_revision", lambda *_: {"revision_number": 1} if has_revision else None
+    )
+    caps = _caps(_job(resolved_archetype="guided_story"), "song_text")
+    assert caps.get("visual_editor_style") is (
+        has_revision and (visuals_enabled or overlays_enabled)
+    )
+
+
 def test_capabilities_montage_song_text_all_on(monkeypatch):
     _arm(monkeypatch)
     caps = _caps(_job(), "song_text")

@@ -1,14 +1,14 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import SwiftUI
 
 struct NativeVisualPanel: View {
-    enum Tab: String, CaseIterable { case browse = "Browse", placement = "Placement", animation = "Animation" }
+    enum Tab: String, CaseIterable { case edit = "Edit", animation = "Animation" }
     enum Category: String, CaseIterable { case media = "Media", cards = "Text cards", motion = "Motion", camera = "Camera FX" }
     @ObservedObject var session: NativeEditorSession
     @ObservedObject var uploads: BackgroundUploadCoordinator
     let projectID: UUID
     let onDone: () -> Void
-    @State private var tab: Tab = .browse
+    @State private var tab: Tab = .edit
     @State private var category: Category = .media
     @State private var showsImporter = false
     @State private var cardPreset: String?
@@ -39,16 +39,40 @@ struct NativeVisualPanel: View {
         }
     }
 
+    private var editorTabs: [Tab] {
+        guard selected != nil else { return [] }
+        return mediaSelected || cardElement != nil ? [.edit, .animation] : [.edit]
+    }
+    private var editorHeading: String { selected.map { "Edit " + label($0).lowercased() } ?? "Add visual" }
+    private var addAction: (() -> Void)? { selected == nil ? nil : { openLibrary() } }
+
+    private func openLibrary() {
+        editingText = false
+        session.endTransaction()
+        session.select(nil)
+        tab = .edit
+        cardPreset = nil
+        motionPreset = nil
+    }
+
     var body: some View {
-        NativeEditorLanePanel(title: "Visuals", tabs: Tab.allCases, tab: $tab, onDone: {
+        NativeEditorLanePanel(title: "Visuals", tabs: editorTabs, tab: $tab, onDone: {
             editingText = false; session.endTransaction(); onDone()
-        }) {
+        }, heading: editorHeading, onAdd: addAction) {
             VStack(spacing: 12) {
                 if session.isAddingVisual { ProgressView("Opening visual…").frame(minHeight: 44) }
-                switch tab {
-                case .browse: browse
-                case .placement: placement
-                case .animation: animations
+                if mediaSelected && !session.canEdit("visual_editor_style") {
+                    Text("Advanced visual editing isn’t available for this edit yet. Placement and timing are still editable.")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                        .accessibilityIdentifier("native-editor-visual-style-unavailable")
+                }
+                if selected == nil {
+                    browse
+                } else {
+                    switch tab {
+                    case .edit: placement
+                    case .animation: animations
+                    }
                 }
                 if let error = session.visualError {
                     Text(error).foregroundStyle(KriaColor.failureText).font(KriaFont.body(12))
@@ -78,8 +102,9 @@ struct NativeVisualPanel: View {
                 }
             }
         }
-        .onChange(of: selected) { _, value in
-            if let value, !(value.kind == .cameraEffect && category == .camera && tab == .browse) { tab = .placement }
+        .onChange(of: selected, initial: true) { _, _ in
+            editingText = false
+            tab = .edit
         }
         .onChange(of: editingText) { _, focused in
             if focused { session.beginTransaction() } else { session.endTransaction() }
@@ -104,21 +129,7 @@ struct NativeVisualPanel: View {
             case .motion: motion
             case .camera: camera
             }
-            let items = session.timelineItems.filter { visualKinds.contains($0.kind) }
-            if !items.isEmpty {
-                Text("In this edit").font(KriaFont.body(12).weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
-                ForEach(items, id: \.id) { item in
-                    Button { session.select(item); tab = .placement } label: {
-                        HStack {
-                            Image(systemName: symbol(item.selection)).frame(width: 24)
-                            Text(label(item.selection)).lineLimit(1)
-                            Spacer()
-                            Text("\(item.start.formatted(.number.precision(.fractionLength(1))))–\(item.end.formatted(.number.precision(.fractionLength(1))))s")
-                                .font(KriaFont.body(12)).monospacedDigit()
-                        }.frame(minHeight: 44)
-                    }.accessibilityIdentifier("native-editor-visual-item-" + item.id)
-                }
-            }
+
         }
     }
 
@@ -140,13 +151,27 @@ struct NativeVisualPanel: View {
                 Text("Choose media from Photos or Files to place in your edit.")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
             }
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                ForEach(session.visualLibrary) { asset in
-                    Button { Task { await session.addLibraryVisual(asset) } } label: { assetTile(asset) }
-                        .disabled(asset.status != "ready" || session.isAddingVisual || !session.canAuthorVisuals)
-                        .accessibilityIdentifier("native-editor-add-visual-" + asset.id)
-                    if asset.retryable == true {
-                        Button("Retry " + (asset.sourceFilename ?? "visual")) { Task { await session.retryLibraryVisual(asset.id) } }
+            // The library is bounded. Eager, equal-height rows keep its scroll
+            // extent stable while thumbnails load and analysis polls refresh.
+            VStack(spacing: 10) {
+                ForEach(Array(stride(from: 0, to: session.visualLibrary.count, by: 3)), id: \.self) { start in
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(0..<3, id: \.self) { column in
+                            if start + column < session.visualLibrary.count {
+                                let asset = session.visualLibrary[start + column]
+                                VStack(spacing: 0) {
+                                    Button { Task { await session.addLibraryVisual(asset) } } label: { assetTile(asset) }
+                                        .disabled(asset.status != "ready" || session.isAddingVisual || !session.canAuthorVisuals)
+                                        .accessibilityIdentifier("native-editor-add-visual-" + asset.id)
+                                    if asset.retryable == true {
+                                        Button("Retry") { Task { await session.retryLibraryVisual(asset.id) } }
+                                            .accessibilityLabel("Retry " + (asset.sourceFilename ?? "visual"))
+                                    }
+                                }.frame(maxWidth: .infinity)
+                            } else {
+                                Color.clear.frame(maxWidth: .infinity, minHeight: 116, maxHeight: 116)
+                            }
+                        }
                     }
                 }
             }
@@ -158,8 +183,10 @@ struct NativeVisualPanel: View {
         VStack(spacing: 6) {
             NativeVisualThumbnail(asset: asset)
                 .frame(height: 76).clipped().clipShape(RoundedRectangle(cornerRadius: 9))
-            Text(asset.sourceFilename ?? "Visual").font(KriaFont.body(11)).lineLimit(1)
-            if asset.status != "ready" { Text(asset.status.capitalized).font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk) }
+            Text(asset.sourceFilename ?? "Visual").font(KriaFont.body(11)).lineLimit(1).frame(height: 14)
+            Text(asset.status == "ready" ? " " : asset.status.capitalized)
+                .font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk).lineLimit(1).frame(height: 14)
+                .accessibilityHidden(asset.status == "ready")
         }
     }
 
@@ -187,7 +214,7 @@ struct NativeVisualPanel: View {
                     Button("Cancel") { self.cardPreset = nil }
                     Spacer()
                     Button("Add card") {
-                        if session.addTextCard(text: cardText, bold: cardPreset == "Bold") != nil { self.cardPreset = nil; tab = .placement }
+                        if session.addTextCard(text: cardText, bold: cardPreset == "Bold") != nil { self.cardPreset = nil; tab = .edit }
                     }.disabled(cardText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }.frame(minHeight: 44)
             } else {
@@ -258,19 +285,6 @@ struct NativeVisualPanel: View {
                     }
                 }
             }.disabled(!session.canEdit(.cameraEffects))
-            HStack {
-                Text("Intensity").frame(width: 68, alignment: .leading)
-                NativePaperSlider(session: session, value: Binding(get: {
-                    (selected?.kind == .cameraEffect ? raw["intensity"]?.numberValue ?? cameraIntensity : cameraIntensity) * 100
-                }, set: { percentage in
-                    cameraIntensity = percentage / 100
-                    if let selected, selected.kind == .cameraEffect {
-                        session.setCameraEffectIntensity(id: selected.id, intensity: cameraIntensity)
-                    } else { session.addCameraPulse(intensity: cameraIntensity) }
-                }), bounds: 1...8, step: 0.1, label: "Camera intensity")
-                Text("\(Int((selected?.kind == .cameraEffect ? raw["intensity"]?.numberValue ?? cameraIntensity : cameraIntensity) * 100))%")
-                    .frame(width: 48).monospacedDigit()
-            }.frame(minHeight: 44).disabled(!session.canEdit(.cameraEffects))
             Text("Applies to footage. Adjust its range on the timeline.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
         }
     }
@@ -293,6 +307,10 @@ struct NativeVisualPanel: View {
                         Button("Fill") { session.setVisualEditorStyle(selected, key: "fit_mode", value: .string("cover")) }
                         Button("Fit") { session.setVisualEditorStyle(selected, key: "fit_mode", value: .string("contain")) }
                     }.disabled(displayMode != "fullscreen" || !session.canEdit("visual_editor_style"))
+                    if displayMode != "fullscreen" {
+                        Text("Choose Fullscreen to adjust Fit or Fill.")
+                            .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    }
                     let peers = session.visualLayerSelections(for: selected)
                     let layerIndex = peers.firstIndex(of: selected) ?? 0
                     NativeEditorMenuRow(title: "Layer", value: "\(layerIndex + 1) of \(peers.count)") {
@@ -322,13 +340,13 @@ struct NativeVisualPanel: View {
                     }
                 }
                 timing(selected)
-                Button("Remove visual", role: .destructive) { session.removeVisualSelection(selected); tab = .browse }
+                Button("Remove visual", role: .destructive) { session.removeVisualSelection(selected); openLibrary() }
                     .frame(minHeight: 44).accessibilityIdentifier("native-editor-remove-visual")
             }.disabled(!canEditSelection)
             if !canEditSelection {
                 Text("This visual is read-only in this edit.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }
-        } else { Text("Select a visual from Browse or the timeline.").frame(minHeight: 80) }
+        } else { Text("Choose a visual on the timeline to edit it.").frame(minHeight: 80) }
     }
 
     @ViewBuilder private var animations: some View {
@@ -350,11 +368,11 @@ struct NativeVisualPanel: View {
                         }.accessibilityLabel("\(phase == "entrance" ? "In" : phase == "exit" ? "Out" : "Loop") visual animation \(effect)")
                     }
                 }
-                slider("Speed", value: Binding(get: { animation["speed"]?.numberValue ?? 1 }, set: { setAnimation("speed", value: .number($0), selected: selected) }), range: 0.25...3)
+                slider("Animation speed", value: Binding(get: { animation["speed"]?.numberValue ?? 1 }, set: { setAnimation("speed", value: .number($0), selected: selected) }), range: 0.25...3)
                 Text("Changes motion speed. Visual timing stays the same.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }.disabled(!session.canEdit("visual_editor_style"))
         } else if let element = cardElement {
-            NativeEditorTextPanel(id: element.id, session: session, initialTab: .animation, onDone: { tab = .placement })
+            NativeEditorTextPanel(id: element.id, session: session, initialTab: .animation, embeddedAnimation: true, onDone: { tab = .edit })
         } else if selected?.kind == .motionScene || selected?.kind == .cameraEffect {
             placement
         } else { Text("Select a visual to animate.").frame(minHeight: 80) }
@@ -388,10 +406,10 @@ struct NativeVisualPanel: View {
     }
     private func label(_ selected: EditorSelection) -> String {
         switch selected.kind {
-        case .mediaOverlay: return "Media overlay"
+        case .mediaOverlay: return (raw["media_kind"] ?? raw["kind"]) == .string("video") ? "Video" : "Photo"
         case .motionScene: return session.document.motionScenes.first { $0.id == selected.id }?.preset?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Motion"
         case .cameraEffect: return "Zoom pulse"
-        default: return session.document.visualBlocks.first { $0.id == selected.id }?.kind == "text_card" ? "Text card" : "Photo or video"
+        default: return session.document.visualBlocks.first { $0.id == selected.id }?.kind == "text_card" ? "Text card" : ((raw["media_kind"] ?? raw["kind"]) == .string("video") ? "Video" : "Photo")
         }
     }
     private func symbol(_ selected: EditorSelection) -> String {
@@ -403,34 +421,67 @@ struct NativeVisualPanel: View {
 struct NativeVisualThumbnail: View {
     let asset: CreationVisual
     @State private var videoFrame: UIImage?
-    private var sourceURL: URL? { asset.previewURL ?? asset.sourceURL ?? asset.displayURL }
+    static func thumbnailURL(for asset: CreationVisual) -> URL? {
+        // Video preview_url is a still image, not a playable video asset.
+        // Originals are available before AI analysis finishes.
+        return asset.sourceURL ?? asset.displayURL
+    }
+    // Re-signing an unchanged object during polling must not restart decoding.
+    static func thumbnailIdentity(for asset: CreationVisual) -> String {
+        let url = thumbnailURL(for: asset)
+        return [asset.id, asset.kind, url?.host ?? "", url?.path ?? ""].joined(separator: "|")
+    }
+    private var sourceURL: URL? { Self.thumbnailURL(for: asset) }
     var body: some View {
-        Group {
+        GeometryReader { geometry in
+            Group {
             if asset.kind == "video" {
-                if let videoFrame { Image(uiImage: videoFrame).resizable().scaledToFill() }
-                else { placeholder }
+                if let preview = asset.previewURL {
+                    AsyncImage(url: preview) { phase in
+                        if let image = phase.image { image.resizable().scaledToFill() }
+                        else { videoFallback }
+                    }
+                } else { videoFallback }
             } else {
                 AsyncImage(url: asset.displayURL ?? asset.sourceURL) { image in
                     image.resizable().scaledToFill()
                 } placeholder: { placeholder }
             }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }.accessibilityHidden(true)
-            .task(id: sourceURL) {
+            .task(id: Self.thumbnailIdentity(for: asset)) {
                 guard asset.kind == "video", let sourceURL else { return }
-                videoFrame = nil
                 let frame = try? await Self.videoThumbnail(url: sourceURL)
                 guard !Task.isCancelled else { return }
                 videoFrame = frame
             }
     }
+    @ViewBuilder private var videoFallback: some View {
+        if let videoFrame { Image(uiImage: videoFrame).resizable().scaledToFill() }
+        else { placeholder }
+    }
     private var placeholder: some View {
         ZStack { KriaColor.softZinc; Image(systemName: asset.kind == "image" ? "photo" : "video") }
     }
     @MainActor static func videoThumbnail(url: URL) async throws -> UIImage {
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 256, height: 256)
-        let result = try await generator.image(at: .zero)
-        return UIImage(cgImage: result.image)
+        let task = Task.detached(priority: .utility) {
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 256, height: 256)
+            return try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                return try await generator.image(at: .zero).image
+            } onCancel: {
+                generator.cancelAllCGImageGeneration()
+            }
+        }
+        let image = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        return UIImage(cgImage: image)
     }
 }

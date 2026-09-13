@@ -6092,6 +6092,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "overlays_reason": None
                 if settings.media_overlays_enabled
                 else "media_overlays_disabled",
+                # Guided revisions use the same validated visual schemas and
+                # compositors as montage edits, including editor_style.
+                "visual_editor_style": revision is not None
+                and bool(settings.visual_blocks_enabled or settings.media_overlays_enabled),
                 "visual_blocks": bool(settings.visual_blocks_enabled),
                 "visual_blocks_reason": None
                 if settings.visual_blocks_enabled

@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import UIKit
 import KriaMediaEngine
 @testable import Kria
 
@@ -219,6 +220,99 @@ import KriaMediaEngine
                 XCTAssertEqual(frame.image.width, 1080)
                 XCTAssertEqual(frame.image.height, 1920)
             }
+        }
+    }
+
+    func testLeavingAndReleasingEditorStopsRetainedPlayer() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var session: NativeEditorSession? = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: url)
+        let player = try XCTUnwrap(session?.player)
+        defer { player.pause() }
+        session?.togglePlayback()
+        session?.pausePlayback()
+        XCTAssertEqual(player.rate, 0)
+        XCTAssertEqual(session?.isPlaying, false)
+        session?.togglePlayback()
+        XCTAssertEqual(player.rate, 1)
+        weak var released = session
+        session = nil
+        for _ in 0..<100 {
+            if released == nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNil(released)
+        XCTAssertEqual(player.rate, 0, "A player retained by its view must be silent after the editor closes")
+    }
+
+    func testReplacingPreviewStopsOldPlayerBeforeNewPlayerCanPlay() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: url)
+        let oldPlayer = try XCTUnwrap(session.player)
+        defer { oldPlayer.pause(); session.player?.pause() }
+        session.togglePlayback()
+        for _ in 0..<100 {
+            if oldPlayer.timeControlStatus == .playing { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(oldPlayer.rate, 1)
+        // Source preparation/overlay changes replace a playing preview.
+        await session.prepareFixtureSourcePreview(url: url)
+        let replacement = try XCTUnwrap(session.player)
+        XCTAssertFalse(replacement === oldPlayer)
+        XCTAssertEqual(oldPlayer.rate, 0, "A retained outgoing preview must never continue its audio")
+        XCTAssertNil(oldPlayer.currentItem, "The outgoing view must not be able to restart detached media")
+        for _ in 0..<100 {
+            if replacement.timeControlStatus == .playing { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(replacement.rate, 1)
+        session.togglePlayback()
+        XCTAssertFalse(session.isPlaying)
+        XCTAssertEqual(replacement.rate, 0)
+        XCTAssertEqual(oldPlayer.rate, 0, "Pausing the editor must leave no second audio stream")
+    }
+
+    func testPhotoAndVideoOverlayPlaybackAdvancesAfterScrubbing() async throws {
+        let footage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let imageURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
+        defer { try? FileManager.default.removeItem(at: imageURL) }
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 48, height: 48)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 48, height: 48))
+        }
+        try XCTUnwrap(image.pngData()).write(to: imageURL)
+        for (kind, url) in [("image", imageURL), ("video", footage)] {
+            var draft = NativeEditorUITestFixtures.captionVisuals
+            var document = EditorDocument(snapshot: draft.serverSnapshot)
+            document.visualBlocks[0].raw["media_kind"] = .string(kind)
+            draft.serverSnapshot = document.encodeSnapshot()
+            let session = NativeEditorSession(draft: draft)
+            let media = ResolvedEditorSource(clipIndex: -1, mediaID: "fixture",
+                asset: MediaAsset(id: "fixture", relativePath: url.lastPathComponent,
+                    fingerprint: try SHA256Fingerprinter().fingerprint(file: url), duration: kind == "video" ? 4 : nil), url: url)
+            await session.prepareFixtureSourcePreview(url: footage, mediaSources: ["visual:paper-media:paper-media": media])
+            XCTAssertEqual(session.sourcePreviewState, .ready)
+            // Slow dragging lets several composed stills finish before Play;
+            // the final request may still be rendering during the handoff.
+            for step in 0..<24 {
+                session.seek(to: 0.1 + Double(step) * 0.025)
+                try await Task.sleep(for: .milliseconds(60))
+            }
+            session.seek(to: 0.5)
+            for _ in 0..<100 {
+                if session.scrubPreviewFrame != nil { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            XCTAssertNotNil(session.scrubPreviewFrame)
+            session.togglePlayback()
+            for _ in 0..<160 {
+                if session.currentTime >= 1.5 { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            XCTAssertGreaterThanOrEqual(session.currentTime, 1.5, "Playback must advance into the \(kind) overlay")
+            XCTAssertNil(session.scrubPreviewFrame, "The scrub still must not cover continuous playback")
+            session.seek(to: 0.75)
+            XCTAssertFalse(session.isPlaying, "A new scrub still pauses playback")
         }
     }
 

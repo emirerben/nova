@@ -253,6 +253,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     nonisolated(unsafe) private var timeObserver: Any?
     nonisolated(unsafe) private var observingPlayer: AVPlayer?
     nonisolated(unsafe) private var endObserver: NSObjectProtocol?
+    private var playbackStateObserver: NSKeyValueObservation?
     private var durationLoadTask: Task<Void, Never>?
     private var promptRefreshSequence: UInt64 = 0
     private let playbackEndTolerance: TimeInterval = 0.05
@@ -327,6 +328,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         durationLoadTask?.cancel()
         seekRecoveryTask?.cancel()
         scrubFrameTask?.cancel()
+        observingPlayer?.pause()
         if let timeObserver, let observingPlayer { observingPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
     }
@@ -760,7 +762,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     #if DEBUG
     /// Account-free verification still uses the production compiler and compositor.
-    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false) async {
+    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:]) async {
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
         sourcePreviewState = .preparing
@@ -774,6 +776,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             }
             let fingerprint = try SHA256Fingerprinter().fingerprint(file: url)
             sourceCompiler = try NativeEditorRenderCompiler(fontDirectory: fonts)
+            authoredVisualSources.merge(mediaSources) { _, source in source }
             resolvedSources = try Dictionary(uniqueKeysWithValues: Set(timelineClips.compactMap(\.sourceClipIndex)).map { index in
                 var sourceURL = url
                 var sourceFingerprint = fingerprint
@@ -1149,9 +1152,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         }
         guard let player else { isPlaying = false; return }
         if isPlaying {
-            player.pause()
-            isPlaying = false
-            _ = requestScrubFrame(at: currentTime)
+            pausePlayback()
             return
         }
         // AVPlayer does not automatically restart after an end notification.
@@ -1165,9 +1166,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
         cancelScrubFrames(clearImage: false)
         if hadScrubFrame || player.currentItem?.videoComposition != nil {
             let generation = scrubFrameGeneration
-            player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak player] _ in
+            player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak player] finished in
                 Task { @MainActor [weak self, weak player] in
-                    guard let self, self.player === player, self.scrubFrameGeneration == generation, self.isPlaying else { return }
+                    guard finished, let self, self.player === player, self.scrubFrameGeneration == generation, self.isPlaying else { return }
                     self.scrubPreviewFrame = nil
                     self.scrubPreviewTime = nil
                 }
@@ -1176,6 +1177,12 @@ enum NativeEditorLoadState: Equatable, Sendable {
         activatePreviewAudio()
         player.play()
         isPlaying = true
+    }
+
+    func pausePlayback() {
+        player?.pause()
+        isPlaying = false
+        _ = requestScrubFrame(at: currentTime)
     }
 
     /// Editor playback is media audio, including when the silent switch is on.
@@ -1699,12 +1706,28 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
 
     func refreshVisualLibrary() async {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-analyzing-gallery") {
+            visualLibrary = (0..<24).map { index in
+                CreationVisual(id: "analyzing-\(index)", kind: "video", status: index == 0 ? "analyzing" : "ready",
+                    sourceFilename: "Gallery video \(index)", displayURL: nil, previewURL: nil, retryable: nil,
+                    sourceURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+            }
+            return
+        }
+        #endif
         guard let api, let itemID, !visualLibraryLoading else { return }
         visualLibraryLoading = true
         defer { visualLibraryLoading = false }
         do {
             let library = try await api.visuals(itemID: itemID)
             guard self.itemID == itemID, !Task.isCancelled else { return }
+            #if DEBUG
+            NativePreviewDiagnostics.record("gallery-refresh", fields: [
+                "count": String(library.assets.count),
+                "pending": String(library.assets.filter { $0.status != "ready" }.count)
+            ])
+            #endif
             visualLibrary = library.assets
             visualLibraryLimit = library.maxAssets
             visualError = nil
@@ -2843,9 +2866,20 @@ enum NativeEditorLoadState: Equatable, Sendable {
         mediaDuration = nil
         durationSourcesInvalidated = false
 
+        playbackStateObserver?.invalidate()
+        // SwiftUI may retain the outgoing VideoPlayer after this replacement.
+        // Stop and detach it first so its audio cannot outlive the visible player.
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
         let next = AVPlayer(playerItem: item)
         player = next
         observingPlayer = next
+        playbackStateObserver = next.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self, weak next] _, _ in
+            Task { @MainActor [weak self, weak next] in
+                guard let self, let next, self.player === next else { return }
+                self.reconcilePlaybackState(next.timeControlStatus)
+            }
+        }
         if let preferredDuration, preferredDuration.isFinite, preferredDuration > 0 {
             authoritativeDuration = preferredDuration
         }
@@ -2869,7 +2903,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 if seconds.isFinite && self.isPlaying && !self.seekInFlight && self.pendingSeekTime == nil {
                     self.currentTime = min(max(0, seconds), max(0, self.duration))
                 }
-                self.reconcilePlaybackState(next.timeControlStatus == .playing)
+                self.reconcilePlaybackState(next.timeControlStatus)
             }
         }
 
@@ -2885,7 +2919,15 @@ enum NativeEditorLoadState: Equatable, Sendable {
             self.refreshDuration()
         }
     }
-    func reconcilePlaybackState(_ nextIsPlaying: Bool) {
+    func reconcilePlaybackState(_ status: AVPlayer.TimeControlStatus) {
+        // Waiting for a composed frame is not a pause. Keep the play request
+        // alive so the seek handoff cannot strand a scrub still over the player.
+        if status == .waitingToPlayAtSpecifiedRate { return }
+        let nextIsPlaying = status == .playing
+        if nextIsPlaying, scrubPreviewFrame != nil {
+            scrubPreviewFrame = nil
+            scrubPreviewTime = nil
+        }
         guard isPlaying != nextIsPlaying else { return }
         isPlaying = nextIsPlaying
     }

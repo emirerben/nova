@@ -27,7 +27,7 @@ struct NativeTextCreationPanel: View {
                 get: { session.pendingText?.text ?? "" },
                 set: { session.updatePendingText($0) }
             ), focused: $focused, identifier: "native-editor-new-text-input")
-                .frame(height: 76)
+                .frame(minHeight: 76, maxHeight: .infinity)
                 .padding(8)
                 .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
         }

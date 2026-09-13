@@ -170,7 +170,9 @@ struct NativeEditorTransport: View {
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                 .foregroundStyle(KriaColor.ink)
                 .monospacedDigit()
-                .accessibilityLabel("Current time \(nativeTimecode(clock.currentTime))")
+                .accessibilityLabel("Current time")
+                .accessibilityValue(nativeTimecode(clock.currentTime))
+                .accessibilityIdentifier("native-editor-current-time")
 
             GeometryReader { proxy in
                 let width = max(proxy.size.width, 1)
@@ -204,7 +206,9 @@ struct NativeEditorTransport: View {
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                 .foregroundStyle(KriaColor.zinc)
                 .monospacedDigit()
-                .accessibilityLabel("Duration \(nativeTimecode(session.duration))")
+                .accessibilityLabel("Duration")
+                .accessibilityValue(nativeTimecode(session.duration))
+                .accessibilityIdentifier("native-editor-duration")
         }
         .padding(.horizontal, 14)
         .frame(height: 54)

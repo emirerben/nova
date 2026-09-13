@@ -2,7 +2,8 @@
 
 The native editor uses Paper screens 11–19 for caption and visual inspectors.
 Captions have Edit captions, Style, and Settings tabs. Language, regeneration,
-Sounds, and the separate Overlays/Styles tools are outside this change.
+Sounds, and the separate Overlays/Styles tools are outside this change. AI actions
+are tracked separately in PR #1019.
 
 ## State and controls
 
@@ -10,8 +11,16 @@ Sounds, and the separate Overlays/Styles tools are outside this change.
 controls. `NativeVisualPanel.swift` browses the authenticated visual library,
 opens the existing Photos/Files upload flow, and authors media, text cards,
 Card stack/Film strip compositions, and footage-level Zoom pulse effects.
-Video thumbnails are decoded with AVFoundation; signed playback URLs are not
-sent to an image decoder.
+The Visuals tool opens Add visual; selecting an existing timeline visual opens
+its type-specific editor. Media and text cards have Edit and Animation tabs;
+motion and camera effects show their own controls. Add visual returns to the
+library. The panel resize handle adjusts the space shared with the preview, and
+playback controls remain available while an inspector is open. Leaving the editor
+pauses playback; replacing the preview player stops the outgoing player first.
+
+Gallery rows retain their dimensions while thumbnails load and polling refreshes
+assets. Video thumbnails use the preview still when available, with AVFoundation
+decoding the original video as a fallback; playback URLs never enter an image decoder.
 
 All mutations use `NativeEditorSession` transactions. A text card consists of a
 visual block and an ordinary text element linked by `visual_block_id`; moving,
@@ -41,9 +50,11 @@ silently upgraded. Camera effects change the footage, not a floating visual.
 
 The new client requires `caption_editor_style` or `visual_editor_style` in the
 existing capability response before authoring those fields. Basic visual imports
-and text cards require only the existing lane capabilities; guided-story edits
-can allow visual blocks without advertising the newer styling fields. New media
-omits `editor_style` until a supported style edit is made. Older library responses
+and text cards require only the existing lane capabilities. Guided-story edits
+advertise `visual_editor_style` when a revision exists and either visual blocks
+or media overlays are enabled. Older capability responses keep advanced styling
+disabled while supported placement and timing remain editable. New media omits
+`editor_style` until a supported style edit is made. Older library responses
 can supply original videos through `display_url`; image fallbacks must reference
 the original storage key, never a flattened preview. No database migration is required.
 

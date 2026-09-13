@@ -240,6 +240,71 @@ final class NativeCompositionTests: XCTestCase {
 
     }
 
+    @MainActor func testVisualStyleControlsChangeLivePixelsAndSavedOutput() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let context = CIContext()
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        let base = directory.appendingPathComponent("base.png"), card = directory.appendingPathComponent("card.png")
+        try context.writePNGRepresentation(of: CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 96, height: 160)), to: base, format: .RGBA8, colorSpace: space)
+        try context.writePNGRepresentation(of: CIImage(color: .red).cropped(to: CGRect(x: 0, y: 0, width: 96, height: 48)), to: card, format: .RGBA8, colorSpace: space)
+        let urls = ["base": base, "card": card]
+        let assets = try urls.sorted(by: { $0.key < $1.key }).map { MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value)) }
+        let manifest = try RenderAssetManifest(assets: assets.map { RenderAssetReference(id: $0.id, fingerprint: try RenderFingerprint($0.fingerprint!), source: .original(mediaID: $0.id)) })
+        var recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160), assets: assets,
+            tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "base", sourceAssetID: "base", sourceDuration: 3)]),
+                TimelineTrack(id: "overlay", kind: .overlay, clips: [TimelineClip(id: "card", sourceAssetID: "card", sourceDuration: 3, volume: 0,
+                    visualPlacement: VisualMediaPlacement(order: 1, widthFraction: 0.4, windowStart: 0, windowEnd: 3, editorStyle: VisualEditorStyle()))])], assetManifest: manifest)
+        let live = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
+        let item = live.preview.playerItem
+        func redBounds(_ generator: AVAssetImageGenerator, at time: Double) async throws -> CGRect {
+            generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+            let image = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image
+            let pixels = rgba(image)
+            var left = image.width, top = image.height, right = -1, bottom = -1
+            for y in 0..<image.height { for x in 0..<image.width {
+                let i = (y * image.width + x) * 4
+                if pixels[i] > 180 && pixels[i + 1] < 80 {
+                    left = min(left, x); right = max(right, x); top = min(top, y); bottom = max(bottom, y)
+                }
+            } }
+            return right < left ? .zero : CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)
+        }
+        func frame(at time: Double = 0.5) async throws -> CGRect {
+            try live.updateText(recipe: recipe)
+            XCTAssertTrue(item === live.preview.playerItem)
+            let generator = AVAssetImageGenerator(asset: item.asset)
+            generator.videoComposition = item.videoComposition
+            return try await redBounds(generator, at: time)
+        }
+        let original = try await frame()
+        recipe.tracks[1].clips[0].visualPlacement?.editorStyle?.zoom = 2
+        let zoomed = try await frame()
+        XCTAssertGreaterThan(zoomed.width, original.width * 1.8)
+        recipe.tracks[1].clips[0].visualPlacement?.editorStyle?.rotationDegrees = 90
+        let rotated = try await frame()
+        XCTAssertEqual(rotated.height, zoomed.width, accuracy: 2)
+        XCTAssertEqual(rotated.width, zoomed.height, accuracy: 2)
+        recipe.tracks[1].clips[0].visualPlacement = VisualMediaPlacement(order: 1, contain: true, windowStart: 0, windowEnd: 3, editorStyle: VisualEditorStyle(fitMode: "contain"))
+        let fitted = try await frame()
+        recipe.tracks[1].clips[0].visualPlacement?.contain = false
+        recipe.tracks[1].clips[0].visualPlacement?.editorStyle?.fitMode = "cover"
+        let filled = try await frame()
+        XCTAssertGreaterThan(filled.height, fitted.height * 3)
+        recipe.tracks[1].clips[0].visualPlacement?.editorStyle?.animation = .init(entrance: .fade, speed: 0.25)
+        let slow = try await frame(at: 0.1)
+        recipe.tracks[1].clips[0].visualPlacement?.editorStyle?.animation.speed = 3
+        let fast = try await frame(at: 0.1)
+        XCTAssertEqual(slow, .zero)
+        XCTAssertGreaterThan(fast.height, 150)
+        let output = directory.appendingPathComponent("styled.mp4")
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: urls, outputURL: output)
+        let saved = try await redBounds(AVAssetImageGenerator(asset: AVURLAsset(url: output)), at: 0.1)
+        XCTAssertEqual(saved.height, fast.height, accuracy: 2)
+        XCTAssertEqual(saved.width, fast.width, accuracy: 2)
+    }
+
     @MainActor func testPhotoOnlyTimelinePreviewsAndExportsThroughSameClock() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

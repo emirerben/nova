@@ -77,7 +77,7 @@ struct NativeEditorView: View {
                     )
                 }
             }
-            .frame(width: viewport.size.width, height: viewport.size.height)
+            .frame(width: viewport.size.width, height: viewport.size.height, alignment: .top)
             .font(KriaFont.body())
             .foregroundStyle(KriaColor.ink)
             .background(KriaColor.paper)
@@ -94,7 +94,7 @@ struct NativeEditorView: View {
                     return
                 }
                 guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
-                if [.visualBlock, .motionScene, .cameraEffect].contains(selection.kind) || (selection.kind == .mediaOverlay && lanePanel == .visuals) {
+                if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
                     lanePanel = .visuals; inspector = nil; textInspectorID = nil
                     return
                 }
@@ -156,6 +156,7 @@ struct NativeEditorView: View {
                 Text("Unsaved editor changes are stored only on this device until you save.")
             }
             .task { await loadEditor() }
+            .onDisappear { session.pausePlayback() }
         }
     }
 
@@ -164,11 +165,16 @@ struct NativeEditorView: View {
             ? viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
             : viewport.size.height
         let portraitHeight = min(338, max(150, referenceHeight * 0.40))
-        let defaultPreviewHeight = session.previewAspectRatio > 1 ? min(124, portraitHeight) : portraitHeight
+        let preferredPreviewHeight = session.previewAspectRatio > 1 ? min(124, portraitHeight) : portraitHeight
+        // Reserve room for the header, divider and usable text controls above
+        // the keyboard rather than allowing their minimum heights to overflow.
+        let defaultPreviewHeight = keyboardVisible
+            ? min(preferredPreviewHeight, max(80, viewport.size.height - 320))
+            : preferredPreviewHeight
         let resizeRange = max(0, defaultPreviewHeight - 80)
         let showsTimeline = session.pendingText == nil && textInspectorID == nil && lanePanel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
-        let previewHeight = max(80, defaultPreviewHeight - (showsTimeline ? timelineExpansion * resizeRange : 0) - (showsContext ? 52 : 0))
+        let previewHeight = max(80, defaultPreviewHeight - timelineExpansion * resizeRange - (showsContext ? 52 : 0))
         VStack(spacing: 0) {
             NativeEditorProjectHeader(
                 title: project.workspaceTitle, session: session,
@@ -204,8 +210,12 @@ struct NativeEditorView: View {
                     }
                 }
 
+            timelineResizeHandle(range: resizeRange)
+            if !showsTimeline && !keyboardVisible {
+                NativeEditorTransport(session: session)
+            }
+
             if session.pendingText != nil {
-                Spacer(minLength: 0)
                 NativeTextCreationPanel(session: session) { selection in
                     selectedTextForActions = selection.id
                     textInspectorID = selection.id
@@ -218,7 +228,6 @@ struct NativeEditorView: View {
                 NativeEditorTextPanel(id: id, session: session) { textInspectorID = nil }
                     .id(id)
             } else {
-            timelineResizeHandle(range: resizeRange)
             NativeEditorTimeline(session: session)
                 .frame(maxHeight: .infinity)
                 .layoutPriority(1)
@@ -235,7 +244,8 @@ struct NativeEditorView: View {
             }
 
             NativeEditorToolRail(selected: $selectedTool) { tool in
-                if tool == .captions || tool == .visuals { lanePanel = tool }
+                if tool == .visuals { session.select(nil); lanePanel = tool }
+                else if tool == .captions { lanePanel = tool }
                 else if tool == .text { session.beginTextCreation() }
                 else { inspector = .tool(tool) }
             }
@@ -271,9 +281,9 @@ struct NativeEditorView: View {
             )
             .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: timelineResizeFeedback)
             .accessibilityElement()
-            .accessibilityLabel("Timeline size")
+            .accessibilityLabel("Editor panel size")
             .accessibilityValue("\(Int(timelineExpansion * 100)) percent expanded")
-            .accessibilityHint("Swipe up or down to resize the timeline and preview")
+            .accessibilityHint("Swipe up or down to resize the editor panel and preview")
             .accessibilityAdjustableAction { direction in
                 let step: CGFloat = direction == .increment ? 0.25 : -0.25
                 let next = min(1, max(0, timelineExpansion + step))
