@@ -4507,6 +4507,46 @@ def _db(execute_results: list, plan, job=None) -> AsyncMock:
     return db
 
 
+@pytest.mark.asyncio
+async def test_editor_sound_effect_resolution_batches_catalog_query_and_keeps_archived() -> None:
+    archived_effect = types.SimpleNamespace(
+        id="archived-pop",
+        name="Archived Pop",
+        audio_gcs_path="sound-effects/archived-pop/audio.wav",
+        duration_s=0.25,
+        archived_at=object(),
+    )
+    current_effect = types.SimpleNamespace(
+        id="current-whoosh",
+        name="Current Whoosh",
+        audio_gcs_path="sound-effects/current-whoosh/audio.wav",
+        duration_s=0.4,
+        archived_at=None,
+    )
+    db = AsyncMock()
+    db.execute.return_value = _result([archived_effect, current_effect])
+
+    resolved = await gj.resolve_editor_sound_effect_placements(
+        [
+            {"id": "placement-1", "sound_effect_id": "archived-pop", "src_gcs_path": ""},
+            {"id": "placement-2", "sound_effect_id": "current-whoosh", "src_gcs_path": ""},
+        ],
+        user_id="user-1",
+        plan_item_id="item-1",
+        db=db,
+    )
+
+    assert db.execute.await_count == 1
+    assert [placement["src_gcs_path"] for placement in resolved] == [
+        archived_effect.audio_gcs_path,
+        current_effect.audio_gcs_path,
+    ]
+    assert [placement["label"] for placement in resolved] == [
+        archived_effect.name,
+        current_effect.name,
+    ]
+
+
 @pytest.fixture()
 def client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)

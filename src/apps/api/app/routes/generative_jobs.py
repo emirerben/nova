@@ -3929,14 +3929,32 @@ async def resolve_editor_sound_effect_placements(
 
     from app.models import SoundEffect  # noqa: PLC0415
 
+    # Resolve all catalog identities in one query. Editor commits can carry up
+    # to 100 placements, and querying each identity individually makes that
+    # normal case needlessly expensive. Keep the placement-order loop below so
+    # missing or audio-less identities retain the previous first-error
+    # semantics. Do not filter archived rows: existing placements must keep
+    # working after an admin archives an asset.
+    effect_ids = {
+        effect_id
+        for effect_id in (placement.get("sound_effect_id") for placement in placements)
+        if effect_id
+    }
+    effects_by_id: dict[str, Any] = {}
+    if effect_ids:
+        effects = (
+            (await db.execute(select(SoundEffect).where(SoundEffect.id.in_(effect_ids))))
+            .scalars()
+            .all()
+        )
+        effects_by_id = {str(effect.id): effect for effect in effects}
+
     resolved: list[dict] = []
     for raw in placements:
         placement = dict(raw)
         effect_id = placement.get("sound_effect_id")
         if effect_id:
-            effect = (
-                await db.execute(select(SoundEffect).where(SoundEffect.id == effect_id))
-            ).scalar_one_or_none()
+            effect = effects_by_id.get(str(effect_id))
             if effect is None or not effect.audio_gcs_path:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
