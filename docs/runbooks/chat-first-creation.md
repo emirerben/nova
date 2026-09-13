@@ -13,9 +13,12 @@ operations, or a second render state machine.
 
 `PlanItem` and `Job` remain authoritative for footage, creator-agent manifests,
 render status, variants, playback URLs, and editor state. Read-time job responses
-re-sign playback URLs. A render or exact-generation revision always requires an
-explicit confirmation action. Messages received while a job is rendering are
-stored as pending revision intent and are not applied to the in-flight job.
+re-sign playback URLs. Planner renders and exact-generation revisions require
+an explicit confirmation action; messages received during those renders remain
+pending revision intent. Runtime-1 uploaded Visuals removal is a narrow direct
+Save exception: the removal request saves desired state and queues a new render
+generation through the canonical editor validators, including during a rerender.
+See [supported layers, receipts and native refresh](unified-editor-chat.md#runtime-1-uploaded-visuals-removal).
 
 The supported Paper formats are:
 
