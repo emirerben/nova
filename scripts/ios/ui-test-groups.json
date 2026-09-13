@@ -40,7 +40,8 @@
       "KriaUITests/NativeEditorInspectorUITests/testTimelineCanZoomBeyondPreviousLimit",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeShrinksPreviewAndRestoresIt",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineSwipesSeekUnderFixedPlayhead",
-      "KriaUITests/NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens"
+      "KriaUITests/NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens",
+      "KriaUITests/NativeCaptionVisualUITests/testLegacyServerAllowsOpeningVisualImporterAndAddingCard"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
