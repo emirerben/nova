@@ -62,6 +62,17 @@ struct CreationVisual: Codable, Sendable, Identifiable {
     var sourceURL: URL? = nil
     var durationS: Double? = nil
     var mediaStatus: String? = nil
+
+    /// Older APIs return original videos in display_url. For images, accept
+    /// that URL only when its key is the original, never a flattened preview.
+    var originalMediaURL: URL? {
+        if let sourceURL { return sourceURL }
+        guard let displayURL else { return nil }
+        if kind == "video" { return displayURL }
+        guard let gcsPath, !gcsPath.isEmpty,
+              displayURL.path.removingPercentEncoding?.hasSuffix("/" + gcsPath) == true else { return nil }
+        return displayURL
+    }
     enum CodingKeys: String, CodingKey {
         case id, kind, status, retryable
         case gcsPath = "gcs_path", sourceURL = "source_url", durationS = "duration_s", mediaStatus = "media_status"

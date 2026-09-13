@@ -302,6 +302,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
             installPlayer(url: initialPlaybackURL)
         }
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-legacy-visuals") {
+            itemID = "fixture-visual-item"
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
         #endif
     }
@@ -1714,7 +1717,15 @@ enum NativeEditorLoadState: Equatable, Sendable {
         catch { visualError = error.localizedDescription }
     }
 
-    var canAuthorVisuals: Bool { canEdit("visual_editor_style") && canEditSection(.visualBlocks) }
+    // Basic media and cards use the existing lane contract. Only edits that
+    // introduce editor_style need the newer styling capability.
+    var canAuthorVisuals: Bool { canEditSection(.visualBlocks) }
+    var canImportVisuals: Bool { itemID != nil && (canAuthorVisuals || canEditSection(.motionScenes)) }
+    var visualImportUnavailableMessage: String? {
+        if itemID == nil { return "Open a saved edit to add photos or videos." }
+        if !canImportVisuals { return "Adding visuals isn’t available for this edit." }
+        return nil
+    }
 
     func addLibraryVisual(_ asset: CreationVisual) async {
         guard canAuthorVisuals, !isAddingVisual, document.visualBlocks.count < 20,
@@ -1729,7 +1740,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         let generation = document.revision.baseGeneration
         defer { isAddingVisual = false }
         do {
-            guard let sourceResolver, let url = asset.sourceURL else { throw MediaEngineError.missingAsset(asset.id) }
+            guard let sourceResolver, let url = asset.originalMediaURL else { throw MediaEngineError.missingAsset(asset.id) }
             let source = try await sourceResolver.resolveMedia(id: asset.id, url: url, generation: generation)
             guard !Task.isCancelled, generation == document.revision.baseGeneration, canAuthorVisuals else { return }
             authoredVisualSources["visual:" + block.id + ":" + block.id] = source
@@ -1769,7 +1780,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             guard let sourceResolver else { throw APIError.unsupported }
             var sources: [String: ResolvedEditorSource] = [:]
             for asset in assets {
-                guard let url = asset.sourceURL else { throw MediaEngineError.missingAsset(asset.id) }
+                guard let url = asset.originalMediaURL else { throw MediaEngineError.missingAsset(asset.id) }
                 sources["motion:" + asset.id] = try await sourceResolver.resolveMedia(id: asset.id, url: url, generation: generation)
             }
             guard !Task.isCancelled, generation == document.revision.baseGeneration else { return }

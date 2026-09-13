@@ -128,7 +128,12 @@ struct NativeVisualPanel: View {
                 Label("Add photo or video", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 44)
             }.buttonStyle(.plain)
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(KriaColor.line, lineWidth: 1))
-                .disabled(session.visualItemID == nil || !session.canAuthorVisuals)
+                .disabled(!session.canImportVisuals)
+                .accessibilityIdentifier("native-editor-import-visual")
+            if let message = session.visualImportUnavailableMessage {
+                Text(message).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    .accessibilityIdentifier("native-editor-import-visual-unavailable")
+            }
             if session.visualLibraryLoading && session.visualLibrary.isEmpty { ProgressView("Loading visuals…") }
             if session.visualLibrary.isEmpty && !session.visualLibraryLoading {
                 Text("Your added photos and videos").font(KriaFont.body(14).weight(.medium))
@@ -171,6 +176,7 @@ struct NativeVisualPanel: View {
                             Text(preset).font(KriaFont.body(13))
                         }
                     }.disabled(!session.canAuthorVisuals || !session.canEdit(.text))
+                        .accessibilityIdentifier("native-editor-card-preset-" + preset.lowercased())
                 }
             }
             if let cardPreset {

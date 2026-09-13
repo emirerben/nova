@@ -6,6 +6,7 @@ import Foundation
 /// retaining future lane data in `serverSnapshot` for characterization tests.
 enum NativeEditorUITestFixtures {
     enum Shape: String, CaseIterable, Sendable {
+        case legacyVisuals = "legacy-visuals"
         case captionVisuals = "caption-visuals"
         case projectedCaptions = "projected-captions"
         case sourceText = "source-text"
@@ -32,6 +33,7 @@ enum NativeEditorUITestFixtures {
 
     static func draft(for shape: Shape) -> EditorDraft {
         switch shape {
+        case .legacyVisuals: legacyVisuals
         case .captionVisuals: captionVisuals
         case .projectedCaptions: projectedCaptions
         case .sourceText: sourceText
@@ -42,6 +44,14 @@ enum NativeEditorUITestFixtures {
         case .unknown: unknownSections
         }
     }
+
+    static let legacyVisuals: EditorDraft = {
+        var value = captionVisuals
+        var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps.removeValue(forKey: "visual_editor_style")
+        value.serverSnapshot["editor_capabilities"] = .object(caps)
+        return value
+    }()
 
     static let captionVisuals: EditorDraft = {
         let clips = [clip(0, start: 0, duration: 4)]

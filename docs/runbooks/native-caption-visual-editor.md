@@ -40,8 +40,12 @@ silently upgraded. Camera effects change the footage, not a floating visual.
   from display/preview derivatives. Existing ownership checks still apply.
 
 The new client requires `caption_editor_style` or `visual_editor_style` in the
-existing capability response before authoring those fields. Existing lane gates
-still apply. No database migration is required.
+existing capability response before authoring those fields. Basic visual imports
+and text cards require only the existing lane capabilities; guided-story edits
+can allow visual blocks without advertising the newer styling fields. New media
+omits `editor_style` until a supported style edit is made. Older library responses
+can supply original videos through `display_url`; image fallbacks must reference
+the original storage key, never a flattened preview. No database migration is required.
 
 ## Timeline decisions
 

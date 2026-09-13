@@ -35,8 +35,7 @@ enum NativeVisualAuthoring {
             "version": .number(1), "origin": .string("user"), "timing_mode": .string("manual"),
             "asset_id": .string(asset.id), "src_gcs_path": .string(path), "media_kind": .string(asset.kind),
             "display_mode": .string("overlay"), "scale": .number(0.35), "x_frac": .number(0.5), "y_frac": .number(0.5),
-            "z": .number(Double(z)), "transform": .object(["fit_mode": .string("cover"), "focal_x": .number(0.5), "focal_y": .number(0.5), "zoom": .number(1)]),
-            "editor_style": .object(defaultStyle)
+            "z": .number(Double(z)), "transform": .object(["fit_mode": .string("cover"), "focal_x": .number(0.5), "focal_y": .number(0.5), "zoom": .number(1)])
         ]
         if let duration = asset.durationS, asset.kind == "video" {
             raw["source_duration_s"] = .number(duration)

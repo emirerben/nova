@@ -190,13 +190,61 @@ final class NativeVisualAuthoringTests: XCTestCase {
         XCTAssertNil(NativeVisualAuthoring.media(asset: video, start: 0, end: 3, z: 0))
     }
 
-    func testEmptyCardAndOlderServerDoNotInsert() {
+    func testEmptyCardDoesNotInsert() {
         let session = session()
         let before = session.document
         XCTAssertNil(session.addTextCard(text: "  ", bold: false))
         XCTAssertEqual(session.document, before)
-        let old = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
-        XCTAssertNil(old.addTextCard(text: "Unsupported", bold: false))
+    }
+
+    func testLegacyLaneCapabilityAllowsImportAndCardsWithoutNewStyleFields() async throws {
+        let draft = NativeEditorUITestFixtures.allLanes
+        let api = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: UUID().uuidString, baseGenerationID: "g1",
+            snapshot: draft.serverSnapshot, canUndo: false, createdAt: .now), authoritativeVariant: [
+                "editor_capabilities": .object(["visual_blocks": .bool(true), "text_elements": .bool(true)])
+            ])
+        let session = NativeEditorSession()
+        await session.load(api: api, threadID: UUID())
+        XCTAssertFalse(session.canEdit("visual_editor_style"))
+        XCTAssertTrue(session.canImportVisuals)
+        XCTAssertNil(session.visualImportUnavailableMessage)
+        let before = session.document
+        let selected = try XCTUnwrap(session.addTextCard(text: "Legacy server card", bold: false))
+        XCTAssertNil(session.visualRaw(selected)?["editor_style"])
+        session.undo()
+        XCTAssertEqual(session.document, before)
+        let asset = CreationVisual(id: "image", kind: "image", status: "ready", sourceFilename: nil,
+            displayURL: nil, previewURL: nil, retryable: nil, gcsPath: "users/test/image.png")
+        let media = try XCTUnwrap(NativeVisualAuthoring.media(asset: asset, start: 0, end: 3, z: 1))
+        XCTAssertNil(media.raw["editor_style"])
+    }
+
+    func testMissingLaneCapabilityStillBlocksAuthoringAndExplainsImport() {
+        var draft = NativeEditorUITestFixtures.allLanes
+        draft.serverSnapshot["editor_capabilities"] = .object(["text_elements": .bool(true)])
+        let session = NativeEditorSession(draft: draft)
+        XCTAssertFalse(session.canAuthorVisuals)
+        XCTAssertFalse(session.canImportVisuals)
+        XCTAssertNotNil(session.visualImportUnavailableMessage)
+        XCTAssertNil(session.addTextCard(text: "Unsupported", bold: false))
+    }
+
+    func testLegacyVisualSourceFallbackNeverUsesAnImageDerivative() throws {
+        let raw = URL(string: "https://storage.googleapis.com/bucket/users/test/image.png?signature=test")!
+        let preview = URL(string: "https://storage.googleapis.com/bucket/previews/image.jpg?signature=test")!
+        var asset = CreationVisual(id: "image", kind: "image", status: "ready", sourceFilename: nil,
+            displayURL: raw, previewURL: preview, retryable: nil, gcsPath: "users/test/image.png")
+        XCTAssertEqual(asset.originalMediaURL, raw)
+        asset = CreationVisual(id: "image", kind: "image", status: "ready", sourceFilename: nil,
+            displayURL: preview, previewURL: nil, retryable: nil, gcsPath: "users/test/image.png")
+        XCTAssertNil(asset.originalMediaURL)
+        asset.sourceURL = raw
+        XCTAssertEqual(asset.originalMediaURL, raw)
+        let video = CreationVisual(id: "video", kind: "video", status: "ready", sourceFilename: nil,
+            displayURL: raw, previewURL: preview, retryable: nil)
+        XCTAssertEqual(video.originalMediaURL, raw)
     }
 
     func testCameraPulseHasBoundedTimingAndUndo() throws {
