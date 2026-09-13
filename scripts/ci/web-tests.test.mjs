@@ -43,22 +43,22 @@ test('gate CLI returns nonzero for each unsuccessful Actions result', async () =
   }
 });
 
-test('discovery uses the pnpm executable environment', async () => {
+test('discovery uses the npm executable environment', async () => {
   const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { delimiter, join, resolve } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const { spawnSync } = await import('node:child_process');
-  const temp = mkdtempSync(join(tmpdir(), 'web-ci-pnpm-'));
+  const temp = mkdtempSync(join(tmpdir(), 'web-ci-npm-'));
   try {
     const calls = join(temp, 'calls.json');
     const web = fileURLToPath(new URL('../../src/apps/web/', import.meta.url));
-    writeFileSync(join(temp, 'pnpm'), `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)));\nconsole.log(${JSON.stringify(JSON.stringify(interactionPaths.map(path => resolve(web, path))))});\n`, { mode: 0o755 });
+    writeFileSync(join(temp, 'npm'), `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)));\nconsole.log(${JSON.stringify(JSON.stringify(interactionPaths.map(path => resolve(web, path))))});\n`, { mode: 0o755 });
     const child = spawnSync(process.execPath, [fileURLToPath(new URL('./web-tests.mjs', import.meta.url)), 'verify'], {
       env: { ...process.env, PATH: `${temp}${delimiter}${process.env.PATH}` }, encoding: 'utf8',
     });
     assert.equal(child.status, 0, child.stderr);
-    assert.deepEqual(JSON.parse(readFileSync(calls, 'utf8')), ['exec', 'jest', '--listTests', '--json', '--runInBand']);
+    assert.deepEqual(JSON.parse(readFileSync(calls, 'utf8')), ['exec', '--no', '--', 'jest', '--listTests', '--json', '--runInBand']);
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
