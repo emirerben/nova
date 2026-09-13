@@ -187,6 +187,7 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
                 "highlight_color": variant.get("caption_highlight_color"),
                 "stroke_width": variant.get("caption_stroke_width"),
                 "shadow_enabled": variant.get("caption_shadow_enabled"),
+                "appearance": variant.get("caption_editor_style"),
             },
             "total_cues": len(cues),
             "truncated": False,

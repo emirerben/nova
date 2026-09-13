@@ -39,7 +39,14 @@
       "KriaUITests/NativeEditorInspectorUITests/testTextFirstTapShowsTrimsAndSecondTapOpensInspector",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineCanZoomBeyondPreviousLimit",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeShrinksPreviewAndRestoresIt",
-      "KriaUITests/NativeEditorInspectorUITests/testTimelineSwipesSeekUnderFixedPlayhead"
+      "KriaUITests/NativeEditorInspectorUITests/testTimelineSwipesSeekUnderFixedPlayhead",
+      "KriaUITests/NativeCaptionVisualUITests/testAnalyzingGalleryCanScrollInBothDirections",
+      "KriaUITests/NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens",
+      "KriaUITests/NativeCaptionVisualUITests/testLegacyServerAllowsOpeningVisualImporterAndAddingCard",
+      "KriaUITests/NativeCaptionVisualUITests/testExistingVisualOpensEditorAndAddActionOpensLibrary",
+      "KriaUITests/NativeCaptionVisualUITests/testAddingCameraEffectOpensItsSpecificEditor",
+      "KriaUITests/NativeCaptionVisualUITests/testVisualControlsEditAndPlaybackRemainAvailable",
+      "KriaUITests/NativeEditorInspectorUITests/testPreviewResizeIsAvailableAcrossEditorPanels"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

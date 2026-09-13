@@ -75,6 +75,30 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    func testBufferingDuringPlayHandoffCannotLeaveScrubImageOverMovingVideo() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: url)
+        session.seek(to: 0.5)
+        for _ in 0..<100 {
+            if session.scrubPreviewFrame != nil { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertNotNil(session.scrubPreviewFrame)
+        let player = DelayedSeekPlayer()
+        session.player = player
+        session.togglePlayback()
+        // Buffering arrives before the play-position seek completion.
+        session.reconcilePlaybackState(.waitingToPlayAtSpecifiedRate)
+        XCTAssertTrue(session.isPlaying, "Buffering must preserve the play request")
+        player.completeSeek(finished: false)
+        await Task.yield()
+        await Task.yield()
+        session.reconcilePlaybackState(.playing)
+        XCTAssertNil(session.scrubPreviewFrame, "A moving player must never stay covered by its old scrub still")
+        player.pause()
+    }
+
     func testStalledPausedSeekRecoversNewestTargetAndIgnoresLateCompletion() async {
         let session = NativeEditorSession()
         session.duration = 60
@@ -1252,7 +1276,7 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 }
 
-private final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
+final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     let draftSnapshot: DraftSnapshot
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
@@ -1392,8 +1416,8 @@ private final class DelayedSeekPlayer: AVPlayer, @unchecked Sendable {
             pending.expectation.fulfill()
         }
     }
-    func completeSeek() {
+    func completeSeek(finished: Bool = true) {
         guard !completions.isEmpty else { return }
-        completions.removeFirst()(true)
+        completions.removeFirst()(finished)
     }
 }

@@ -1,9 +1,69 @@
 import XCTest
 import AVFoundation
+import UIKit
 import KriaMediaEngine
 @testable import Kria
 
 @MainActor final class NativeEditorRenderCompilerTests: XCTestCase {
+    func testExplicitWordDisplaySeparatesWordsAndClampsEditedTiming() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        for highlighted in [false, true] {
+            let cue = EditorCaptionCue(id: "cue", startS: 1, endS: 2, text: "Hello world", raw: ["words": .array([
+                .object(["text": .string("Old"), "start_s": .number(0), "end_s": .number(5)])])])
+            let document = EditorDocument(captionMeta: ["style": .string("word"), "highlight_color": .string("#FF0000"),
+                "appearance": .object(["highlight_spoken_word": .bool(highlighted)])], captionCues: [cue])
+            let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 1, end: 2)
+            let layers = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source]).recipe.textLayers
+            XCTAssertEqual(layers.count, 2)
+            XCTAssertEqual(layers.map { $0.runs.map(\.text).joined() }, ["Hello", "world"])
+            XCTAssertEqual(layers[0].start, 1, accuracy: 0.001)
+            XCTAssertEqual(layers[0].end, layers[1].start, accuracy: 0.001)
+            XCTAssertEqual(layers[1].end, 2, accuracy: 0.001)
+            XCTAssertEqual(layers[0].runs.first?.fill, highlighted ? TextInk(red: 1, green: 0, blue: 0, alpha: 1) : TextInk(red: 1, green: 1, blue: 1, alpha: 1))
+        }
+    }
+
+    func testStyledLegacyOverlayCompilesZeroAndPositiveFrozenTail() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "base", relativePath: "base.mov", fingerprint: fingerprint),
+            url: URL(fileURLWithPath: "/fixture/base.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        for sourceDuration in [1.0, 3.0] {
+            let media = ResolvedEditorSource(clipIndex: -1, mediaID: "card", asset: MediaAsset(id: "card", relativePath: "card.mov",
+                fingerprint: fingerprint, duration: sourceDuration, naturalSize: MediaSize(width: 96, height: 160)), url: URL(fileURLWithPath: "/fixture/card.mov"))
+            let document = EditorDocument(mediaOverlays: [.init(id: "overlay", startS: 0, endS: 3,
+                raw: ["editor_style": .object(NativeVisualAuthoring.defaultStyle)])])
+            let item = NativeEditorTimelineItem(selection: .init(kind: .mediaOverlay, id: "overlay"), start: 0, end: 3)
+            var recipe = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source], mediaSources: ["overlay:overlay": media]).recipe
+            let trackIndex = try XCTUnwrap(recipe.tracks.firstIndex { $0.kind == .overlay })
+            XCTAssertEqual(recipe.tracks[trackIndex].clips[0].holdDuration, 3 - sourceDuration)
+            XCTAssertNoThrow(try recipe.validate())
+            recipe.tracks[trackIndex].clips[0].holdDuration = 4
+            XCTAssertThrowsError(try recipe.validate(), "Held time cannot exceed the placement window")
+        }
+    }
+
+    func testCaptionAlignmentMatchesFinalASSMargins() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        for (alignment, anchor) in [("left", 80.0), ("center", 540.0), ("right", 1000.0)] {
+            let document = EditorDocument(captionMeta: ["appearance": .object(["alignment": .string(alignment), "highlight_spoken_word": .bool(false)])],
+                captionCues: [.init(id: "cue", startS: 0, endS: 2, text: "One more game")])
+            let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0, end: 2)
+            let recipe = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source]).recipe
+            XCTAssertEqual(try XCTUnwrap(recipe.textLayers.first).anchorX, anchor, accuracy: 0.001)
+        }
+    }
+
     func testNarrationKeepsVoiceTrackAndSlowsShortOriginalFootage() throws {
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
@@ -160,6 +220,99 @@ import KriaMediaEngine
                 XCTAssertEqual(frame.image.width, 1080)
                 XCTAssertEqual(frame.image.height, 1920)
             }
+        }
+    }
+
+    func testLeavingAndReleasingEditorStopsRetainedPlayer() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var session: NativeEditorSession? = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: url)
+        let player = try XCTUnwrap(session?.player)
+        defer { player.pause() }
+        session?.togglePlayback()
+        session?.pausePlayback()
+        XCTAssertEqual(player.rate, 0)
+        XCTAssertEqual(session?.isPlaying, false)
+        session?.togglePlayback()
+        XCTAssertEqual(player.rate, 1)
+        weak var released = session
+        session = nil
+        for _ in 0..<100 {
+            if released == nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNil(released)
+        XCTAssertEqual(player.rate, 0, "A player retained by its view must be silent after the editor closes")
+    }
+
+    func testReplacingPreviewStopsOldPlayerBeforeNewPlayerCanPlay() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: url)
+        let oldPlayer = try XCTUnwrap(session.player)
+        defer { oldPlayer.pause(); session.player?.pause() }
+        session.togglePlayback()
+        for _ in 0..<100 {
+            if oldPlayer.timeControlStatus == .playing { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(oldPlayer.rate, 1)
+        // Source preparation/overlay changes replace a playing preview.
+        await session.prepareFixtureSourcePreview(url: url)
+        let replacement = try XCTUnwrap(session.player)
+        XCTAssertFalse(replacement === oldPlayer)
+        XCTAssertEqual(oldPlayer.rate, 0, "A retained outgoing preview must never continue its audio")
+        XCTAssertNil(oldPlayer.currentItem, "The outgoing view must not be able to restart detached media")
+        for _ in 0..<100 {
+            if replacement.timeControlStatus == .playing { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(replacement.rate, 1)
+        session.togglePlayback()
+        XCTAssertFalse(session.isPlaying)
+        XCTAssertEqual(replacement.rate, 0)
+        XCTAssertEqual(oldPlayer.rate, 0, "Pausing the editor must leave no second audio stream")
+    }
+
+    func testPhotoAndVideoOverlayPlaybackAdvancesAfterScrubbing() async throws {
+        let footage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let imageURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
+        defer { try? FileManager.default.removeItem(at: imageURL) }
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 48, height: 48)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 48, height: 48))
+        }
+        try XCTUnwrap(image.pngData()).write(to: imageURL)
+        for (kind, url) in [("image", imageURL), ("video", footage)] {
+            var draft = NativeEditorUITestFixtures.captionVisuals
+            var document = EditorDocument(snapshot: draft.serverSnapshot)
+            document.visualBlocks[0].raw["media_kind"] = .string(kind)
+            draft.serverSnapshot = document.encodeSnapshot()
+            let session = NativeEditorSession(draft: draft)
+            let media = ResolvedEditorSource(clipIndex: -1, mediaID: "fixture",
+                asset: MediaAsset(id: "fixture", relativePath: url.lastPathComponent,
+                    fingerprint: try SHA256Fingerprinter().fingerprint(file: url), duration: kind == "video" ? 4 : nil), url: url)
+            await session.prepareFixtureSourcePreview(url: footage, mediaSources: ["visual:paper-media:paper-media": media])
+            XCTAssertEqual(session.sourcePreviewState, .ready)
+            // Slow dragging lets several composed stills finish before Play;
+            // the final request may still be rendering during the handoff.
+            for step in 0..<24 {
+                session.seek(to: 0.1 + Double(step) * 0.025)
+                try await Task.sleep(for: .milliseconds(60))
+            }
+            session.seek(to: 0.5)
+            for _ in 0..<100 {
+                if session.scrubPreviewFrame != nil { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            XCTAssertNotNil(session.scrubPreviewFrame)
+            session.togglePlayback()
+            for _ in 0..<160 {
+                if session.currentTime >= 1.5 { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            XCTAssertGreaterThanOrEqual(session.currentTime, 1.5, "Playback must advance into the \(kind) overlay")
+            XCTAssertNil(session.scrubPreviewFrame, "The scrub still must not cover continuous playback")
+            session.seek(to: 0.75)
+            XCTAssertFalse(session.isPlaying, "A new scrub still pauses playback")
         }
     }
 

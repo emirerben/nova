@@ -19471,6 +19471,7 @@ def _render_subtitled_variant(
         "caption_highlight_color": spec.get("caption_highlight_color"),
         "caption_stroke_width": spec.get("caption_stroke_width"),
         "caption_shadow_enabled": spec.get("caption_shadow_enabled"),
+        "caption_editor_style": spec.get("caption_editor_style"),
         "caption_font_user_edited": spec.get("caption_font_user_edited"),
         "caption_position_user_edited": spec.get("caption_position_user_edited"),
         # Language the captions were transcribed in (ISO "en"/"tr"). Shown as the editor
@@ -21086,6 +21087,10 @@ def _caption_style_overrides(
         "stroke_width": variant.get("caption_stroke_width"),
         "shadow_enabled": variant.get("caption_shadow_enabled"),
     }
+    editor_style = variant.get("caption_editor_style")
+    if isinstance(editor_style, dict):
+        appearance.update(editor_style)
+        appearance["display_style"] = variant.get("voiceover_caption_style", "sentence")
     return _caption_appearance_with_direction(
         appearance if any(value is not None for value in appearance.values()) else None,
         typed_overrides,
@@ -23819,6 +23824,7 @@ def _merge_speech_cut_prior_state(
         "caption_highlight_color",
         "caption_stroke_width",
         "caption_shadow_enabled",
+        "caption_editor_style",
         "caption_font_user_edited",
         "caption_position_user_edited",
     ):
@@ -24990,6 +24996,7 @@ def _finalize_job_decision(
                     "caption_highlight_color": r.get("caption_highlight_color"),
                     "caption_stroke_width": r.get("caption_stroke_width"),
                     "caption_shadow_enabled": r.get("caption_shadow_enabled"),
+                    "caption_editor_style": r.get("caption_editor_style"),
                     "caption_font_user_edited": r.get("caption_font_user_edited"),
                     "caption_position_user_edited": r.get("caption_position_user_edited"),
                     # subtitled caption language ("en"/"tr") — MUST survive so the editor

@@ -427,7 +427,14 @@ def build_visual_block_composite_command(
                 media_parts.append(f"trim=duration={duration_s:.6f},setpts=PTS-STARTPTS")
 
             if block.display_mode == "overlay":
-                width = max(2, round(settings.output_width * block.scale))
+                width = max(
+                    2,
+                    round(
+                        settings.output_width
+                        * block.scale
+                        * (block.editor_style.zoom if block.editor_style else 1)
+                    ),
+                )
                 media_parts.append(f"scale={width}:-2,setsar=1")
                 overlay_x = f"({settings.output_width}*{block.x_frac:.6f}-overlay_w/2)"
                 overlay_y = f"({settings.output_height}*{block.y_frac:.6f}-overlay_h/2)"
@@ -458,6 +465,44 @@ def build_visual_block_composite_command(
                 overlay_y = f"(main_h-overlay_h)*{transform.focal_y:.6f}"
 
             media_parts.append("format=rgba")
+            if block.editor_style is not None:
+                from app.pipeline.visual_editor import (  # noqa: PLC0415
+                    visual_animation_filters,
+                    visual_expressions,
+                )
+
+                media_parts.extend(visual_animation_filters(block.editor_style, duration_s))
+                motion = visual_expressions(block.editor_style, duration_s, f"(t-{start_s:.6f})")
+                x = block.x_frac if block.display_mode == "overlay" else 0.5
+                y = block.y_frac if block.display_mode == "overlay" else 0.5
+                center_x = settings.output_width * x
+                center_y = settings.output_height * y
+                if (
+                    block.display_mode != "overlay"
+                    and transform.fit_mode == "contain"
+                    and (transform.focal_x != 0.5 or transform.focal_y != 0.5)
+                ):
+                    # Rotation changes overlay_w/h. Retain the fitted source's
+                    # original center, around which native rotates and scales.
+                    from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+                    probe = probe_video(replacement_paths[source_index])
+                    source_w, source_h = probe.width, probe.height
+                    if round(probe.rotation_degrees) % 180 == 90:
+                        source_w, source_h = source_h, source_w
+                    ratio = min(target_w / source_w, target_h / source_h)
+                    fitted_w = math.floor(source_w * ratio + 0.5)
+                    fitted_h = math.floor(source_h * ratio + 0.5)
+                    center_x = (settings.output_width - fitted_w) * transform.focal_x + fitted_w / 2
+                    center_y = (
+                        settings.output_height - fitted_h
+                    ) * transform.focal_y + fitted_h / 2
+                overlay_x = (
+                    f"'{center_x:.6f}-overlay_w/2+({motion['x']})*{settings.output_width}/1080'"
+                )
+                overlay_y = (
+                    f"'{center_y:.6f}-overlay_h/2+({motion['y']})*{settings.output_height}/1920'"
+                )
             if block.transition_in == "fade" and duration_s > _FADE_S * 2:
                 media_parts.append(f"fade=t=in:st=0:d={_FADE_S}:alpha=1")
             if block.transition_out == "fade" and duration_s > _FADE_S * 2:

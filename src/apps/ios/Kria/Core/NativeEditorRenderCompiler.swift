@@ -176,6 +176,7 @@ enum NativeEditorRenderError: Error, Equatable {
             assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint)
             references[id] = RenderAssetReference(id: id, fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: source.mediaID))
             urls[id] = source.url
+            let editorStyle = try Self.visualEditorStyle(overlay.raw["editor_style"])
             let fullscreen = overlay.raw["display_mode"]?.stringValue == "fullscreen"
             let width = Double(canvas.width), height = Double(canvas.height)
             let coverWidth = size.width * max(width / size.width, height / size.height)
@@ -198,7 +199,11 @@ enum NativeEditorRenderError: Error, Equatable {
             overlays.append(TimelineClip(id: id, sourceAssetID: id, sourceStart: sourceStart, sourceDuration: moving,
                 timelineStart: item.start, transform: transform, volume: 0, holdDuration: max(0, window - moving),
                 overlayAboveText: true, overlayPopIn: !fullscreen && overlay.raw["entrance_token"] == .string("pop_in"),
-                overlayPreserveAlpha: !fullscreen && source.preserveAlpha, overlayDissolveSeed: overlay.raw["exit_token"]?.stringValue == "dissolve-out" ? UInt32(211 + (document.mediaOverlays.firstIndex(where: { $0.id == overlay.id }) ?? 0) * 53) : nil))
+                overlayPreserveAlpha: !fullscreen && source.preserveAlpha,
+                visualPlacement: editorStyle.map { VisualMediaPlacement(order: 0, contain: $0.fitMode == "contain", zoom: $0.zoom,
+                    widthFraction: fullscreen ? nil : overlay.raw["scale"]?.numberValue ?? 0.35, xFraction: x, yFraction: y,
+                    windowStart: item.start, windowEnd: item.end, editorStyle: $0) },
+                overlayDissolveSeed: overlay.raw["exit_token"]?.stringValue == "dissolve-out" ? UInt32(211 + (document.mediaOverlays.firstIndex(where: { $0.id == overlay.id }) ?? 0) * 53) : nil))
         }
         func registerFont(_ font: URL) throws -> String {
             let fontID = "font-\(font.lastPathComponent)"
@@ -311,10 +316,15 @@ enum NativeEditorRenderError: Error, Equatable {
             let font = try resolveFont(captionFont[family] ?? family)
             let fontID = try registerFont(font)
             let wordStyle = meta["style"]?.stringValue == "word"
+            let appearance = meta["appearance"]?.objectValue ?? [:]
+            let explicitHighlight = appearance["highlight_spoken_word"]?.boolValue
+            let captionAlignment = AuthoredTextLayout.Alignment(rawValue: appearance["alignment"]?.stringValue ?? "center") ?? .center
+            let captionX = captionAlignment == .left ? 80.0 / 1080 : captionAlignment == .right ? 1000.0 / 1080 : 0.5
             let captionStyle = AuthoredTextLayout.Style(fontAssetID: fontID, size: meta["size_px"]?.numberValue ?? 78,
-                widthFraction: 920.0 / 1080, yFraction: meta["y_frac"]?.numberValue ?? (document.editFormat == "subtitled" ? 0.82 : 1740.0 / 1920),
-                color: try ink(meta["color"], fallback: "#FFFFFF"), strokeWidth: meta["stroke_width"]?.numberValue ?? 4,
-                shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(nil, fallback: "#000000", alpha: 0.5), sigma: 0, dx: 1, dy: 1)],
+                widthFraction: 920.0 / 1080, xFraction: captionX, yFraction: meta["y_frac"]?.numberValue ?? (document.editFormat == "subtitled" ? 0.82 : 1740.0 / 1920),
+                alignment: captionAlignment,
+                color: try ink(meta["color"], fallback: "#FFFFFF"), stroke: try ink(appearance["stroke_color"], fallback: "#000000"), strokeWidth: meta["stroke_width"]?.numberValue ?? 4,
+                shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)],
                 bottomAligned: true, fontVariations: fontInstances[family] ?? [:])
             var previousWordEnd = 0.0
             for cue in document.captionCues where !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -324,7 +334,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 }
                 if item.start >= total { continue }
                 guard item.end > item.start else { throw RecipeError.invalidTimeline }
-                if wordStyle {
+                if wordStyle || explicitHighlight == true {
                     let tokens = cue.text.split(whereSeparator: \.isWhitespace).map(String.init)
                     let wordValues: [JSONValue]
                     if case .array(let values) = cue.raw["words"] { wordValues = values } else { wordValues = [] }
@@ -350,8 +360,20 @@ enum NativeEditorRenderError: Error, Equatable {
                         starts.append(start)
                     }
                     guard let first = starts.first, first < total else { continue }
+                    if wordStyle, let highlighted = explicitHighlight {
+                        for index in tokens.indices {
+                            let start = max(item.start, starts[index])
+                            let end = min(total, item.end, index + 1 < starts.count ? starts[index + 1] : previousWordEnd)
+                            guard end > start else { continue }
+                            var style = captionStyle
+                            if highlighted { style.color = try ink(meta["highlight_color"], fallback: "#C5F82A") }
+                            text.append(try AuthoredTextLayout.compile(id: "caption-" + cue.id + "-word-" + String(index),
+                                text: tokens[index], start: start, end: end, style: style, fontURL: font, canvas: canvas))
+                        }
+                        continue
+                    }
                     text.append(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
-                        start: first, end: min(total, previousWordEnd), starts: starts.map { $0 - first },
+                        start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(item.end, previousWordEnd)), starts: starts.map { $0 - first },
                         highlight: try ink(meta["highlight_color"], fallback: "#C5F82A"), style: captionStyle, fontURL: font, canvas: canvas))
                 } else {
                     let layout = try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
@@ -370,7 +392,8 @@ enum NativeEditorRenderError: Error, Equatable {
             return a == b ? ($0.startS == $1.startS ? $0.id < $1.id : $0.startS < $1.startS) : a < b
         }
         for (index, block) in (structured + mediaBlocks).enumerated() {
-            let start = block.startS, end = min(total, block.endS)
+            let item = items.first(where: { $0.kind == .visualBlock && $0.id == block.id })
+            let start = item?.start ?? block.startS, end = min(total, item?.end ?? block.endS)
             guard end > start else { throw RecipeError.invalidTimeline }
             let policy = block.raw["audio_policy"]?.objectValue ?? [:]
             let sfxIDs = Set(document.soundEffects.map { "sfx:" + $0.id })
@@ -405,7 +428,7 @@ enum NativeEditorRenderError: Error, Equatable {
                     preCrop: !isMedia && (image || motion != .none), motion: motion,
                     widthFraction: isMedia && shot["display_mode"]?.stringValue == "overlay" ? shot["scale"]?.numberValue ?? 0.35 : nil,
                     xFraction: shot["x_frac"]?.numberValue ?? 0.5, yFraction: shot["y_frac"]?.numberValue ?? 0.5,
-                    windowStart: start, windowEnd: end, fadeIn: fadeIn, fadeOut: fadeOut)
+                    windowStart: start, windowEnd: end, fadeIn: fadeIn, fadeOut: fadeOut, editorStyle: try Self.visualEditorStyle(block.raw["editor_style"]))
                 overlays.append(TimelineClip(id: alias, sourceAssetID: alias, sourceStart: sourceStart, sourceDuration: length,
                     timelineStart: shotStart, volume: 0, visualPlacement: placement))
             }
@@ -472,6 +495,13 @@ enum NativeEditorRenderError: Error, Equatable {
             assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills)
         try recipe.validate()
         return NativeEditorRenderProgram(recipe: recipe, assetURLs: urls)
+    }
+
+    static func visualEditorStyle(_ raw: JSONValue?) throws -> VisualEditorStyle? {
+        guard let raw, raw != .null else { return nil }
+        let style = try JSONDecoder().decode(VisualEditorStyle.self, from: JSONEncoder().encode(raw))
+        try style.validate()
+        return style
     }
 
     /// Matches text_motion_v2.normalize_text_motion; absent v2 motion retains legacy timing.
