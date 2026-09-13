@@ -25,24 +25,37 @@ jobs:
   ios-tests:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-15
+    # Keep this job id: build-and-test consumes its matrix aggregate as the
+    # stable, fail-closed required check. Contracts are portable, so running
+    # them on Ubuntu leaves the macOS runner for the native build sooner.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: native
+            runner: macos-15
+          - lane: contracts
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
-      - uses: actions/setup-python@v5
+      - name: Set up Python for portable contract checks
+        if: matrix.lane == 'contracts'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: src/apps/api/pyproject.toml
       - name: Test iOS verification orchestration
+        if: matrix.lane == 'contracts'
         run: python3 -m unittest discover -s scripts/ios/tests -v
       - name: Install contract generator dependencies
+        if: matrix.lane == 'contracts'
         working-directory: src/apps/api
         run: pip install -e .
       - name: Verify mobile OpenAPI and shared contracts
+        if: matrix.lane == 'contracts'
         working-directory: src/apps/api
         env:
           STORAGE_BUCKET: nova-test
@@ -50,13 +63,21 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           INTERNAL_API_KEY: test
         run: python -m app.cli.kria_contracts --check
+      - name: Set up Xcode
+        if: matrix.lane == 'native'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - name: Install XcodeGen
+        if: matrix.lane == 'native'
         run: brew install xcodegen
       - name: Identify Xcode cache
+        if: matrix.lane == 'native'
         id: xcode-cache
         run: |
           echo "toolchain=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Restore Xcode build data
+        if: matrix.lane == 'native'
         id: build-cache
         uses: actions/cache/restore@v4
         with:
@@ -71,6 +92,7 @@ jobs:
           restore-keys: |
             ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
       - name: Report Xcode cache reuse
+        if: matrix.lane == 'native'
         env:
           MATCHED_KEY: ${{ steps.build-cache.outputs.cache-matched-key }}
         run: |
@@ -80,6 +102,7 @@ jobs:
             echo "Xcode cache miss: cold build required" >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Build and unit tests
+        if: matrix.lane == 'native'
         id: build-unit
         env:
           # PRs deliberately stop at the required build/unit gate. Full native
@@ -90,9 +113,10 @@ jobs:
       # Save a usable build as soon as compilation/unit tests pass. In particular,
       # main's shared cache need not wait for the slower UI suite to finish.
       - name: Record compiled input timestamps
+        if: matrix.lane == 'native'
         run: python3 scripts/ios/cache-inputs.py save
       - name: Save Xcode build data
-        if: steps.build-cache.outputs.cache-hit != 'true'
+        if: matrix.lane == 'native' && steps.build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -106,28 +130,28 @@ jobs:
       - name: Native UI tests (reuse compiled build)
         # Do not shorten this suite with a PR timeout: it is a separate,
         # fail-closed full regression on main and workflow_dispatch instead.
-        if: github.event_name != 'pull_request'
+        if: matrix.lane == 'native' && github.event_name != 'pull_request'
         env:
           KRIA_IOS_TEST_MODE: ui
           KRIA_IOS_UI_GROUPS: full
         run: bash scripts/ios/verify.sh
       - name: Compare focused UI coverage (manual only)
-        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_ui_group != 'none'
+        if: matrix.lane == 'native' && github.event_name == 'workflow_dispatch' && inputs.benchmark_ui_group != 'none'
         env:
           BENCHMARK_UI_GROUP: ${{ inputs.benchmark_ui_group }}
         run: |
           KRIA_IOS_TEST_MODE=prepare-ui bash scripts/ios/verify.sh
           KRIA_IOS_TEST_MODE=ui KRIA_IOS_UI_GROUPS="smoke,$BENCHMARK_UI_GROUP" bash scripts/ios/verify.sh
       - name: Upload iOS test diagnostics
-        if: always()
+        if: always() && matrix.lane == 'native'
         uses: actions/upload-artifact@v4
         with:
-          name: ios-test-diagnostics
+          name: ios-native-test-diagnostics
           path: test-results/ios/
           retention-days: 7
           if-no-files-found: ignore
       - name: Report deferred PR UI regression
-        if: github.event_name == 'pull_request'
+        if: matrix.lane == 'native' && github.event_name == 'pull_request'
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           ## Native UI regression deferred

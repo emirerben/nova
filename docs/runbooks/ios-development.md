@@ -146,6 +146,10 @@ The iOS workflow always reports `build-and-test`. The shared
 every push to main runs the full iOS gate. Unrelated PRs report an explicit
 not-applicable result through a small Ubuntu gate without allocating a Mac.
 
+Mobile contract generation checks and verification-script tests run on a parallel
+Linux matrix leg. Both legs must pass the stable `build-and-test` gate, so Python
+dependency installation does not delay Xcode.
+
 The selected Mac job has separate **Build and unit tests** and **Native UI tests**
 steps, sharing one compiled build and simulator. Every selected PR runs the build and
 unit-test phase; the exhaustive native UI suite runs on main pushes and manual

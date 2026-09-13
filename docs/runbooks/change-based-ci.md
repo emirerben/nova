@@ -63,6 +63,8 @@ Web CI installs from the checked-in `src/apps/web/package-lock.json` with
 pnpm install. API tests run as two deterministic round-robin shards over the
 complete non-quality test-file set; both shards feed the same stable `test-api`
 gate, so sharding changes wall-clock scheduling without reducing coverage.
+The iOS matrix runs mobile contracts on Linux alongside the Mac build/unit leg;
+the stable `build-and-test` gate requires both legs to pass.
 
 ## Verification and rollback
 
