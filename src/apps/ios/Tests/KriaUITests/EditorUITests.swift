@@ -35,7 +35,7 @@ final class EditorUITests: XCTestCase {
         app.buttons["native-editor-captions-done"].tap()
 
         app.buttons["native-editor-tool-visuals"].tap()
-        XCTAssertTrue(app.buttons["native-editor-visuals-tab-Browse"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Add visual"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Your added photos and videos"].exists)
     }
 

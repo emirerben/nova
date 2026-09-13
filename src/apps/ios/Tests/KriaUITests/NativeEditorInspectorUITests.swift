@@ -267,9 +267,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["Edit text"].tap()
         let edit = app.textViews["native-editor-text-content"]
         XCTAssertTrue(edit.waitForExistence(timeout: 3))
-        edit.tap()
-        edit.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7) + " Second")
-        XCTAssertEqual(edit.value as? String, "First Second")
+        // A center tap can place the caret inside the second line. Tap beyond
+        // its trailing text so deletion starts at the end on every screen size.
+        edit.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
+        edit.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7))
+        expectation(for: NSPredicate(format: "value == %@", "First"), evaluatedWith: edit)
+        waitForExpectations(timeout: 5)
+        edit.typeText(" Second")
+        expectation(for: NSPredicate(format: "value == %@", "First Second"), evaluatedWith: edit)
+        waitForExpectations(timeout: 5)
         app.buttons["native-editor-text-inspector-done"].tap()
         let single = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: First Second")).firstMatch
         XCTAssertTrue(single.waitForExistence(timeout: 3))
