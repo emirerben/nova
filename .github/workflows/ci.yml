@@ -27,24 +27,12 @@ jobs:
         if: needs.changes.outputs.web == 'true'
         with:
           node-version: "20"
-      - uses: pnpm/action-setup@v3
-        if: needs.changes.outputs.web == 'true'
-        with:
-          version: 9
-      - name: Get pnpm store directory
-        if: needs.changes.outputs.web == 'true'
-        id: pnpm-store
-        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
-        if: needs.changes.outputs.web == 'true'
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('src/apps/web/package.json') }}
-          restore-keys: pnpm-store-${{ runner.os }}-
+          cache: npm
+          cache-dependency-path: src/apps/web/package-lock.json
       - name: Install web dependencies
         if: needs.changes.outputs.web == 'true'
         working-directory: src/apps/web
-        run: pnpm install --no-frozen-lockfile
+        run: npm ci --no-audit --no-fund
       - uses: actions/setup-python@v5
         if: needs.changes.outputs.api == 'true'
         with:
@@ -58,7 +46,7 @@ jobs:
       - name: Run web lint
         if: needs.changes.outputs.web == 'true'
         working-directory: src/apps/web
-        run: pnpm lint
+        run: npm run lint
       - name: Run API lint
         if: needs.changes.outputs.api == 'true'
         working-directory: src/apps/api
@@ -79,24 +67,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: src/apps/web/package-lock.json
       - uses: denoland/setup-deno@v2
         if: matrix.group == 'remaining'
         with:
           deno-version: v2.7.13
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
-      - name: Get pnpm store directory
-        id: pnpm-store
-        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('src/apps/web/package.json') }}
-          restore-keys: pnpm-store-${{ runner.os }}-
       - name: Install web dependencies
         working-directory: src/apps/web
-        run: pnpm install --no-frozen-lockfile
+        run: npm ci --no-audit --no-fund
       - name: Cache offline CanvasKit motion dependencies
         if: matrix.group == 'remaining'
         working-directory: src/apps/web
@@ -161,7 +140,13 @@ jobs:
   test-api-suite:
     needs: changes
     if: needs.changes.outputs.api == 'true'
+    name: api (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      # Both shards must finish so the stable test-api gate aggregates failures.
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     services:
       postgres:
         image: postgres:16-alpine
@@ -229,8 +214,7 @@ jobs:
           python -m alembic downgrade -1
           python scripts/verify_0103_downgrade_state.py verify
           python -m alembic upgrade head
-      - name: Run API tests
-        working-directory: src/apps/api
+      - name: Run API test shard with timing reports
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
           REDIS_URL: redis://localhost:6379
@@ -241,4 +225,4 @@ jobs:
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
           WAITLIST_ADMIN_SECRET: test-admin-secret
           ALLOWED_ORIGINS: '["http://localhost:3000"]'
-        run: pytest tests/ -v --ignore=tests/quality -n auto --timeout=60
+        run: python3 scripts/ci/api-tests.py "${{ matrix.shard }}"

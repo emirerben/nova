@@ -26,7 +26,7 @@ LICENSES.md     — third-party component and font licenses
 TODOS.md        — deferred work backlog, grouped by the PR that deferred it
 ```
 
-Native setup, build commands, and architecture boundaries are in the [Kria iOS development runbook](docs/runbooks/ios-development.md). The [phone-rendering pilot runbook](docs/runbooks/phone-rendering.md) describes the account-gated experimental path, supported edits, consent, and remaining KRI-29 release gates. The [KRI-37 native editor validation record](docs/runbooks/kri-37-native-editor-validation.md) covers source previews, authored text controls, verified release scope, and deferred qualification; native capability rollout gates remain closed.
+Native setup, build commands, and architecture boundaries are in the [Kria iOS development runbook](docs/runbooks/ios-development.md). The [phone-rendering pilot runbook](docs/runbooks/phone-rendering.md) describes the account-gated experimental path, supported edits, consent, and remaining KRI-29 release gates. The [KRI-37 native editor validation record](docs/runbooks/kri-37-native-editor-validation.md) covers source previews, authored text controls, verified release scope, and deferred qualification; native capability rollout gates remain closed. The [KRI-43 captions and visuals runbook](docs/runbooks/native-caption-visual-editor.md) documents caption styling, visual authoring, additive API fields, timeline behavior, and API-first rollout.
 
 ## Features
 

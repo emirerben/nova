@@ -28,6 +28,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.agents._schemas.visual_editor import VisualEditorStyle
 from app.services.media_overlay_preview import nonblank_str
 
 # Canvas dimensions (portrait 9:16) — must match text_overlay_skia.CANVAS_{W,H}.
@@ -60,6 +61,8 @@ class MediaOverlay(BaseModel):
     # an id gets a fresh one on parse instead of failing validation (prod
     # 2026-07-12: required-id cards were silently dropped by coerce, so a PUT
     # without ids 200'd while persisting an EMPTY list).
+    editor_style: VisualEditorStyle | None = None
+
     id: str = Field(
         default_factory=lambda: uuid.uuid4().hex,
         description="Stable uuid hex, server-assigned when absent.",

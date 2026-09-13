@@ -291,8 +291,8 @@ final class NativeEditorTimelinePerformanceTests: XCTestCase {
         var sessionInvalidations = 0
         let cancellable = session.objectWillChange.sink { sessionInvalidations += 1 }
 
-        session.reconcilePlaybackState(false)
-        session.reconcilePlaybackState(false)
+        session.reconcilePlaybackState(.paused)
+        session.reconcilePlaybackState(.paused)
 
         XCTAssertEqual(sessionInvalidations, 0)
         withExtendedLifetime(cancellable) {}

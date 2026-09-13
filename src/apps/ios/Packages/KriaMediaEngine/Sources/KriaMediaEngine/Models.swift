@@ -118,7 +118,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         }
         for clip in clips {
             if let placement = clip.visualPlacement {
-                guard schemaVersion == 2, tracks.contains(where: { $0.kind == .overlay && $0.clips.contains(where: { $0.id == clip.id }) }), clip.volume == 0, clip.holdDuration == nil else { throw RecipeError.invalidTimeline }
+                guard schemaVersion == 2, tracks.contains(where: { $0.kind == .overlay && $0.clips.contains(where: { $0.id == clip.id }) }), clip.volume == 0, clip.holdDuration == nil || clip.overlayAboveText == true else { throw RecipeError.invalidTimeline }
                 try placement.validate()
                 guard clip.timelineStart >= placement.windowStart, clip.timelineStart + clip.duration <= placement.windowEnd + 0.000_001 else { throw RecipeError.invalidTimeline }
             }

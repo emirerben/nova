@@ -13,6 +13,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
+from app.agents._schemas.visual_editor import VisualEditorStyle
+
 MAX_VISUAL_BLOCKS = 20
 MAX_BLOCK_DURATION_S = 10.0
 MIN_MEDIA_DURATION_S = 0.1
@@ -120,7 +122,6 @@ CardBackground = Annotated[
 
 class VisualBlockBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
-
     version: Literal[1] = 1
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     start_s: float = Field(ge=0.0)
@@ -177,6 +178,7 @@ class MediaBlock(VisualBlockBase):
     """User-authored image/video layer composed below text and captions."""
 
     kind: Literal["media"]
+    editor_style: VisualEditorStyle | None = None
     asset_id: str = Field(min_length=1, max_length=80)
     src_gcs_path: str = Field(min_length=1, max_length=1024)
     preview_gcs_path: str | None = Field(default=None, max_length=1024)
