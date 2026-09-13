@@ -1,14 +1,18 @@
 """Provider-free creator direction behavior against migrated PostgreSQL."""
 
 import asyncio
+import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models import (
     CreationThread,
@@ -34,6 +38,23 @@ from app.services.creator_direction_snapshot import (
     typed_overrides_from_container,
 )
 from app.services.creator_memory_learning import enqueue_memory_extraction
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module", autouse=True)
+async def _module_database_sessions():
+    """Keep pooled asyncpg connections on this module's event loop.
+
+    The application pool can already contain connections opened by another
+    test module on an earlier loop, especially under xdist scheduling.
+    """
+    engine = create_async_engine(settings.asyncpg_database_url, pool_pre_ping=True)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sys.modules[__name__], "AsyncSessionLocal", factory)
+        try:
+            yield
+        finally:
+            await engine.dispose()
 
 
 async def _create_user() -> uuid.UUID:
