@@ -2,6 +2,14 @@
 
 Nova transforms raw real-life videos into viral short-form content (TikTok, Reels, Shorts).
 
+## Codex agent routing
+
+Routine delegation is explicitly authorized: use bounded subagents for independent work. Parent default: Astra Low; parent owns architecture, integration, and high-risk review. Choose Luna Medium (`default`/`cheap_worker`: mechanical edits; `explorer`: read-only), Terra Medium (`implementer`: normal multi-file work), or Astra Medium (`debugger`: ambiguous/risky analysis).
+
+Before delegating, read `docs/runbooks/codex-agent-routing.md`. Provide ownership, acceptance criteria, findings, and focused checks. Reuse workers; parallel edits need disjoint files or worktrees. Workers do not delegate. Return to parent if scope exceeds the role or two corrective attempts yield no new evidence; a routine test failure stays with its worker. Parent manages Luna → Terra → Astra escalation.
+
+Without named roles, use explicit `model` + `reasoning_effort="medium"`, `fork_turns="none"`, and a self-contained handoff including role instructions. Never silently inherit a costlier parent model. Unsupported overrides must be reported, not replaced. User choices and runtime restrictions take precedence.
+
 ## CLAUDE.md size budget
 
 Hard budget: **38,000 chars**, enforced by CI (`scripts/check_claude_md_size.sh`).
@@ -284,15 +292,6 @@ Every new `COPY <src> ...` in the prod `Dockerfile` must be verified against
 builder AFTER the PR merged. `.github/workflows/docker-build.yml` catches it on the PR
 for anything touching `Dockerfile`, `.dockerignore`, or `src/apps/api/**`. Narrative:
 agents/DECISIONS.md "Dockerfile / .dockerignore coupling" (PR #118/#119).
-
-## Agentic workflow (how to work fast here)
-
-- **Default to subagents, not new sessions.** Spawn a subagent (Agent tool) per heavy subtask from ONE orchestrating session. Each subagent burns its own context window and returns only a summary. Do NOT open a new session per subtask.
-- **Parallelize independent subtasks** in one message (multiple Agent calls). Use `isolation: "worktree"` on subagents that edit files in parallel.
-- **For batchable work** across N items, run the decompose workflow: `Workflow({ scriptPath: ".claude/workflows/decompose.js", args: { subtasks: [{title, prompt}, ...] } })`. Running ANY workflow needs explicit opt-in — include the word "workflow" in the request.
-- **Prefer gbrain over grep for semantic lookups.** `gbrain search "<intent>"`, `gbrain code-def <symbol>`, `gbrain code-callers <symbol>`. Grep is still right for exact strings and regex.
-- **Only start a new session when** the work is genuinely unrelated, or after a deliberate `/context-save` → `/context-restore` handoff.
-- **Project skills** live in `.agents/skills/`: `/improve`, `/motion-dev`, `/transitions-dev`, `/verify-editor-timeline`. Read each `SKILL.md` for its trigger and gate; external versions are pinned in `skills-lock.json`.
 
 ## GBrain Search Guidance (configured by /sync-gbrain)
 <!-- gstack-gbrain-search-guidance:start -->

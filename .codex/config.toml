@@ -1,0 +1,26 @@
+# Named-role defaults; desktop collaboration needs explicit overrides (see runbook).
+model = "gpt-6-astra"
+model_reasoning_effort = "low"
+
+[features]
+multi_agent = true
+
+[agents.default]
+description = "Small isolated or mechanical changes. Stay within owned files and acceptance criteria. Return substantial multi-file or ambiguous work to the parent."
+config_file = "agents/cheap-worker.toml"
+
+[agents.cheap_worker]
+description = "Small isolated or mechanical changes. Stay within owned files and acceptance criteria. Return substantial multi-file or ambiguous work to the parent."
+config_file = "agents/cheap-worker.toml"
+
+[agents.implementer]
+description = "Normal features, multi-file state/data flow, and moderate debugging. Follow the supplied design and ownership. Return ambiguous architecture or risky root-cause analysis to the parent."
+config_file = "agents/implementer.toml"
+
+[agents.debugger]
+description = "Investigate ambiguous root causes and risky cross-system behavior. Prioritize evidence, falsifiable hypotheses, and focused checks. Return evidence gaps to the parent; do not broaden scope without direction."
+config_file = "agents/debugger.toml"
+
+[agents.explorer]
+description = "Read-only bounded exploration. Do not edit files or perform external writes. Return concise findings with file references and remaining unknowns; no implementation."
+config_file = "agents/explorer.toml"
