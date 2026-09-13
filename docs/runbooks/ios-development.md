@@ -147,12 +147,12 @@ every push to main runs the full iOS gate. Unrelated PRs report an explicit
 not-applicable result through a small Ubuntu gate without allocating a Mac.
 
 The selected Mac job has separate **Build and unit tests** and **Native UI tests**
-steps, sharing one compiled build and simulator. PR changes confined to unit
-fixtures/tests or the generated OpenAPI client run the fast phase only; backend
-contract changes also compile/test the native client without rerunning the
-fixture-driven UI suite. Native app, design-system, media-engine, resource,
-UI-test and unknown/shared changes retain UI coverage. Fonts and type-poster
-assets under the web public directory are also native build inputs.
+steps, sharing one compiled build and simulator. Every selected PR runs the build and
+unit-test phase; the exhaustive native UI suite runs on main pushes and manual
+dispatch. The selector still classifies native app, design-system, media-engine,
+resource, UI-test, and unknown/shared changes as UI-affecting for reporting and
+future policy changes. Fonts and type-poster assets under the web public
+directory are also native build inputs.
 
 `make ios-verify` still runs the full local gate. When local sessions share a
 Mac, set `KRIA_SIMULATOR_ID` to a dedicated available iPhone simulator to avoid
@@ -161,7 +161,7 @@ fail before building; CI retains its automatic device selection. For targeted ve
 
 ```sh
 KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh
-# CI splits full coverage without compiling twice:
+# Main and manual CI split full coverage without compiling twice:
 KRIA_IOS_TEST_MODE=prepare-ui bash scripts/ios/verify.sh
 KRIA_IOS_TEST_MODE=ui KRIA_IOS_UI_GROUPS=full bash scripts/ios/verify.sh
 ```
@@ -201,9 +201,10 @@ not the cached manifest. Standalone developer runs do not restore times by defau
 
 Run cache/phase regression tests with `python3 -m unittest discover -s
 scripts/ios/tests -v`. To disable timestamp restoration, remove
-`KRIA_RESTORE_INPUT_TIMES` from the CI build step; to restore full PR UI coverage,
-select `ios_ui=true` whenever `ios=true`. Neither rollback should skip compilation
-or relax `build-and-test`.
+`KRIA_RESTORE_INPUT_TIMES` from the CI build step. To restore full PR UI coverage
+in a future policy change, make the PR workflow invoke the `prepare-ui` and `ui`
+phases whenever `ios_ui=true`; neither rollback should skip compilation or relax
+`build-and-test`.
 
 Local verification of the timestamp restore on 2026-09-10 reset all 126 native
 and shared input mtimes to simulate a fresh checkout, then ran the `unit` mode
@@ -213,36 +214,38 @@ in 32.1 seconds. Both runs had zero `SwiftCompile`,
 not a promised GitHub-hosted duration; the first cache without a timestamp
 manifest still needs to establish one.
 
-### Focused UI coverage (KRI-27)
+### Focused UI coverage (historical KRI-27)
 
-PRs with changes confined to one reviewed native feature run that feature's UI
-checks plus four cross-app smoke scenarios. The manifest in
+The former focused-UI policy ran a reviewed native feature's UI checks plus four
+cross-app smoke scenarios. The manifest in
 `scripts/ios/ui-test-groups.json` lists exact source paths and XCTest identifiers.
 The groups are `creation`, `projects`, and `editor`; `smoke` covers workspace
 navigation, creation through ready, editor back navigation, and playback.
-Shared workspace/app state, services/models, design-system files, media-engine
-code, resources, project configuration, test infrastructure, and unknown paths
-require the full suite. Changes touching more than one feature also run full.
-The chat-components file also owns project navigation, the chat transport serves
-project fixtures, and `EditorViews.swift` contains gallery results; those shared
-files deliberately have no focused mapping. Project implementation currently
-lives in shared workspace/state files, so those changes run full; project-test-only edits can select `smoke,projects`.
+Under that former policy, shared workspace/app state, services/models,
+design-system files, media-engine code, resources, project configuration, test
+infrastructure, and unknown paths required the full suite. Changes touching more
+than one feature also ran full.
+Under that former policy, the chat-components file also owned project navigation,
+the chat transport served project fixtures, and `EditorViews.swift` contained
+gallery results; those shared files deliberately had no focused mapping. Project
+implementation lived in shared workspace/state files, so those changes ran full;
+project-test-only edits could select `smoke,projects`.
 
-All main pushes run full coverage. Existing unit-only rules for generated API
-clients, backend contracts, and unit-test-only edits are unchanged. The selector
-retains `ios` and `ios_ui`, adding `ios_ui_groups` (`none`, `full`, or exactly
+All main pushes now run full coverage, while PRs run build and unit tests only.
+The selector retains `ios` and `ios_ui`, adding `ios_ui_groups` (`none`, `full`, or exactly
 `smoke,creation`, `smoke,projects`, or `smoke,editor`). The required `build-and-test`
-gate rejects missing or inconsistent group outputs. Unknown or stale test
-inventory forces full selection; the manifest guard also requires new tests to
-be explicitly classified before the PR can pass.
+gate still rejects missing or inconsistent group outputs on every run.
+Unknown or stale test inventory forces full selection in the selector; the
+manifest guard also requires new tests to be explicitly classified before the
+PR can pass.
 
 UI tests remain serial. The preparation builds both test bundles, executes all
-non-UI tests, and writes the existing one-use receipt. Focused runs reuse that
-build and reject changed native inputs. Selection is validated before invoking
-Xcode, and the actual result bundle must contain every expected UI test with a
-passing outcome. Zero executed tests, skipped selected tests, or unexpected UI
-tests fail the gate. `make ios-verify` runs the complete unit and UI phases with
-separate result bundles.
+non-UI tests, and writes the existing one-use receipt. Main and manual UI runs
+reuse that build and reject changed native inputs. Selection is validated before
+invoking Xcode, and the actual result bundle must contain every expected UI test
+with a passing outcome. Zero executed tests, skipped selected tests, or
+unexpected UI tests fail the gate. `make ios-verify` runs the complete unit and
+UI phases with separate result bundles.
 
 ```sh
 KRIA_SIMULATOR_ID=<dedicated-iphone-uuid> KRIA_IOS_TEST_MODE=prepare-ui bash scripts/ios/verify.sh
@@ -251,8 +254,9 @@ KRIA_IOS_TEST_MODE=ui KRIA_IOS_UI_GROUPS=smoke,creation bash scripts/ios/verify.
 
 Use a fresh `prepare-ui` before each UI invocation. UI-only mode requires an explicit group;
 missing, empty, or malformed selections fail. The full local gate supplies
-`full` automatically, and CI supplies the selector output. To roll back selection without weakening required checks,
-return `full` whenever `ios_ui=true` (and retain `none` when UI is omitted).
+`full` automatically, and manual CI supplies the full group after preparation.
+PR CI does not invoke the UI phase, even when the selector reports
+`ios_ui=true`.
 
 Each invocation writes logs, phase timings, and distinct unit/UI `.xcresult`
 bundles under `test-results/ios/`. GitHub uploads these artifacts on success or
@@ -271,21 +275,24 @@ roughly five-minute gap occurs before test execution, not in slow assertions.
 The original console log does not establish why runner startup stalled. Keep
 result bundles to diagnose any recurrence rather than claiming a startup fix.
 
-The UI phase took 11m 24s, including 22 tests executing in 9m 53s. Focused groups
-select 9 tests for creation, 6 for projects, and 15 for editor after smoke
-deduplication. Applying #1007's per-test durations to those sets estimates test
-execution of about 4m 29s, 3m 13s, and 6m 29s respectively. These are selection-only
-projections, not measured CI runtimes; setup, compilation, runner startup, and
-queueing remain. Broad changes like #1007 still select all 22 tests.
+The UI phase took 11m 24s, including 22 tests executing in 9m 53s. Under the
+former focused policy, groups selected 9 tests for creation, 6 for projects, and
+15 for editor after smoke deduplication. Applying #1007's per-test durations to
+those sets estimated test execution of about 4m 29s, 3m 13s, and 6m 29s
+respectively. Those were selection-only projections, not measured CI runtimes;
+setup, compilation, runner startup, and queueing remained. Broad changes like
+#1007 still selected all 22 tests.
 
 The earlier 12–17-minute estimate for focused iOS checks assumed an additional
-2–4-minute startup/build improvement that this change does not claim.
+2–4-minute startup/build improvement that the former change did not claim. A
+7–10-minute CI turnaround remains a target, not a measured guarantee.
 
-For a GitHub-hosted comparison on one runner, manually dispatch the iOS workflow
-with `benchmark_ui_group=creation` (or `projects`/`editor`). This always runs the
-full gate first, then a fresh preparation and the selected focused UI sample;
-it does not change required coverage or add work to ordinary PR checks. Compare
-the two UI phase timings, not the combined benchmark-job duration.
+For a GitHub-hosted comparison on one runner, the workflow could be manually
+dispatched with `benchmark_ui_group=creation` (or `projects`/`editor`). That
+benchmark ran the full gate first, then a fresh preparation and the selected
+focused UI sample; it did not change required coverage or add work to ordinary
+PR checks. The relevant comparison was between UI phase timings, not the
+combined benchmark-job duration.
 
 Local validation on 2026-09-10 (iPhone 17e simulator, iOS 26.5) passed all 22 UI
 tests, confirmed against the result bundle, in a 375-second UI phase. The unit
@@ -297,10 +304,10 @@ GitHub-hosted savings.
 On the same local simulator, `smoke,creation` passed all nine selected tests in
 166 seconds, versus the 375-second full UI phase (209 seconds / 56% less UI-phase
 time). Its fresh preparation used 11 seconds for settings, 5 seconds for the
-incremental build, and 6 seconds for unit execution. This is a local serial sample,
-not a controlled GitHub-runner benchmark.
-The local `smoke,editor` run also verified all 15 selected tests passed in
-229 seconds (146 seconds / 39% less UI-phase time than the full run).
+incremental build, and 6 seconds for unit execution. This was a local serial
+sample, not a controlled GitHub-runner benchmark. The local `smoke,editor` run
+also verified all 15 selected tests passed in 229 seconds (146 seconds / 39%
+less UI-phase time than the full run).
 
 ## Native editor source assets
 
