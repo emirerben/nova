@@ -102,3 +102,28 @@ new operation capabilities on an eligible edit. Keep existing visual/motion and
 camera feature gates aligned with their render support. A rollback to an older
 client does not rewrite saved JSON; use the same backend render support for edits
 that already contain the new fields.
+
+## Guided-caption and footage API support
+
+Guided edits accept `caption_meta` independently of narration-bound text elements.
+The API advertises `caption_editor_style` only for a valid editable revision.
+Sentence/word display and spoken-word highlighting are projected during rendering;
+copy edits preserve source IDs and timing. Disabled captions remain editable records
+but are excluded from the render receipt. Older revisions that omit metadata retain
+their existing render and state hash.
+
+Video occurrences accept optional `source_crop` (top-left normalized `x`, `y`,
+`width`, `height`) and `playback_rate` (0.25–4). Capability keys are
+`clips.source_crop`, `clips.playback_rate`, and `media_source_controls.*`.
+Retiming preserves source start and consumes the requested source span; exhaustion
+shortens subsequent footage placement. Narration retains its clock, with the final
+decoded frame held through any remaining narration. Omitted fields preserve legacy
+implicit rates and hashes; an explicit null crop resets the crop.
+
+Editor SFX placements may carry a public catalog `sound_effect_id` with a distinct
+placement ID. The server resolves the catalog source before applying ownership and
+schema validation, so clients do not author trusted storage paths.
+
+Deploy the API and workers before enabling these controls in a native client.
+Reopen the editor after deployment to fetch its updated capabilities. No schema
+migration, prompt change, or new environment setting is required.

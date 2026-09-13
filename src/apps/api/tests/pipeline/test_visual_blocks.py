@@ -189,3 +189,15 @@ def test_mixed_structured_and_media_pass_uses_unique_graph_labels() -> None:
     assert "[vb0]" in graph
     assert "[media1]" in graph and "[media2]" in graph
     assert "[media0]" not in graph
+
+
+def test_video_media_block_crop_and_retime_are_in_the_render_graph() -> None:
+    block = _media(
+        media_kind="video",
+        source_crop={"x": 0.2, "y": 0.1, "width": 0.7, "height": 0.8},
+        playback_rate=2.0,
+    )
+    cmd = build_visual_block_composite_command("base.mp4", [block], ["clip.mp4"], "out.mp4")
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    assert "setpts=PTS/2" in graph
+    assert "trunc(iw*0.200000000/2)*2:trunc(ih*0.100000000/2)*2" in graph

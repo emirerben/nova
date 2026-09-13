@@ -214,6 +214,23 @@ def _media_video_trim_window(block: MediaBlock) -> tuple[float, float]:
     return trim_start, trim_end
 
 
+def _source_crop_filter(crop: object) -> str | None:
+    if crop is None:
+        return None
+    values = crop.model_dump() if hasattr(crop, "model_dump") else crop
+    if not isinstance(values, dict):
+        return None
+    try:
+        x, y, width, height = (float(values[key]) for key in ("x", "y", "width", "height"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (
+        "crop="
+        f"trunc(iw*{width:.9f}/2)*2:trunc(ih*{height:.9f}/2)*2:"
+        f"trunc(iw*{x:.9f}/2)*2:trunc(ih*{y:.9f}/2)*2"
+    )
+
+
 def _render_shot(shot: VisualShot, duration_s: float, tmpdir: str, index: int, output: str) -> None:
     local = _download_shot(shot, tmpdir, index)
     if shot.kind == "image":
@@ -425,6 +442,19 @@ def build_visual_block_composite_command(
                 media_parts.append(f"trim=duration={trim_end - trim_start:.6f},setpts=PTS-STARTPTS")
             else:
                 media_parts.append(f"trim=duration={duration_s:.6f},setpts=PTS-STARTPTS")
+
+            source_crop = _source_crop_filter(block.source_crop)
+            if source_crop is not None:
+                media_parts.append(source_crop)
+            if block.playback_rate is not None:
+                media_parts.append(f"setpts=PTS/{float(block.playback_rate):.9g}")
+                if block.media_kind == "video":
+                    trim_start, trim_end = _media_video_trim_window(block)
+                    source_output_s = (trim_end - trim_start) / float(block.playback_rate)
+                    if source_output_s < duration_s:
+                        media_parts.append(
+                            f"tpad=stop_mode=clone:stop_duration={duration_s - source_output_s:.6f}"
+                        )
 
             if block.display_mode == "overlay":
                 width = max(

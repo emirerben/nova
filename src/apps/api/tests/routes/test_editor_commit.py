@@ -1386,6 +1386,7 @@ def test_guided_v2_capabilities_keep_legacy_lane_booleans_and_honest_reasons(
     assert caps["nova"]["remove_music"] == {"editable": True, "reason": None}
     assert caps["timeline_max_slots"] == 120
     assert caps["copilot_snapshot_wire_version"] == 1
+    assert caps["caption_editor_style"] is True
 
 
 def _commit_req(**kw) -> gj.EditorCommitRequest:
@@ -7194,6 +7195,77 @@ def test_guided_timeline_projection_uses_left_segment_transition_and_parent_id(m
     assert result["segments"][1]["layout"] == "fullscreen"
     # The overlap belongs to the transition AFTER new-first, not new-second.
     assert result["segments"][1]["output_start_s"] == pytest.approx(1.8)
+
+
+def test_guided_timeline_save_preserves_implicit_retime_and_allows_explicit_source_control_reset(
+    monkeypatch,
+):
+    """Omitted controls preserve old source spans; null intentionally clears them."""
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    current = {
+        "approval_proposal_version": 1,
+        "approval_media_digest": "a" * 64,
+        "revision_number": 4,
+        "sources": [
+            {
+                "media_id": "m0",
+                "lane": "clip",
+                "gcs_path": "slot-uploads/m0.mp4",
+                "generation": "g0",
+                "kind": "video",
+                "duration_s": 8.0,
+            }
+        ],
+        # This is a pre-KRI43 two-times retime, stored only as a source span.
+        "segments": [
+            {
+                "segment_id": "retimed",
+                "media_id": "m0",
+                "source_start_s": 1.0,
+                "source_end_s": 5.0,
+                "duration_s": 2.0,
+                "source_crop": {"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
+            }
+        ],
+        "audio": {"mode": "none"},
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    preserved = gj._guided_v2_revision_for_write(
+        job,
+        variant,
+        gj.TimelineEditRequest(
+            revision_number=4,
+            base_generation=gj.variant_render_baseline(variant),
+            slots=[gj.TimelineSlotEdit(slot_id="retimed", clip_index=0, in_s=1, duration_s=1.5)],
+        ),
+    )["segments"][0]
+    assert preserved["source_end_s"] == pytest.approx(4.0)
+    assert "playback_rate" not in preserved
+    assert preserved["source_crop"]["width"] == pytest.approx(0.8)
+
+    reset = gj._guided_v2_revision_for_write(
+        job,
+        variant,
+        gj.TimelineEditRequest(
+            revision_number=4,
+            base_generation=gj.variant_render_baseline(variant),
+            slots=[
+                gj.TimelineSlotEdit(
+                    slot_id="retimed",
+                    clip_index=0,
+                    in_s=1,
+                    duration_s=1.5,
+                    playback_rate=None,
+                    source_crop=None,
+                )
+            ],
+        ),
+    )["segments"][0]
+    assert reset["source_end_s"] == pytest.approx(2.5)
+    assert "playback_rate" not in reset
+    assert "source_crop" not in reset
 
 
 def test_guided_timeline_projection_accepts_production_scale_103_slot_commit(monkeypatch):

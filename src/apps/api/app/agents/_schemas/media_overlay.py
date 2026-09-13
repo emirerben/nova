@@ -49,6 +49,21 @@ _DEFAULT_X_FRAC = 0.5
 _OVERLAY_GCS_PREFIX = "users/"
 
 
+class SourceCrop(BaseModel):
+    """Normalized source-space crop for a video card."""
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _inside_source(self) -> SourceCrop:
+        if self.x + self.width > 1 + 1e-6 or self.y + self.height > 1 + 1e-6:
+            raise ValueError("source_crop must stay within normalized source bounds")
+        return self
+
+
 class MediaOverlay(BaseModel):
     """One timed, positioned image/video overlay card.
 
@@ -116,6 +131,8 @@ class MediaOverlay(BaseModel):
     # Probed client-side at upload time and persisted so the trim UI can show
     # correct bounds without re-probing after Apply or page reload.
     clip_duration_s: float | None = Field(default=None, ge=0.0)
+    source_crop: SourceCrop | None = None
+    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
 
     # z-order (higher = rendered later = on top). Defaults to list position.
     z: int = Field(default=0, ge=0)
@@ -185,6 +202,11 @@ class MediaOverlay(BaseModel):
                 start, end = None, None
         if start is not None and end is not None and end - start <= 0.05:
             start, end = None, None
+        if self.kind == "video" and self.playback_rate is not None and dur is not None:
+            # The card's output window remains fixed; retiming owns the source
+            # end and consumes rate × output seconds from its fixed start.
+            start = start or 0.0
+            end = min(dur, start + (self.end_s - self.start_s) * self.playback_rate)
         self.clip_trim_start_s, self.clip_trim_end_s = start, end
         return self
 

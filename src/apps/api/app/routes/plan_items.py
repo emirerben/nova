@@ -6390,6 +6390,22 @@ async def editor_commit_item(
             for row in rows
         }
 
+    if commit_body.sound_effects is not None:
+        from app.routes.generative_jobs import (  # noqa: PLC0415
+            resolve_editor_sound_effect_placements,
+        )
+
+        commit_body = commit_body.model_copy(
+            update={
+                "sound_effects": await resolve_editor_sound_effect_placements(
+                    commit_body.sound_effects,
+                    user_id=str(user.id),
+                    plan_item_id=str(item.id),
+                    db=db,
+                )
+            }
+        )
+
     prep = prepare_editor_commit(
         locked_job,
         variant_id,

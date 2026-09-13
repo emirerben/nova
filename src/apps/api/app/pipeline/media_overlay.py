@@ -142,6 +142,25 @@ def _is_dissolve_frame_sequence(path: str) -> bool:
     return "%04d" in path and "dissolve_card_" in path
 
 
+def _source_crop_filter(crop: object) -> str | None:
+    """Return an even-pixel crop expression from a validated normalized rect."""
+
+    if crop is None:
+        return None
+    values = crop.model_dump() if hasattr(crop, "model_dump") else crop
+    if not isinstance(values, dict):
+        return None
+    try:
+        x, y, width, height = (float(values[key]) for key in ("x", "y", "width", "height"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (
+        "crop="
+        f"trunc(iw*{width:.9f}/2)*2:trunc(ih*{height:.9f}/2)*2:"
+        f"trunc(iw*{x:.9f}/2)*2:trunc(ih*{y:.9f}/2)*2"
+    )
+
+
 def _run_ffmpeg(cmd: list[str], *, label: str, timeout_s: int = 180) -> None:
     result = subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False)
     if result.returncode != 0:
@@ -469,6 +488,12 @@ def build_media_overlay_command(
             # No trim — enter the scale step directly.
             card_filter_parts.append(f"[{in_idx}:v]null")
 
+        source_crop = _source_crop_filter(card.source_crop)
+        if source_crop is not None:
+            card_filter_parts.append(source_crop)
+        if card.playback_rate is not None:
+            card_filter_parts.append(f"setpts=PTS/{float(card.playback_rate):.9g}")
+
         if card.editor_style is not None:
             style = card.editor_style
             card_filter_parts.append("setpts=PTS-STARTPTS")
@@ -526,6 +551,8 @@ def build_media_overlay_command(
             if trim_e is not None:
                 trim_dur = trim_e - trim_s
                 window_dur = card.end_s - card.start_s
+                if card.playback_rate is not None:
+                    trim_dur /= float(card.playback_rate)
                 extra_pad = max(0.0, window_dur - trim_dur)
                 if extra_pad > 0:
                     card_filter_parts.append(f"tpad=stop_mode=clone:stop_duration={extra_pad:.3f}")
