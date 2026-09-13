@@ -8,8 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
-from app.database import AsyncSessionLocal
+from app.config import settings
 from app.models import (
     CreationThread,
     CreationThreadEvent,
@@ -34,6 +36,12 @@ from app.services.creator_direction_snapshot import (
     typed_overrides_from_container,
 )
 from app.services.creator_memory_learning import enqueue_memory_extraction
+
+# Other test modules use the application's pooled engine on different event
+# loops. Keep these real-Postgres tests independent of that process-global pool;
+# NullPool closes each connection on return instead of reusing a loop-bound one.
+_test_engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+AsyncSessionLocal = async_sessionmaker(_test_engine, expire_on_commit=False)
 
 
 async def _create_user() -> uuid.UUID:
