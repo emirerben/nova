@@ -22,6 +22,8 @@ final class NativeCaptionVisualUITests: XCTestCase {
         let multiline = app.textViews["native-editor-new-card-text"]
         let input = text.exists ? text : multiline
         XCTAssertTrue(input.waitForExistence(timeout: 5))
+        app.scrollViews["native-editor-visuals-scroll"].swipeUp()
+        XCTAssertTrue(input.isHittable)
         input.tap()
         input.typeText("My visual card")
         app.buttons["Add card"].tap()
