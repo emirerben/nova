@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.10.0] - 2026-09-13
+
+### Changed
+- v0.76.10.0 feat: add native caption and visual editing (#1018) <!-- release-pr: 1018 -->
+
 ## [0.76.9.0] - 2026-09-13
 
 ### Changed
