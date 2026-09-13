@@ -18,11 +18,13 @@ values belong in an untracked local override or CI secrets.
 make ios-generate  # regenerate Kria.xcodeproj
 make ios-build     # unsigned simulator build
 make ios-test      # generate, build, and run unit/UI tests
-make ios-verify    # same gate used by CI
+make ios-verify    # full local build, unit, and UI regression
 ```
 
 Set `KRIA_SKIP_SIMULATOR_TESTS=1` only when validating compilation on a host
-without an installed iPhone simulator. CI must run the complete gate.
+without an installed iPhone simulator. PR CI always compiles and runs unit tests.
+The exhaustive native UI suite runs on main and manual dispatch; it is outside
+the PR shipping gate. Run `make ios-verify` locally when validating native flows.
 
 Verification boots the selected simulator while `build-for-testing` compiles the
 app and test bundles, then runs `test-without-building` on that same destination.
