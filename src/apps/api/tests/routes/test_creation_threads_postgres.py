@@ -20,6 +20,7 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_engine
+from app.database import engine as async_engine
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -122,7 +123,14 @@ def _receipt(
 
 
 @pytest.fixture()
-async def seeded_projects() -> _SeededProjects:
+async def seeded_projects(request: pytest.FixtureRequest) -> _SeededProjects:
+    # pytest-asyncio gives each async test a separate event loop, while the
+    # application engine is process-global. Drop a connection returned by an
+    # earlier test before this fixture checks it out with its own loop.
+    await async_engine.dispose()
+    # Register a loop-independent fallback for fixture setup failures, which
+    # otherwise bypass an async-generator fixture's teardown branch.
+    request.addfinalizer(lambda: async_engine.sync_engine.dispose(close=False))
     ids = _SeededProjects(
         user_id=uuid.uuid4(),
         target_thread_id=uuid.uuid4(),
@@ -287,26 +295,33 @@ async def seeded_projects() -> _SeededProjects:
     try:
         yield ids
     finally:
-        async with AsyncSessionLocal() as db:
-            await db.execute(delete(CreationThread).where(CreationThread.creator_id == ids.user_id))
-            await db.execute(
-                update(Job)
-                .where(Job.id.in_((ids.target_job_id, ids.unrelated_job_id)))
-                .values(content_plan_item_id=None)
-            )
-            await db.execute(
-                delete(PlanItem).where(PlanItem.id.in_((ids.target_item_id, ids.unrelated_item_id)))
-            )
-            await db.execute(
-                delete(Job).where(Job.id.in_((ids.target_job_id, ids.unrelated_job_id)))
-            )
-            await db.execute(
-                delete(ContentPlan).where(
-                    ContentPlan.id.in_((ids.target_plan_id, ids.unrelated_plan_id))
+        try:
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    delete(CreationThread).where(CreationThread.creator_id == ids.user_id)
                 )
-            )
-            await db.execute(delete(User).where(User.id == ids.user_id))
-            await db.commit()
+                await db.execute(
+                    update(Job)
+                    .where(Job.id.in_((ids.target_job_id, ids.unrelated_job_id)))
+                    .values(content_plan_item_id=None)
+                )
+                await db.execute(
+                    delete(PlanItem).where(
+                        PlanItem.id.in_((ids.target_item_id, ids.unrelated_item_id))
+                    )
+                )
+                await db.execute(
+                    delete(Job).where(Job.id.in_((ids.target_job_id, ids.unrelated_job_id)))
+                )
+                await db.execute(
+                    delete(ContentPlan).where(
+                        ContentPlan.id.in_((ids.target_plan_id, ids.unrelated_plan_id))
+                    )
+                )
+                await db.execute(delete(User).where(User.id == ids.user_id))
+                await db.commit()
+        finally:
+            await async_engine.dispose()
 
 
 @pytest.mark.asyncio
