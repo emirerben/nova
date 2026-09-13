@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.9.0] - 2026-09-13
+
+### Changed
+- v0.76.9.0 fix: shorten PR checks with locked dependencies and parallel API tests (#1021) <!-- release-pr: 1021 -->
+
 ## [0.76.8.0] - 2026-09-12
 
 ### Changed
