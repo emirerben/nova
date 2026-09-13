@@ -327,3 +327,212 @@ def test_consecutive_drafts_preserve_prior_text_and_other_sections() -> None:
     assert merged["text_elements"][0]["color"] == "#FF0000"
     assert variant["text_elements"][0]["text"] == "Old hook"
     assert merge_editor_draft({"remove_music": True}, {"remove_music": False})["remove_music"]
+
+
+def _media_block(block_id="media-1"):
+    return {
+        "id": block_id,
+        "kind": "media",
+        "asset_id": "uploaded-asset",
+        "src_gcs_path": "users/u/private-image.jpg",
+        "media_kind": "image",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "origin": "user",
+    }
+
+
+def _enable_visuals(monkeypatch, variant):
+    variant["base_video_path"] = "users/u/base.mp4"
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda *_: {"visual_blocks": True},
+    )
+
+
+def test_visual_media_snapshot_exposes_only_safe_removable_media(monkeypatch):
+    variant = _variant()
+    _enable_visuals(monkeypatch, variant)
+    variant["visual_blocks"] = [
+        _media_block(),
+        {"id": "card", "kind": "text_card"},
+        {**_media_block("ai-media"), "origin": "ai"},
+    ]
+    variant["media_overlays"] = [{"id": "legacy", "src_gcs_path": "users/u/old.jpg"}]
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    assert "visual_media" in snapshot["allowed_op_families"]
+    assert snapshot["visual_media"] == [
+        {
+            "id": "media-1",
+            "media_kind": "image",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "origin": "user",
+        }
+    ]
+    assert "users/" not in json.dumps(snapshot)
+    assert "legacy" not in json.dumps(snapshot)
+
+
+def test_remove_visual_media_preserves_every_unrelated_lane(monkeypatch):
+    from app.agents._schemas.visual_block import validate_visual_blocks
+    from app.services.kria_editor_ops import project_editor_draft
+
+    variant = _variant()
+    _enable_visuals(monkeypatch, variant)
+    card = {
+        "id": "card",
+        "kind": "text_card",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "background": {"type": "solid", "color": "#000000"},
+    }
+    variant["visual_blocks"] = [_media_block(), _media_block("keep"), card]
+    variant["media_overlays"] = [{"id": "legacy"}]
+    variant["sound_effects"] = [{"id": "sound"}]
+    variant["camera_effects"] = [{"id": "camera"}]
+    before = json.dumps(variant, sort_keys=True)
+    payload = compile_editor_ops(
+        _job(variant),
+        variant,
+        [
+            {"op": "remove_visual_media", "target_ids": ["media-1"]},
+        ],
+    ).payload
+    raw = payload.model_dump(mode="json", exclude_none=True)
+    assert [row["id"] for row in raw["visual_blocks"]] == ["keep", "card"]
+    assert payload.text_elements is payload.caption_cues is payload.timeline_slots is None
+    assert payload.media_overlays is payload.sound_effects is payload.mix is None
+    assert payload.remove_music is False
+    validate_visual_blocks(raw["visual_blocks"], duration_s=4.0)
+    projected = project_editor_draft(variant, raw)
+    for lane in (
+        "text_elements",
+        "caption_cues",
+        "ai_timeline",
+        "media_overlays",
+        "sound_effects",
+        "camera_effects",
+        "music_track_id",
+        "mix",
+    ):
+        assert projected[lane] == variant[lane]
+    assert json.dumps(variant, sort_keys=True) == before
+
+
+@pytest.mark.parametrize("targets", [[], ["missing"], ["card"], ["media-1", "media-1"], [True]])
+def test_visual_removal_rejects_invalid_targets_atomically(monkeypatch, targets):
+    variant = _variant()
+    _enable_visuals(monkeypatch, variant)
+    variant["visual_blocks"] = [_media_block(), {"id": "card", "kind": "text_card"}]
+    before = json.dumps(variant, sort_keys=True)
+    with pytest.raises(KriaEditorOpError):
+        compile_editor_ops(
+            _job(variant), variant, [{"op": "remove_visual_media", "target_ids": targets}]
+        )
+    assert json.dumps(variant, sort_keys=True) == before
+
+
+@pytest.mark.parametrize("reason", ["no_base", "lyrics", "linked_text", "disabled", "ai_origin"])
+def test_visual_removal_rejects_uneditable_or_text_linked_media(monkeypatch, reason):
+    variant = _variant()
+    _enable_visuals(monkeypatch, variant)
+    variant["visual_blocks"] = [_media_block()]
+    if reason == "no_base":
+        variant.pop("base_video_path")
+    elif reason == "lyrics":
+        variant["text_mode"] = "lyrics"
+    elif reason == "linked_text":
+        variant["text_elements"][0]["visual_block_id"] = "media-1"
+    elif reason == "ai_origin":
+        variant["visual_blocks"][0]["origin"] = "ai"
+    else:
+        monkeypatch.setattr("app.services.kria_editor_ops._editor_capabilities", lambda *_: {})
+    assert (
+        "visual_media" not in build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
+    )
+    with pytest.raises(KriaEditorOpError, match="no longer removable"):
+        compile_editor_ops(
+            _job(variant), variant, [{"op": "remove_visual_media", "target_ids": ["media-1"]}]
+        )
+
+
+def test_guided_visual_removal_uses_revision_lane_and_fences_commit(monkeypatch):
+    from app.services.kria_editor_ops import project_editor_draft
+
+    variant = _variant()
+    _enable_visuals(monkeypatch, variant)
+    variant["visual_blocks"] = [_media_block("stale")]
+    variant["guided_edit_revision"] = {
+        "revision_number": 7,
+        "visual_blocks": [_media_block()],
+        "text_elements": [],
+    }
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._guided_v2_revision",
+        lambda _job, row: row["guided_edit_revision"],
+    )
+    payload = compile_editor_ops(
+        _job(variant),
+        variant,
+        [
+            {
+                "op": "remove_visual_media",
+                "target_ids": ["media-1"],
+            }
+        ],
+    ).payload
+    assert payload.guided_revision_number == 7
+    assert payload.guided_revision is None
+    assert payload.visual_blocks == []
+    projected = project_editor_draft(variant, payload.model_dump(mode="json", exclude_none=True))
+    assert projected["guided_edit_revision"]["visual_blocks"] == []
+    assert (
+        "visual_media"
+        not in build_editor_snapshot(_job(projected), projected)["allowed_op_families"]
+    )
+
+
+def test_real_guided_save_removes_media_preserving_revision_and_narration(monkeypatch):
+    import copy
+
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+    from tests.routes.test_editor_commit import _arm, _narrated_guided_job
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    job = _narrated_guided_job()
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    revision["visual_blocks"] = [_media_block()]
+    revision["state_hash"] = ""
+    variant["guided_edit_revision"] = revision
+    variant["visual_blocks"] = [_media_block()]
+    before = copy.deepcopy(gj._guided_v2_revision(job, variant))
+    assert "visual_media" in build_editor_snapshot(job, variant)["allowed_op_families"]
+    payload = compile_editor_ops(
+        job,
+        variant,
+        [
+            {
+                "op": "remove_visual_media",
+                "target_ids": ["media-1"],
+            }
+        ],
+    ).payload
+    result = gj.prepare_editor_commit(job, "song_text", payload)
+    saved = job.assembly_plan["variants"][0]["guided_edit_revision"]
+    assert result["sections"]["visual_blocks"] is True
+    assert saved["visual_blocks"] == []
+    assert saved["revision_number"] == before["revision_number"] + 1
+    for lane in (
+        "text_elements",
+        "segments",
+        "audio",
+        "sources",
+        "sound_effects",
+        "media_overlays",
+    ):
+        assert saved[lane] == before[lane]

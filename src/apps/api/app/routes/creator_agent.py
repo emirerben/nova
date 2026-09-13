@@ -1965,7 +1965,12 @@ async def _run_planning_turn(
             locked,
             event_type="assistant_strategy",
             payload={
-                "message": locked.active_plan["summary"],
+                # A model summary is a proposal, never an execution receipt.
+                "message": (
+                    "I prepared a proposed edit. Review the plan and confirm it "
+                    "before I change the video."
+                ),
+                "proposal_summary": locked.active_plan["summary"],
                 "plan_hash": locked.active_plan["plan_hash"],
                 "target_duration_s": locked.active_plan.get("target_duration_s"),
                 "montage_cadence": locked.active_plan.get("montage_cadence"),

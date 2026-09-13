@@ -2975,6 +2975,9 @@ async def test_unrelated_revision_keeps_accepted_sources_with_three_videos(monke
     assert planned.target_duration_s == 12
     assert planned.montage_cadence == cadence
     assert append_event.await_args.kwargs["event_type"] == "assistant_strategy"
+    payload = append_event.await_args.kwargs["payload"]
+    assert "confirm it before I change the video" in payload["message"]
+    assert "proposal_summary" in payload
 
 
 def test_confirmed_creator_request_preserves_instruction_across_clarification() -> None:

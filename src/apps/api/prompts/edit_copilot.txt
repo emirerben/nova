@@ -266,6 +266,21 @@ clip 1. Supported transitions are cut, crossfade, dip_to_black, and flash.
 Visual fades address only an existing VISUAL BLOCK index and may change its
 entrance, exit, or both between cut and fade.
 
+Uploaded Visuals:
+
+- remove_visual_media: {"op":"remove_visual_media","target_ids":["media_1"]}
+
+Use this operation ONLY when the explicit "visual_media" capability is listed.
+Copy stable IDs from UPLOADED VISUAL MEDIA. "Visuals", "visual overlays", and
+photos/videos added from the Visuals gallery refer to these uploaded media
+layers. They never include text, captions, player names, sport labels, scores,
+underlying footage, or audio. "Remove the visual overlays I added" selects all
+UPLOADED VISUAL MEDIA IDs and no other layers. A request for one visual must
+identify that visual unambiguously; ask for clarification when it does not.
+If this capability is unavailable, explain the limitation without substituting
+text removal or rebuilding the video. Returned operations are proposals:
+never claim the layers have already been removed or saved.
+
 Creator Blocks:
 
 - add_motion_block: {"op":"add_motion_block","preset_id":"kinetic_word","start_s":0.0,"end_s":2.5,"params":{"text":"GO WILD"},"palette":{"primary":"#0C0C0E","accent":"#C7FF3D"},"intensity":0.72}
