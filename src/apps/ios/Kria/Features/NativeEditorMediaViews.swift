@@ -369,9 +369,13 @@ struct NativeVideoPreview: View {
            let selected = objects.first(where: { $0.item.selection == selection }),
            selected.item.kind != .text, canDirectlyPosition(selected), session.canEdit("visual_editor_style") {
             let bounds = frame(for: selected, in: size)
-            let radians = selected.rotation * .pi / 180
-            let corner = CGPoint(x: bounds.midX + bounds.width / 2 * cos(radians) - bounds.height / 2 * sin(radians),
-                                 y: bounds.midY + bounds.width / 2 * sin(radians) + bounds.height / 2 * cos(radians))
+            let radians: CGFloat = CGFloat(selected.rotation) * .pi / 180
+            let dx: CGFloat = bounds.width / 2
+            let dy: CGFloat = bounds.height / 2
+            let cosine: CGFloat = cos(radians)
+            let sine: CGFloat = sin(radians)
+            let corner = CGPoint(x: bounds.midX + dx * cosine - dy * sine,
+                                 y: bounds.midY + dx * sine + dy * cosine)
             if hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y) <= 22 {
                 directMoveObjectID = selected.id
                 visualTransformBaseline = selected
