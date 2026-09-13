@@ -18,6 +18,7 @@ enum NativeEditorSaveState: Equatable, Sendable {
     case renderRetryNeeded(String)
     case conflict
     case loadFailed(String)
+    case refreshFailed(String)
     case previewFailed(String)
     case failed(String)
 }
@@ -70,6 +71,8 @@ enum NativeEditorLoadState: Equatable, Sendable {
         didSet { saveStateBeforePromptFailure = nil }
     }
     private var saveStateBeforePromptFailure: NativeEditorSaveState?
+    private var conversationRuntimeVersion = 2
+    private var legacyPromptSnapshot: [String: JSONValue]?
     @Published private(set) var loadState: NativeEditorLoadState = .loaded
     @Published var player: AVPlayer?
     struct TextInteractionFrame {
@@ -536,6 +539,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
 
     func load(api: any KriaAPIClient, threadID: UUID, variantID: String? = nil, allowPlaybackFallback: Bool = true) async {
+        conversationRuntimeVersion = 2
         self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
         defer { isSaving = false }
         do {
@@ -578,20 +582,63 @@ enum NativeEditorLoadState: Equatable, Sendable {
         let sequence = promptRefreshSequence
         let baseline = cleanDocument
         do {
-            let snapshot = try await api.draft(threadID: threadID)
+            let snapshot: DraftSnapshot
+            let variant: [String: JSONValue]?
+            if conversationRuntimeVersion == 1 {
+                // Legacy conversations have no runtime-v2 draft endpoint.
+                // Read the same rendered authority used when opening this editor.
+                let latest = try? await api.project(threadID: threadID)
+                let targetJob: UUID
+                let targetVariant: String
+                let targetItem: String
+                if let latest {
+                    // Playback summaries may show another ready cut while the
+                    // selected edit renders. Mutation authority stays selected.
+                    guard let activeJob = latest.activeJobID.flatMap(UUID.init(uuidString:)),
+                          let activeItem = latest.activePlanItemID else { throw APIError.invalidResponse }
+                    let variants = latest.job?.variants ?? []
+                    let selected = latest.state?["selected_variant_id"]?.stringValue
+                        ?? (variants.count == 1 ? variants.first?.variantID : nil)
+                    guard let selected, variants.contains(where: { $0.variantID == selected }) else {
+                        throw APIError.invalidResponse
+                    }
+                    targetJob = activeJob; targetVariant = selected; targetItem = activeItem
+                } else {
+                    // An unavailable projection can only reuse the complete
+                    // currently loaded target; never mix old and new IDs.
+                    guard let jobID, let variantKey, let itemID else { return }
+                    targetJob = jobID; targetVariant = variantKey; targetItem = itemID
+                }
+                let current = try await api.editorVariant(jobID: targetJob, variantID: targetVariant)
+                variant = current
+                snapshot = DraftSnapshot(
+                    draftID: "job-\(targetJob.uuidString)", itemID: targetItem, variantKey: targetVariant,
+                    draftRevision: 0, snapshotHash: "", etag: "", baseJobID: targetJob.uuidString,
+                    baseGenerationID: current["render_generation_id"]?.stringValue
+                        ?? current["render_finished_at"]?.stringValue ?? "",
+                    snapshot: [:], canUndo: false, createdAt: .now)
+            } else {
+                snapshot = try await api.draft(threadID: threadID)
+                if let targetJob = snapshot.baseJobID.flatMap(UUID.init) {
+                    variant = try await api.editorVariant(jobID: targetJob, variantID: snapshot.variantKey)
+                } else { variant = nil }
+            }
             let nextJobID = snapshot.baseJobID.flatMap(UUID.init)
             let nextVariantKey = snapshot.variantKey
-            let variant: [String: JSONValue]?
-            if let nextJobID { variant = try await api.editorVariant(jobID: nextJobID, variantID: nextVariantKey) }
-            else { variant = nil }
             let nextDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: variant)
+            let sameTarget = nextJobID == jobID && nextVariantKey == variantKey && snapshot.itemID == itemID
+            if conversationRuntimeVersion == 1, sameTarget, nextDraft.serverSnapshot == legacyPromptSnapshot,
+               sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled {
+                if let previous = saveStateBeforePromptFailure { saveState = previous }
+                return
+            }
             let nextDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(nextDraft))
             guard sequence == promptRefreshSequence, !Task.isCancelled else { return }
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { return }
             if let previous = saveStateBeforePromptFailure { saveState = previous }
-            guard nextDocument != cleanDocument else { return }
+            guard !sameTarget || nextDocument != cleanDocument else { return }
             guard !hasUnsavedChanges, pendingText == nil, !isSaving else {
                 saveState = .conflict
                 return
@@ -599,6 +646,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             let selected = selection
             let time = currentTime
             draft = nextDraft
+            if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
             cleanDocument = document
             jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
             configureCapabilities(from: variant)
@@ -616,7 +664,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             // A refresh error temporarily owns the banner. Any intervening
             // save/render status assignment relinquishes that ownership.
             let previous = saveStateBeforePromptFailure ?? saveState
-            saveState = .failed("Your conversation changed, but the editor couldn’t refresh. Your local edit is still here. \(error.localizedDescription)")
+            saveState = .refreshFailed("Your conversation changed, but the editor couldn’t refresh. Your local edit is still here. \(error.localizedDescription)")
             saveStateBeforePromptFailure = previous
         }
     }
@@ -629,6 +677,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
            let refreshed = try? await api.project(threadID: project.id) {
             resolvedProject = refreshed.summary
         }
+        conversationRuntimeVersion = resolvedProject.runtimeVersion
         if let jobID = resolvedProject.activeJobID,
            let itemID = resolvedProject.activePlanItemID,
            let variantID = resolvedProject.outputVariantID {
@@ -728,7 +777,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 canUndo: false,
                 createdAt: .now
             )
-            draft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+            let loadedDraft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+            draft = loadedDraft
+            legacyPromptSnapshot = loadedDraft.serverSnapshot
             configureCapabilities(from: variant)
             cleanDocument = document
             undoStack.removeAll()
@@ -2333,6 +2384,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 createdAt: .now
             )
             let latestDraft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+            if conversationRuntimeVersion == 1 { legacyPromptSnapshot = latestDraft.serverSnapshot }
             var latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestClean.revision.baseGeneration = generation
             var rebased = latestClean
@@ -3085,6 +3137,16 @@ enum NativeEditorLoadState: Equatable, Sendable {
         )
         let selected = selection
         replace(with: snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant))
+        if conversationRuntimeVersion == 1 {
+            // Compare raw authority, before client metadata/hydration. Reusing
+            // encodeSnapshot here would cache random compatibility clip IDs.
+            let authority = DraftSnapshot(
+                draftID: snapshot.draftID, itemID: itemID, variantKey: variantKey,
+                draftRevision: 0, snapshotHash: "", etag: "", baseJobID: snapshot.baseJobID,
+                baseGenerationID: generation, snapshot: [:], canUndo: false, createdAt: .now
+            )
+            legacyPromptSnapshot = authority.editorDraft(projectID: projectID, authoritativeVariant: variant).serverSnapshot
+        }
         cleanDocument = document
         undoStack.removeAll()
         redoStack.removeAll()

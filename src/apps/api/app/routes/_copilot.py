@@ -72,7 +72,7 @@ class CopilotTurnResponse(BaseModel):
 
 
 _SUCCESS_WORDS = re.compile(
-    r"\b(done|stored|changed|updated|applied|staged|edited|trimmed|removed|swapped|made|set)\b",
+    r"\b(done|stored|saved|deleted|erased|cleared|changed|updated|applied|staged|edited|trimmed|removed|swapped|made|set)\b",
     re.IGNORECASE,
 )
 _NEGATED_SUCCESS = re.compile(

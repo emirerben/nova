@@ -33,7 +33,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-09-v42"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-13-v43"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -129,6 +129,7 @@ _TOOL_OPS = {"open_tool"}
 _EFFECT_OPS = {"add_camera_effect", "patch_camera_effect", "remove_camera_effect"}
 _TRANSITION_OPS = {"set_transition"}
 _VISUAL_OPS = {"set_visual_fade"}
+_VISUAL_MEDIA_OPS = {"remove_visual_media"}
 _SERVER_OPS = {"apply_speech_cut_candidate"}
 _MOTION_OPS = {"add_motion_block", "patch_motion_block", "remove_motion_block"}
 _BULK_OPS = {"add_unused_sources", "set_media_duration", "stack_images"}
@@ -155,6 +156,7 @@ _VALID_OPS = (
     | _EFFECT_OPS
     | _TRANSITION_OPS
     | _VISUAL_OPS
+    | _VISUAL_MEDIA_OPS
     | _SERVER_OPS
     | _MOTION_OPS
     | _HISTORY_OPS
@@ -205,6 +207,7 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "patch_camera_effect": frozenset({"camera_effect_index"}),
     "remove_camera_effect": frozenset({"camera_effect_index"}),
     "set_transition": frozenset({"boundary_index", "transition"}),
+    "remove_visual_media": frozenset({"target_ids"}),
     "set_visual_fade": frozenset({"visual_block_index"}),
     "apply_speech_cut_candidate": frozenset({"candidate_id"}),
     "add_motion_block": frozenset({"preset_id", "start_s", "end_s", "params"}),
@@ -283,6 +286,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "patch_camera_effect": frozenset({"camera_effect_index", "start_s", "end_s", "intensity"}),
     "remove_camera_effect": frozenset({"camera_effect_index"}),
     "set_transition": frozenset({"boundary_index", "transition", "duration_s"}),
+    "remove_visual_media": frozenset({"target_ids"}),
     "set_visual_fade": frozenset({"visual_block_index", "transition_in", "transition_out"}),
     "apply_speech_cut_candidate": frozenset({"candidate_id"}),
     "add_motion_block": frozenset(
@@ -449,6 +453,7 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
         '{"op":"patch_motion_block","motion_id":"motion_1","patch":{"params":{"text":"NEW HOOK"}}}',
     ),
     ("remove_motion_block", '{"op":"remove_motion_block","motion_id":"motion_1"}'),
+    ("remove_visual_media", '{"op":"remove_visual_media","target_ids":["media_1"]}'),
 )
 
 _STYLE_PATCH_FIELDS = frozenset(
@@ -1326,6 +1331,19 @@ def _format_snapshot(snapshot: dict) -> str:
                 f"{visual_details}"
                 f"{_context_row_suffix(block, component_context_enabled)}"
             )
+
+    visual_media = snapshot.get("visual_media")
+    if isinstance(visual_media, list):
+        lines.append("\nUPLOADED VISUAL MEDIA (stable IDs; photos/videos only, never text):")
+        if not visual_media:
+            lines.append("(none)")
+        for row in visual_media[:100]:
+            if isinstance(row, dict):
+                lines.append(
+                    f"id={_field(row.get('id'), max_chars=160)!r} "
+                    f"media_kind={_field(row.get('media_kind'), max_chars=30)!r} "
+                    f"time={_fmt_range(_as_float(row.get('start_s')), _as_float(row.get('end_s')))}"
+                )
 
     motion = snapshot.get("motion")
     if isinstance(motion, dict):
@@ -3284,6 +3302,10 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
     if name == "apply_custom_effect" and not settings.custom_effects_enabled:
         return False
     raw_allowed = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
+    if name in _VISUAL_MEDIA_OPS:
+        # Existing clients cannot stage this server-owned operation. Only the
+        # explicit portable capability exposes it, including for old snapshots.
+        return isinstance(raw_allowed, list) and "visual_media" in raw_allowed
     if raw_allowed in (None, []):
         return not _component_context_enabled(snapshot)
     if not isinstance(raw_allowed, list):
@@ -3588,6 +3610,31 @@ def _coerce_payload(
     state: _ParseState,
 ) -> dict | None:
     out = dict(payload)
+
+    if name == "remove_visual_media":
+        targets = out.get("target_ids")
+        if (
+            not isinstance(targets, list)
+            or not 1 <= len(targets) <= 100
+            or any(not isinstance(value, str) or not value for value in targets)
+            or len(set(targets)) != len(targets)
+        ):
+            state.invalid_value()
+            return None
+        rows = snapshot.get("visual_media")
+        available = (
+            {row.get("id") for row in rows if isinstance(row, dict)}
+            if isinstance(rows, list)
+            else set()
+        )
+        if any(value not in available for value in targets):
+            state.reject(
+                op=name,
+                reason="stale_target",
+                detail="An uploaded visual is no longer available in this draft",
+            )
+            return None
+        return {"target_ids": list(targets)}
 
     if name in _BULK_OPS:
         return _clean_bulk_operation(name, out, snapshot, state)

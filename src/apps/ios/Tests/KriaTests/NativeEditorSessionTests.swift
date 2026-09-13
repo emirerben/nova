@@ -30,6 +30,204 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.sourcePoolCallCount, 2, "Repeated authority keeps the same generation inputs")
     }
 
+    func testLegacyConversationRefreshDoesNotUseRuntimeTwoDraftOrEraseLocalEdits() async throws {
+        let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "unused", itemID: "item", variantKey: "initial", draftRevision: 0,
+            snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
+            snapshot: [:], canUndo: false, createdAt: .now), draftError: .conflict,
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        let project = ProjectSummary(id: UUID(), title: "Legacy", status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial", runtimeVersion: 1,
+            activeJobID: jobID, activePlanItemID: "item")
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        let original = session.document
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(fake.draftCallCount, 0)
+        XCTAssertEqual(session.document, original)
+        XCTAssertEqual(session.saveState, .idle)
+        let clip = try XCTUnwrap(session.timelineClips.first)
+        session.setClipTiming(clipID: clip.id, durationS: 1.5)
+        let local = session.document
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document, local)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        fake.authoritativeVariant = Self.variant(duration: 2, generation: "g2")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document, local)
+        XCTAssertEqual(session.saveState, .conflict)
+        XCTAssertEqual(fake.draftCallCount, 0)
+    }
+
+    func testLegacyRefreshRejectsMissingOrUnknownSelectionWithoutLoadedTargetFallback() async throws {
+        let jobID = UUID()
+        let threadID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "unused", itemID: "item", variantKey: "initial", draftRevision: 0,
+            snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
+            snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        let project = ProjectSummary(id: threadID, title: "Legacy", status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial", runtimeVersion: 1,
+            activeJobID: jobID, activePlanItemID: "item")
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        let original = session.document
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        for state in ["{}", #"{"selected_variant_id":"unknown"}"#] {
+            fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
+            {
+              "id":"\#(threadID.uuidString)","title":"Legacy","status":"active",
+              "revision":8,"runtime_version":1,
+              "active_job_id":"\#(jobID.uuidString)","active_plan_item_id":"item",
+              "state":\#(state),
+              "job":{"id":"\#(jobID.uuidString)","status":"variants_ready","variants":[
+                {"variant_id":"initial","render_status":"ready"},
+                {"variant_id":"other","render_status":"ready"}
+              ]},"updated_at":"2026-09-09T08:00:00Z"
+            }
+            """#.utf8))
+            fake.lastVariantID = nil
+            await session.synchronizePromptRevision()
+            XCTAssertNil(fake.lastVariantID, "Invalid projection must not fetch the loaded variant")
+            XCTAssertEqual(session.document, original)
+            XCTAssertFalse(session.hasUnsavedChanges)
+            XCTAssertEqual(fake.draftCallCount, 0)
+            guard case .refreshFailed = session.saveState else {
+                return XCTFail("Invalid selection must report a refresh failure")
+            }
+        }
+    }
+
+    func testLegacyVisualRemovalRefreshKeepsSelectedRenderingVariant() async throws {
+        let jobID = UUID()
+        let threadID = UUID()
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let projection = try decoder.decode(CreationThread.self, from: Data(#"""
+        {
+          "id":"\#(threadID.uuidString)","title":"Legacy","status":"active",
+          "revision":8,"runtime_version":1,
+          "active_job_id":"\#(jobID.uuidString)","active_plan_item_id":"item",
+          "state":{"selected_variant_id":"selected"},
+          "job":{"id":"\#(jobID.uuidString)","status":"variants_ready_partial","variants":[
+            {"variant_id":"other","render_status":"ready","output_url":"https://example.com/other.mp4"},
+            {"variant_id":"selected","render_status":"rendering","render_generation_id":"g2"}
+          ]},"updated_at":"2026-09-09T08:00:00Z"
+        }
+        """#.utf8))
+        XCTAssertEqual(projection.summary.outputVariantID, "other", "Playback falls back while the selected edit renders")
+        var variant = Self.variant(duration: 2, generation: "g1")
+        variant["variant_id"] = .string("selected")
+        // Stable source IDs let this assertion compare the complete clip lane.
+        variant["user_timeline"] = .object(["slots": .array([.object([
+            "slot_id": .string(UUID().uuidString), "clip_index": .number(0),
+            "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(4),
+        ])])])
+        variant["text_elements"] = .array([.object([
+            "id": .string(UUID().uuidString), "text": .string("Keep this title"),
+            "start_s": .number(0), "end_s": .number(2),
+        ])])
+        variant["audio_mix"] = .object(["original_level": .number(0.7)])
+        variant["visual_blocks"] = .array([.object([
+            "id": .string("uploaded-photo"), "kind": .string("media"),
+            "start_s": .number(0), "end_s": .number(2),
+            "src_gcs_path": .string("owned/photo.png"),
+        ])])
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "unused", itemID: "item", variantKey: "selected", draftRevision: 0,
+            snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
+            snapshot: [:], canUndo: false, createdAt: .now), draftError: .conflict,
+            authoritativeVariant: variant, refreshedThread: projection)
+        let project = ProjectSummary(id: threadID, title: "Legacy", status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "selected", runtimeVersion: 1,
+            activeJobID: jobID, activePlanItemID: "item")
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        let before = session.document
+        XCTAssertEqual(before.visualBlocks.count, 1)
+        variant["visual_blocks"] = .array([])
+        variant["render_generation_id"] = .string("g2")
+        variant["render_status"] = .string("rendering")
+        fake.authoritativeVariant = variant
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(fake.lastVariantID, "selected")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertTrue(session.document.visualBlocks.isEmpty)
+        XCTAssertEqual(session.document.clips, before.clips)
+        XCTAssertEqual(session.document.textElements, before.textElements)
+        XCTAssertEqual(session.document.mix, before.mix)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(fake.draftCallCount, 0)
+
+        let accepted = session.document
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document, accepted)
+        XCTAssertEqual(session.saveState, .idle)
+
+        // A subsequent explicit selection is authoritative even if both cuts
+        // happen to carry an identical editor document.
+        fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {
+          "id":"\#(threadID.uuidString)","title":"Legacy","status":"active",
+          "revision":9,"runtime_version":1,
+          "active_job_id":"\#(jobID.uuidString)","active_plan_item_id":"item",
+          "state":{"selected_variant_id":"other"},
+          "job":{"id":"\#(jobID.uuidString)","status":"variants_ready","variants":[
+            {"variant_id":"other","render_status":"ready"},
+            {"variant_id":"selected","render_status":"ready"}
+          ]},"updated_at":"2026-09-09T08:00:01Z"
+        }
+        """#.utf8))
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(fake.lastVariantID, "other")
+    }
+
+    func testLegacyRefreshAfterManualSaveAndConflictRebasePreservesNewLocalEdit() async throws {
+        let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "unused", itemID: "item", variantKey: "initial", draftRevision: 0,
+            snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
+            snapshot: [:], canUndo: false, createdAt: .now), draftError: .conflict,
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"),
+            commitResponse: EditorCommitResponse(ok: false, generation: "g2",
+                sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
+                revisionNumber: nil, revisionHash: nil, expectedDuration: nil))
+        let project = ProjectSummary(id: UUID(), title: "Legacy", status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial", runtimeVersion: 1,
+            activeJobID: jobID, activePlanItemID: "item")
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 1)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        let saved = Self.variant(duration: 1.5, generation: "g2")
+        fake.authoritativeVariant = saved
+        XCTAssertTrue(session.rebaseCleanDraft(from: saved))
+        session.saveState = .saved
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.2)
+        let afterSave = session.document
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document, afterSave)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertNotEqual(session.saveState, .conflict)
+
+        fake.authoritativeVariant = Self.variant(duration: 1.4, generation: "g3")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.saveState, .conflict)
+        await session.rebaseAfterConflict()
+        let rebased = session.document
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(rebased.revision.baseGeneration, "g3")
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document, rebased)
+        XCTAssertNotEqual(session.saveState, .conflict)
+        XCTAssertEqual(fake.draftCallCount, 0)
+    }
+
     func testPromptRefreshRecoveryClearsFailureForUnchangedDocument() async {
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
             draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
@@ -40,7 +238,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let baseline = session.document
         fake.draftError = .requestFailed
         await session.synchronizePromptRevision()
-        guard case .failed = session.saveState else { return XCTFail("Expected refresh failure") }
+        guard case .refreshFailed = session.saveState else { return XCTFail("Expected refresh failure") }
         // Repeated failures must retain the original state, not the last error.
         await session.synchronizePromptRevision()
         fake.draftError = nil
@@ -1284,7 +1482,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     let editorVariantError: APIError?
     var commitResponse: EditorCommitResponse?
     let commitError: APIError?
-    let refreshedThread: CreationThread?
+    var refreshedThread: CreationThread?
     private(set) var commitIsSuspended = false
     private var commitContinuation: CheckedContinuation<Void, Never>?
     private var commitResumeRequested = false

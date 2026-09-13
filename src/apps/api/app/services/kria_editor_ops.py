@@ -35,6 +35,7 @@ _PORTABLE_FAMILIES = {
     "text",
     "title",
     "transition",
+    "visual_media",
 }
 _TEXT_STYLE_FIELDS = {
     "alignment",
@@ -90,6 +91,38 @@ def _safe_slot(row: dict[str, Any], index: int) -> dict[str, Any]:
     }
 
 
+def _visual_media_rows(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]:
+    """Use story-native desired state when present, including an explicitly empty lane."""
+    guided = _guided_v2_revision(job, variant)
+    owner = guided if guided is not None else variant
+    return copy.deepcopy(owner.get("visual_blocks") or [])
+
+
+def _removable_visual_media(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]:
+    if (
+        _editor_capabilities(job, variant).get("visual_blocks") is not True
+        or variant.get("text_mode") == "lyrics"
+        or not variant.get("base_video_path")
+    ):
+        return []
+    rows = _visual_media_rows(job, variant)
+    guided = _guided_v2_revision(job, variant)
+    text = (guided if guided is not None else variant).get("text_elements") or []
+    linked = {row.get("visual_block_id") for row in text if isinstance(row, dict)}
+    ids = [row.get("id") for row in rows if isinstance(row, dict)]
+    return [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("kind") == "media"
+        and row.get("origin", "user") == "user"
+        and isinstance(row.get("id"), str)
+        and row["id"]
+        and ids.count(row["id"]) == 1
+        and row["id"] not in linked
+    ]
+
+
 def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     caps = _editor_capabilities(job, variant)
     families: list[str] = []
@@ -120,6 +153,8 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         )
     ):
         families.append("music")
+    if _removable_visual_media(job, variant):
+        families.append("visual_media")
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
@@ -192,6 +227,15 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
             "total_cues": len(cues),
             "truncated": False,
         }
+    if "visual_media" in snapshot["allowed_op_families"]:
+        snapshot["visual_media"] = [
+            {
+                key: row[key]
+                for key in ("id", "media_kind", "start_s", "end_s", "origin")
+                if key in row
+            }
+            for row in _removable_visual_media(job, variant)
+        ]
     current_track_id = variant.get("music_track_id")
     if "music" in snapshot["allowed_op_families"]:
         snapshot["music"] = {
@@ -269,9 +313,14 @@ def _summary(op: dict[str, Any]) -> str:
 def project_editor_draft(variant: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     """Overlay a same-generation draft without mutating the rendered Job."""
     projected = copy.deepcopy(variant)
-    for key in ("text_elements", "caption_cues", "music_track_id"):
+    for key in ("text_elements", "caption_cues", "music_track_id", "visual_blocks"):
         if payload.get(key) is not None:
             projected[key] = copy.deepcopy(payload[key])
+    if payload.get("visual_blocks") is not None and isinstance(
+        projected.get("guided_edit_revision"), dict
+    ):
+        projected["guided_edit_revision"]["visual_blocks"] = copy.deepcopy(payload["visual_blocks"])
+        projected["guided_edit_revision"]["state_hash"] = ""
     if payload.get("timeline_slots") is not None:
         originals = {
             row.get("slot_id"): row for row in _variant_slots(variant) if row.get("slot_id")
@@ -360,10 +409,30 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
     remove_music = False
     music_track_id: str | None = None
     title: str | None = None
+    visual_blocks: list[dict[str, Any]] | None = None
 
     for op in ops:
         name = str(op.get("op") or "")
-        if name == "edit_text":
+        if name == "remove_visual_media":
+            targets = op.get("target_ids")
+            if (
+                not isinstance(targets, list)
+                or not targets
+                or len(targets) > 100
+                or any(not isinstance(value, str) or not value for value in targets)
+                or len(set(targets)) != len(targets)
+            ):
+                raise KriaEditorOpError("Visual media removal requires unique existing target IDs")
+            allowed = {row["id"] for row in _removable_visual_media(job, variant)}
+            current = (
+                visual_blocks if visual_blocks is not None else _visual_media_rows(job, variant)
+            )
+            present = {row.get("id") for row in current if isinstance(row, dict)}
+            if not set(targets).issubset(allowed & present):
+                raise KriaEditorOpError("The selected visual media is no longer removable")
+            visual_blocks = [row for row in current if row.get("id") not in set(targets)]
+            changed.add("visual_media")
+        elif name == "edit_text":
             index = _require_index(text, op.get("bar_index"), "Text")
             text[index]["text"] = str(op["text"])
             changed.add("text")
@@ -576,7 +645,10 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             raise KriaEditorOpError(f"{name or 'Unknown operation'} is not portable to Kria yet")
         changes.append(_summary(op))
 
+    guided = _guided_v2_revision(job, variant)
     request = EditorCommitRequest(
+        guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
+        visual_blocks=visual_blocks,
         base_generation=base_generation,
         text_elements=text if "text" in changed else None,
         caption_cues=captions if "captions" in changed else None,

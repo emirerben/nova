@@ -31,6 +31,12 @@ def test_main_creator_eval(
     )
     assert result.passed, f"{result.summary()}: {result.structural_failures}"
 
+    if fixture.meta.get("manual_visual_removal"):
+        assert result.output is not None
+        assert result.output["action"]["kind"] == "ask_user", (
+            "A strategy cannot remove manual media layers; it must not clear text instead"
+        )
+
     expected = fixture.meta.get("text_intent")
     if expected:
         from app.agents._schemas.creator_agent import (
