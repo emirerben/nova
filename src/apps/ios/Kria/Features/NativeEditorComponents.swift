@@ -99,6 +99,8 @@ struct NativeEditorSaveBanner: View {
                     .background(KriaColor.softZinc)
                     .accessibilityIdentifier("native-editor-retry-render")
             }
+        case .refreshFailed(let message):
+            banner(title: "Couldn’t refresh this edit", detail: message, systemImage: "arrow.clockwise", tint: .orange)
         case .loadFailed(let message):
             banner(title: "Couldn’t load this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
         case .previewFailed(let message):
