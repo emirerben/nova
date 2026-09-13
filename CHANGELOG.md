@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.11.0] - 2026-09-13
+
+### Changed
+- fix: remove uploaded Visuals through legacy editor chat (#1019) <!-- release-pr: 1019 -->
+
 ## [0.76.10.0] - 2026-09-13
 
 ### Changed
