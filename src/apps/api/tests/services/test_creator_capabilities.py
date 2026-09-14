@@ -70,6 +70,188 @@ def test_audio_led_and_voiceover_items_are_native(monkeypatch) -> None:
     assert guided.reason_code == "native_render_required"
 
 
+@pytest.mark.parametrize("edit_format", ["montage", "day_vlog", "single_hero"])
+def test_verified_phone_original_audio_uses_guided_and_preserves_audio(
+    monkeypatch, edit_format
+) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "edit_format_day_vlog_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "edit_format_single_hero_enabled", True)
+    phone_ids = [f"phone-{index}" for index in range(17)]
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format=edit_format,
+        media=[{"media_id": media_id, "kind": "video"} for media_id in phone_ids],
+        phone_source_media_ids=phone_ids,
+        phone_rendering_allowed=True,
+    )
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format=edit_format, audio_strategy="original_audio", render_program="native"
+        ),
+    )
+    assert plan.strategy.render_program == "guided"
+    assert plan.strategy.montage_audio is not None
+    assert plan.strategy.montage_audio.preserve_source_audio is True
+    # Empty selection preserves every approved moment, without applying the
+    # twelve-source limit intended for individually selected audio beds.
+    assert plan.strategy.montage_audio.source_media_ids == []
+
+
+@pytest.mark.parametrize("media_scope", [None, "all"])
+@pytest.mark.parametrize("case", ["disabled", "invalid", "mixed", "voiceover"])
+def test_unavailable_phone_sources_cannot_fall_back_to_cloud(
+    monkeypatch, case, media_scope
+) -> None:
+    _enable_guided(monkeypatch)
+    media = [{"media_id": "phone-a", "kind": "video"}]
+    if case == "mixed":
+        media.append({"media_id": "cloud-b", "kind": "video"})
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=media,
+        phone_source_media_ids=[] if case == "invalid" else ["phone-a"],
+        phone_rendering_allowed=case != "disabled",
+        has_voiceover=case == "voiceover",
+    )
+    assert capabilities.CAPABILITY_PHONE_SOURCE_AUDIO in manifest.capabilities
+    assert not manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO].available
+    assert not manifest.capabilities[capabilities.CAPABILITY_DISPATCH_RENDER].available
+    with pytest.raises(MixedMediaTimingUnavailableError):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="montage", audio_strategy="original_audio", media_scope=media_scope
+            ),
+        )
+
+
+def test_cloud_manifest_and_original_audio_route_stay_unchanged(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-cloud",
+        edit_format="montage",
+        media=[{"media_id": "clip-a", "kind": "video"}],
+    )
+    assert capabilities.CAPABILITY_PHONE_SOURCE_AUDIO not in manifest.capabilities
+    phone = capabilities.resolve_creator_manifest(
+        item_id="item-cloud",
+        edit_format="montage",
+        media=[{"media_id": "clip-a", "kind": "video"}],
+        phone_source_media_ids=["clip-a"],
+        phone_rendering_allowed=True,
+    )
+    assert phone.manifest_hash != manifest.manifest_hash
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage", audio_strategy="original_audio", selected_media_ids=["clip-a"]
+        ),
+    )
+    assert plan.strategy.render_program == "native"
+    assert plan.strategy.montage_audio is None
+
+
+@pytest.mark.parametrize("audio", ["licensed_music", "original_audio"])
+def test_phone_provenance_overrides_model_native_choice(monkeypatch, audio) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+    )
+    plan = capabilities.compile_strategy_to_plan(
+        manifest, CreativeStrategy(audio_strategy=audio, render_program="native")
+    )
+    assert plan.strategy.render_program == "guided"
+
+
+def test_phone_only_montage_rejects_voiceover_strategy(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+    )
+    with pytest.raises(MixedMediaTimingUnavailableError, match="does not support voiceover"):
+        capabilities.compile_strategy_to_plan(
+            manifest, CreativeStrategy(audio_strategy="voiceover")
+        )
+
+
+def test_phone_only_strategy_rejects_audio_led_format_even_when_enabled(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "edit_format_talking_head_enabled", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+    )
+    with pytest.raises(MixedMediaTimingUnavailableError, match="guided edit format"):
+        capabilities.compile_strategy_to_plan(
+            manifest, CreativeStrategy(edit_format="talking_head")
+        )
+
+
+@pytest.mark.parametrize("pool_kind", ["image", "video"])
+def test_unused_pool_media_does_not_disable_phone_clips_but_cannot_be_selected(
+    monkeypatch, pool_kind
+) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[
+            {"media_id": "phone-a", "kind": "video"},
+            {"media_id": "asset-photo", "kind": pool_kind},
+        ],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO].available
+    for strategy in (
+        CreativeStrategy(media_scope="all"),
+        CreativeStrategy(selected_media_ids=["asset-photo"]),
+        CreativeStrategy(montage_audio={"source_media_ids": ["asset-photo"]}),
+        CreativeStrategy(
+            montage_cadence=MontageCadenceConstraint(
+                source_media_ids=["phone-a", "asset-photo"],
+                cut_duration_s=1,
+            )
+        ),
+    ):
+        with pytest.raises(MixedMediaTimingUnavailableError, match="bound video sources"):
+            capabilities.compile_strategy_to_plan(manifest, strategy)
+
+
+def test_phone_original_audio_preserves_explicit_audio_policy(monkeypatch) -> None:
+    from app.schemas.edit_proposal import MontageAudioPlan
+
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+    )
+    explicit = MontageAudioPlan(preserve_source_audio=False)
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(audio_strategy="original_audio", montage_audio=explicit),
+    )
+    assert plan.strategy.render_program == "guided"
+    assert plan.strategy.montage_audio == explicit
+
+
 def test_guided_voiceover_opt_in_preserves_all_media_without_native_cap(monkeypatch) -> None:
     _enable_guided(monkeypatch)
     monkeypatch.setattr(

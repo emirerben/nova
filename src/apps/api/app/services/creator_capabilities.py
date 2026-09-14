@@ -29,6 +29,7 @@ from app.agents._schemas.creator_agent import (
 from app.agents._schemas.creator_policy import (
     CAPABILITY_DRAFT_GUIDED_PROPOSAL,
     CAPABILITY_GUIDED_VOICEOVER,
+    CAPABILITY_PHONE_SOURCE_AUDIO,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
@@ -160,6 +161,8 @@ def resolve_creator_manifest(
     limits: CreatorLimits | None = None,
     guided_capability_enabled: bool | None = None,
     narration: CreatorNarrationIdentity | Mapping[str, Any] | None = None,
+    phone_source_media_ids: Sequence[str] | None = None,
+    phone_rendering_allowed: bool = False,
 ) -> ResolvedCreatorManifest:
     """Resolve a descriptive v1 manifest from server state and policy.
 
@@ -169,6 +172,9 @@ def resolve_creator_manifest(
     """
 
     resolved_media = _as_media_refs(media)
+    # None means cloud sources; an empty list means phone provenance whose
+    # receipts could not be verified. Never erase that provenance on failure.
+    resolved_phone_source_ids = set(phone_source_media_ids or ())
     resolved_catalog = _as_catalog_refs(catalog)
     resolved_narration = (
         None
@@ -309,6 +315,40 @@ def resolve_creator_manifest(
             capabilities[capability_name] = _unavailable(
                 "disabled_by_setting", f"{capability_name} is disabled by the server"
             )
+    if phone_source_media_ids is not None:
+        attached_media = [
+            media for media in resolved_media if not media.media_id.startswith("asset-")
+        ]
+        if not phone_rendering_allowed:
+            phone = _unavailable(
+                "disabled_by_setting", "phone rendering is unavailable for this account"
+            )
+        elif (
+            not resolved_phone_source_ids
+            or resolved_phone_source_ids
+            != {media.media_id for media in attached_media if media.kind == "video"}
+            or any(media.kind != "video" for media in attached_media)
+        ):
+            phone = _unavailable(
+                "unverified_phone_sources", "verified phone-only video sources are required"
+            )
+        elif has_voiceover:
+            phone = _unavailable(
+                "unsupported_phone_audio", "phone rendering does not support recorded voiceover"
+            )
+        else:
+            phone = _available()
+        capabilities[CAPABILITY_PHONE_SOURCE_AUDIO] = phone
+        if not phone.available:
+            for capability_name in (
+                CAPABILITY_DRAFT_GUIDED_PROPOSAL,
+                CAPABILITY_GUIDED_STORY,
+                CAPABILITY_DISPATCH_RENDER,
+            ):
+                capabilities[capability_name] = phone
+        capabilities[CAPABILITY_GUIDED_VOICEOVER] = _unavailable(
+            "unsupported_phone_audio", "phone rendering does not support recorded voiceover"
+        )
     if capabilities["main_creator_agent"].available and not getattr(
         settings, "main_creator_agent_rollout_percent", 0
     ):
