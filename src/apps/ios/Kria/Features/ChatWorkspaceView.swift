@@ -210,6 +210,23 @@ private struct WorkspaceRecoveryView: View {
     }
 }
 
+private struct ConversationEntrance: ViewModifier {
+    let visible: Bool
+    let order: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(visible ? 1 : 0)
+            .offset(y: visible || reduceMotion ? 0 : -6)
+            .animation(
+                reduceMotion ? .easeOut(duration: 0.15) :
+                    .timingCurve(0.23, 1, 0.32, 1, duration: 0.2).delay(min(Double(order) * 0.035, 0.105)),
+                value: visible
+            )
+    }
+}
+
 private struct CreationWorkspaceView: View {
     let project: ProjectSummary
     let openProjects: () -> Void
@@ -220,6 +237,8 @@ private struct CreationWorkspaceView: View {
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @State private var prompt = ""
     @State private var events: [ThreadEvent] = []
+    @State private var initialConversationLoaded = false
+    @State private var initialConversationRevealed = false
     @State private var pendingMessages: [PendingChatMessage] = []
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var approval: ApprovalSnapshot?
@@ -311,11 +330,15 @@ private struct CreationWorkspaceView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 20) {
-                        ForEach(transcript) { message in
+                        ForEach(Array(transcript.enumerated()), id: \.element.id) { index, message in
                             ChatMessageRow(message: message).id(message.id)
+                                .modifier(ConversationEntrance(visible: initialConversationRevealed, order: index))
                         }
 
-                        stageContent
+                        if fullThread != nil || isUITesting {
+                            stageContent
+                                .modifier(ConversationEntrance(visible: initialConversationRevealed, order: transcript.count))
+                        }
 
                         if (isThinking || isSending) && workspaceStage != .rendering {
                             ThinkingRow().id("thinking")
@@ -338,6 +361,20 @@ private struct CreationWorkspaceView: View {
                 }
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
                 .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                .opacity(initialConversationLoaded ? 1 : 0)
+                .overlay {
+                    if !initialConversationLoaded {
+                        ProgressView("Loading conversation…")
+                            .accessibilityIdentifier("conversation-loading")
+                    }
+                }
+                .task(id: initialConversationLoaded) {
+                    guard initialConversationLoaded else { return }
+                    scrollToEnd(proxy)
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+                    initialConversationRevealed = true
+                }
                 .scrollDismissesKeyboard(.interactively)
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation history")
@@ -683,6 +720,9 @@ private struct CreationWorkspaceView: View {
     }
 
     private func refreshNow() async {
+        defer {
+            if !Task.isCancelled { initialConversationLoaded = true }
+        }
         errorMessage = nil
         do {
             let requestSequence = projectionOrder.begin()
