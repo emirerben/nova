@@ -6,18 +6,18 @@ stale test result, and skips a build number that App Store Connect already has.
 
 ## One-time account setup
 
-The Apple account holder must register `com.kria.app`, create the Kria app
+The Apple account holder must register `com.emirerben.kria`, create the Kria app
 record, and enable **Sign in with Apple** for that App ID. Create the external
 group that owns Kria's public TestFlight link before the first upload. The
 workflow adds approved builds to that existing group; it intentionally never
 widens distribution to an arbitrary group.
 
-Create a dedicated iOS Google OAuth client for `com.kria.app`. Its client ID
+Create a dedicated iOS Google OAuth client for `com.emirerben.kria`. Its client ID
 and custom callback scheme become the Release values for
 `KRIA_GOOGLE_CLIENT_ID` and `KRIA_GOOGLE_REDIRECT_SCHEME`. The production API
 must accept both values before the first TestFlight upload:
 
-- `MOBILE_APPLE_CLIENT_IDS` includes `com.kria.app`.
+- `MOBILE_APPLE_CLIENT_IDS` includes `com.emirerben.kria`.
 - `MOBILE_GOOGLE_CLIENT_IDS` includes the dedicated iOS client ID.
 - `MOBILE_JWT_SECRET` is present and remains independent from web proxy auth.
 
