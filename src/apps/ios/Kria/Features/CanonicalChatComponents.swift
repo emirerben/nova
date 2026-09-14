@@ -196,9 +196,6 @@ struct ChatMessageRow: View {
             .frame(maxWidth: .infinity)
         } else {
             VStack(alignment: .leading, spacing: 7) {
-                Text("Kria")
-                    .font(KriaFont.body(11).weight(.semibold))
-                    .foregroundStyle(KriaColor.zinc)
                 Text(message.content)
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)
