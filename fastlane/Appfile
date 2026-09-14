@@ -1,2 +1,2 @@
-app_identifier("com.kria.app")
+app_identifier("com.emirerben.kria")
 team_id(ENV.fetch("KRIA_DEVELOPMENT_TEAM"))
