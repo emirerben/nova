@@ -10,6 +10,7 @@
       "KriaUITests/CreationUITests/testUnavailableCapabilitiesShowRetryInsteadOfDeadFormatCards"
     ],
     "projects": [
+      "KriaUITests/ProjectsUITests/testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint",
       "KriaUITests/ProjectsUITests/testProjectActionsCanBeCancelledWithoutChangingProject",
       "KriaUITests/ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
     ],

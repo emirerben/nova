@@ -6,6 +6,7 @@ struct ChatWorkspaceView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsProjects = false
     @State private var drawerDrag: CGFloat = 0
+    @GestureState private var drawerGestureActive = false
     @State private var drawerMounted = false
     @State private var horizontalDrawerDrag: Bool?
     @State private var drawerGestureExclusions: [CGRect] = []
@@ -85,6 +86,16 @@ struct ChatWorkspaceView: View {
             .background(KriaColor.paper.ignoresSafeArea())
             .onPreferenceChange(DrawerGestureExclusionPreference.self) { drawerGestureExclusions = $0 }
             .simultaneousGesture(drawerGesture(width: drawerWidth))
+            .onChange(of: drawerGestureActive) { _, active in
+                // onEnded is not called when another recognizer or the system
+                // cancels a drag. GestureState resets for both outcomes.
+                guard !active else { return }
+                let needsSettlement = horizontalDrawerDrag == true || drawerDrag != 0
+                horizontalDrawerDrag = nil
+                if needsSettlement {
+                    setDrawerOpen(drawerOffset > drawerWidth / 2)
+                }
+            }
             .accessibilityAction(.escape) { setDrawerOpen(false) }
         }
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: showsProjects)
@@ -118,6 +129,7 @@ struct ChatWorkspaceView: View {
 
     private func drawerGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 3, coordinateSpace: .global)
+            .updating($drawerGestureActive) { _, active, _ in active = true }
             .onChanged { value in
                 // Choose an axis once, without a 20-point dead zone at touch-down.
                 if horizontalDrawerDrag == nil {
@@ -133,8 +145,8 @@ struct ChatWorkspaceView: View {
                 let wasHorizontal = horizontalDrawerDrag == true
                 horizontalDrawerDrag = nil
                 guard wasHorizontal else { return }
-                let projectedOffset = (showsProjects ? width : 0) + value.predictedEndTranslation.width
-                setDrawerOpen(projectedOffset > width / 2)
+                let releasedOffset = (showsProjects ? width : 0) + value.translation.width
+                setDrawerOpen(releasedOffset > width / 2)
             }
     }
 }
