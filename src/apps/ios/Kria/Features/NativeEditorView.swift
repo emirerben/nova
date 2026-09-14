@@ -14,6 +14,7 @@ struct NativeEditorView: View {
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
     @State private var showsConversation = false
+    @State private var lanePanel: NativeEditorTool?
     @State private var textInspectorID: String?
     @State private var selectedTextForActions: String?
     @State private var keyboardVisible = false
@@ -76,7 +77,7 @@ struct NativeEditorView: View {
                     )
                 }
             }
-            .frame(width: viewport.size.width, height: viewport.size.height)
+            .frame(width: viewport.size.width, height: viewport.size.height, alignment: .top)
             .font(KriaFont.body())
             .foregroundStyle(KriaColor.ink)
             .background(KriaColor.paper)
@@ -93,6 +94,14 @@ struct NativeEditorView: View {
                     return
                 }
                 guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
+                if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
+                    lanePanel = .visuals; inspector = nil; textInspectorID = nil
+                    return
+                }
+                if selection.kind == .captionCue {
+                    lanePanel = .captions; inspector = nil; textInspectorID = nil
+                    return
+                }
                 if selection.kind == .text {
                     if selectedTextForActions == selection.id {
                         textInspectorID = selection.id
@@ -100,6 +109,7 @@ struct NativeEditorView: View {
                         selectedTextForActions = selection.id
                         textInspectorID = nil
                     }
+                    lanePanel = nil
                     inspector = nil
                     return
                 }
@@ -146,6 +156,7 @@ struct NativeEditorView: View {
                 Text("Unsaved editor changes are stored only on this device until you save.")
             }
             .task { await loadEditor() }
+            .onDisappear { session.pausePlayback() }
         }
     }
 
@@ -154,11 +165,16 @@ struct NativeEditorView: View {
             ? viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
             : viewport.size.height
         let portraitHeight = min(338, max(150, referenceHeight * 0.40))
-        let defaultPreviewHeight = session.previewAspectRatio > 1 ? min(124, portraitHeight) : portraitHeight
+        let preferredPreviewHeight = session.previewAspectRatio > 1 ? min(124, portraitHeight) : portraitHeight
+        // Reserve room for the header, divider and usable text controls above
+        // the keyboard rather than allowing their minimum heights to overflow.
+        let defaultPreviewHeight = keyboardVisible
+            ? min(preferredPreviewHeight, max(80, viewport.size.height - 320))
+            : preferredPreviewHeight
         let resizeRange = max(0, defaultPreviewHeight - 80)
-        let showsTimeline = session.pendingText == nil && textInspectorID == nil
+        let showsTimeline = session.pendingText == nil && textInspectorID == nil && lanePanel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
-        let previewHeight = max(80, defaultPreviewHeight - (showsTimeline ? timelineExpansion * resizeRange : 0) - (showsContext ? 52 : 0))
+        let previewHeight = max(80, defaultPreviewHeight - timelineExpansion * resizeRange - (showsContext ? 52 : 0))
         VStack(spacing: 0) {
             NativeEditorProjectHeader(
                 title: project.workspaceTitle, session: session,
@@ -194,17 +210,24 @@ struct NativeEditorView: View {
                     }
                 }
 
+            timelineResizeHandle(range: resizeRange)
+            if !showsTimeline && !keyboardVisible {
+                NativeEditorTransport(session: session)
+            }
+
             if session.pendingText != nil {
-                Spacer(minLength: 0)
                 NativeTextCreationPanel(session: session) { selection in
                     selectedTextForActions = selection.id
                     textInspectorID = selection.id
                 }
+            } else if lanePanel == .visuals {
+                NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id) { lanePanel = nil }
+            } else if lanePanel == .captions {
+                NativeCaptionPanel(session: session) { lanePanel = nil }
             } else if let id = textInspectorID {
                 NativeEditorTextPanel(id: id, session: session) { textInspectorID = nil }
                     .id(id)
             } else {
-            timelineResizeHandle(range: resizeRange)
             NativeEditorTimeline(session: session)
                 .frame(maxHeight: .infinity)
                 .layoutPriority(1)
@@ -221,7 +244,9 @@ struct NativeEditorView: View {
             }
 
             NativeEditorToolRail(selected: $selectedTool) { tool in
-                if tool == .text { session.beginTextCreation() }
+                if tool == .visuals { session.select(nil); lanePanel = tool }
+                else if tool == .captions { lanePanel = tool }
+                else if tool == .text { session.beginTextCreation() }
                 else { inspector = .tool(tool) }
             }
             }
@@ -256,9 +281,9 @@ struct NativeEditorView: View {
             )
             .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: timelineResizeFeedback)
             .accessibilityElement()
-            .accessibilityLabel("Timeline size")
+            .accessibilityLabel("Editor panel size")
             .accessibilityValue("\(Int(timelineExpansion * 100)) percent expanded")
-            .accessibilityHint("Swipe up or down to resize the timeline and preview")
+            .accessibilityHint("Swipe up or down to resize the editor panel and preview")
             .accessibilityAdjustableAction { direction in
                 let step: CGFloat = direction == .increment ? 0.25 : -0.25
                 let next = min(1, max(0, timelineExpansion + step))
@@ -299,6 +324,7 @@ struct NativeEditorView: View {
     }
 
     private func requestBack() {
+        if lanePanel != nil { lanePanel = nil; return }
         if session.pendingText != nil { session.cancelTextCreation(); return }
         if textInspectorID != nil { textInspectorID = nil; return }
         if session.hasUnsavedChanges { showsUnsavedExit = true }

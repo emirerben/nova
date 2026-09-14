@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import app.pipeline.guided_story as guided_story
 from app.agents._schemas.text_element import TextElement
 from app.pipeline.canvas import Canvas
 from app.pipeline.generative_overlays import build_overlays_from_text_elements
@@ -1712,6 +1713,145 @@ def test_runtime_revision_preserves_narration_caption_text_and_style_but_pins_ti
     assert runtime_caption["end_s"] == canonical_caption["end_s"]
     assert runtime_caption["word_timings"] == canonical_caption["word_timings"]
     assert runtime_caption["source_params"] == canonical_caption["source_params"]
+
+
+def test_voiceover_revision_can_extend_to_edited_44_8_frame_duration() -> None:
+    guided = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"]).model_copy(
+        update={
+            "narration": NarrationTrack(
+                gcs_path="voiceover/take.m4a",
+                generation="4",
+                duration_s=44.688,
+                words=[{"text": "spoken", "start_s": 0.2, "end_s": 0.6}],
+            )
+        }
+    )
+    guided["approved_proposal"] = snapshot.model_dump(mode="json")
+    guided["media_digest"] = canonical_media_digest(snapshot.media, snapshot.narration)
+    canonical = compile_execution_plan(guided, track=None)
+    assert canonical["resolved_duration_s"] == pytest.approx(44.7)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    revision["segments"][0]["duration_s"] += 0.1
+    for segment in revision["segments"]:
+        segment.pop("output_start_s", None)
+        segment.pop("output_end_s", None)
+    revision["state_hash"] = ""
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+    assert runtime["resolved_duration_s"] == pytest.approx(44.8)
+
+
+def test_sanitized_eo_shape_retains_147_caption_receipts_through_39_segment_edit() -> None:
+    """Regression fixture for the EO-shaped save/recompile path.
+
+    The fixture deliberately uses neutral media IDs and words.  Its shape is
+    the contract: 147 approved narration cues, a 39-segment revised visual
+    timeline ending at 44.8s, and a 44.688s pinned narration source.
+    """
+    guided = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"])
+    words = [
+        {
+            "text": f"cue{index}",
+            "start_s": round(index * 44.688 / 147, 6),
+            "end_s": round((index + 1) * 44.688 / 147, 6),
+        }
+        for index in range(147)
+    ]
+    snapshot = snapshot.model_copy(
+        update={
+            "duration_s": 45,
+            "narration": NarrationTrack(
+                gcs_path="voiceover/neutral.m4a",
+                generation="fixture-1",
+                duration_s=44.688,
+                words=words,
+            ),
+        }
+    )
+    guided["approved_proposal"] = snapshot.model_dump(mode="json")
+    guided["media_digest"] = canonical_media_digest(snapshot.media, snapshot.narration)
+    canonical = compile_execution_plan(guided, track=None)
+    assert canonical["resolved_duration_s"] == pytest.approx(44.7)
+    captions = [
+        row for row in canonical["text_elements"] if row["id"].startswith("narration-caption-")
+    ]
+    assert len(captions) == 147
+
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    approved_segment = next(
+        segment for segment in revision["segments"] if segment["media_id"] == "coast-video"
+    )
+    edited_duration = 44.8 / 39
+    revision["segments"] = [
+        {
+            **approved_segment,
+            "segment_id": f"neutral-segment-{index}",
+            "source_start_s": 0.0,
+            "source_end_s": edited_duration,
+            "duration_s": edited_duration,
+            "output_start_s": index * edited_duration,
+            "output_end_s": (index + 1) * edited_duration,
+        }
+        for index in range(39)
+    ]
+    # Copy/style edits must never change approved cue identity or timings.
+    edited_caption_id = captions[1]["id"]
+    next(row for row in revision["text_elements"] if row["id"] == edited_caption_id)["text"] = (
+        "edited neutral cue"
+    )
+    revision["caption_meta"] = {"style": "sentence", "appearance": {"highlight_spoken_word": True}}
+    revision["state_hash"] = ""
+
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+    runtime_captions = [
+        row for row in runtime["text_elements"] if row["id"].startswith("narration-caption-")
+    ]
+    assert len(runtime["story_timeline"]) == 39
+    assert runtime["resolved_duration_s"] == pytest.approx(44.8)
+    assert [row["id"] for row in runtime_captions] == [row["id"] for row in captions]
+    assert all(
+        row["source_params"] == original["source_params"]
+        for row, original in zip(runtime_captions, captions, strict=True)
+    )
+    assert next(row for row in runtime_captions if row["id"] == edited_caption_id)["text"] == (
+        "edited neutral cue"
+    )
+    # Caption presentation is a render-only projection; runtime compilation
+    # deliberately keeps the approved cue stream free of presentation state.
+    assert revision["caption_meta"]["style"] == "sentence"
+
+
+def test_short_edited_visual_timeline_holds_final_frame_to_pinned_narration(
+    monkeypatch, tmp_path
+) -> None:
+    """A 44.8s visual edit must not cut a 44.688s narrated output short."""
+    source = str(tmp_path / "assembled.mp4")
+    output = tmp_path / "held.mp4"
+    output.write_bytes(b"rendered")
+    monkeypatch.setattr(guided_story, "probe_video", lambda _: SimpleNamespace(duration_s=39.0))
+    captured: list[str] = []
+
+    def fake_run(command, **_kwargs):
+        captured.extend(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(guided_story.subprocess, "run", fake_run)
+    assert guided_story._hold_final_frame_to_duration(source, str(output), target_s=44.8) == str(
+        output
+    )
+    assert "tpad=stop_mode=clone:stop_duration=5.800000" in captured
+    assert captured[captured.index("-t") + 1] == "44.800000"
 
 
 def test_runtime_revision_recomputes_server_context_labels_per_segment() -> None:

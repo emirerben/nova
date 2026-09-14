@@ -6390,6 +6390,22 @@ async def editor_commit_item(
             for row in rows
         }
 
+    if commit_body.sound_effects is not None:
+        from app.routes.generative_jobs import (  # noqa: PLC0415
+            resolve_editor_sound_effect_placements,
+        )
+
+        commit_body = commit_body.model_copy(
+            update={
+                "sound_effects": await resolve_editor_sound_effect_placements(
+                    commit_body.sound_effects,
+                    user_id=str(user.id),
+                    plan_item_id=str(item.id),
+                    db=db,
+                )
+            }
+        )
+
     prep = prepare_editor_commit(
         locked_job,
         variant_id,
@@ -7690,6 +7706,8 @@ async def _delete_verified_pool_upload(
 
 
 class PoolAssetOut(BaseModel):
+    # Original source for native composition; display_url may be a JPEG derivative.
+    source_url: str | None = None
     id: str
     kind: str
     status: str
@@ -7753,6 +7771,11 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
     preview_path = raw_preview_path or None
     display_url: str | None = None
     preview_url: str | None = None
+    source_url: str | None = None
+    try:
+        source_url = storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
+    except Exception:  # noqa: BLE001 — unavailable sources remain visibly unavailable
+        pass
     try:
         display_url = storage.signed_get_url(
             asset.gcs_path if asset.kind == "video" else (preview_path or asset.gcs_path),
@@ -7841,6 +7864,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         nova_on_screen_text=nova_on_screen_text,
         brands=brands,
         display_url=display_url,
+        source_url=source_url,
         preview_url=preview_url,
         deduped=deduped,
         gcs_path=asset.gcs_path,

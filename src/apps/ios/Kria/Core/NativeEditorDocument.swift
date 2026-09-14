@@ -527,6 +527,7 @@ private extension EditorDocument {
             ("highlight_color", ["caption_highlight_color"]),
             ("stroke_width", ["caption_stroke_width"]),
             ("shadow_enabled", ["caption_shadow_enabled"]),
+            ("appearance", ["caption_editor_style"]),
         ]
         for (canonicalKey, keys) in aliases {
             if let value = value(for: canonicalKey, aliases: keys) { result[canonicalKey] = value }
@@ -709,7 +710,7 @@ private extension EditorDocument {
     static func presence(_ object: [String: JSONValue], key: String) -> EditorPresence { guard let value = object[key] else { return .absent }; if case .null = value { return .null }; return .value }
 }
 
-private extension JSONValue {
+extension JSONValue {
     var boolValue: Bool? { if case let .bool(value) = self { return value }; return nil }
 }
 

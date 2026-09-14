@@ -2,7 +2,9 @@
 
 PRs targeting `main` or `dev` select whole suites from their merge-base diff.
 Every push to `main` runs full web, API, lint and iOS regression coverage.
-The test assertions, web partitioning and iOS test execution remain unchanged.
+PRs run the affected iOS build/unit phase; the exhaustive iOS UI phase runs on
+main and manual dispatch. The test assertions, web partitioning and iOS test
+execution remain unchanged.
 Other specialized workflows and deployment triggers retain their existing rules.
 
 ## Selection policy
@@ -10,17 +12,18 @@ Other specialized workflows and deployment triggers retain their existing rules.
 | Changed files | PR coverage |
 | --- | --- |
 | `src/apps/web/**`, web test runner scripts | Web tests and web lint |
-| Native app, media engine, resources, UI tests, `scripts/ios/**`, iOS workflow | iOS build, unit/UI tests, shell tests and mobile contracts |
-| Native unit tests/fixture or `Kria/Generated/**` only | iOS build, unit tests and mobile contracts; no UI execution |
-| Web public fonts and type-posters bundled in Xcode | Web and full iOS coverage |
+| Native app, media engine, resources, UI tests, `scripts/ios/**`, iOS workflow | iOS build/unit on PRs; full iOS coverage on main and manual dispatch; shell tests and mobile contracts |
+| Native unit tests/fixture or `Kria/Generated/**` only | iOS build, unit tests and mobile contracts; no PR UI execution |
+| Web public fonts and type-posters bundled in Xcode | Web and iOS build/unit on PRs; full iOS coverage on main |
 | API internal implementation, prompts, tests | API tests and API lint |
 | API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | Web, API and native build/unit contracts; fixture-driven UI tests are not selected |
 | Shared packages, assets, root dependencies/build config, selector, general CI workflows or unknown paths | All suites |
 | `docs/**`, `plans/**`, `agents/**`, listed root documentation, `VERSION` | No heavyweight suites |
 | Root `package.json` / `package-lock.json` changing only release versions | No heavyweight suites |
 
-The `ios_ui` output selects the slower UI phase within the iOS job; it always
-implies `ios=true`. Every main push still selects both phases. See the
+The `ios_ui` output identifies UI-affecting changes and always implies
+`ios=true`; PR workflow policy currently defers the slower UI phase. Every main
+push still runs both phases. See the
 [iOS runbook](ios-development.md#change-based-ci) for phase commands and cache reuse.
 
 Mixed changes select the union. Runtime-tree Markdown (including prompts) is
@@ -55,6 +58,14 @@ No branch-protection changes are needed for the existing required `lint` and
 avoid dependency installation, PostgreSQL/Redis services, five web workers and
 macOS runners. Superseded PR runs are cancelled; main runs are not cancelled.
 
+Web CI installs from the checked-in `src/apps/web/package-lock.json` with
+`npm ci`, so dependency resolution is locked rather than based on an unlocked
+pnpm install. API tests run as two deterministic round-robin shards over the
+complete non-quality test-file set; both shards feed the same stable `test-api`
+gate, so sharding changes wall-clock scheduling without reducing coverage.
+The iOS matrix runs mobile contracts on Linux alongside the Mac build/unit leg;
+the stable `build-and-test` gate requires both legs to pass.
+
 ## Verification and rollback
 
 ```sh
@@ -66,6 +77,11 @@ actionlint .github/workflows/ci.yml .github/workflows/ci-changes.yml .github/wor
 Regression cases cover real git histories, renamed/deleted/mixed files, unusual
 filenames, moving base branches, release metadata versus dependencies, missing
 diffs, and gate success/failure/cancellation combinations.
+
+Local validation passed all 320 web suites. The slow Chat group contained 112
+tests and completed in 6 seconds locally; an older CI run took 796 seconds for
+that group, so the 7–10-minute turnaround target remains a goal rather than a
+measured guarantee.
 
 To inspect a PR locally, set `CI_EVENT=pull_request`, `CI_BASE=<base SHA>` and
 `CI_HEAD=<head SHA>` when running `python3 scripts/ci/select-tests.py`. Without a

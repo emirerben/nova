@@ -99,6 +99,8 @@ struct NativeEditorSaveBanner: View {
                     .background(KriaColor.softZinc)
                     .accessibilityIdentifier("native-editor-retry-render")
             }
+        case .refreshFailed(let message):
+            banner(title: "Couldn’t refresh this edit", detail: message, systemImage: "arrow.clockwise", tint: .orange)
         case .loadFailed(let message):
             banner(title: "Couldn’t load this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
         case .previewFailed(let message):
@@ -170,7 +172,9 @@ struct NativeEditorTransport: View {
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                 .foregroundStyle(KriaColor.ink)
                 .monospacedDigit()
-                .accessibilityLabel("Current time \(nativeTimecode(clock.currentTime))")
+                .accessibilityLabel("Current time")
+                .accessibilityValue(nativeTimecode(clock.currentTime))
+                .accessibilityIdentifier("native-editor-current-time")
 
             GeometryReader { proxy in
                 let width = max(proxy.size.width, 1)
@@ -204,7 +208,9 @@ struct NativeEditorTransport: View {
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                 .foregroundStyle(KriaColor.zinc)
                 .monospacedDigit()
-                .accessibilityLabel("Duration \(nativeTimecode(session.duration))")
+                .accessibilityLabel("Duration")
+                .accessibilityValue(nativeTimecode(session.duration))
+                .accessibilityIdentifier("native-editor-duration")
         }
         .padding(.horizontal, 14)
         .frame(height: 54)

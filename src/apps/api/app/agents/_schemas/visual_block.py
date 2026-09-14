@@ -13,6 +13,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
+from app.agents._schemas.visual_editor import VisualEditorStyle
+
 MAX_VISUAL_BLOCKS = 20
 MAX_BLOCK_DURATION_S = 10.0
 MIN_MEDIA_DURATION_S = 0.1
@@ -70,6 +72,21 @@ class MediaTransform(BaseModel):
     zoom: float = Field(default=1.0, ge=1.0, le=4.0)
 
 
+class SourceCrop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _inside_source(self) -> SourceCrop:
+        if self.x + self.width > 1 + 1e-6 or self.y + self.height > 1 + 1e-6:
+            raise ValueError("source_crop must stay within normalized source bounds")
+        return self
+
+
 class SolidBackground(BaseModel):
     type: Literal["solid"]
     color: str = "#111111"
@@ -120,7 +137,6 @@ CardBackground = Annotated[
 
 class VisualBlockBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
-
     version: Literal[1] = 1
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     start_s: float = Field(ge=0.0)
@@ -177,6 +193,7 @@ class MediaBlock(VisualBlockBase):
     """User-authored image/video layer composed below text and captions."""
 
     kind: Literal["media"]
+    editor_style: VisualEditorStyle | None = None
     asset_id: str = Field(min_length=1, max_length=80)
     src_gcs_path: str = Field(min_length=1, max_length=1024)
     preview_gcs_path: str | None = Field(default=None, max_length=1024)
@@ -184,6 +201,8 @@ class MediaBlock(VisualBlockBase):
     source_duration_s: float | None = Field(default=None, gt=0.0)
     trim_start_s: float | None = Field(default=None, ge=0.0)
     trim_end_s: float | None = Field(default=None, gt=0.0)
+    source_crop: SourceCrop | None = None
+    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
     display_mode: Literal["fullscreen", "overlay"] = "fullscreen"
     transform: MediaTransform = Field(default_factory=MediaTransform)
     x_frac: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -210,7 +229,9 @@ class MediaBlock(VisualBlockBase):
         trim_end = min(trim_end, self.source_duration_s)
         if trim_start >= trim_end - 1e-6:
             raise ValueError("video media trim end must be greater than trim start")
-        if window > trim_end - trim_start + _FRAME_TOLERANCE_S:
+        if self.playback_rate is not None:
+            trim_end = min(self.source_duration_s, trim_start + window * self.playback_rate)
+        elif window > trim_end - trim_start + _FRAME_TOLERANCE_S:
             raise ValueError("video media window exceeds the selected source footage")
         self.trim_start_s = trim_start
         self.trim_end_s = trim_end

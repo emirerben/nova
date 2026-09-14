@@ -628,3 +628,45 @@ class TestLoopedImageInputBound:
         cmd = _build([a, b], ["/tmp/first.jpg", "/tmp/second.jpg"], [432, 432])
         assert cmd.count("/tmp/first.jpg") == 1
         assert cmd.count("/tmp/second.jpg") == 1
+
+
+@pytest.mark.parametrize("mode", ["contain", "cover"])
+def test_editor_fullscreen_fit_keeps_source_aspect_and_centers_motion(mode):
+    from app.agents._schemas.visual_editor import VisualAnimation, VisualEditorStyle
+
+    card = _card_img(start_s=2, end_s=5)
+    card.display_mode = "fullscreen"
+    card.editor_style = VisualEditorStyle(
+        fit_mode=mode, zoom=2, animation=VisualAnimation(entrance="slide")
+    )
+    fc = _fc(_build([card]))
+    expected = "increase" if mode == "cover" else "decrease"
+    assert f"scale=2160:3840:force_original_aspect_ratio={expected}" in fc
+    assert ("crop=1080:1920" in fc) == (mode == "cover")
+    assert "540.0-overlay_w/2" in fc
+    assert "(t-2.000000)" in fc
+    assert "enable='between(t,2.000,5.000)'" in fc
+
+
+def test_editor_pip_zoom_and_rotation_preserve_legacy_pop():
+    from app.agents._schemas.visual_editor import VisualEditorStyle
+
+    card = _card_img(scale=0.4)
+    card.entrance_token = "pop_in"
+    card.editor_style = VisualEditorStyle(zoom=2, rotation_deg=90)
+    fc = _fc(_build([card]))
+    assert "scale=864:-2" in fc
+    assert "rotate=1.570796327" in fc
+    assert "0.82+0.18*min(t/0.18,1)" in fc
+    assert "overlay_w/2" in fc
+
+
+def test_video_card_crop_and_retime_use_top_left_source_coordinates():
+    card = _card_video(start_s=1.0, end_s=3.0)
+    card.clip_duration_s = 8.0
+    card.source_crop = {"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.7}
+    card.playback_rate = 2.0
+    fc = _fc(_build([card], ["/tmp/clip.mp4"], [432]))
+    assert "setpts=PTS/2" in fc
+    assert "crop=trunc(iw*0.600000000/2)*2:trunc(ih*0.700000000/2)*2:" in fc
+    assert "trunc(iw*0.100000000/2)*2:trunc(ih*0.200000000/2)*2" in fc

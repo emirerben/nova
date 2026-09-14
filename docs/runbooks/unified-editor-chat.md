@@ -28,6 +28,47 @@ editor draft. History persistence retries never replay an editor command.
 Runtime-v2's server draft executor also accepts draft-only tool groups; a render
 approval is created only for a group that explicitly requests rendering.
 
+## Runtime-1 uploaded Visuals removal
+
+Legacy `POST /creation-threads/:id/messages` recognizes English removal requests
+such as “Remove the visual overlays I added” for the selected variant (or the sole
+variant). `creation_editor_actions.py` resolves stable IDs through EditCopilot,
+then uses `compile_editor_ops` and the canonical atomic Save validators. The
+request directly saves and queues the edit; it does not create a planner proposal.
+
+Only supported, user-origin `visual_blocks` of kind `media`, with no linked text,
+are removable. Existing editor capabilities and a base video are required;
+lyrics variants and legacy `media_overlays` are excluded. Text, captions, names,
+scores, footage, audio and other Visuals retain their saved values. Ambiguous,
+unsupported and empty-operation results report that nothing changed. Planner
+strategy messages describe proposals, never completed edits.
+
+The user event, desired edit and saved receipt commit together after ownership,
+selection, item/job and generation checks. “Saved” does not mean “rendered”. An
+enqueue failure reports saved-but-not-rendered only if that exact generation is
+still rendering; stale attempts cannot report failure for a newer edit.
+
+Native runtime-1 prompt refresh reads the selected variant's editor authority,
+even while another variant supplies playable output. A clean editor accepts the
+new baseline; unsaved local changes remain intact and show a conflict. Unchanged
+raw authority does not create a false conflict, including after manual Save or
+conflict rebase. Refresh failures have their own banner and preserve local edits.
+
+The removal timeline contract is:
+
+- **Duration:** canonical guided revision segments/duration and
+  `visual_block_variant_duration` remain unchanged.
+- **Ripple:** removing a Visuals layer does not ripple any remaining lane,
+  including music; ordering and timing remain intact.
+- **Scrubbing:** native canonical duration and scrub bounds remain unchanged.
+- **Resizing:** no resize behavior or handle semantics change.
+- **Save/history:** server Save establishes a new generation baseline; native
+  dirty edits conflict instead of being silently overwritten.
+- **Parity:** `test_creation_editor_actions_integration.py` exercises real guided
+  Save preparation; `testLegacyVisualRemovalRefreshKeepsSelectedRenderingVariant`
+  in `NativeEditorSessionTests.swift` checks native refresh and lane preservation.
+  These fixtures mock model/network/database boundaries, not production renders.
+
 ## Timeline contract
 
 - **Duration:** the existing virtual timeline and editor apply context own ordered
@@ -72,4 +113,6 @@ this change does not require enabling runtime v2 or changing render flags.
 | Visual suggestion parity | The main chat uses the same matcher hook and undo-recorded acceptance callback. The editor's `poolOnly` presentation retains uploads without AI actions. |
 
 Browser fixtures replace model and render HTTP responses; they do not claim a
-paid live-model or production-render evaluation. No prompts changed in this work.
+paid live-model or production-render evaluation. The original KRI-22 browser transport did not change prompts. Runtime-1 Visuals
+removal changes both editor-copilot and main-creator prompts and requires their
+versioned live evals before landing, in addition to offline regression gates.

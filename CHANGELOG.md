@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.12.0] - 2026-09-14
+
+### Changed
+- fix: enable guided caption display and native source controls (#1022) <!-- release-pr: 1022 -->
+
+## [0.76.11.0] - 2026-09-13
+
+### Changed
+- fix: remove uploaded Visuals through legacy editor chat (#1019) <!-- release-pr: 1019 -->
+
+## [0.76.10.0] - 2026-09-13
+
+### Changed
+- v0.76.10.0 feat: add native caption and visual editing (#1018) <!-- release-pr: 1018 -->
+
+## [0.76.9.0] - 2026-09-13
+
+### Changed
+- v0.76.9.0 fix: shorten PR checks with locked dependencies and parallel API tests (#1021) <!-- release-pr: 1021 -->
+
 ## [0.76.8.0] - 2026-09-12
 
 ### Changed

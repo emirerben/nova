@@ -4246,7 +4246,7 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-09-v42"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-13-v43"
 
 
 def _motion_snapshot() -> dict:

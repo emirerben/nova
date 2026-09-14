@@ -1710,6 +1710,51 @@
         "title": "EditRecipeV2",
         "type": "object"
       },
+      "EditorCaptionAppearance": {
+        "additionalProperties": false,
+        "description": "Explicit native-editor appearance; missing values retain legacy renders.",
+        "properties": {
+          "alignment": {
+            "default": null,
+            "enum": [
+              "left",
+              "center",
+              "right"
+            ],
+            "nullable": true,
+            "title": "Alignment",
+            "type": "string"
+          },
+          "highlight_spoken_word": {
+            "default": null,
+            "nullable": true,
+            "title": "Highlight Spoken Word",
+            "type": "boolean"
+          },
+          "shadow_color": {
+            "default": null,
+            "nullable": true,
+            "title": "Shadow Color",
+            "type": "string"
+          },
+          "shadow_opacity": {
+            "default": null,
+            "maximum": 1,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Shadow Opacity",
+            "type": "number"
+          },
+          "stroke_color": {
+            "default": null,
+            "nullable": true,
+            "title": "Stroke Color",
+            "type": "string"
+          }
+        },
+        "title": "EditorCaptionAppearance",
+        "type": "object"
+      },
       "EditorCommitBackgroundMusic": {
         "description": "Full replacement background bed for editor commits.\n\n``track_id=None`` or ``enabled=false`` clears the bed. When a track is set,\nthe persisted renderer contract remains ``smart_music_treatment``.",
         "properties": {
@@ -1757,6 +1802,11 @@
       },
       "EditorCommitCaptionMeta": {
         "properties": {
+          "appearance": {
+            "$ref": "#/components/schemas/EditorCaptionAppearance",
+            "default": null,
+            "nullable": true
+          },
           "color": {
             "default": null,
             "nullable": true,
@@ -3217,6 +3267,11 @@
             "title": "Display Mode",
             "type": "string"
           },
+          "editor_style": {
+            "$ref": "#/components/schemas/VisualEditorStyle",
+            "default": null,
+            "nullable": true
+          },
           "effect_group_id": {
             "default": null,
             "maxLength": 80,
@@ -3258,6 +3313,14 @@
             "title": "Origin",
             "type": "string"
           },
+          "playback_rate": {
+            "default": null,
+            "maximum": 4.0,
+            "minimum": 0.25,
+            "nullable": true,
+            "title": "Playback Rate",
+            "type": "number"
+          },
           "preview_gcs_path": {
             "default": null,
             "maxLength": 1024,
@@ -3285,6 +3348,11 @@
             "nullable": true,
             "title": "Source",
             "type": "string"
+          },
+          "source_crop": {
+            "$ref": "#/components/schemas/SourceCrop",
+            "default": null,
+            "nullable": true
           },
           "source_duration_s": {
             "default": null,
@@ -4244,6 +4312,12 @@
             "title": "Source Type",
             "type": "string"
           },
+          "source_url": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Url",
+            "type": "string"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -5075,6 +5149,45 @@
           "type"
         ],
         "title": "SolidBackground",
+        "type": "object"
+      },
+      "SourceCrop": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Height",
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "SourceCrop",
         "type": "object"
       },
       "StaggeredContent": {
@@ -6064,6 +6177,14 @@
             "title": "Parent Segment Id",
             "type": "string"
           },
+          "playback_rate": {
+            "default": null,
+            "maximum": 4.0,
+            "minimum": 0.25,
+            "nullable": true,
+            "title": "Playback Rate",
+            "type": "number"
+          },
           "removed": {
             "default": false,
             "title": "Removed",
@@ -6074,6 +6195,15 @@
             "nullable": true,
             "title": "Slot Id",
             "type": "string"
+          },
+          "source_crop": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "default": null,
+            "nullable": true,
+            "title": "Source Crop",
+            "type": "object"
           },
           "transition_after": {
             "default": "cut",
@@ -6347,6 +6477,63 @@
         "title": "UploadTarget",
         "type": "object"
       },
+      "VisualAnimation": {
+        "additionalProperties": false,
+        "properties": {
+          "entrance": {
+            "default": "none",
+            "enum": [
+              "none",
+              "fade",
+              "pop",
+              "slide",
+              "zoom"
+            ],
+            "title": "Entrance",
+            "type": "string"
+          },
+          "exit": {
+            "default": "none",
+            "enum": [
+              "none",
+              "fade",
+              "pop",
+              "slide",
+              "zoom"
+            ],
+            "title": "Exit",
+            "type": "string"
+          },
+          "loop": {
+            "default": "none",
+            "enum": [
+              "none",
+              "pulse",
+              "bounce",
+              "float"
+            ],
+            "title": "Loop",
+            "type": "string"
+          },
+          "speed": {
+            "default": 1,
+            "maximum": 3,
+            "minimum": 0.25,
+            "title": "Speed",
+            "type": "number"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "title": "VisualAnimation",
+        "type": "object"
+      },
       "VisualCanvasFill": {
         "additionalProperties": false,
         "properties": {
@@ -6426,6 +6613,47 @@
           "color"
         ],
         "title": "VisualCanvasFill",
+        "type": "object"
+      },
+      "VisualEditorStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "animation": {
+            "$ref": "#/components/schemas/VisualAnimation"
+          },
+          "fit_mode": {
+            "default": "cover",
+            "enum": [
+              "contain",
+              "cover"
+            ],
+            "title": "Fit Mode",
+            "type": "string"
+          },
+          "rotation_deg": {
+            "default": 0,
+            "maximum": 360,
+            "minimum": -360,
+            "title": "Rotation Deg",
+            "type": "number"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Version",
+            "type": "integer"
+          },
+          "zoom": {
+            "default": 1,
+            "maximum": 4,
+            "minimum": 1,
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "title": "VisualEditorStyle",
         "type": "object"
       },
       "VisualMediaPlacement": {

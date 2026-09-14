@@ -3024,6 +3024,21 @@ async def message_thread(
         return await _response(db, await _load(thread_id, user, db))
     if thread.revision != body.expected_revision:
         raise HTTPException(status_code=409, detail="Creation thread changed")
+    # Editor actions own their user-message admission so the model call can
+    # release locks without committing an incomplete idempotency receipt.
+    from app.services.creation_editor_actions import (  # noqa: PLC0415
+        execute_visual_removal,
+        is_visual_removal_request,
+    )
+
+    if thread.active_job_id and is_visual_removal_request(body.message):
+        try:
+            thread = await execute_visual_removal(db, thread, body, user)
+        except Exception:
+            await db.rollback()
+            raise
+        return await _response(db, thread)
+
     await _append(
         db,
         thread,

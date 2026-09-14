@@ -1,0 +1,97 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-13-v43",
+  "input": {
+    "utterance": "Remove the visual overlays I added",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "visual_media",
+        "text",
+        "clip",
+        "caption",
+        "music"
+      ],
+      "base_generation": "g1",
+      "total_duration_s": 25,
+      "slots": [
+        {
+          "slot_id": "clip1",
+          "clip_index": 0,
+          "in_s": 0,
+          "duration_s": 25
+        }
+      ],
+      "text_bars": [
+        {
+          "id": "text-0",
+          "text": "Alex",
+          "start_s": 0,
+          "end_s": 2
+        },
+        {
+          "id": "text-1",
+          "text": "Football",
+          "start_s": 1,
+          "end_s": 3
+        },
+        {
+          "id": "text-2",
+          "text": "3\u20131",
+          "start_s": 2,
+          "end_s": 4
+        }
+      ],
+      "captions": {
+        "cues": [
+          {
+            "start": 0,
+            "end": 2,
+            "text": "Our winning moment"
+          }
+        ]
+      },
+      "visual_media": [
+        {
+          "id": "photo-1",
+          "media_kind": "image",
+          "start_s": 2,
+          "end_s": 5
+        },
+        {
+          "id": "video-2",
+          "media_kind": "video",
+          "start_s": 8,
+          "end_s": 12
+        }
+      ],
+      "music": {
+        "removable": true
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"remove_visual_media\", \"target_ids\": [\"photo-1\", \"video-2\"]}], \"confidence\": 0.98, \"reply\": \"I prepared removal of the uploaded photo and video layers, preserving the text and audio.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "remove_visual_media",
+        "target_ids": [
+          "photo-1",
+          "video-2"
+        ]
+      }
+    ],
+    "confidence": 0.98,
+    "reply": "I prepared removal of the uploaded photo and video layers, preserving the text and audio.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "visual_media_targets": [
+      "photo-1",
+      "video-2"
+    ]
+  }
+}

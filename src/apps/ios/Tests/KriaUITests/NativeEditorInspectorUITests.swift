@@ -196,6 +196,50 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(preview.frame.height, originalHeight, accuracy: 2)
     }
 
+    func testPreviewResizeIsAvailableAcrossEditorPanels() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text", "-ui-testing-editor-analyzing-gallery"]
+        for tool in ["visuals", "captions", "text", "text-style", "text-animation", "text-edit"] {
+            app.launch()
+            let button = app.buttons["native-editor-tool-\(tool.hasPrefix("text") ? "text" : tool)"]
+            XCTAssertTrue(button.waitForExistence(timeout: 20))
+            button.tap()
+            if tool.hasPrefix("text-") {
+                let input = app.textViews["native-editor-new-text-input"]
+                XCTAssertTrue(input.waitForExistence(timeout: 5))
+                input.tap()
+                input.typeText("Resize test")
+                app.buttons["native-editor-text-done"].tap()
+                if tool == "text-animation" { app.buttons["Animation"].tap() }
+                if tool == "text-edit" { app.buttons["Edit text"].tap() }
+            }
+            let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
+            let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+            let header = app.buttons["native-editor-back"]
+            let panel = tool == "text"
+                ? app.textViews["native-editor-new-text-input"]
+                : app.scrollViews[tool.hasPrefix("text-") ? "native-editor-text-inspector-scroll" : "native-editor-\(tool)-scroll"]
+            XCTAssertTrue(handle.waitForExistence(timeout: 5), tool)
+            XCTAssertTrue(panel.waitForExistence(timeout: 5), tool)
+            XCTAssertTrue(handle.isHittable, tool)
+            let originalHeight = preview.frame.height
+            let originalHeaderY = header.frame.minY
+            let originalPanelHeight = panel.frame.height
+            let originalBottom = panel.frame.maxY
+            let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
+            XCTAssertLessThan(preview.frame.height, originalHeight - 40, tool)
+            XCTAssertEqual(header.frame.minY, originalHeaderY, accuracy: 2, tool)
+            XCTAssertGreaterThan(panel.frame.height, originalPanelHeight + 40, tool)
+            XCTAssertEqual(panel.frame.maxY, originalBottom, accuracy: 2, tool)
+            let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 300)))
+            XCTAssertEqual(preview.frame.height, originalHeight, accuracy: 2, tool)
+            XCTAssertEqual(header.frame.minY, originalHeaderY, accuracy: 2, tool)
+            app.terminate()
+        }
+    }
+
     func testPreviewPreparationSurvivesLoadedViewTransition() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text", "-ui-testing-editor-delayed-source"]
@@ -223,9 +267,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["Edit text"].tap()
         let edit = app.textViews["native-editor-text-content"]
         XCTAssertTrue(edit.waitForExistence(timeout: 3))
-        edit.tap()
-        edit.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7) + " Second")
-        XCTAssertEqual(edit.value as? String, "First Second")
+        // A center tap can place the caret inside the second line. Tap beyond
+        // its trailing text so deletion starts at the end on every screen size.
+        edit.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
+        edit.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7))
+        expectation(for: NSPredicate(format: "value == %@", "First"), evaluatedWith: edit)
+        waitForExpectations(timeout: 5)
+        edit.typeText(" Second")
+        expectation(for: NSPredicate(format: "value == %@", "First Second"), evaluatedWith: edit)
+        waitForExpectations(timeout: 5)
         app.buttons["native-editor-text-inspector-done"].tap()
         let single = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: First Second")).firstMatch
         XCTAssertTrue(single.waitForExistence(timeout: 3))
@@ -459,8 +509,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(captions.waitForExistence(timeout: 8))
         captions.tap()
 
-        XCTAssertTrue(app.textFields["native-editor-selected-caption-input"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Caption settings"].exists)
+        XCTAssertTrue(app.buttons["native-editor-captions-tab-Style"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-caption-row-cue-all"].firstMatch.exists)
     }
 
     func testAllPersistedLanesExposeStableTimelineIdentityAndInspector() {
@@ -471,11 +521,11 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let cases: [(timelineID: String, inspectorID: String)] = [
             ("native-editor-timeline-music-00000000-0000-4000-8000-000000000350", "native-editor-selected-music-track"),
             ("native-editor-timeline-sound_effect-sfx-1", "native-editor-selected-sfx-placement"),
-            ("native-editor-timeline-media_overlay-overlay-1", "native-editor-selected-overlay-display-mode"),
+            ("native-editor-timeline-media_overlay-overlay-1", "native-editor-visuals-panel"),
             ("native-editor-timeline-carousel-carousel-1", "native-editor-selected-carousel-position"),
-            ("native-editor-timeline-visual_block-visual-1", "native-editor-selected-visual-preset"),
-            ("native-editor-timeline-motion_scene-motion-1", "native-editor-capability-reason"),
-            ("native-editor-timeline-camera_effect-camera-1", "native-editor-selected-camera-intensity"),
+            ("native-editor-timeline-visual_block-visual-1", "native-editor-visuals-panel"),
+            ("native-editor-timeline-motion_scene-motion-1", "native-editor-visuals-panel"),
+            ("native-editor-timeline-camera_effect-camera-1", "native-editor-visuals-panel"),
         ]
 
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
@@ -490,7 +540,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
                 inspectorElement.waitForExistence(timeout: 3),
                 "Inspector \(value.inspectorID) did not follow \(value.timelineID)"
             )
-            let done = app.buttons["native-editor-inspector-done"]
+            let done = app.buttons[value.inspectorID == "native-editor-visuals-panel" ? "native-editor-visuals-done" : "native-editor-inspector-done"]
             XCTAssertTrue(done.exists)
             done.tap()
         }

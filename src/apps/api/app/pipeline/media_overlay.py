@@ -142,6 +142,25 @@ def _is_dissolve_frame_sequence(path: str) -> bool:
     return "%04d" in path and "dissolve_card_" in path
 
 
+def _source_crop_filter(crop: object) -> str | None:
+    """Return an even-pixel crop expression from a validated normalized rect."""
+
+    if crop is None:
+        return None
+    values = crop.model_dump() if hasattr(crop, "model_dump") else crop
+    if not isinstance(values, dict):
+        return None
+    try:
+        x, y, width, height = (float(values[key]) for key in ("x", "y", "width", "height"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (
+        "crop="
+        f"trunc(iw*{width:.9f}/2)*2:trunc(ih*{height:.9f}/2)*2:"
+        f"trunc(iw*{x:.9f}/2)*2:trunc(ih*{y:.9f}/2)*2"
+    )
+
+
 def _run_ffmpeg(cmd: list[str], *, label: str, timeout_s: int = 180) -> None:
     result = subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False)
     if result.returncode != 0:
@@ -194,7 +213,21 @@ def _render_dissolve_component_source_frames(
     else:
         card_parts.append("[0:v]null")
 
-    if is_fullscreen:
+    if card.editor_style is not None:
+        style = card.editor_style
+        if is_fullscreen:
+            mode = "increase" if style.fit_mode == "cover" else "decrease"
+            card_parts.append(
+                f"scale={round(canvas.width * style.zoom)}:{round(canvas.height * style.zoom)}:"
+                f"force_original_aspect_ratio={mode},setsar=1"
+            )
+            if style.fit_mode == "cover":
+                card_parts.append(f"crop={canvas.width}:{canvas.height}")
+        else:
+            card_parts.append(f"scale={max(2, round(card_width_px * style.zoom))}:-2,setsar=1")
+            if card.entrance_token == "pop_in":
+                card_parts.append("scale=w='iw*(0.82+0.18*min(t/0.18,1))':h=-2:eval=frame")
+    elif is_fullscreen:
         card_parts.append(
             f"scale={canvas.width}:{canvas.height}:force_original_aspect_ratio=increase,"
             f"crop={canvas.width}:{canvas.height},setsar=1,format=rgba"
@@ -220,8 +253,21 @@ def _render_dissolve_component_source_frames(
         else:
             card_parts.append("tpad=stop_mode=clone:stop=-1")
 
+    if card.editor_style is not None:
+        from app.pipeline.visual_editor import visual_animation_filters  # noqa: PLC0415
+
+        card_parts.extend(visual_animation_filters(card.editor_style, duration_s))
     card_parts.append("setpts=PTS-STARTPTS,settb=AVTB[card]")
     layer_xy = "0:0" if is_fullscreen else f"{ox}:{oy_expr}"
+    if card.editor_style is not None:
+        from app.pipeline.visual_editor import visual_expressions  # noqa: PLC0415
+
+        motion = visual_expressions(card.editor_style, duration_s)
+        center_x, center_y = (canvas.width / 2, canvas.height / 2) if is_fullscreen else (cx, cy)
+        layer_xy = (
+            f"'{center_x}-overlay_w/2+({motion['x']})*{canvas.width}/1080':"
+            f"'{center_y}-overlay_h/2+({motion['y']})*{canvas.height}/1920'"
+        )
     filter_complex = ";".join(
         [
             ",".join(card_parts),
@@ -442,7 +488,30 @@ def build_media_overlay_command(
             # No trim — enter the scale step directly.
             card_filter_parts.append(f"[{in_idx}:v]null")
 
-        if is_fullscreen:
+        source_crop = _source_crop_filter(card.source_crop)
+        if source_crop is not None:
+            card_filter_parts.append(source_crop)
+        if card.playback_rate is not None:
+            card_filter_parts.append(f"setpts=PTS/{float(card.playback_rate):.9g}")
+
+        if card.editor_style is not None:
+            style = card.editor_style
+            card_filter_parts.append("setpts=PTS-STARTPTS")
+            if is_fullscreen:
+                mode = "increase" if style.fit_mode == "cover" else "decrease"
+                card_filter_parts.append(
+                    f"scale={round(canvas.width * style.zoom)}:{round(canvas.height * style.zoom)}:"
+                    f"force_original_aspect_ratio={mode},setsar=1"
+                )
+                if style.fit_mode == "cover":
+                    card_filter_parts.append(f"crop={canvas.width}:{canvas.height}")
+            else:
+                card_filter_parts.append(f"scale={max(2, round(cw * style.zoom))}:-2,setsar=1")
+                if card.entrance_token == "pop_in":
+                    card_filter_parts.append(
+                        "scale=w='iw*(0.82+0.18*min(t/0.18,1))':h=-2:eval=frame"
+                    )
+        elif is_fullscreen:
             # Full-frame takeover (plan 009): cover-crop to exactly the canvas.
             # force_original_aspect_ratio=increase scales the SHORT side to fit,
             # crop center-cuts the overflow; setsar=1 guards odd input SARs.
@@ -482,6 +551,8 @@ def build_media_overlay_command(
             if trim_e is not None:
                 trim_dur = trim_e - trim_s
                 window_dur = card.end_s - card.start_s
+                if card.playback_rate is not None:
+                    trim_dur /= float(card.playback_rate)
                 extra_pad = max(0.0, window_dur - trim_dur)
                 if extra_pad > 0:
                     card_filter_parts.append(f"tpad=stop_mode=clone:stop_duration={extra_pad:.3f}")
@@ -490,13 +561,32 @@ def build_media_overlay_command(
                 # clip_duration_s unknown: safe fallback (slow but correct).
                 card_filter_parts.append("tpad=stop_mode=clone:stop=-1")
 
+        if card.editor_style is not None:
+            from app.pipeline.visual_editor import visual_animation_filters  # noqa: PLC0415
+
+            card_filter_parts.extend(
+                visual_animation_filters(card.editor_style, card.end_s - card.start_s)
+            )
+
         # PTS shift so the card plays from its own start during the window.
         card_filter_parts.append(f"setpts=PTS-STARTPTS+{card.start_s:.3f}/TB,settb=AVTB[{shifted}]")
         filter_parts.append(",".join(card_filter_parts))
 
         # Overlay with time-gate. Fullscreen composites at the origin (static
         # dims); pip centers via the runtime overlay_h expression.
-        if is_fullscreen:
+        if card.editor_style is not None:
+            from app.pipeline.visual_editor import visual_expressions  # noqa: PLC0415
+
+            motion = visual_expressions(
+                card.editor_style, card.end_s - card.start_s, f"(t-{card.start_s:.6f})"
+            )
+            center_x = canvas.width / 2 if is_fullscreen else round(cx)
+            center_y = canvas.height / 2 if is_fullscreen else round(cy)
+            overlay_xy = (
+                f"'{center_x}-overlay_w/2+({motion['x']})*{canvas.width}/1080':"
+                f"'{center_y}-overlay_h/2+({motion['y']})*{canvas.height}/1920'"
+            )
+        elif is_fullscreen:
             overlay_xy = "0:0"
         elif card.entrance_token == "pop_in":
             overlay_xy = f"({round(cx)}-overlay_w/2):{oy_expr}"

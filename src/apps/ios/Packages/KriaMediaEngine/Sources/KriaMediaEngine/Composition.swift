@@ -74,6 +74,7 @@ struct PreviewAudioBinding: Sendable {
             audioParameters.append(parameter)
             audioBindings.append(PreviewAudioBinding(trackID: track.trackID, clipID: clip.id, usesOriginalGain: originalGain))
         }
+        let overlayOrders = Self.overlayOrders(in: recipe)
         for recipeTrack in recipe.tracks {
             // A track per cut can exhaust hardware decoders on long phone
             // timelines. Reuse tracks once their previous segment has ended;
@@ -155,7 +156,7 @@ struct PreviewAudioBinding: Sendable {
                         clipID: clip.id, naturalSize: size, preferredTransform: preferred,
                         overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true, overlayPreserveAlpha: clip.overlayPreserveAlpha,
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
-                        visualPlacement: clip.visualPlacement, visualOrder: clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
+                        visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     if clip.visualPlacement == nil && (recipeTrack.kind == .video || clip.overlayPreserveAlpha == nil) {
                         try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1, originalGain: recipeTrack.kind == .video)
                     }
@@ -173,7 +174,7 @@ struct PreviewAudioBinding: Sendable {
                         clipID: clip.id, naturalSize: normalized.extent.size, overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true,
                         overlayPreserveAlpha: clip.overlayPreserveAlpha,
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
-                        visualPlacement: clip.visualPlacement, visualOrder: clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
+                        visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                 }
                 if let seed = clip.overlayDissolveSeed {
                     layers[layers.count - 1].overlayDissolve = try NativeDissolveRenderer(width: recipe.canvas.width, height: recipe.canvas.height, seed: seed, maxBitmapBytes: 64 * 1024 * 1024, preset: .media)
@@ -260,6 +261,13 @@ struct PreviewAudioBinding: Sendable {
         var result = PreviewComposition(description: CompositionDescription(duration: total, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
         result.audioBindings = audioBindings
         return result
+    }
+
+    /// The compiler emits above-text overlays in z order. Their placement style
+    /// must not move them ahead of legacy peers, and time sorting is only for tracks.
+    static func overlayOrders(in recipe: EditRecipe) -> [String: Int] {
+        Dictionary(uniqueKeysWithValues: recipe.tracks.flatMap(\.clips)
+            .filter { $0.overlayAboveText == true }.enumerated().map { ($0.element.id, 2000 + $0.offset) })
     }
 
     /// Track matrices use top-left coordinates; decoded CIImage pixels use

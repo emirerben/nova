@@ -44,6 +44,23 @@ class ReframeError(Exception):
     pass
 
 
+def _atempo_filter(speed_factor: float) -> str:
+    """Return pitch-preserving FFmpeg tempo filters for 0.25x–4x playback."""
+
+    remaining = float(speed_factor)
+    if not 0.25 <= remaining <= 4.0:
+        raise ReframeError("speed_factor must be between 0.25 and 4")
+    factors: list[float] = []
+    while remaining < 0.5:
+        factors.append(0.5)
+        remaining /= 0.5
+    while remaining > 2.0:
+        factors.append(2.0)
+        remaining /= 2.0
+    factors.append(remaining)
+    return ",".join(f"atempo={factor:.9g}" for factor in factors)
+
+
 def _double_rate(rate: str) -> str:
     """Double an ffmpeg bitrate string (e.g. "12M" -> "24M", "800K" -> "1600K").
 
@@ -250,6 +267,7 @@ def reframe_and_export(
     look_adjustments: object = None,
     canvas: Canvas | None = None,
     exact_duration: bool = False,
+    source_crop: dict[str, float] | None = None,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -315,6 +333,7 @@ def reframe_and_export(
         look_preset=look_preset,
         look_adjustments=look_adjustments,
         canvas=canvas,
+        source_crop=source_crop,
     )
 
     # Debug: log final filter chain to diagnose darkness/color issues.
@@ -402,6 +421,10 @@ def reframe_and_export(
         cmd += [
             "-vf",
             vf_string,
+            # `atempo` changes tempo without shifting pitch. The video side
+            # is retimed by setpts in _build_video_filter; only request this
+            # audio filter when the caller explicitly preserves source audio.
+            *(["-af", _atempo_filter(speed_factor)] if has_audio and speed_factor != 1.0 else []),
             *(["-t", f"{duration:.6f}"] if exact_duration else []),
             # Intermediate (re-encoded by the final burn). ultrafast keeps per-slot
             # render speed, but its weaker tools macroblock dark gradients and the
@@ -467,6 +490,7 @@ def reframe_and_export(
             look_preset=look_preset,
             look_adjustments=look_adjustments,
             canvas=canvas,
+            source_crop=source_crop,
             # keep_segments is provably None here — the mutual-exclusion
             # check above raises before any subprocess run.
         )
@@ -889,6 +913,7 @@ def _build_video_filter(
     look_adjustments: object = None,
     look_label_prefix: str = "look",
     canvas: Canvas | None = None,
+    source_crop: dict[str, float] | None = None,
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
@@ -951,6 +976,20 @@ def _build_video_filter(
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:
         filters.append(f"setpts=PTS/{speed_factor}")
+
+    if source_crop is not None:
+        # Values have already crossed the bounded guided-revision schema. Use
+        # even pixel dimensions/offsets for yuv420p while retaining source
+        # normalized-space semantics across source resolutions.
+        x = float(source_crop["x"])
+        y = float(source_crop["y"])
+        width = float(source_crop["width"])
+        height = float(source_crop["height"])
+        filters.append(
+            "crop="
+            f"trunc(iw*{width:.9f}/2)*2:trunc(ih*{height:.9f}/2)*2:"
+            f"trunc(iw*{x:.9f}/2)*2:trunc(ih*{y:.9f}/2)*2"
+        )
 
     # 1. Scale/crop. Default "crop" mode center-crops 16:9 source to 9:16 (loses
     # the sides — fine for talking heads / single-subject shots). "letterbox"

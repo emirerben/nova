@@ -1965,7 +1965,12 @@ async def _run_planning_turn(
             locked,
             event_type="assistant_strategy",
             payload={
-                "message": locked.active_plan["summary"],
+                # A model summary is a proposal, never an execution receipt.
+                "message": (
+                    "I prepared a proposed edit. Review the plan and confirm it "
+                    "before I change the video."
+                ),
+                "proposal_summary": locked.active_plan["summary"],
                 "plan_hash": locked.active_plan["plan_hash"],
                 "target_duration_s": locked.active_plan.get("target_duration_s"),
                 "montage_cadence": locked.active_plan.get("montage_cadence"),
@@ -3763,6 +3768,21 @@ async def _execute_creator_craft(
                 )
             )
             if has_editor_sections:
+                if editor_commit.sound_effects is not None:
+                    from app.routes.generative_jobs import (  # noqa: PLC0415
+                        resolve_editor_sound_effect_placements,
+                    )
+
+                    editor_commit = editor_commit.model_copy(
+                        update={
+                            "sound_effects": await resolve_editor_sound_effect_placements(
+                                editor_commit.sound_effects,
+                                user_id=str(user.id),
+                                plan_item_id=str(item.id),
+                                db=db,
+                            )
+                        }
+                    )
                 if speech_operation_id:
                     # The editor gateway validates against the client-pinned
                     # last-good generation. Speech staging may already have
