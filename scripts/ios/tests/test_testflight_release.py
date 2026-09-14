@@ -94,6 +94,16 @@ class ArchiveScriptTests(unittest.TestCase):
         self.assertRegex(before_archive, r"[Nn]umeric|\[0-9\]|[0-9].*(?:regex|pattern)|^[^#]*[0-9]")
         self.assertRegex(before_archive, r"positive integer|\^\[1-9\]|BUILD_NUMBER.*[0-9]")
 
+    def test_export_profile_uses_the_production_bundle_identifier(self):
+        self.assertIn(
+            'options["provisioningProfiles"]["com.emirerben.kria"]',
+            self.text,
+        )
+        self.assertNotIn(
+            'options["provisioningProfiles"]["com.kria.app"]',
+            self.text,
+        )
+
 
 class FastlaneTests(unittest.TestCase):
     def test_lane_uses_app_store_distribution_and_external_group(self):

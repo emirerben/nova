@@ -54,7 +54,7 @@ template, destination, team_id, profile_specifier = sys.argv[1:]
 with open(template, "rb") as source:
     options = plistlib.load(source)
 options["teamID"] = team_id
-options["provisioningProfiles"]["com.kria.app"] = profile_specifier
+options["provisioningProfiles"]["com.emirerben.kria"] = profile_specifier
 with open(destination, "wb") as output:
     plistlib.dump(options, output)
 PY
