@@ -145,6 +145,17 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var sourceResolver: NativeEditorSourceResolver?
     private var resolvedAudio: [String: ResolvedEditorSource] = [:]
     private var previewVariant: [String: JSONValue] = [:]
+    var musicPlaybackMode: NativeMusicPlaybackMode { .init(variant: previewVariant) }
+    var songReference: NativeSongReference? {
+        guard musicPlaybackMode == .referenceOnly else { return nil }
+        return NativeSongReference(variant: previewVariant)
+    }
+    var editorSongReferencePresentation: NativeEditorSongReferencePresentation? {
+        guard let songReference else { return nil }
+        return .make(reference: songReference, baselineDuration: authoritativeDuration,
+            currentDuration: duration, durationChanged: durationSourcesInvalidated)
+    }
+    private var sourceAudioPreserved: Bool { previewVariant["source_audio_preserved"]?.boolValue ?? true }
     private var sourcePool: NativeEditorSourcePool?
     private var resolvedMedia: [String: ResolvedEditorSource] = [:]
     private var resolvedSources: [Int: ResolvedEditorSource]?
@@ -1023,8 +1034,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
             guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
             resolvedAudio["narration"] = resolved
         }
-        let ids = Set([Self.usesRenderedNarration(previewVariant) ? nil : document.music?.trackID,
-                       document.backgroundMusic?.enabled == true && document.backgroundMusic?.muted != true
+        let referenceOnlyMusic = musicPlaybackMode == .referenceOnly
+        let ids = Set([referenceOnlyMusic || Self.usesRenderedNarration(previewVariant) ? nil : document.music?.trackID,
+                       !referenceOnlyMusic && document.backgroundMusic?.enabled == true && document.backgroundMusic?.muted != true
                         ? document.backgroundMusic?.trackID : nil].compactMap { $0 })
         for id in ids where resolvedAudio[id] == nil {
             sourcePreviewState = .preparing
@@ -1151,7 +1163,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 "textWindows": snapshot.textElements.prefix(8).map { "\($0.startS):\($0.endS)" }.joined(separator: ",")])
             #endif
             let program = try compiler.compile(document: snapshot, clips: clips, items: items,
-                                               sources: sources, audioSources: audio, mediaSources: media)
+                                               sources: sources, audioSources: audio, mediaSources: media,
+                                               referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
+                                               sourceAudioPreserved: sourceAudioPreserved)
             if let preview = sourcePreview, (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
                 sourcePreviewState = .ready
                 if !isPlaying { seek(to: currentTime) }
@@ -2740,7 +2754,12 @@ enum NativeEditorLoadState: Equatable, Sendable {
             sections["timeline_slots"] = .array(rows.enumerated().map { index, row in
                 guard index < draft.clips.count, var value = Self.object(row) else { return row }
                 let clip = draft.clips[index]
-                value["asset_id"] = .string(clip.assetID.uuidString); value["muted"] = .bool(clip.muted)
+                value["asset_id"] = .string(clip.assetID.uuidString)
+                // Do not manufacture an explicit unmute while hydrating a
+                // legacy slot. The absence of this field carries the backend's
+                // initial source-audio policy; explicit true or false is an
+                // authoring choice and must survive the projection.
+                if value["muted"] != nil || clip.muted { value["muted"] = .bool(clip.muted) }
                 if let sourceIndex = clip.sourceClipIndex { value["clip_index"] = .number(Double(sourceIndex)) }
                 if let sourceDuration = clip.sourceDuration { value["source_duration_s"] = .number(sourceDuration) }
                 return .object(value)

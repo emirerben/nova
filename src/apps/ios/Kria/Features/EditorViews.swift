@@ -201,6 +201,7 @@ struct ResultsView: View {
     @State private var isRefreshingPlayback = false
     @State private var isPreparingShare = false
     @State private var showsEditor = false
+    @State private var songReference: NativeSongReference?
 
     init(project: ProjectSummary, libraryJobID: UUID? = nil) {
         self.project = project
@@ -214,6 +215,7 @@ struct ResultsView: View {
                 if let player { VideoPlayer(player: player).onDisappear { player.pause() } }
                 else { RoundedRectangle(cornerRadius: 22).fill(KriaColor.ink).overlay(ProgressView().tint(KriaColor.sky)) }
             }.aspectRatio(9/16, contentMode: .fit).frame(maxHeight: 420).clipShape(RoundedRectangle(cornerRadius: 22))
+            if let songReference { NativeSongReferenceCard(reference: songReference) }
             HStack {
                 Button("Edit video") { showsEditor = true }
                     .buttonStyle(KriaPrimaryButtonStyle())
@@ -227,11 +229,13 @@ struct ResultsView: View {
             Text(message ?? "Ready in your project receipt.").font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
         }
         .padding(24)
-        .task { await refreshPlayback() }
+        .task { await refreshPlayback(); await loadSongReference() }
         .sheet(isPresented: $showShare, onDismiss: removeShareFile) {
             if let shareFileURL { ShareSheetView(url: shareFileURL) }
         }
-        .fullScreenCover(isPresented: $showsEditor) {
+        .fullScreenCover(isPresented: $showsEditor, onDismiss: {
+            Task { await refreshPlayback(); await loadSongReference() }
+        }) {
             NativeEditorView(
                 project: project,
                 libraryJobID: libraryJobID,
@@ -250,6 +254,15 @@ struct ResultsView: View {
             playbackURL = url
             player = AVPlayer(url: url)
         } catch { message = error.localizedDescription }
+    }
+
+    private func loadSongReference() async {
+        songReference = nil
+        guard let variantID = project.outputVariantID else { return }
+        let jobID = libraryJobID ?? project.activeJobID ?? project.id
+        guard let variant = try? await model.api.editorVariant(jobID: jobID, variantID: variantID),
+              NativeMusicPlaybackMode(variant: variant) == .referenceOnly else { return }
+        songReference = NativeSongReference(variant: variant)
     }
     private func saveToPhotos() async {
         guard let playbackURL else { return }
