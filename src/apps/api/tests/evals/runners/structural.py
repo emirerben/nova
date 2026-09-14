@@ -2681,8 +2681,19 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
             and not input.capability_manifest.capabilities["draft_guided_proposal"].available
         ):
             failures.append("strategy requests unavailable guided execution")
-        if action.strategy.audio_strategy in {"original_audio", "voiceover"} and (
-            action.strategy.render_program != "native"
+        phone = input.capability_manifest.capabilities.get("phone_source_audio")
+        phone_original_audio = bool(
+            phone is not None
+            and phone.available
+            and not input.capability_manifest.has_voiceover
+            and action.strategy.audio_strategy == "original_audio"
+            and action.strategy.render_program == "guided"
+            and action.strategy.montage_audio is not None
+        )
+        if (
+            action.strategy.audio_strategy in {"original_audio", "voiceover"}
+            and action.strategy.render_program != "native"
+            and not phone_original_audio
         ):
             failures.append("audio-led strategy is not native")
         normalized_request = " ".join(input.user_message.casefold().split())

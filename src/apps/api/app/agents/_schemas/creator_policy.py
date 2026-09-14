@@ -12,6 +12,7 @@ MAX_MAIN_CREATOR_SELECTED_MEDIA = 12
 CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 CAPABILITY_GUIDED_VOICEOVER = "guided_voiceover"
 GUIDED_VOICEOVER_EXECUTION_CONTRACT = "guided_voiceover_v1"
+CAPABILITY_PHONE_SOURCE_AUDIO = "phone_source_audio"
 
 
 def _requires_guided_voiceover(
@@ -57,6 +58,27 @@ def effective_render_program(
         strategy.montage_cadence is not None
         or strategy.video_reuse_policy in {"distinct_windows", "allow_repeat"}
     )
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if phone is not None:
+        if not phone.available:
+            raise MixedMediaTimingUnavailableError(phone.reason or "phone rendering is unavailable")
+        if manifest.has_voiceover or strategy.audio_strategy == "voiceover":
+            raise MixedMediaTimingUnavailableError(
+                "phone rendering does not support voiceover audio"
+            )
+        if not guided_edit_applicable(strategy_format, has_voiceover=False):
+            raise MixedMediaTimingUnavailableError("phone sources require a guided edit format")
+        selected_ids = set(strategy.selected_media_ids)
+        if strategy.montage_cadence is not None:
+            selected_ids.update(strategy.montage_cadence.source_media_ids)
+        if strategy.montage_audio is not None:
+            selected_ids.update(strategy.montage_audio.source_media_ids)
+        if any(
+            (media.kind != "video" or media.media_id.startswith("asset-"))
+            and (strategy.media_scope == "all" or media.media_id in selected_ids)
+            for media in manifest.media
+        ):
+            raise MixedMediaTimingUnavailableError("phone rendering requires bound video sources")
     guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
     guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
     guided_voiceover_requested = _requires_guided_voiceover(manifest, strategy)
@@ -104,6 +126,12 @@ def effective_render_program(
         if not (guided and guided.available):
             raise MontageCadenceUnavailableError(
                 "source-aware montage requires the guided proposal capability"
+            )
+        return "guided"
+    if phone is not None:
+        if not (guided and guided.available):
+            raise MixedMediaTimingUnavailableError(
+                "phone rendering requires the guided proposal capability"
             )
         return "guided"
     native_required = (
@@ -172,6 +200,20 @@ def normalize_creator_strategy_media(
                         if strategy.montage_cadence
                         else []
                     ),
+                )
+            }
+        )
+    if (
+        manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO, None)
+        and manifest.capabilities[CAPABILITY_PHONE_SOURCE_AUDIO].available
+        and guided_edit_applicable(strategy.edit_format, has_voiceover=manifest.has_voiceover)
+        and strategy.audio_strategy == "original_audio"
+        and strategy.montage_audio is None
+    ):
+        strategy = strategy.model_copy(
+            update={
+                "montage_audio": MontageAudioPlan(
+                    preserve_source_audio=True,
                 )
             }
         )

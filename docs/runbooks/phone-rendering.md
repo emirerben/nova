@@ -44,6 +44,24 @@ lane is not repaired by redelivering that same plan. Generate a new approved edi
 under v6; never render analysis proxies as a fallback or rewrite ready receipts.
 Deploy the API/worker contract and install the corresponding native app together.
 
+## Creator confirmation and phone-only footage
+
+Phone-source provenance must constrain Creator planning before confirmation.
+An original-audio montage still needs the guided proposal/approval path for
+device rendering; the Creator program named `native` is the legacy cloud
+assembler, not the iPhone renderer. Preserve source audio explicitly in the
+guided strategy. Do not bypass the dispatch guard that requires an approved
+phone edit plan for analysis proxies.
+
+When Generate creates no Job, inspect the Creator session's `last_error` and
+the `plan_item_render.invalid_clips` log detail. The detail `analysis proxies
+require an approved phone edit plan` indicates a routing/approval failure,
+not missing footage. A manifest conflict happens earlier and consumes no
+render attempt. After correcting the routing, a new message in the same failed
+project creates a fresh planning session using its existing attachments; the
+creator then confirms the new direction. Repeated Generate taps on the failed
+proposal do not repair it.
+
 ## Implemented foundations
 
 - `KriaMediaEngine/SourceAssetStore.swift` binds opaque server media IDs to

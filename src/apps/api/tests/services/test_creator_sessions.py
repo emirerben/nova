@@ -855,6 +855,83 @@ async def test_context_preserves_analyzed_clip_assignment_duration() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "valid",
+        "disabled",
+        "outside_cohort",
+        "invalid",
+        "mixed",
+        "mixed_unassigned",
+        "legacy_missing",
+        "beyond_manifest",
+    ],
+)
+async def test_context_keeps_phone_provenance_and_validates_receipts(monkeypatch, case) -> None:
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.agents._schemas.creator_policy import MixedMediaTimingUnavailableError
+    from app.services.creator_capabilities import compile_strategy_to_plan
+    from tests.services.test_phone_sources import receipt
+
+    owner = uuid.uuid4()
+    assignment = receipt("phone-a")
+    assignments = [assignment]
+    paths = [assignment["gcs_path"]]
+    if case == "invalid":
+        assignment["upload_contract"] = {}
+    elif case == "mixed":
+        assignments.append({"media_id": "cloud-b", "gcs_path": "users/u/cloud.mp4"})
+        paths.append("users/u/cloud.mp4")
+    elif case == "mixed_unassigned":
+        paths.append("users/u/cloud.mp4")
+    elif case == "legacy_missing":
+        assignments = []
+    elif case == "beyond_manifest":
+        assignments = [
+            {"media_id": f"cloud-{index}", "gcs_path": f"users/u/{index}.mp4"}
+            for index in range(50)
+        ] + assignments
+        paths = [row["gcs_path"] for row in assignments]
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        edit_format="montage",
+        audio_mode="original",
+        voiceover_gcs_path=None,
+        current_job_id=None,
+        clip_gcs_paths=paths,
+        clip_assignments=assignments,
+    )
+    monkeypatch.setattr(creator_sessions.settings, "phone_rendering_enabled", case != "disabled")
+    monkeypatch.setattr(
+        creator_sessions.settings,
+        "phone_render_user_ids",
+        [uuid.uuid4() if case == "outside_cohort" else owner],
+    )
+    empty = MagicMock()
+    empty.scalars.return_value = []
+    db = AsyncMock()
+    db.execute.side_effect = [empty, empty, empty]
+
+    manifest, _ = await creator_sessions.resolve_item_creator_context(
+        db,
+        item,
+        persona=SimpleNamespace(user_id=owner),
+        guided_capability_enabled=True,
+    )
+
+    assert "phone_source_audio" in manifest.capabilities
+    assert manifest.capabilities["phone_source_audio"].available is (case == "valid")
+    strategy = CreativeStrategy(audio_strategy="original_audio", render_program="native")
+    if case == "valid":
+        assert compile_strategy_to_plan(manifest, strategy).strategy.render_program == "guided"
+    else:
+        with pytest.raises(MixedMediaTimingUnavailableError):
+            compile_strategy_to_plan(manifest, strategy)
+    assert "analysis-proxy" not in manifest.model_dump_json()
+
+
+@pytest.mark.asyncio
 async def test_context_exposes_only_ready_published_sound_effect_catalog_refs() -> None:
     item = SimpleNamespace(
         id=uuid.uuid4(),

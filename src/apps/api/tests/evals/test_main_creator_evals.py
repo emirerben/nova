@@ -31,6 +31,14 @@ def test_main_creator_eval(
     )
     assert result.passed, f"{result.summary()}: {result.structural_failures}"
 
+    if fixture.meta.get("phone_original_audio"):
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        assert action["strategy"]["render_program"] == "guided"
+        assert action["strategy"]["montage_audio"]["preserve_source_audio"] is True
+        assert action["strategy"]["montage_audio"]["source_media_ids"] == []
+
     if fixture.meta.get("manual_visual_removal"):
         assert result.output is not None
         assert result.output["action"]["kind"] == "ask_user", (

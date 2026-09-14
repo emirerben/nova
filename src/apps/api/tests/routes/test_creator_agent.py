@@ -4377,8 +4377,10 @@ async def test_chat_cleanup_publish_failure_crash_replay_refunds_once(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phone_original_audio", [False, True])
 async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_rows(
     monkeypatch,
+    phone_original_audio,
 ) -> None:
     """The guided confirmation must not read ORM instances after its rollback.
 
@@ -4395,6 +4397,15 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
     session_id = uuid.uuid4()
     job_id = uuid.uuid4()
     manifest = _manifest(monkeypatch)
+    if phone_original_audio:
+        manifest = resolve_creator_manifest(
+            item_id="item-1",
+            edit_format="montage",
+            media=[{"media_id": "clip-1", "kind": "video"}],
+            phone_source_media_ids=["clip-1"],
+            phone_rendering_allowed=True,
+            guided_capability_enabled=True,
+        )
     initial_item = _ExpiringNamespace(
         id=item_id,
         content_plan_id=plan_id,
@@ -4444,11 +4455,15 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
     strategy = CreativeStrategy(
         direction="guided_story",
         edit_format="montage",
-        audio_strategy="licensed_music",
-        render_program="guided",
+        audio_strategy="original_audio" if phone_original_audio else "licensed_music",
+        render_program="native" if phone_original_audio else "guided",
         selected_media_ids=["clip-1"],
     )
     edit_plan = compile_strategy_to_plan(manifest, strategy)
+    assert edit_plan.strategy.render_program == "guided"
+    if phone_original_audio:
+        assert edit_plan.strategy.montage_audio is not None
+        assert edit_plan.strategy.montage_audio.preserve_source_audio is True
     active = {
         "version": 1,
         "plan_hash": "a" * 64,

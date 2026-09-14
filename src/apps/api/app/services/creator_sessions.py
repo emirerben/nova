@@ -23,6 +23,7 @@ from app.agents._schemas.creator_agent import (
     canonical_context_hash,
 )
 from app.config import settings
+from app.kria.media_sources import is_analysis_proxy_path
 from app.models import (
     ContentPlan,
     CreatorAgentEvent,
@@ -44,6 +45,7 @@ from app.services.edit_proposal_limits import (
     queue_for_guided_contract,
 )
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
+from app.services.phone_sources import bind_phone_sources
 from app.services.tiktok_style_observations import effective_persona_style
 
 ACTIVE_CREATOR_PHASES = frozenset(
@@ -238,6 +240,25 @@ async def resolve_item_creator_context(
 
     media_refs: list[CreatorMediaRef] = []
     media_context: list[dict[str, Any]] = []
+    phone_source_media_ids: list[str] | None = None
+    stored_paths = list(getattr(item, "clip_gcs_paths", None) or []) + [
+        assignment.get("gcs_path")
+        for assignment in (item.clip_assignments or [])
+        if isinstance(assignment, dict)
+    ]
+    source_paths = list(dict.fromkeys(path for path in stored_paths if isinstance(path, str)))
+    if any(is_analysis_proxy_path(path) for path in source_paths):
+        # Validate the server-owned upload receipts before exposing the marker
+        # to the planner.  The full bindings remain private to dispatch.
+        try:
+            phone_source_media_ids = [
+                binding.media_id
+                for binding in bind_phone_sources(list(item.clip_assignments or []), source_paths)
+            ]
+        except ValueError:
+            # Keep the phone restriction visible even for incomplete or stale
+            # receipts. Planning must not silently fall back to cloud inputs.
+            phone_source_media_ids = []
     seen: set[str] = set()
     for index, assignment in enumerate((item.clip_assignments or [])[:MAX_CREATOR_MEDIA_REFS]):
         if not isinstance(assignment, dict):
@@ -418,6 +439,8 @@ async def resolve_item_creator_context(
         narration=creator_narration_identity(item),
         media=media_refs,
         catalog=catalog,
+        phone_source_media_ids=phone_source_media_ids,
+        phone_rendering_allowed=settings.phone_rendering_for(persona.user_id),
         current_edit=current_edit,
         has_ready_variant=has_ready_variant,
         # Chat creation owns a trusted internal guided-proposal path, while
