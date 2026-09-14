@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.16.0] - 2026-09-14
+
+### Changed
+- fix: route phone-source creation through guided approval (#1025) <!-- release-pr: 1025 -->
+
 ## [0.76.15.0] - 2026-09-14
 
 ### Changed
