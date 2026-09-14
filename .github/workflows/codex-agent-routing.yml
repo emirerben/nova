@@ -1,0 +1,25 @@
+name: Codex agent routing
+
+on:
+  pull_request:
+    paths:
+      - '.codex/config.toml'
+      - '.codex/agents/**'
+      - 'CLAUDE.md'
+      - 'AGENTS.md'
+      - 'docs/runbooks/codex-agent-routing.md'
+      - 'scripts/check_codex_agent_routing.py'
+      - '.github/workflows/codex-agent-routing.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  routing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python3 scripts/check_codex_agent_routing.py
