@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 
 from app.pipeline.canvas import Canvas
 from app.pipeline.guided_story import (
+    _compile_execution_plan_version,
     _render_image_moment,
     _render_moments,
     compile_execution_plan,
@@ -435,13 +436,15 @@ def _snapshot(
 
 
 @pytest.mark.parametrize(
-    ("with_music", "orientation", "creator_pinned_portrait"),
+    ("with_music", "orientation", "creator_pinned_portrait", "compiler_version"),
     [
-        (False, "portrait", False),
-        (True, "portrait", False),
-        (False, "landscape", False),
-        (False, "portrait", True),
-        (True, "portrait", True),
+        (False, "portrait", False, 6),
+        (True, "portrait", False, 6),
+        (False, "landscape", False, 6),
+        (False, "portrait", True, 6),
+        (True, "portrait", True, 6),
+        (True, "portrait", False, 4),
+        (True, "portrait", True, 5),
     ],
 )
 def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
@@ -450,6 +453,7 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     with_music: bool,
     orientation: str,
     creator_pinned_portrait: bool,
+    compiler_version: int,
 ) -> None:
     from app import storage
     from app.pipeline import guided_story
@@ -535,15 +539,14 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
         )
         from app import storage
 
-        monkeypatch.setattr(
-            storage,
-            "download_generation_to_file",
-            lambda object_path, local_path, *, generation: (
+        def download_with_music(object_path, local_path, *, generation):
+            if object_path == "music/a.m4a":
+                assert compiler_version < 6, "Reference-only renders must not download the song"
                 shutil.copy2(audio, local_path)
-                if object_path == "music/a.m4a"
-                else download(object_path, local_path, generation=generation)
-            ),
-        )
+            else:
+                download(object_path, local_path, generation=generation)
+
+        monkeypatch.setattr(storage, "download_generation_to_file", download_with_music)
         track = SimpleNamespace(
             id="track-1",
             title="Corfu Drift",
@@ -556,9 +559,11 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
             "audio_gcs_path": "music/a.m4a",
             "generation": "123",
             "start_s": 0.0,
+            "artist": "Fixture artist",
+            "catalog_duration_s": 30.0,
         }
 
-    plan = compile_execution_plan(
+    plan = _compile_execution_plan_version(
         _snapshot(
             analyzed_aspect=(
                 1.7778 if orientation == "landscape" or creator_pinned_portrait else None
@@ -566,6 +571,7 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
             creator_pinned_portrait=creator_pinned_portrait,
         ),
         track=track_payload,
+        compiler_version=compiler_version,
     )
     assert plan["output_orientation"] == orientation
     assert plan["transition_policy"]["type"] == ("none" if creator_pinned_portrait else "crossfade")
@@ -656,7 +662,21 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     assert receipt["image_count"] == 5
     assert receipt["video_count"] == 2
     assert receipt["output"]["audio_codec"] == "aac"
-    assert receipt["music_applied"] is with_music
+    assert receipt["music_applied"] is (with_music and compiler_version < 6)
+    if compiler_version >= 6:
+        assert result["music_playback_mode"] == "reference_only"
+        assert result["music_track_id"] is None
+        assert receipt["music"] is None
+        if with_music:
+            reference = plan["song_reference"]
+            assert receipt["song_reference"] == result["song_reference"] == reference
+            assert reference["title"] == "Corfu Drift"
+            assert reference["end_s"] == pytest.approx(plan["resolved_duration_s"])
+        else:
+            assert result["song_reference"] is None
+    else:
+        assert receipt["music"]["track_id"] == "track-1"
+        assert "song_reference" not in receipt
     assert set(receipt["actual_text_ids"]) == {
         "guided-title",
         "guided-thought-food",

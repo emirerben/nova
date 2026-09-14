@@ -1,5 +1,7 @@
 "use client";
 
+import { SongReferenceNotice } from "@/components/SongReferenceNotice";
+
 /**
  * EditorShell — the full-screen TikTok-parity editor at
  * /plan/items/[id]/edit?variant=<id> (plan §1, approved mockup Variant A).
@@ -1458,6 +1460,7 @@ export default function EditorShell({
   // A variant whose editor_capabilities are ALL false is read-only: banner +
   // Save disabled + every mutating command no-ops. The server's honest reason
   // is surfaced verbatim.
+  const referenceOnlyMusic = variant?.music_playback_mode === "reference_only";
   const capabilities = variant?.editor_capabilities;
   const guidedStoryV2 = hasGuidedOperationCapabilities(capabilities);
   const clipCan = useCallback(
@@ -1467,8 +1470,8 @@ export default function EditorShell({
   );
   const musicCan = useCallback(
     (operation: Parameters<typeof canEditMusic>[1], legacy: boolean) =>
-      canEditMusic(capabilities, operation, legacy),
-    [capabilities],
+      !referenceOnlyMusic && canEditMusic(capabilities, operation, legacy),
+    [capabilities, referenceOnlyMusic],
   );
   const textElementsAllowed = canEditLane(
     capabilities,
@@ -1654,13 +1657,13 @@ export default function EditorShell({
       setVideoMuted(doc.videoMuted);
       setSoundMuted(doc.soundMuted);
       setMixLevel(doc.mixLevel ?? null);
-      setMixDirty(doc.mixDirty ?? false);
+      setMixDirty(variant?.music_playback_mode === "reference_only" ? false : (doc.mixDirty ?? false));
       setSelectedMusicTrackId(doc.musicTrackId ?? variant?.music_track_id ?? null);
       setMusicRemoved(doc.musicRemoved ?? false);
       setMusicStartS(doc.musicStartS ?? variant?.music_preview_start_s ?? 0);
-      setMusicDirty(doc.musicDirty ?? false);
+      setMusicDirty(variant?.music_playback_mode === "reference_only" ? false : (doc.musicDirty ?? false));
       setBackgroundMusic(doc.backgroundMusic ?? null);
-      setBackgroundMusicDirty(doc.backgroundMusicDirty ?? false);
+      setBackgroundMusicDirty(variant?.music_playback_mode === "reference_only" ? false : (doc.backgroundMusicDirty ?? false));
       setCarouselMoment(doc.carouselMoment ?? null);
       setCarouselMomentDirty(doc.carouselMomentDirty ?? false);
       setLyricsEnabled(doc.lyricsEnabled ?? persistedLyricsEnabled(variant));
@@ -2224,8 +2227,8 @@ export default function EditorShell({
   }, [refreshMusicTracks]);
 
   const effectiveBackgroundMusicTrackId =
-    backgroundMusic?.enabled === false ? null : (backgroundMusic?.track_id ?? null);
-  const effectiveMusicTrackId = musicRemoved
+    referenceOnlyMusic || backgroundMusic?.enabled === false ? null : (backgroundMusic?.track_id ?? null);
+  const effectiveMusicTrackId = referenceOnlyMusic || musicRemoved
     ? null
     : selectedMusicTrackId ?? variant?.music_track_id ?? null;
   const effectiveAudioTrackId = effectiveMusicTrackId ?? effectiveBackgroundMusicTrackId;
@@ -2306,7 +2309,7 @@ export default function EditorShell({
   const backgroundMusicFallbackActive =
     !!variant?.background_music?.track_id &&
     effectiveBackgroundMusicTrackId === variant.background_music.track_id;
-  const virtualMusicRemoteUrl = virtualMusicUnavailable
+  const virtualMusicRemoteUrl = referenceOnlyMusic || virtualMusicUnavailable
     ? null
     : virtualMusicTrack?.preview_audio_url ??
       (variantMusicFallbackActive ? variant?.music_preview_url ?? null : null) ??
@@ -2359,6 +2362,7 @@ export default function EditorShell({
       : virtualMusicRemoteUrl;
   const virtualPreviewAudio = resolveVirtualPreviewAudio({
     virtualPreviewRequested,
+    sourceAudioPreserved: referenceOnlyMusic ? variant?.source_audio_preserved : undefined,
     clipDirty,
     musicDirty,
     backgroundMusicDirty,
@@ -2853,7 +2857,7 @@ export default function EditorShell({
   }, [activeTool, localSfx.length, sfxGlossaryEffects.length, notify]);
 
   const musicPickerShouldLoad =
-    (!!variant?.music_track_id ||
+    !referenceOnlyMusic && (!!variant?.music_track_id ||
       !!variant?.background_music?.track_id ||
       !!selectedMusicTrackId ||
       !!effectiveBackgroundMusicTrackId ||
@@ -3619,7 +3623,7 @@ export default function EditorShell({
 
   const pickMusicTrack = useCallback(
     (trackId: string) => {
-      if (readOnly || !variant) return;
+      if (readOnly || !variant || variant.music_playback_mode === "reference_only") return;
       const selectedTrack = musicTracks.find((track) => track.id === trackId);
       if (variant.music_track_id) {
         if (trackId === selectedMusicTrackId && !musicRemoved) return;
@@ -3684,17 +3688,17 @@ export default function EditorShell({
   // drives the Save; the commit emits `remove_music: true` and the server
   // re-renders through the track-free path.
   const removeMusic = useCallback(() => {
-    if (readOnly || !variant?.music_track_id || musicRemoved) return;
+    if (referenceOnlyMusic || readOnly || !variant?.music_track_id || musicRemoved) return;
     history.record();
     setSelectedMusicTrackId(null);
     setMusicRemoved(true);
     setMusicStartS(0);
     setMusicDirty(true);
-  }, [history, musicRemoved, readOnly, variant?.music_track_id]);
+  }, [history, musicRemoved, readOnly, referenceOnlyMusic, variant?.music_track_id]);
 
   const patchBackgroundMusic = useCallback(
     (patch: Partial<EditorCommitBackgroundMusic>) => {
-      if (readOnly || !backgroundMusic?.track_id) return;
+      if (referenceOnlyMusic || readOnly || !backgroundMusic?.track_id) return;
       history.record("background-music");
       setBackgroundMusic((current) =>
         current?.track_id
@@ -3707,16 +3711,16 @@ export default function EditorShell({
       );
       setBackgroundMusicDirty(true);
     },
-    [backgroundMusic?.track_id, history, readOnly],
+    [backgroundMusic?.track_id, history, readOnly, referenceOnlyMusic],
   );
 
   const removeBackgroundMusic = useCallback(() => {
-    if (readOnly || !backgroundMusic?.track_id) return;
+    if (referenceOnlyMusic || readOnly || !backgroundMusic?.track_id) return;
     history.record();
     setBackgroundMusic({ track_id: null, enabled: false });
     setBackgroundMusicDirty(true);
     clear();
-  }, [backgroundMusic?.track_id, clear, history, readOnly]);
+  }, [backgroundMusic?.track_id, clear, history, readOnly, referenceOnlyMusic]);
 
   const patchMusicStart = useCallback(
     (startS: number) => {
@@ -6999,12 +7003,12 @@ export default function EditorShell({
       !!virtualMusicTrack?.preview_audio_url ||
       !!variant.music_preview_url ||
       !!variant.background_music?.preview_url);
-  const soundBedLabel = isVoiceoverVariant
+  const soundBedLabel = referenceOnlyMusic ? "Original audio + effects" : isVoiceoverVariant
     ? effectiveMusicTrackId
       ? `Narration + ${effectiveMusicTitle}`
       : "Narration"
     : effectiveMusicTitle;
-  const soundLaneTitle = isVoiceoverVariant ? "Narration bed" : "Music + effects";
+  const soundLaneTitle = referenceOnlyMusic ? "Audio + effects" : isVoiceoverVariant ? "Narration bed" : "Music + effects";
   const hasUnbakedSfx = sfxDirty || localSfx.length > 0;
   const clipPreviewHint = (() => {
     if (!virtualPreviewActive) return "Clip changes preview after Save";
@@ -8033,6 +8037,10 @@ export default function EditorShell({
             if (!video.paused) void audio.play().catch(() => {});
           }}
         />
+      )}
+
+      {referenceOnlyMusic && variant.song_reference && (
+        <div className="px-3 py-2"><SongReferenceNotice reference={variant.song_reference} /></div>
       )}
 
       {/* ── Middle row: rail · drawer · canvas · inspector · edge rail ── */}

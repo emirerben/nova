@@ -89,7 +89,20 @@ export function resolveCarouselFocusClipIndex(
   return moment.focus?.[0]?.card_index ?? null;
 }
 
+export interface SongReference {
+  schema_version: 1;
+  delivery: "external_platform";
+  track_id: string;
+  title: string;
+  artist: string | null;
+  start_s: number;
+  end_s: number;
+}
+
 export interface GenerativeVariant {
+  source_audio_preserved?: boolean;
+  music_playback_mode?: "embedded" | "reference_only";
+  song_reference?: SongReference | null;
   variant_id: string;
   rank: number;
   text_mode: GenerativeTextMode;

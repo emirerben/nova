@@ -23,6 +23,7 @@ export interface VirtualPreviewAudio {
  */
 export function resolveVirtualPreviewAudio({
   virtualPreviewRequested,
+  sourceAudioPreserved,
   clipDirty,
   musicDirty,
   backgroundMusicDirty,
@@ -37,6 +38,7 @@ export function resolveVirtualPreviewAudio({
   soundMuted,
 }: {
   virtualPreviewRequested: boolean;
+  sourceAudioPreserved?: boolean;
   clipDirty: boolean;
   musicDirty: boolean;
   backgroundMusicDirty: boolean;
@@ -120,6 +122,13 @@ export function resolveVirtualPreviewAudio({
       // audio would preview a different soundtrack from the saved narration.
       url: baseVideoUrl || null,
     };
+  }
+
+  // A reference-only montage can deliberately suppress raw clip audio.
+  // Keep that render policy when its matched song is metadata-only; narration
+  // and an explicitly chosen source bed above retain their own authority.
+  if (sourceAudioPreserved === false) {
+    return { active: true, kind: "native", muted: true, startS: 0, url: null };
   }
 
   // The prepared interleaved bed is exact for visual-only changes. A changed

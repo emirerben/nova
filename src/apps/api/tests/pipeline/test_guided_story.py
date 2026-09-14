@@ -23,11 +23,13 @@ from app.pipeline.guided_story import (
     _render_image_moment,
     _render_moments,
     _render_video_moment,
+    _song_reference,
     _tag_guided_text_overlays,
     _upload_verified_outputs,
     _verify_receipt,
     compile_execution_plan,
     compile_guided_runtime_plan,
+    song_reference_variant_fields,
     validate_execution_plan,
     validate_proposal_timing,
     validate_ready_result,
@@ -45,6 +47,26 @@ from app.schemas.edit_proposal import (
     canonical_media_digest,
 )
 from app.schemas.guided_edit_revision import guided_editor_revision_from_approval
+
+
+def test_song_reference_preserves_explicit_zero_and_rejects_out_of_catalog_window() -> None:
+    track = {
+        "track_id": "track-1",
+        "title": "Song",
+        "artist": "Artist",
+        "catalog_duration_s": 30.0,
+        "start_s": 0.0,
+    }
+    reference = _song_reference(track, duration_s=5.0)
+    assert reference is not None
+    assert reference["start_s"] == 0.0
+    assert reference["end_s"] == 5.0
+    assert _song_reference({**track, "start_s": 26.0}, duration_s=5.0) is None
+    missing_artist = _song_reference(
+        {key: value for key, value in track.items() if key != "artist"}, duration_s=5.0
+    )
+    assert missing_artist is not None
+    assert missing_artist["artist"] is None
 
 
 def _guided_snapshot(*, direction: str = "guided_story", catalog_extra: bool = False) -> dict:
@@ -217,7 +239,7 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
     assert plan["selected_media_ids"] == ["food-photo", "town-photo", "coast-video"]
     assert "unused-photo" not in {row["media_id"] for row in plan["story_timeline"]}
     assert plan["resolved_duration_s"] == 18
-    assert plan["compiler_version"] == 4
+    assert plan["compiler_version"] == 6
     assert plan["proposal_version"] == 7
     assert [row["beat_id"] for row in plan["beat_windows"]] == ["food", "town", "coast"]
     assert {row["layout"] for row in plan["story_timeline"]} == {
@@ -262,7 +284,7 @@ def test_voiceover_compiler_uses_narration_duration_and_caption_words() -> None:
 
     plan = compile_execution_plan(raw, track=None)
 
-    assert plan["compiler_version"] == 5
+    assert plan["compiler_version"] == 6
     assert plan["resolved_duration_s"] == pytest.approx(4.7)
     assert [
         row["text"] for row in plan["text_elements"] if row["id"].startswith("narration-caption-")
@@ -1991,7 +2013,8 @@ def test_runtime_revision_rejects_ambiguous_approved_text_identity(
 
 def test_runtime_revision_preserves_looks_transition_order_and_music_window() -> None:
     guided = _guided_snapshot(catalog_extra=True)
-    canonical = compile_execution_plan(guided, track=None)
+    # This fixture exercises the legacy server-mixed replacement-track path.
+    canonical = _compile_execution_plan_version(guided, track=None, compiler_version=4)
     revision = guided_editor_revision_from_approval(
         proposal_version=guided["proposal_version"],
         media_digest=guided["media_digest"],
@@ -3047,6 +3070,12 @@ def _verified_receipt(plan: dict) -> dict:
         "actual_duration_s": plan["resolved_duration_s"],
         "music_applied": False,
         "music": None,
+        "song_reference": plan.get("song_reference"),
+        "source_audio_preserved": (
+            bool((plan.get("montage_audio") or {}).get("preserve_source_audio"))
+            if plan.get("compiler_version", 0) >= 6
+            else None
+        ),
         "output": {
             "width": 1080,
             "height": 1920,
@@ -3115,6 +3144,7 @@ def _ready_result(plan: dict) -> dict:
         "base_video_path": "generative-jobs/job-1/base_guided.mp4",
         "video_path": "generative-jobs/job-1/final_guided.mp4",
         "render_receipt": _verified_receipt(plan),
+        **song_reference_variant_fields(plan),
     }
 
 

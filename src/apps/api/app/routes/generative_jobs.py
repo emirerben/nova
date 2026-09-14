@@ -63,6 +63,7 @@ from app.models import (
     TemporaryMediaUpload,
     User,
 )
+from app.pipeline.guided_story import GuidedStorySongReference
 from app.pipeline.look_presets import (
     EDIT_WIDE_LOOK_PRESETS,
     LOOK_PRESETS,
@@ -532,6 +533,9 @@ class GenerativeVariant(BaseModel):
     poster_path: str | None = None
     poster_url: str | None = None
     music_track_id: str | None = None
+    music_playback_mode: Literal["embedded", "reference_only"] | None = None
+    song_reference: GuidedStorySongReference | None = None
+    source_audio_preserved: bool | None = None
     track_title: str | None = None
     # Fresh-signed preview URL (+ best-section offset) for the variant's matched
     # track, minted on every status read. The editor's virtual preview cannot
@@ -1832,6 +1836,17 @@ def _variants_for_response(job: Job) -> list[dict]:
     public_plan = projection.value
     public_variants = public_plan.get("variants") if isinstance(public_plan, dict) else None
     for v in public_variants if isinstance(public_variants, list) else []:
+        if v.get("music_playback_mode") == "reference_only":
+            # Reference-only songs never have a server audio asset. Prevent
+            # stale legacy fields from exposing or signing an old preview.
+            v = {
+                **v,
+                "music_track_id": None,
+                "music_preview_url": None,
+                "music_preview_start_s": None,
+                "background_music": None,
+                "smart_music_treatment": None,
+            }
         video_path = v.get("video_path")
         variant_id = str(v.get("variant_id") or "video")
         masked_last_good = variant_id in projection.masked_last_good_variant_ids
@@ -6150,11 +6165,12 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 settings.edit_wide_looks_enabled,
                 None if settings.edit_wide_looks_enabled else "disabled",
             )
+            reference_only = variant.get("music_playback_mode") == "reference_only"
             music_operations = {
-                "swap": operation(),
-                "remove": operation(),
-                "level": operation(),
-                "window": operation(),
+                name: operation(
+                    not reference_only, "song_added_when_posting" if reference_only else None
+                )
+                for name in ("swap", "remove", "level", "window")
             }
             return {
                 "text_elements": text_editable,
@@ -6246,7 +6262,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "camera_effects": False,
                 "background_music": False,
                 "suggestions": False,
-                "swap_song": bool(revision is not None),
+                "swap_song": bool(revision is not None) and not reference_only,
                 "intro_controls": False,
                 "reason": revision_reason,
                 "orientation": operation(
@@ -6263,7 +6279,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "nova": {
                     "trim_clip_start": operation(),
                     "trim_output_start": operation(),
-                    "remove_music": operation(),
+                    "remove_music": music_operations["remove"],
                 },
                 "lyrics": {
                     "editable": False,
@@ -8693,6 +8709,14 @@ def require_guided_story_editor_commit(
     variant = _find_variant(job, variant_id)
     if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
         return
+    if variant.get("music_playback_mode") == "reference_only" and (
+        payload.music_track_id is not None
+        or payload.remove_music
+        or payload.music_window is not None
+        or payload.background_music is not None
+        or payload.mix is not None
+    ):
+        raise HTTPException(status_code=422, detail="song_added_when_posting")
     if getattr(settings, "guided_story_editor_v2_enabled", False):
         # V2 accepts the conventional Save sections and atomically projects
         # them into the revision. Captions/lyrics/speech cuts/intro/carousel
@@ -10496,6 +10520,15 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession, *, job:
     """
     from app.routes.music import _preview_audio_url  # noqa: PLC0415
 
+    for variant in variants:
+        if variant.get("music_playback_mode") == "reference_only":
+            variant.update(
+                music_track_id=None,
+                music_preview_url=None,
+                music_preview_start_s=None,
+                background_music=None,
+            )
+    variants = [v for v in variants if v.get("music_playback_mode") != "reference_only"]
     track_ids = {v.get("music_track_id") for v in variants if v.get("music_track_id")}
     track_ids.update(
         treatment.get("track_id")

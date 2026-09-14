@@ -367,3 +367,22 @@ describe("VariantCard layout preview cards (W3)", () => {
     expect(onChangeLayout).toHaveBeenCalledWith("cluster");
   });
 });
+
+
+describe("song timing reference", () => {
+  it("shows precise copyable posting details and hides stale song swap controls", async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<VariantCard {...baseProps} tracks={[{ id: "t1", title: "Track" } as never]}
+      variant={makeVariant({ music_playback_mode: "reference_only", song_reference: {
+        schema_version: 1, delivery: "external_platform", track_id: "t1", title: "Track",
+        artist: "Artist", start_s: 42.35, end_s: 59.351,
+      } })} />);
+    expect(screen.getByText("Track — Artist")).toBeInTheDocument();
+    expect(screen.getByText(/42.350–59.351 seconds/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Swap song")).not.toBeInTheDocument();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Copy song details" })));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("42.350–59.351 seconds"));
+    expect(screen.getByRole("status")).toHaveTextContent("Copied");
+  });
+});

@@ -37,7 +37,8 @@ enum NativeEditorRenderError: Error, Equatable {
     }
 
     func compile(document: EditorDocument, clips: [EditorClip], items: [NativeEditorTimelineItem],
-                 sources: [Int: ResolvedEditorSource], audioSources: [String: ResolvedEditorSource] = [:], mediaSources: [String: ResolvedEditorSource] = [:]) throws -> NativeEditorRenderProgram {
+                 sources: [Int: ResolvedEditorSource], audioSources: [String: ResolvedEditorSource] = [:], mediaSources: [String: ResolvedEditorSource] = [:],
+                 referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true) throws -> NativeEditorRenderProgram {
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
         ] where populated { throw NativeEditorRenderError.unsupportedLane(name) }
@@ -57,6 +58,9 @@ enum NativeEditorRenderError: Error, Equatable {
         var references: [String: RenderAssetReference] = [:]
         var urls: [String: URL] = [:]
         var video: [TimelineClip] = []
+        let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? 1
+        let originalGain = requestedOriginalGain.isFinite ? min(max(0, requestedOriginalGain), 1) : 1
+        let hasExplicitOriginalGain = document.mix["original_level"] != nil
         let activeSlots = document.clips.filter { !$0.removed }
         func slot(for clip: EditorClip, index: Int) -> EditorTimelineSlot? {
             if let id = clip.slotID, let value = activeSlots.first(where: { $0.id == id }) { return value }
@@ -95,10 +99,12 @@ enum NativeEditorRenderError: Error, Equatable {
             let sourceDuration = clip.trimOut - clip.trimIn
             let duration = clip.end - clip.start
             guard duration > 0, sourceDuration > 0 else { throw RecipeError.invalidTimeline }
+            let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
+            let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
                 sourceStart: clip.trimIn, sourceDuration: sourceDuration, timelineStart: clip.start,
                 rate: sourceDuration / duration, transition: transition,
-                volume: clip.muted || audioSources["narration"] != nil ? 0 : 1, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil))
+                volume: clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil))
         }
         var audioTracks: [TimelineTrack] = []
         let total = video.map { $0.timelineStart + $0.duration }.max() ?? 0
@@ -134,14 +140,14 @@ enum NativeEditorRenderError: Error, Equatable {
             ]))
         }
         // The rendered narration source already includes its approved music bed.
-        if let music = document.music, audioSources["narration"] == nil {
+        if !referenceOnlyMusic, let music = document.music, audioSources["narration"] == nil {
             guard music.alignment == nil || music.alignment == "preserve_cuts" else {
                 throw NativeEditorRenderError.unsupportedLane("beat alignment")
             }
             try addAudio(id: music.trackID, lane: "music", start: music.startS, length: total,
                          gain: document.mix["music_level"]?.numberValue ?? 1)
         }
-        if let bed = document.backgroundMusic, bed.enabled, !bed.muted, let id = bed.trackID {
+        if !referenceOnlyMusic, let bed = document.backgroundMusic, bed.enabled, !bed.muted, let id = bed.trackID {
             let start = bed.startS ?? 0
             let length = min(total, max(0, (bed.endS ?? (start + total)) - start))
             try addAudio(id: id, lane: "background-music", start: start, length: length, gain: pow(10, (bed.gainDB ?? -18) / 20))
@@ -491,7 +497,7 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         let recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
             assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
-            audio: AudioMixRecipe(originalVolume: document.mix["original_level"]?.numberValue ?? 1, muteWindows: muteWindows),
+            audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows),
             assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills)
         try recipe.validate()
         return NativeEditorRenderProgram(recipe: recipe, assetURLs: urls)

@@ -181,6 +181,11 @@ struct NativeEditorView: View {
                 onBack: requestBack, onChat: conversation == nil ? requestBack : onBack
             )
             NativeEditorSaveBanner(session: session)
+            if let presentation = session.editorSongReferencePresentation {
+                NativeSongReferenceCard(presentation: presentation)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 4)
+            }
             if session.deviceRenderKey != nil {
                 Button("Rendering on iPhone") { showsDeviceRender = true }
                     .font(KriaFont.body(12).weight(.semibold))

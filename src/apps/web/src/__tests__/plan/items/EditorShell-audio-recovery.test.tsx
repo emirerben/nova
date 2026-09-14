@@ -170,6 +170,24 @@ afterEach(() => {
 });
 
 describe("EditorShell virtual audio recovery", () => {
+  it("ignores stale matched and background song audio while keeping narration", async () => {
+    statusVariant = {
+      ...VARIANT,
+      music_playback_mode: "reference_only",
+      music_track_id: "old-track",
+      music_preview_url: "https://cdn.example.test/old-song.m4a",
+      background_music: { track_id: "old-bed", preview_url: "https://cdn.example.test/old-bed.m4a" },
+    } as PlanItemVariant;
+    await act(async () => {
+      render(<EditorShell itemId="item-1" variantParam="narrated" />);
+    });
+    await waitFor(() => expect(mockUseVirtualPreview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ enabled: true, musicAudioUrl: VARIANT.base_video_url, musicTrackActive: true }),
+    ));
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(getMusicTracks).not.toHaveBeenCalled();
+  });
+
   it("refreshes a narration URL once, then falls back from virtual preview", async () => {
     await act(async () => {
       render(<EditorShell itemId="item-1" variantParam="narrated" />);

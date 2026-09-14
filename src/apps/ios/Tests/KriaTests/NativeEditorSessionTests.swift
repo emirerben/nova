@@ -641,6 +641,16 @@ final class NativeEditorSessionTests: XCTestCase {
         _ = clipID; _ = assetID
     }
 
+    func testHydrationDoesNotSynthesizeAnUnmuteOverrideForAnUntouchedSlot() {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 2, trimIn: 0, trimOut: 2, slotID: "slot-a")
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object([
+            "timeline_slots": .array([.object(["slot_id": .string("slot-a"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])
+        ])])]
+        let draft = EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0, serverSnapshot: snapshot)
+        let session = NativeEditorSession(draft: draft)
+        XCTAssertNil(session.document.clips.first?.raw["muted"])
+    }
+
     func testReorderingPreservesSourcePoolIndexes() {
         let first = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 7, start: 0, end: 2, trimIn: 0, trimOut: 2, slotID: "a")
         let second = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 2, start: 2, end: 4, trimIn: 0, trimOut: 2, slotID: "b")

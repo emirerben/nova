@@ -1,4 +1,5 @@
 "use client";
+import { SongReferenceNotice } from "@/components/SongReferenceNotice";
 
 import { useEffect, useRef, useState } from "react";
 import { StableVideo } from "@/components/StableVideo";
@@ -196,7 +197,7 @@ export function VariantCard({
         <div className="mb-2 flex items-center justify-between">
           <span className={badgeClass}>
             {TEXT_MODE_LABEL[variant.text_mode] ?? variant.text_mode}
-            {variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
+            {variant.music_playback_mode === "reference_only" ? (variant.song_reference ? " · Song added when posting" : " · Original audio") : variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
           </span>
           {/* Quiet "Saved" pulse takes precedence over the saving badge: a
               text edit settles to a brief lime pulse that recedes, never a
@@ -265,7 +266,7 @@ export function VariantCard({
         <div className="flex flex-wrap items-center gap-2">
           <span className={badgeClass}>
             {TEXT_MODE_LABEL[variant.text_mode] ?? variant.text_mode}
-            {variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
+            {variant.music_playback_mode === "reference_only" ? (variant.song_reference ? " · Song added when posting" : " · Original audio") : variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
           </span>
           {sequenceSynced && (
             <span className={syncedBadgeClass} title={SEQUENCE_TEXT_LOCKED_HINT}>
@@ -300,6 +301,8 @@ export function VariantCard({
           )}
         </div>
       )}
+
+      {variant.music_playback_mode === "reference_only" && <SongReferenceNotice reference={variant.song_reference} />}
 
       <div className="mt-3 flex flex-wrap gap-2">
         {onToggleClips && (
@@ -482,7 +485,7 @@ export function VariantCard({
             </div>
           );
         })()}
-        {tracks.length > 0 && variant.music_track_id !== null && (
+        {variant.music_playback_mode !== "reference_only" && tracks.length > 0 && variant.music_track_id !== null && (
           // key remounts the trigger after each pick so it always reverts to
           // the "Swap song…" placeholder — this is a one-shot action, not a
           // persisted selection (mirrors the native select-with-empty-value reset).

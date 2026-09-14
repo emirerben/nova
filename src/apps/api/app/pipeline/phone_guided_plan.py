@@ -57,7 +57,9 @@ def compile_phone_guided_plan(
     ]
     has_transitions = any(value not in {"none", "cut"} for value in boundaries)
     preserve_audio = bool((plan.montage_audio or {}).get("preserve_source_audio"))
-    if has_transitions and preserve_audio:
+    # V6 reconstructs cloud source audio at the same overlapping source
+    # windows as the native mixer. Legacy transition renders discarded audio.
+    if has_transitions and preserve_audio and plan.compiler_version < 6:
         raise UnsupportedPhonePlan("source audio across guided transitions is not yet verified")
     if plan.story_timeline and plan.story_timeline[-1].transition_after not in {None, "cut"}:
         raise UnsupportedPhonePlan("final phone moment cannot transition to a missing moment")

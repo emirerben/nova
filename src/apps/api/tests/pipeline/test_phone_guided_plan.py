@@ -300,3 +300,29 @@ def test_sequence_blocks_draw_above_other_lanes_without_changing_dissolve_seed()
         ("sequence", 500),
         ("sequence", 250),
     ]
+
+
+@pytest.mark.parametrize("kind", ["crossfade", "dip_to_black", "flash"])
+def test_v6_source_audio_transitions_preserve_windows_and_apply_gain_once(kind):
+    plan, bindings = transition_fixture(kind, duration=0.12)
+    plan.compiler_version = 6
+    plan.montage_audio = {"preserve_source_audio": True}
+    plan.editor_audio_level = 0.4
+    recipe = compile_phone_guided_plan(plan, bindings)
+    first, second = recipe.tracks[0].clips
+    assert recipe.audio.original_volume == 0.4
+    assert first.volume == second.volume == 1
+    assert first.source_start == 2
+    assert second.source_start == 5
+    assert second.timeline_start == 2.88
+    assert recipe.duration == 5.88
+    assert "analysis-proxy" not in recipe.model_dump_json()
+
+
+def test_v6_audio_transitions_still_reject_speed_changes():
+    plan, bindings = transition_fixture()
+    plan.compiler_version = 6
+    plan.montage_audio = {"preserve_source_audio": True}
+    plan.story_timeline[0].source_end_s -= 0.5
+    with pytest.raises(ValueError, match="exact source window"):
+        compile_phone_guided_plan(plan, bindings)

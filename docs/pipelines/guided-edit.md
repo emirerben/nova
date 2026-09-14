@@ -343,6 +343,24 @@ path/generation and window (or explicit no-match), output orientation and its ex
 typography identity, and approved text. Redelivery reuses this plan rather than rematching a changed
 music library.
 
+Compiler version 6 keeps matched-song timing as a separate `song_reference`
+(title, artist, catalog ID, and exact start/end seconds) with
+`delivery: external_platform`. The song still drives beat-aligned allocation,
+but `music` is absent and `music_applied` is false. No song audio object is pinned,
+downloaded, previewed, or mixed for these plans. Narration, original-audio policy,
+and sound effects remain independent. New variant payloads declare
+`music_playback_mode: reference_only`, including when no track matches; the optional
+reference is copied into the strict render receipt. Editors and download surfaces
+show the section to select in TikTok or Instagram without claiming availability in
+those platforms' catalogs. Duration revisions must update the reference end while
+preserving the chosen start. Existing compiler versions 1–5 keep their persisted
+music and canonical replay behavior; ready historical outputs are not rewritten.
+For v6 edits that preserve original audio, the cloud renderer rebuilds the source
+audio from the approved source windows and timeline positions after visual
+assembly. Overlaps sum at constant gain, matching the native mixer; the editor
+original-audio level applies once. This also prevents video-only transition
+assembly from silently dropping original sound when no song is mixed.
+
 Compiler version 3 adds the approved output canvas while retaining version 2's timing allocator.
 Version 2 gives every approved moment its direction-specific minimum, caps each video at
 its real usable duration (including any transition overlap), and redistributes the rest of the beat

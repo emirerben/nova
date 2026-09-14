@@ -26,6 +26,24 @@ Rollback: set `PHONE_RENDERING_ENABLED=false`. This blocks new attempts while
 preserving published outputs and allowing already-reserved exports to finalize.
 The pilot does not satisfy or remove the remaining KRI-29 release gates.
 
+## Matched songs as posting references
+
+New guided compiler-v6 jobs carry a timing-only song reference, with no music
+lane in the portable render recipe. This avoids requiring phone song-download or
+song-mixing support while retaining beat-aligned cuts. Native preview/export and
+the web editor suppress matched/background song audio for `reference_only`
+variants, including stale local selections, and display copyable song/section
+details at export. Narration, original audio, and SFX retain their existing policy.
+V6 source audio can overlap visual transitions: cloud and native mixing preserve
+each approved source window at its timeline position and apply the original
+level once. Legacy plans retain the transition/source-audio rejection. Exact
+source-duration and original-asset binding checks remain required.
+
+A failed historical job whose immutable v5 plan includes an unsupported music
+lane is not repaired by redelivering that same plan. Generate a new approved edit
+under v6; never render analysis proxies as a fallback or rewrite ready receipts.
+Deploy the API/worker contract and install the corresponding native app together.
+
 ## Implemented foundations
 
 - `KriaMediaEngine/SourceAssetStore.swift` binds opaque server media IDs to
