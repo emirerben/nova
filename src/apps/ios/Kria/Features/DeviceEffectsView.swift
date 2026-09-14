@@ -74,12 +74,42 @@ private final class DeviceEffectsSession {
     private var requestedCount = 0
     private var exportProgress = 0.0
     private var lifecycle: [[String: Any]] = []
+    private let comparisonSamples: [(label: String, seconds: Double)] = [
+        ("0.6", 0.6),
+        ("1.0", 1.0),
+        ("3.0", 3.0),
+        ("5.3", 5.3),
+    ]
     func recordLifecycle(_ event: String) {
         lifecycle.append(["event": event, "date": ISO8601DateFormatter().string(from: Date())])
         saveReport()
     }
     private let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("DeviceEffects", isDirectory: true)
+
+    /// Persist lossless, full-canvas samples beside report.json. These are
+    /// deliberately stable names so each device run leaves one comparable set
+    /// per catalog case without adding user media to the report.
+    private func saveSampledFrames(asset: AVAsset, videoComposition: AVVideoComposition? = nil,
+                                   caseID: String, kind: String) async throws -> [String: String] {
+        let framesDirectory = directory.appendingPathComponent("frames/\(caseID)", isDirectory: true)
+        try FileManager.default.createDirectory(at: framesDirectory, withIntermediateDirectories: true)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.videoComposition = videoComposition
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        var paths: [String: String] = [:]
+        for sample in comparisonSamples {
+            phase = "\(kind)_frame_\(sample.label)"; saveReport()
+            let image = try generator.copyCGImage(at: CMTime(seconds: sample.seconds, preferredTimescale: 600), actualTime: nil)
+            let filename = "\(kind)-\(sample.label).png"
+            let destination = framesDirectory.appendingPathComponent(filename)
+            guard let data = UIImage(cgImage: image).pngData() else { throw MediaEngineError.exportFailed }
+            try data.write(to: destination, options: .atomic)
+            paths[sample.label] = "frames/\(caseID)/\(filename)"
+        }
+        return paths
+    }
 
     func load() async {
         guard cases.isEmpty else { return }
@@ -191,9 +221,11 @@ private final class DeviceEffectsSession {
         let asset = AVURLAsset(url: destination)
         let duration = try await asset.load(.duration).seconds
         guard abs(duration - 6) < 0.1 else { throw MediaEngineError.exportFailed }
+        let exportFrames = try await saveSampledFrames(asset: asset, caseID: id, kind: "export")
         output = destination
         status = String(format: "%@: exported 6 seconds in %.2f seconds", id, seconds)
-        results.append(["effect": id, "export_seconds": seconds, "duration": duration, "status": "exported"])
+        results.append(["effect": id, "export_seconds": seconds, "duration": duration,
+                        "status": "exported", "export_frames": exportFrames])
     }
 
     func testAll() async {
@@ -216,6 +248,7 @@ private final class DeviceEffectsSession {
         } else { requested = cases }
         requestedCount = requested.count
         for item in requested {
+            var previewFrames: [String: String] = [:]
             do {
                 activeCase = item.id; phase = "preview_prepare"
                 status = "Preparing \(item.id)…"; saveReport()
@@ -225,11 +258,16 @@ private final class DeviceEffectsSession {
                 let preview = try await AVPlayerPreviewComposer().makePreview(recipe: value.0, assetURLs: value.1)
                 let prepareSeconds = Date().timeIntervalSince(prepareStart)
                 let frameStart = Date()
+                previewFrames = try await saveSampledFrames(asset: preview.playerItem.asset,
+                                                            videoComposition: preview.playerItem.videoComposition,
+                                                            caseID: item.id, kind: "preview")
+                // Retain the old backwards-seek probe independently of the
+                // saved cloud-comparison samples.
                 let generator = AVAssetImageGenerator(asset: preview.playerItem.asset)
                 generator.videoComposition = preview.playerItem.videoComposition
                 generator.requestedTimeToleranceBefore = .zero
                 generator.requestedTimeToleranceAfter = .zero
-                for time in [0.1, 1.0, 3.0, 5.3, 1.0, 5.8] {
+                for time in [1.0, 5.8, 1.0] {
                     phase = "preview_frame_\(time)"; saveReport()
                     _ = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
                 }
@@ -237,8 +275,11 @@ private final class DeviceEffectsSession {
                 try await export(value, id: item.id)
                 results[results.count - 1]["preview_prepare_seconds"] = prepareSeconds
                 results[results.count - 1]["preview_frame_requests_seconds"] = frameSeconds
+                results[results.count - 1]["preview_frames"] = previewFrames
             } catch {
-                results.append(["effect": item.id, "status": "failed", "error": String(describing: error)])
+                var failure: [String: Any] = ["effect": item.id, "status": "failed", "error": String(describing: error)]
+                if !previewFrames.isEmpty { failure["preview_frames"] = previewFrames }
+                results.append(failure)
             }
             activeCase = nil; phase = "between_cases"; saveReport()
         }
