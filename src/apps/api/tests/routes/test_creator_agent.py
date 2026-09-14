@@ -18,9 +18,11 @@ from app.agents._schemas.creator_agent import (
     AskUser,
     CreativeStrategy,
     CreatorCraftBundle,
+    CreatorEditSnapshot,
     CreatorMediaRef,
     ProposeStrategy,
     canonical_context_hash,
+    canonical_manifest_hash,
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import get_current_user
@@ -3965,6 +3967,270 @@ async def test_confirm_controller_forwards_chat_capability_to_context(monkeypatc
     assert caught.value.detail == "Footage or capabilities changed; review the plan again"
     resolve_context.assert_awaited_once()
     assert resolve_context.await_args.kwargs["guided_capability_enabled"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("live_change", [None, "media", "capabilities"])
+async def test_confirm_retry_restores_only_hash_verified_original_current_edit(
+    monkeypatch, live_change: str | None
+) -> None:
+    """A terminal Creator retry can reopen its own failed edit snapshot only."""
+
+    from app.tasks import content_plan_build
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id, failed_job_id, replacement_job_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    original = _manifest(monkeypatch)
+    live_without_hash = original.model_copy(
+        update={
+            "current_edit": CreatorEditSnapshot(
+                status="failed", variant_id="original_text", edit_hash="f" * 64
+            )
+        }
+    )
+    if live_change == "media":
+        changed_media = [
+            original.media[0].model_copy(update={"media_id": "replacement-clip"}),
+            *original.media[1:],
+        ]
+        live_without_hash = live_without_hash.model_copy(update={"media": changed_media})
+    elif live_change == "capabilities":
+        changed_capabilities = dict(original.capabilities)
+        assert changed_capabilities
+        changed_capabilities.pop(next(iter(changed_capabilities)))
+        live_without_hash = live_without_hash.model_copy(
+            update={"capabilities": changed_capabilities}
+        )
+    live = live_without_hash.model_copy(
+        update={"manifest_hash": canonical_manifest_hash(live_without_hash)}
+    )
+    assert live.manifest_hash != original.manifest_hash
+    strategy = CreativeStrategy(
+        direction="fast_montage",
+        edit_format="montage",
+        audio_strategy="licensed_music",
+        render_program="native",
+        selected_media_ids=["clip-1"],
+    )
+    edit_plan = compile_strategy_to_plan(original, strategy)
+    item = SimpleNamespace(id=item_id, current_job_id=failed_job_id)
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item_id,
+        status="awaiting_confirmation",
+        revision=3,
+        ownership_epoch=4,
+        manifest_hash=original.manifest_hash,
+        active_plan={
+            "version": 1,
+            "plan_hash": "a" * 64,
+            "creator_request": "Make a clean montage",
+            "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+            "original_current_edit_present": True,
+            "original_current_edit": None,
+        },
+        render_attempts=1,
+        max_render_attempts=2,
+        iteration_count=1,
+        target_job_id=failed_job_id,
+        last_error=None,
+    )
+    failed_job = SimpleNamespace(
+        id=failed_job_id,
+        status="processing_failed",
+        user_id=user.id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=4,
+        all_candidates={
+            "creator_strategy": edit_plan.strategy.model_dump(mode="json", exclude_none=True)
+        },
+    )
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db = AsyncMock()
+    db.execute.return_value = receipt_result
+    receipts: dict[str, CreatorAgentExecution] = {}
+
+    def add(row) -> None:
+        if isinstance(row, CreatorAgentExecution):
+            row.id = uuid.uuid4()
+            receipts["receipt"] = row
+
+    async def get(model, _identifier, **_kwargs):
+        if model is Job:
+            return failed_job
+        if model is CreatorAgentExecution:
+            return receipts.get("receipt")
+        return None
+
+    db.add = MagicMock(side_effect=add)
+    db.get.side_effect = get
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(live, [])),
+    )
+    monkeypatch.setattr(creator_routes, "_apply_plan_intent", MagicMock())
+    monkeypatch.setattr(
+        creator_routes, "_previous_creator_clip_order", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        creator_routes, "_lock_confirmed_render_graph", AsyncMock(return_value=session)
+    )
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    response = SimpleNamespace(status="rendering")
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(
+            return_value=SimpleNamespace(outcome="dispatched", job_id=str(replacement_job_id))
+        ),
+    )
+    monkeypatch.setattr(content_plan_build, "dispatch_item_render_for", MagicMock())
+    assert creator_routes._retry_target_matches_confirmed_plan(
+        item=item,
+        plan=plan,
+        session=session,
+        job=failed_job,
+        target_job_id=failed_job_id,
+        strategy=edit_plan.strategy,
+    )
+    confirmation = creator_routes.confirm_creator_plan_controller(
+        str(item_id),
+        ConfirmBody(
+            session_id=session.id,
+            expected_revision=3,
+            plan_version=1,
+            plan_hash="a" * 64,
+            client_event_id="retry-after-failed-current-edit",
+        ),
+        user,
+        db,
+        allow_chat=True,
+        retry_target_job_id=failed_job_id,
+    )
+
+    if live_change is not None:
+        with pytest.raises(HTTPException) as rejected:
+            await confirmation
+        assert rejected.value.status_code == 409
+        assert "Footage or capabilities changed" in rejected.value.detail
+        assert session.target_job_id == failed_job_id
+        assert session.render_attempts == 1
+        assert not receipts
+        creator_routes.asyncio.to_thread.assert_not_awaited()
+        return
+
+    returned = await confirmation
+    assert returned is response
+    assert session.target_job_id == replacement_job_id
+    assert session.render_attempts == 2
+    assert receipts["receipt"].expected_manifest_hash == original.manifest_hash
+    assert creator_routes.asyncio.to_thread.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_retry_recovers_only_hash_verified_agent_run_snapshot(monkeypatch) -> None:
+    original_base = _manifest(monkeypatch)
+    original_without_hash = original_base.model_copy(
+        update={
+            "current_edit": CreatorEditSnapshot(
+                status="failed", variant_id="first_failed", edit_hash="a" * 64
+            )
+        }
+    )
+    original = original_without_hash.model_copy(
+        update={"manifest_hash": canonical_manifest_hash(original_without_hash)}
+    )
+    live_without_hash = original.model_copy(
+        update={
+            "current_edit": CreatorEditSnapshot(
+                status="failed", variant_id="second_failed", edit_hash="b" * 64
+            )
+        }
+    )
+    live = live_without_hash.model_copy(
+        update={"manifest_hash": canonical_manifest_hash(live_without_hash)}
+    )
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        active_plan={},
+        manifest_hash=original.manifest_hash,
+    )
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [
+        {"capability_manifest": original.model_dump(mode="json")}
+    ]
+    db = AsyncMock()
+    db.execute.return_value = result
+
+    recovered = await creator_routes._original_current_edit_for_retry(
+        db, session=session, manifest=live
+    )
+
+    assert recovered == {
+        "revision": 0,
+        "status": "failed",
+        "variant_id": "first_failed",
+        "edit_hash": "a" * 64,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["wrong_owner", "wrong_epoch", "running", "inflight_variant", "bad_generation", "bad_attempt"],
+)
+def test_retry_target_rejects_nonexact_failed_render(mutation: str) -> None:
+    user_id, item_id, job_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    strategy = CreativeStrategy(
+        edit_format="montage", render_program="guided" if mutation == "bad_attempt" else "native"
+    )
+    session = SimpleNamespace(
+        creator_id=user_id,
+        target_job_id=job_id,
+        ownership_epoch=2,
+        target_variant_id="original_text" if mutation == "bad_generation" else None,
+        target_generation_id="generation-a" if mutation == "bad_generation" else None,
+        active_plan={"guided_generation_attempt_id": "expected-attempt"},
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        status="processing_failed" if mutation != "running" else "rendering",
+        user_id=uuid.uuid4() if mutation == "wrong_owner" else user_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=3 if mutation == "wrong_epoch" else 2,
+        all_candidates={"creator_strategy": strategy.model_dump(mode="json", exclude_none=True)},
+        assembly_plan={
+            "guided_edit": {"generation_attempt_id": "different-attempt"},
+            "variants": [
+                {
+                    "variant_id": "original_text",
+                    "render_generation_id": "generation-b"
+                    if mutation == "bad_generation"
+                    else "generation-a",
+                    "render_status": "rendering" if mutation == "inflight_variant" else "failed",
+                }
+            ],
+        },
+    )
+
+    assert not creator_routes._retry_target_matches_confirmed_plan(
+        item=SimpleNamespace(id=item_id, current_job_id=job_id),
+        plan=SimpleNamespace(ownership_epoch=2),
+        session=session,
+        job=job,
+        target_job_id=job_id,
+        strategy=strategy,
+    )
 
 
 @pytest.mark.asyncio

@@ -979,3 +979,34 @@ def test_session_compiles_agent_strategy_through_capability_service(monkeypatch)
         "boundary_style": "cut",
     }
     assert receipt["edit_plan"]["commands"][-1]["command"] == "dispatch_render"
+    assert receipt["original_current_edit_present"] is True
+    assert receipt["original_current_edit"] is None
+
+
+def test_session_receipt_pins_original_current_edit_snapshot(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+        current_edit={
+            "status": "failed",
+            "variant_id": "original_text",
+            "edit_hash": "a" * 64,
+        },
+    )
+
+    receipt = compile_active_plan(
+        SimpleNamespace(active_plan=None),
+        manifest=manifest,
+        strategy=CreativeStrategy(edit_format="montage", selected_media_ids=["clip-1"]),
+        summary="Retry this cut.",
+    )
+
+    assert receipt["original_current_edit_present"] is True
+    assert receipt["original_current_edit"] == {
+        "revision": 0,
+        "status": "failed",
+        "variant_id": "original_text",
+        "edit_hash": "a" * 64,
+    }

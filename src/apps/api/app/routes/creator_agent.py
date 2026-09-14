@@ -34,11 +34,14 @@ from app.agents._schemas.creator_agent import (
     CreativeStrategy,
     CreatorCraftBundle,
     CreatorEditPlan,
+    CreatorEditSnapshot,
     CreatorRenderIntentEvidence,
     ProposeStrategy,
+    ResolvedCreatorManifest,
     ReviewDecision,
     SetLicensedSfxCommand,
     canonical_context_hash,
+    canonical_manifest_hash,
     normalize_creator_text_color,
 )
 from app.agents._schemas.creator_policy import (
@@ -56,6 +59,7 @@ from app.database import get_db
 from app.db_locks import acquire_locked_rows
 from app.limiter import limiter
 from app.models import (
+    AgentRun,
     ContentPlan,
     CreationThread,
     CreatorAgentEvent,
@@ -115,7 +119,11 @@ from app.services.creator_sessions import (
 )
 from app.services.edit_direction_planner import round_robin_capacity_s
 from app.services.job_phases import mark_reattempt
-from app.services.job_status import PLAN_ITEM_JOB_READY, PLAN_ITEM_JOB_TERMINAL
+from app.services.job_status import (
+    PLAN_ITEM_JOB_FAILED,
+    PLAN_ITEM_JOB_READY,
+    PLAN_ITEM_JOB_TERMINAL,
+)
 from app.services.public_assembly_plan import project_public_assembly_plan
 from app.services.speech_cleanup_terminal import classify_route_speech_cut_rollback
 from app.services.variant_generation_guard import (
@@ -2484,6 +2492,134 @@ class _CommittedRenderPublishFailure(RuntimeError):
         self.job_id = job_id
 
 
+def _retry_target_matches_confirmed_plan(
+    *,
+    item: PlanItem,
+    plan: ContentPlan,
+    session: CreatorAgentSession,
+    job: Job | None,
+    target_job_id: uuid.UUID,
+    strategy: CreativeStrategy,
+) -> bool:
+    """Prove a private retry target is the exact failed Creator render."""
+
+    if (
+        job is None
+        or job.id != target_job_id
+        or item.current_job_id != target_job_id
+        or session.target_job_id != target_job_id
+        or job.status not in PLAN_ITEM_JOB_FAILED
+        or job.user_id != session.creator_id
+        or job.content_plan_item_id != item.id
+        or job.content_plan_ownership_epoch != session.ownership_epoch
+        or session.ownership_epoch != int(plan.ownership_epoch or 0)
+    ):
+        return False
+    variants = (getattr(job, "assembly_plan", None) or {}).get("variants") or []
+    if any(
+        isinstance(variant, dict) and variant.get("render_status") in {"pending", "rendering"}
+        for variant in variants
+    ):
+        return False
+    target_variant_id = getattr(session, "target_variant_id", None)
+    target_generation_id = getattr(session, "target_generation_id", None)
+    if target_variant_id or target_generation_id:
+        if not target_variant_id or not target_generation_id:
+            return False
+        target = next(
+            (
+                variant
+                for variant in variants
+                if isinstance(variant, dict)
+                and variant.get("variant_id") == target_variant_id
+                and variant.get("render_generation_id") == target_generation_id
+            ),
+            None,
+        )
+        if target is None:
+            return False
+    if strategy.render_program == "guided":
+        return _job_matches_guided_attempt(
+            job, (session.active_plan or {}).get("guided_generation_attempt_id")
+        )
+    return (job.all_candidates or {}).get("creator_strategy") == strategy.model_dump(
+        mode="json", exclude_none=True
+    )
+
+
+def _manifest_with_original_current_edit(
+    manifest: ResolvedCreatorManifest,
+    *,
+    current_edit: object,
+) -> ResolvedCreatorManifest | None:
+    """Build a candidate manifest using only a validated opaque edit snapshot."""
+
+    try:
+        snapshot = (
+            None if current_edit is None else CreatorEditSnapshot.model_validate(current_edit)
+        )
+    except (TypeError, ValueError):
+        return None
+    return manifest.model_copy(update={"current_edit": snapshot})
+
+
+async def _original_current_edit_for_retry(
+    db: AsyncSession,
+    *,
+    session: CreatorAgentSession,
+    manifest: ResolvedCreatorManifest,
+) -> object:
+    """Recover a hash-verified original edit snapshot, failing closed for old data."""
+
+    active = session.active_plan if isinstance(session.active_plan, dict) else {}
+    if active.get("original_current_edit_present") is True:
+        candidate = _manifest_with_original_current_edit(
+            manifest, current_edit=active.get("original_current_edit")
+        )
+        if candidate is not None and canonical_manifest_hash(candidate) == session.manifest_hash:
+            return active.get("original_current_edit")
+        return _MISSING_RETRY_EDIT
+
+    # Legacy plans predate the receipt field. Their original creator input is
+    # private; inspect only the bounded session/agent subset and retain only
+    # the opaque current_edit summary after re-hashing the complete manifest.
+    rows = (
+        (
+            await db.execute(
+                select(AgentRun.input_json)
+                .where(
+                    AgentRun.creator_agent_session_id == session.id,
+                    AgentRun.agent_name == "nova.creator.main",
+                )
+                .order_by(AgentRun.created_at.desc())
+                .limit(30)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for payload in rows:
+        payload = payload if isinstance(payload, dict) else {}
+        raw_manifest = payload.get("capability_manifest")
+        if not isinstance(raw_manifest, dict) or "current_edit" not in raw_manifest:
+            continue
+        try:
+            original = ResolvedCreatorManifest.model_validate(raw_manifest)
+        except (TypeError, ValueError):
+            continue
+        if canonical_manifest_hash(original) != session.manifest_hash:
+            continue
+        candidate = _manifest_with_original_current_edit(
+            manifest, current_edit=raw_manifest.get("current_edit")
+        )
+        if candidate is not None and canonical_manifest_hash(candidate) == session.manifest_hash:
+            return raw_manifest.get("current_edit")
+    return _MISSING_RETRY_EDIT
+
+
+_MISSING_RETRY_EDIT = object()
+
+
 async def confirm_creator_plan_controller(
     item_id: str,
     body: ConfirmBody,
@@ -2500,6 +2636,7 @@ async def confirm_creator_plan_controller(
     speech_cleanup_recovery_job_id: uuid.UUID | None = None,
     speech_cleanup_recovery_generation_id: str | None = None,
     speech_cleanup_recovery_analysis_id: uuid.UUID | None = None,
+    retry_target_job_id: uuid.UUID | None = None,
 ) -> CreatorSessionResponse:
     _require_feature(user.id, execution=True, allow_chat=allow_chat)
     recovery_values = (
@@ -2509,6 +2646,8 @@ async def confirm_creator_plan_controller(
         speech_cleanup_recovery_analysis_id,
     )
     recovery_requested = any(value is not None for value in recovery_values)
+    if retry_target_job_id is not None and (not allow_chat or recovery_requested):
+        raise HTTPException(status_code=409, detail="Creator retry changed")
     if recovery_requested and (
         not allow_chat
         or speech_cleanup_recovery_action is None
@@ -2600,10 +2739,41 @@ async def confirm_creator_plan_controller(
             persona=persona,
             guided_capability_enabled=(True if allow_chat else None),
         )
+        expected_manifest_hash = manifest.manifest_hash
         if manifest.manifest_hash != session.manifest_hash:
-            raise HTTPException(
-                status_code=409, detail="Footage or capabilities changed; review the plan again"
+            retry_job = (
+                await db.get(Job, retry_target_job_id, with_for_update=True)
+                if retry_target_job_id is not None
+                else None
             )
+            retry_target_is_exact = retry_target_job_id is not None and (
+                _retry_target_matches_confirmed_plan(
+                    item=item,
+                    plan=plan_row,
+                    session=session,
+                    job=retry_job,
+                    target_job_id=retry_target_job_id,
+                    strategy=edit_plan.strategy,
+                )
+            )
+            original_current_edit = (
+                await _original_current_edit_for_retry(db, session=session, manifest=manifest)
+                if retry_target_is_exact
+                else _MISSING_RETRY_EDIT
+            )
+            restored = (
+                _manifest_with_original_current_edit(manifest, current_edit=original_current_edit)
+                if original_current_edit is not _MISSING_RETRY_EDIT
+                else None
+            )
+            if restored is None or canonical_manifest_hash(restored) != session.manifest_hash:
+                raise HTTPException(
+                    status_code=409, detail="Footage or capabilities changed; review the plan again"
+                )
+            # The verified candidate is proof-only. Keep the live manifest
+            # unchanged for subsequent capacity checks, and persist the
+            # approved manifest identity on the new execution receipt.
+            expected_manifest_hash = session.manifest_hash
         cadence = edit_plan.strategy.montage_cadence
         if cadence is not None:
             media_by_id = {media.media_id: media for media in manifest.media}
@@ -2631,7 +2801,7 @@ async def confirm_creator_plan_controller(
             idempotency_key=body.client_event_id,
             request_digest=request_digest,
             expected_revision=body.expected_revision,
-            expected_manifest_hash=manifest.manifest_hash,
+            expected_manifest_hash=expected_manifest_hash,
             status="running",
         )
         db.add(receipt)

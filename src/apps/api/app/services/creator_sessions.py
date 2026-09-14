@@ -541,6 +541,18 @@ def compile_active_plan(
         "score_labels": strategy.score_labels,
         "sport_labels": strategy.sport_labels,
         "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+        # A render retry changes ``current_edit`` identity. Keep the exact,
+        # opaque snapshot that this plan was approved against so the
+        # controller can prove that this is the sole mutable manifest field
+        # before reopening the same plan.
+        # The explicit presence marker distinguishes a new receipt whose
+        # original value was ``None`` from an older receipt with no snapshot.
+        "original_current_edit_present": True,
+        "original_current_edit": (
+            manifest.current_edit.model_dump(mode="json")
+            if manifest.current_edit is not None
+            else None
+        ),
     }
     clean_request = _clean(creator_request, CREATOR_REQUEST_MAX_CHARS)
     if clean_request:
