@@ -6,6 +6,7 @@ struct ChatWorkspaceView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsProjects = false
     @State private var drawerDrag: CGFloat = 0
+    @GestureState private var drawerGestureActive = false
     @State private var drawerMounted = false
     @State private var horizontalDrawerDrag: Bool?
     @State private var drawerGestureExclusions: [CGRect] = []
@@ -85,6 +86,16 @@ struct ChatWorkspaceView: View {
             .background(KriaColor.paper.ignoresSafeArea())
             .onPreferenceChange(DrawerGestureExclusionPreference.self) { drawerGestureExclusions = $0 }
             .simultaneousGesture(drawerGesture(width: drawerWidth))
+            .onChange(of: drawerGestureActive) { _, active in
+                // onEnded is not called when another recognizer or the system
+                // cancels a drag. GestureState resets for both outcomes.
+                guard !active else { return }
+                let needsSettlement = horizontalDrawerDrag == true || drawerDrag != 0
+                horizontalDrawerDrag = nil
+                if needsSettlement {
+                    setDrawerOpen(drawerOffset > drawerWidth / 2)
+                }
+            }
             .accessibilityAction(.escape) { setDrawerOpen(false) }
         }
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: showsProjects)
@@ -118,6 +129,7 @@ struct ChatWorkspaceView: View {
 
     private func drawerGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 3, coordinateSpace: .global)
+            .updating($drawerGestureActive) { _, active, _ in active = true }
             .onChanged { value in
                 // Choose an axis once, without a 20-point dead zone at touch-down.
                 if horizontalDrawerDrag == nil {
@@ -133,6 +145,8 @@ struct ChatWorkspaceView: View {
                 let wasHorizontal = horizontalDrawerDrag == true
                 horizontalDrawerDrag = nil
                 guard wasHorizontal else { return }
+                // Honor a deliberate flick; cancellation still settles by the
+                // actual position so the drawer can never remain half open.
                 let projectedOffset = (showsProjects ? width : 0) + value.predictedEndTranslation.width
                 setDrawerOpen(projectedOffset > width / 2)
             }
@@ -196,6 +210,23 @@ private struct WorkspaceRecoveryView: View {
     }
 }
 
+private struct ConversationEntrance: ViewModifier {
+    let visible: Bool
+    let order: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(visible ? 1 : 0)
+            .offset(y: visible || reduceMotion ? 0 : -6)
+            .animation(
+                reduceMotion ? .easeOut(duration: 0.15) :
+                    .timingCurve(0.23, 1, 0.32, 1, duration: 0.2).delay(min(Double(order) * 0.035, 0.105)),
+                value: visible
+            )
+    }
+}
+
 private struct CreationWorkspaceView: View {
     let project: ProjectSummary
     let openProjects: () -> Void
@@ -206,6 +237,8 @@ private struct CreationWorkspaceView: View {
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @State private var prompt = ""
     @State private var events: [ThreadEvent] = []
+    @State private var initialConversationLoaded = false
+    @State private var initialConversationRevealed = false
     @State private var pendingMessages: [PendingChatMessage] = []
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var approval: ApprovalSnapshot?
@@ -297,11 +330,15 @@ private struct CreationWorkspaceView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 20) {
-                        ForEach(transcript) { message in
+                        ForEach(Array(transcript.enumerated()), id: \.element.id) { index, message in
                             ChatMessageRow(message: message).id(message.id)
+                                .modifier(ConversationEntrance(visible: initialConversationRevealed, order: index))
                         }
 
-                        stageContent
+                        if fullThread != nil || isUITesting {
+                            stageContent
+                                .modifier(ConversationEntrance(visible: initialConversationRevealed, order: transcript.count))
+                        }
 
                         if (isThinking || isSending) && workspaceStage != .rendering {
                             ThinkingRow().id("thinking")
@@ -321,6 +358,16 @@ private struct CreationWorkspaceView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 28)
                     .frame(maxWidth: .infinity)
+                }
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                .opacity(initialConversationLoaded ? 1 : 0)
+                .task(id: initialConversationLoaded) {
+                    guard initialConversationLoaded else { return }
+                    scrollToEnd(proxy)
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+                    initialConversationRevealed = true
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .accessibilityElement(children: .contain)
@@ -346,8 +393,10 @@ private struct CreationWorkspaceView: View {
             .allowsHitTesting(!projectsDrawerOpen)
         }
         .task {
-            await refreshCapabilities()
+            // History should not wait for the independent capability request.
+            async let capabilities: Void = refreshCapabilities()
             await pollUntilDismissed()
+            await capabilities
         }
         .onChange(of: currentProject.serverRevision) { _, revision in
             threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
@@ -398,6 +447,8 @@ private struct CreationWorkspaceView: View {
                         Color.clear.frame(height: 1).id("conversation-end")
                     }.padding(16)
                 }
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
             }
@@ -492,7 +543,11 @@ private struct CreationWorkspaceView: View {
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { proxy.scrollTo("conversation-end", anchor: .bottom) }
+        // History arrives asynchronously when switching chats. Position it in
+        // the same layout transaction instead of showing a catch-up scroll.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { proxy.scrollTo("conversation-end", anchor: .bottom) }
     }
 
     private func send(message submittedMessage: String? = nil) async {
@@ -617,6 +672,10 @@ private struct CreationWorkspaceView: View {
             capabilitiesError = formats.isEmpty ? "No creation formats are currently available. Try again in a moment." : nil
             maximumClipsByFormat = limits
             capabilitiesAreAuthoritative = true
+            // Initial history and capabilities load independently. Reconcile
+            // only after this authoritative response arrives; substituting a
+            // temporary `.disabled` capability can terminalize a device job.
+            await refreshDeviceRender()
         } catch {
             capabilitiesAreAuthoritative = false
             capabilities = nil
@@ -656,16 +715,27 @@ private struct CreationWorkspaceView: View {
     }
 
     private func refreshDeviceRender(retry: Bool = false) async {
-        guard let deviceRenderKey else { return }
-        await model.deviceRenders.reconcile(deviceRenderKey, capabilities: capabilities?.phoneRendering ?? .disabled, retry: retry)
+        guard capabilitiesAreAuthoritative,
+              let deviceRenderKey,
+              let phoneRendering = capabilities?.phoneRendering else { return }
+        await model.deviceRenders.reconcile(deviceRenderKey, capabilities: phoneRendering, retry: retry)
     }
 
     private func refreshNow() async {
+        defer {
+            if !Task.isCancelled { initialConversationLoaded = true }
+        }
         errorMessage = nil
         do {
             let requestSequence = projectionOrder.begin()
             let thread = try await model.api.project(threadID: project.id)
             apply(thread, requestSequence: requestSequence)
+            // The full projection contains the complete transcript. Reveal it
+            // before a slow delta or approval request returns, so the user
+            // never sees an empty ready state followed by old AI messages.
+            if fullThread != nil, !Task.isCancelled {
+                initialConversationLoaded = true
+            }
             if thread.runtimeVersion == 2 {
                 _ = try await refreshDelta()
             }

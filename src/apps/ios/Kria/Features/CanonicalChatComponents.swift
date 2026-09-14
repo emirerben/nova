@@ -158,6 +158,7 @@ struct ProjectDrawerRow: View {
             Text(project.workspaceStatusLabel).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
         }
         .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).padding(.horizontal, 12)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
@@ -195,9 +196,6 @@ struct ChatMessageRow: View {
             .frame(maxWidth: .infinity)
         } else {
             VStack(alignment: .leading, spacing: 7) {
-                Text("Kria")
-                    .font(KriaFont.body(11).weight(.semibold))
-                    .foregroundStyle(KriaColor.zinc)
                 Text(message.content)
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)

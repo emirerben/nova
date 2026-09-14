@@ -64,6 +64,47 @@ final class ProjectsUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["workspace-project-title"].label, originalTitle)
     }
 
+    func testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launch()
+        createFreshChat(in: app)
+        let menu = app.buttons["workspace-menu-toggle"]
+        let closedX = menu.frame.minX
+        let width = min(326, app.frame.width - 76)
+        func drag(from x: CGFloat, by distance: CGFloat) {
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: app.frame.height * 0.5))
+            let end = start.withOffset(CGVector(dx: distance, dy: 0))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
+        }
+        func assertSettled(open: Bool) {
+            let expected = closedX + (open ? width : 0)
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                abs(menu.frame.minX - expected) < 2
+            }, object: menu)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 4), .completed,
+                           "Drawer must not remain between its endpoints")
+        }
+        drag(from: 10, by: width * 0.3)
+        assertSettled(open: false)
+        drag(from: 10, by: width * 0.7)
+        assertSettled(open: true)
+        drag(from: app.frame.width - 20, by: -width * 0.3)
+        assertSettled(open: true)
+        drag(from: app.frame.width - 20, by: -width * 0.7)
+        assertSettled(open: false)
+        func flick(from x: CGFloat, by distance: CGFloat) {
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: app.frame.height * 0.5))
+            start.press(forDuration: 0.05,
+                        thenDragTo: start.withOffset(CGVector(dx: distance, dy: 0)),
+                        withVelocity: .fast, thenHoldForDuration: 0)
+        }
+        flick(from: 10, by: width * 0.35)
+        assertSettled(open: true)
+        flick(from: app.frame.width - 20, by: -width * 0.35)
+        assertSettled(open: false)
+    }
+
     private func createFreshChat(in app: XCUIApplication) {
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
         app.buttons["Open projects"].tap()
