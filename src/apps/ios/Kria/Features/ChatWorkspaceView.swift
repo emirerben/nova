@@ -672,6 +672,10 @@ private struct CreationWorkspaceView: View {
             capabilitiesError = formats.isEmpty ? "No creation formats are currently available. Try again in a moment." : nil
             maximumClipsByFormat = limits
             capabilitiesAreAuthoritative = true
+            // Initial history and capabilities load independently. Reconcile
+            // only after this authoritative response arrives; substituting a
+            // temporary `.disabled` capability can terminalize a device job.
+            await refreshDeviceRender()
         } catch {
             capabilitiesAreAuthoritative = false
             capabilities = nil
@@ -711,8 +715,10 @@ private struct CreationWorkspaceView: View {
     }
 
     private func refreshDeviceRender(retry: Bool = false) async {
-        guard let deviceRenderKey else { return }
-        await model.deviceRenders.reconcile(deviceRenderKey, capabilities: capabilities?.phoneRendering ?? .disabled, retry: retry)
+        guard capabilitiesAreAuthoritative,
+              let deviceRenderKey,
+              let phoneRendering = capabilities?.phoneRendering else { return }
+        await model.deviceRenders.reconcile(deviceRenderKey, capabilities: phoneRendering, retry: retry)
     }
 
     private func refreshNow() async {
@@ -724,6 +730,12 @@ private struct CreationWorkspaceView: View {
             let requestSequence = projectionOrder.begin()
             let thread = try await model.api.project(threadID: project.id)
             apply(thread, requestSequence: requestSequence)
+            // The full projection contains the complete transcript. Reveal it
+            // before a slow delta or approval request returns, so the user
+            // never sees an empty ready state followed by old AI messages.
+            if fullThread != nil, !Task.isCancelled {
+                initialConversationLoaded = true
+            }
             if thread.runtimeVersion == 2 {
                 _ = try await refreshDelta()
             }
