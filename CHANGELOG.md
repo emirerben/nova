@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.13.0] - 2026-09-14
+
+### Changed
+- feat: keep matched songs as posting references (#1023) <!-- release-pr: 1023 -->
+
 ## [0.76.12.0] - 2026-09-14
 
 ### Changed
