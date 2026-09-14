@@ -64,6 +64,7 @@ import KriaMediaEngine
         let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 4,
             trimIn: 0, trimOut: 4, sourceDuration: 4, slotID: "slot")
         var document = EditorDocument(snapshot: NativeEditorUITestFixtures.captionVisuals.serverSnapshot)
+        document.captionCues = []
         document.visualBlocks[0].startS = 0
         document.visualBlocks[0].endS = 3
         document.visualBlocks[0].raw["media_kind"] = .string("image")
