@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.18.0] - 2026-09-14
+
+### Changed
+- fix(creator): allow retry after failed render identity changes (#1028) <!-- release-pr: 1028 -->
+
 ## [0.76.17.0] - 2026-09-14
 
 ### Changed
