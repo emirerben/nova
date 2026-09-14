@@ -362,12 +362,6 @@ private struct CreationWorkspaceView: View {
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
                 .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .opacity(initialConversationLoaded ? 1 : 0)
-                .overlay {
-                    if !initialConversationLoaded {
-                        ProgressView("Loading conversation…")
-                            .accessibilityIdentifier("conversation-loading")
-                    }
-                }
                 .task(id: initialConversationLoaded) {
                     guard initialConversationLoaded else { return }
                     scrollToEnd(proxy)
@@ -399,8 +393,10 @@ private struct CreationWorkspaceView: View {
             .allowsHitTesting(!projectsDrawerOpen)
         }
         .task {
-            await refreshCapabilities()
+            // History should not wait for the independent capability request.
+            async let capabilities: Void = refreshCapabilities()
             await pollUntilDismissed()
+            await capabilities
         }
         .onChange(of: currentProject.serverRevision) { _, revision in
             threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
