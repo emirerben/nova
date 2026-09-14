@@ -15,6 +15,20 @@
           { "type": "command", "command": "bash scripts/hooks/format-on-save.sh" }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash scripts/hooks/agent-runs.sh start claude" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash scripts/hooks/agent-runs.sh finish claude" }
+        ]
+      }
     ]
   }
 }
