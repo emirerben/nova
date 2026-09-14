@@ -30,8 +30,10 @@ final class SourceAudioOverlapParityTests: XCTestCase {
         let output = directory.appendingPathComponent("overlap.mp4")
         _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
             .export(recipe: recipe, assetURLs: urls, outputURL: output)
-        let firstExpected = try amplitude(try await decode(AVURLAsset(url: first), nil), 1, 431) * 0.4
-        let secondExpected = try amplitude(try await decode(AVURLAsset(url: second), nil), 1, 719) * 0.4
+        let firstPCM = try await decode(AVURLAsset(url: first), nil)
+        let secondPCM = try await decode(AVURLAsset(url: second), nil)
+        let firstExpected = try (0..<2).map { try amplitude(firstPCM, 1, 431, channel: $0) * 0.4 }
+        let secondExpected = try (0..<2).map { try amplitude(secondPCM, 1, 719, channel: $0) * 0.4 }
 
         for (label, asset, mix) in [("preview", preview.preview.playerItem.asset, preview.preview.playerItem.audioMix),
                                     ("export", AVURLAsset(url: output) as AVAsset, nil)] {
@@ -46,12 +48,14 @@ final class SourceAudioOverlapParityTests: XCTestCase {
         }
     }
 
-    private func assertBand(_ pcm: [Float], at time: Double, first: Double?, second: Double?, label: String) throws {
-        let a = try amplitude(pcm, time, 431), b = try amplitude(pcm, time, 719)
-        if let first { XCTAssertEqual(a, first, accuracy: 0.02, "\(label) first tone at \(time)s") }
-        else { XCTAssertLessThan(a, 0.01, "\(label) first tone at \(time)s") }
-        if let second { XCTAssertEqual(b, second, accuracy: 0.02, "\(label) second tone at \(time)s") }
-        else { XCTAssertLessThan(b, 0.01, "\(label) second tone at \(time)s") }
+    private func assertBand(_ pcm: [Float], at time: Double, first: [Double]?, second: [Double]?, label: String) throws {
+        for channel in 0..<2 {
+            let a = try amplitude(pcm, time, 431, channel: channel), b = try amplitude(pcm, time, 719, channel: channel)
+            if let first { XCTAssertEqual(a, first[channel], accuracy: 0.02, "\(label) first tone at \(time)s channel \(channel)") }
+            else { XCTAssertLessThan(a, 0.01, "\(label) first tone at \(time)s channel \(channel)") }
+            if let second { XCTAssertEqual(b, second[channel], accuracy: 0.02, "\(label) second tone at \(time)s channel \(channel)") }
+            else { XCTAssertLessThan(b, 0.01, "\(label) second tone at \(time)s channel \(channel)") }
+        }
     }
 
     private func amplitude(_ pcm: [Float], _ time: Double, _ frequency: Double, channel: Int = 0) throws -> Double {
