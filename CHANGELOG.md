@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.17.0] - 2026-09-14
+
+### Changed
+- fix: qualify default guided fonts for phone rendering (#1026) <!-- release-pr: 1026 -->
+
 ## [0.76.16.0] - 2026-09-14
 
 ### Changed
