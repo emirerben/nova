@@ -658,7 +658,24 @@ struct KriaAPI: KriaAPIClient {
     func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
-    func library() async throws -> [ProjectSummary] { try await request(path: "me/jobs", method: "GET", bodyData: nil, decode: LibraryResponse.self).jobs.map { $0.summary } }
+    func library() async throws -> [ProjectSummary] {
+        var summaries: [ProjectSummary] = []
+        var seenJobIDs = Set<String>()
+        var seenCursors = Set<String>()
+        var cursor: String?
+
+        while true {
+            var query = [URLQueryItem(name: "limit", value: "60")]
+            if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+            let page = try await request(path: "me/jobs", method: "GET", query: query, bodyData: nil, decode: LibraryResponse.self)
+            for job in page.jobs where seenJobIDs.insert(job.id).inserted {
+                summaries.append(job.summary)
+            }
+            guard let nextCursor = page.nextCursor else { return summaries }
+            guard seenCursors.insert(nextCursor).inserted else { throw APIError.invalidResponse }
+            cursor = nextCursor
+        }
+    }
     func createThread(message: String?) async throws -> CreationThread {
         let capabilities = try await creationCapabilities()
         let runtime = capabilities.preferredRuntimeVersion
@@ -735,6 +752,12 @@ struct KriaAPI: KriaAPIClient {
     func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type) async throws -> T {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
+        // URLComponents preserves `+` in query-item values, while FastAPI
+        // decodes a literal plus as a space. Library cursors are ISO-8601
+        // timestamps and commonly contain `+00:00`, so retain their value.
+        if let percentEncodedQuery = components?.percentEncodedQuery {
+            components?.percentEncodedQuery = percentEncodedQuery.replacingOccurrences(of: "+", with: "%2B")
+        }
         guard let url = components?.url else { throw APIError.invalidResponse }
         var request = URLRequest(url: url); request.httpMethod = method; request.setValue("application/json", forHTTPHeaderField: "Accept")
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
@@ -791,7 +814,7 @@ struct KriaAPI: KriaAPIClient {
     }
 }
 private struct EmptyProjectResponse: Decodable {}
-private struct LibraryResponse: Decodable { let jobs: [LibraryJob]; struct LibraryJob: Decodable { let id: String; let mode: String; let status: String; let posterURL: String?; let createdAt: Date; enum CodingKeys: String, CodingKey { case id, mode, status; case posterURL = "poster_url"; case createdAt = "created_at" }; var summary: ProjectSummary { ProjectSummary(id: UUID(uuidString: id) ?? UUID(), title: mode.capitalized, status: status == "ready" ? .ready : status == "failed" ? .failed : .rendering, updatedAt: createdAt, posterURL: posterURL.flatMap(URL.init(string:))) } } }
+private struct LibraryResponse: Decodable { let jobs: [LibraryJob]; let nextCursor: String?; enum CodingKeys: String, CodingKey { case jobs; case nextCursor = "next_cursor" }; struct LibraryJob: Decodable { let id: String; let mode: String; let status: String; let posterURL: String?; let createdAt: Date; enum CodingKeys: String, CodingKey { case id, mode, status; case posterURL = "poster_url"; case createdAt = "created_at" }; var summary: ProjectSummary { ProjectSummary(id: UUID(uuidString: id) ?? UUID(), title: mode.capitalized, status: status == "ready" ? .ready : status == "failed" ? .failed : .rendering, updatedAt: createdAt, posterURL: posterURL.flatMap(URL.init(string:))) } } }
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
 private struct ApprovalResponse: Decodable {}
 private struct RevokeResponse: Decodable { let revoked: Bool? }

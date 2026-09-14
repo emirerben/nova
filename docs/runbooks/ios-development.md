@@ -76,6 +76,13 @@ contains the approved DynaPuff wordmark and shared outline navigation icons.
 The in-app wordmark is a transparent, tightly cropped vector PDF in `KriaWordmark.imageset`, exported from the approved Paper icon artwork (Main Brand Assets, ETC-0 / ETD-0). It preserves the corrected letter spacing and blue `#9BCAFF` without SwiftUI font metrics or per-letter offsets. The opaque 1024px app icon uses the same artwork on white `#FFFFFF`; iOS supplies the rounded mask. Paper PDF export includes a gray canvas rectangle: remove that export-only background before producing the transparent wordmark. The original DynaPuff font and OFL license remain bundled.
 
 The chat workspace owns the project drawer, Gallery, and account presentation.
+Gallery follows `/me/jobs` cursors until all pages are loaded, using the API's
+60-row page limit and retaining server order while deduplicating job IDs. A
+failed refresh preserves the prior library; an initial failure shows recovery
+instead of substituting preview videos, including in Debug builds. For an
+authenticated, count-only device check, launch Debug with
+`-native-library-audit -native-library-inventory-audit` and inspect
+`Library/Caches/native-library-audit.json`; this does not open videos or render.
 Project actions reuse the authenticated creation-thread PATCH/DELETE contracts,
 including revision checks and rename idempotency. Deletion is confirmed and
 blocked during rendering or pending uploads. Microphone chat input is deferred.

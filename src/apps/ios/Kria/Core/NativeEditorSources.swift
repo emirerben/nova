@@ -512,6 +512,14 @@ enum NativePreviewDiagnostics {
                 }
                 rows.append(["stage": "complete"]); save(); return
             }
+            if ProcessInfo.processInfo.arguments.contains("-native-library-inventory-audit") {
+                let library = try await api.library()
+                rows.append(["stage": "inventory", "jobs": String(library.count),
+                    "uniqueJobs": String(Set(library.map(\.id)).count),
+                    "readyLibraryJobs": String(library.filter { $0.status == .ready }.count),
+                    "time": Date().ISO8601Format()])
+                rows.append(["stage": "complete"]); save(); return
+            }
             if ProcessInfo.processInfo.arguments.contains("-native-library-link-audit") {
                 struct Links: Decodable {
                     struct Row: Decodable {
