@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.22.0] - 2026-09-14
+
+### Changed
+- feat(ios): automate external TestFlight releases (#1031) <!-- release-pr: 1031 -->
+
 ## [0.76.21.0] - 2026-09-14
 
 ### Changed
