@@ -1598,6 +1598,7 @@ async def test_cleanup_application_recovery_is_pinned_to_failed_job_and_reaches_
         "speech_cleanup_recovery_job_id": job_id,
         "speech_cleanup_recovery_generation_id": generation,
         "speech_cleanup_recovery_analysis_id": analysis_id,
+        "retry_target_job_id": None,
     }
     routes.reconcile_render_state.assert_awaited_once_with(db, session)
     repair_projection.assert_not_awaited()
@@ -1705,6 +1706,7 @@ async def test_publish_failure_retry_preserves_exact_preflight_contract(
         "speech_cleanup_recovery_job_id": job_id,
         "speech_cleanup_recovery_generation_id": generation,
         "speech_cleanup_recovery_analysis_id": analysis_id,
+        "retry_target_job_id": None,
     }
     routes.reconcile_render_state.assert_awaited_once_with(db, session)
     assert session.status == "awaiting_confirmation"
@@ -1773,6 +1775,7 @@ async def test_generic_publish_failure_retries_without_inventing_cleanup_recover
         "speech_cleanup_recovery_job_id": None,
         "speech_cleanup_recovery_generation_id": None,
         "speech_cleanup_recovery_analysis_id": None,
+        "retry_target_job_id": job_id,
     }
     routes.reconcile_render_state.assert_awaited_once_with(db, session)
 

@@ -43,6 +43,13 @@ or presents one opinionated direction: format, audio, story beats, hook, caption
 pacing, and available treatments. Nothing renders until **Render this** is clicked.
 
 After confirmation, the server re-resolves the manifest and rejects stale plans.
+For an explicit retry of the session's exact owned failed Job, the failed render's
+own `current_edit` identity may differ from the confirmed baseline. Retry restores
+only that pinned identity for comparison and still requires the complete live
+manifest hash to match; footage, capabilities, catalogs, ownership, and generation
+changes remain fenced. New plans retain the baseline edit snapshot. Legacy plans
+can recover it from a session-scoped Creator agent input whose recomputed manifest
+hash matches the saved plan; missing or inconsistent evidence remains a conflict.
 For guided-compatible stories it translates the creative thesis into the existing
 guided planner's `ProposalBrief`; that specialist receives a deterministic,
 render-capable shortlist of at most 32 media sources under per-call aliases such

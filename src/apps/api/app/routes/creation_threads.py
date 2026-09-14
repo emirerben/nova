@@ -3905,6 +3905,11 @@ async def action_thread(
             speech_cleanup_recovery_job_id=recovery_job_id,
             speech_cleanup_recovery_generation_id=recovery_generation_id,
             speech_cleanup_recovery_analysis_id=recovery_analysis_id,
+            retry_target_job_id=(
+                uuid.UUID(str(current_job.id))
+                if body.action == "retry" and recovery_action is None and current_job is not None
+                else None
+            ),
         )
         # The Creator Agent controller owns and commits its transaction. Lock
         # the thread again before projecting the new Job/session so this
