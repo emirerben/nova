@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.23.0] - 2026-09-14
+
+### Changed
+- fix(repo): unblock TestFlight checkout (#1032) <!-- release-pr: 1032 -->
+
 ## [0.76.22.0] - 2026-09-14
 
 ### Changed
