@@ -30,13 +30,19 @@ import KriaMediaEngine
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
             asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: fingerprint, duration: 6),
             url: URL(fileURLWithPath: "/fixture/original.mp4"))
-        let clips = (0..<2).map { index in EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0,
-            start: Double(index * 3), end: Double((index + 1) * 3), trimIn: 0, trimOut: 3,
-            sourceDuration: 6, slotID: "slot-\(index)") }
+        var clips: [EditorClip] = []
+        for index in 0..<2 {
+            let start = Double(index) * 3
+            clips.append(EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0,
+                start: start, end: start + 3, trimIn: 0, trimOut: 3,
+                sourceDuration: 6, slotID: "slot-\(index)"))
+        }
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         for rate in [0.5, 2.0] {
-            let document = EditorDocument(clips: (0..<2).map { index in .init(id: "slot-\(index)", clipIndex: 0,
-                inS: 0, durationS: 3, raw: index == 0 ? ["playback_rate": .number(rate)] : [:]) })
+            let first = EditorTimelineSlot(id: "slot-0", clipIndex: 0, inS: 0, durationS: 3,
+                raw: ["playback_rate": .number(rate)])
+            let second = EditorTimelineSlot(id: "slot-1", clipIndex: 0, inS: 0, durationS: 3)
+            let document = EditorDocument(clips: [first, second])
             let recipe = try compiler.compile(document: document, clips: clips, items: [], sources: [0: source]).recipe
             let rendered = try XCTUnwrap(recipe.tracks.first(where: { $0.kind == .video })?.clips)
             XCTAssertEqual(rendered[0].duration, 3, accuracy: 0.0001)
