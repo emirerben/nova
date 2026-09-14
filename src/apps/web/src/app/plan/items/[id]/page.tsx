@@ -1,5 +1,7 @@
 "use client";
 
+import { SongReferenceNotice } from "@/components/SongReferenceNotice";
+
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useParams, useSearchParams } from "next/navigation";
@@ -3721,6 +3723,7 @@ function FocusedResults({
           : "lg:row-start-1 lg:row-end-3 lg:pt-3"
       }`}
     >
+      {variant?.music_playback_mode === "reference_only" && <SongReferenceNotice reference={variant.song_reference} />}
       <TikTokReleaseRail
         connection={releaseTikTokConnection}
         publication={latestTikTokPublication}

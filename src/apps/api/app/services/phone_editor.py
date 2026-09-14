@@ -14,6 +14,7 @@ from app.pipeline.guided_story import (
     GuidedStoryError,
     GuidedStoryExecutionPlan,
     compile_guided_runtime_plan,
+    song_reference_variant_fields,
 )
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.services.device_render import device_status, pin_device_request
@@ -73,6 +74,7 @@ def prepare_phone_editor_commit(
                 variant["render_status"] = "awaiting_device"
                 variant["render_destination"] = "device"
                 variant["duration_s"] = plan["resolved_duration_s"]
+                variant.update(song_reference_variant_fields(plan))
         staged.status = "awaiting_device"
     except (KeyError, StopIteration, TypeError, ValueError, GuidedStoryError) as exc:
         raise HTTPException(422, detail={"code": "unsupported_phone_edit"}) from exc

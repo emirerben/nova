@@ -748,6 +748,7 @@ def test_guided_text_reburn_pins_base_and_refreshes_output_receipt(monkeypatch) 
         "actual_duration_s": 15,
         "music_applied": False,
         "music": None,
+        "source_audio_preserved": False,
         "output": {
             "width": 1080,
             "height": 1920,
@@ -876,6 +877,9 @@ def test_guided_text_reburn_pins_base_and_refreshes_output_receipt(monkeypatch) 
         settings=gb.settings,
     )
     persisted = {**existing, **result}
+    from app.pipeline.guided_story import song_reference_variant_fields
+
+    persisted.update(song_reference_variant_fields(plan))
 
     assert exact_downloads == [(base_path, "base-gen")]
     assert result["render_receipt"]["output_storage"] == {
@@ -1422,8 +1426,9 @@ def test_first_guided_music_pin_failure_has_stable_code(monkeypatch) -> None:
     monkeypatch.setattr(
         guided_story,
         "validate_guided_snapshot",
-        lambda _raw: (4, "d" * 64, SimpleNamespace()),
+        lambda _raw: (4, "d" * 64, SimpleNamespace(narration=None)),
     )
+    monkeypatch.setattr(guided_story, "COMPILER_VERSION", 4)
     monkeypatch.setattr(guided_story, "matcher_clip_metas", lambda _snapshot: [])
     monkeypatch.setattr(
         gb,
@@ -1433,6 +1438,7 @@ def test_first_guided_music_pin_failure_has_stable_code(monkeypatch) -> None:
             title="Corfu Drift",
             audio_gcs_path="music/corfu.m4a",
             track_config={"best_start_s": 2.0},
+            beat_timestamps_s=[],
         ),
     )
     monkeypatch.setattr(

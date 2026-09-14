@@ -17,6 +17,22 @@ describe("resolveVirtualPreviewAudio", () => {
     soundMuted: false,
   } as const;
 
+  it("keeps deliberately suppressed original audio silent without a song lane", () => {
+    expect(resolveVirtualPreviewAudio({ ...base, sourceAudioPreserved: false, clipDirty: true }))
+      .toEqual({ active: true, kind: "native", muted: true, startS: 0, url: null });
+  });
+
+  it("retains narration when original clip audio is suppressed", () => {
+    expect(resolveVirtualPreviewAudio({ ...base, sourceAudioPreserved: false, narrationApplied: true }))
+      .toMatchObject({ active: true, kind: "rendered", muted: false, url: base.baseVideoUrl });
+  });
+
+  it("allows an explicitly selected source bed over the original-audio policy", () => {
+    expect(resolveVirtualPreviewAudio({ ...base, sourceAudioPreserved: false,
+      sourceAudioMix: "source_a", sourceAudioOptions: [{ mix: "source_a", audio_url: "source.m4a" }],
+    })).toMatchObject({ active: true, kind: "source", muted: false, url: "source.m4a" });
+  });
+
   it("keeps selected uploaded/source audio authoritative after a visual edit", () => {
     expect(
       resolveVirtualPreviewAudio({

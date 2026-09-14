@@ -40,8 +40,8 @@ from app.schemas.edit_proposal import (
 
 log = structlog.get_logger()
 
-COMPILER_VERSION = 4
-VOICEOVER_COMPILER_VERSION = 5
+COMPILER_VERSION = 6
+VOICEOVER_COMPILER_VERSION = 6
 VARIANT_ID = "guided_story"
 _FRAME_S = 1.0 / 30.0
 _ALLOCATION_EPSILON_S = 0.0005
@@ -142,12 +142,34 @@ class GuidedStoryMusic(BaseModel):
     level: float = Field(default=1.0, ge=0, le=1.0)
 
 
+class GuidedStorySongReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    delivery: Literal["external_platform"] = "external_platform"
+    track_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    artist: str | None = None
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> GuidedStorySongReference:
+        if (
+            not math.isfinite(self.start_s)
+            or not math.isfinite(self.end_s)
+            or self.end_s <= self.start_s
+        ):
+            raise ValueError("song reference interval must be finite and ordered")
+        return self
+
+
 class GuidedStoryExecutionPlan(BaseModel):
     """Strict JSONB contract reused verbatim on worker redelivery."""
 
     model_config = ConfigDict(extra="forbid")
 
-    compiler_version: Literal[1, 2, 3, 4, 5]
+    compiler_version: Literal[1, 2, 3, 4, 5, 6]
     proposal_version: int = Field(ge=1)
     media_digest: str = Field(min_length=64, max_length=64)
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
@@ -179,6 +201,14 @@ class GuidedStoryExecutionPlan(BaseModel):
     montage_audio: dict[str, Any] | None = None
     typography: GuidedStoryTypography
     music: GuidedStoryMusic | None = None
+    song_reference: GuidedStorySongReference | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Internal replay fence; deliberately excluded from the public reference
+    # payload so clients only receive the external-platform identity/timing.
+    song_reference_track_duration_s: float | None = Field(
+        default=None, gt=0, exclude_if=lambda value: value is None
+    )
     # Optional generation-pinned creator narration. Legacy plans omit this
     # field and retain their existing audio path exactly.
     narration: NarrationTrack | None = Field(
@@ -207,6 +237,29 @@ class GuidedStoryExecutionPlan(BaseModel):
 
     @model_validator(mode="after")
     def validate_internal_receipt_contract(self) -> GuidedStoryExecutionPlan:
+        if self.compiler_version >= 6 and self.music is not None:
+            raise ValueError("reference-only song plans cannot carry mixed music")
+        if self.compiler_version < 6 and (
+            self.song_reference is not None or self.song_reference_track_duration_s is not None
+        ):
+            raise ValueError("legacy song plans cannot carry an external reference")
+        if (self.song_reference is None) != (self.song_reference_track_duration_s is None):
+            raise ValueError("song reference requires its pinned catalog duration")
+        if self.song_reference is not None:
+            catalog_duration = self.song_reference_track_duration_s
+            if catalog_duration is None or not math.isfinite(catalog_duration):
+                raise ValueError("song reference requires a finite catalog duration")
+            if self.song_reference.end_s > catalog_duration + 0.001:
+                raise ValueError("song reference exceeds the pinned catalog duration")
+            if (
+                abs(
+                    self.song_reference.end_s
+                    - self.song_reference.start_s
+                    - self.resolved_duration_s
+                )
+                > 0.001
+            ):
+                raise ValueError("song reference must cover the resolved video duration")
         if self.editor_revision_number is None and not self.text_elements:
             raise ValueError("approved guided stories require at least one text element")
         if len(self.selected_media_ids) != len(set(self.selected_media_ids)):
@@ -295,6 +348,9 @@ class GuidedStoryRenderReceipt(BaseModel):
     output_orientation_reason: str = "Legacy guided stories used the portrait canvas."
     music_applied: bool
     music: GuidedStoryMusic | None
+    song_reference: GuidedStorySongReference | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     music_window_applied: dict[str, float] | None = None
     output: GuidedStoryOutputReceipt
     base_storage: GuidedStoryStorageReceipt | None = None
@@ -313,6 +369,9 @@ class GuidedStoryRenderReceipt(BaseModel):
     renderer_version: str | None = None
     effect_schema_version: str | None = None
     source_audio_options: list[dict[str, Any]] = Field(default_factory=list)
+    source_audio_preserved: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     narration: NarrationTrack | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -338,6 +397,8 @@ class GuidedStoryRenderReceipt(BaseModel):
             raise ValueError("receipt media kinds do not add up to its media count")
         if self.music_applied != (self.music is not None):
             raise ValueError("receipt music identity does not match application state")
+        if self.music is not None and self.song_reference is not None:
+            raise ValueError("receipt cannot carry both mixed music and an external reference")
         if self.narration_applied != (self.narration is not None):
             raise ValueError("receipt narration identity does not match application state")
         if self.music is not None and self.music_window_applied is not None:
@@ -604,6 +665,56 @@ def _music_payload(track: dict[str, Any] | None, *, duration_s: float) -> dict[s
     if payload.get("end_s") is None:
         payload["end_s"] = round(float(payload.get("start_s") or 0.0) + duration_s, 3)
     return payload
+
+
+def song_reference_variant_fields(plan: dict[str, Any]) -> dict[str, Any]:
+    """Public metadata for new plans; legacy soundtrack contracts stay untouched."""
+    if plan.get("compiler_version", 0) < 6:
+        return {}
+    return {
+        "music_playback_mode": "reference_only",
+        "song_reference": plan.get("song_reference"),
+        "music_track_id": None,
+        "source_audio_preserved": bool(
+            (plan.get("montage_audio") or {}).get("preserve_source_audio")
+        ),
+    }
+
+
+def _song_reference(track: dict[str, Any] | None, *, duration_s: float) -> dict[str, Any] | None:
+    """Persist matched-song identity and timing without making it render input."""
+    if track is None:
+        return None
+    track_id = str(track.get("track_id") or "")
+    title = str(track.get("title") or "")
+    artist = str(track.get("artist") or "")
+    if not track_id or not title or not math.isfinite(duration_s) or duration_s <= 0:
+        return None
+    catalog_raw = track.get("catalog_duration_s")
+    if catalog_raw is None:
+        catalog_raw = track.get("duration_s")
+    try:
+        catalog_duration = float(catalog_raw)
+        requested_start = float(track.get("start_s") if track.get("start_s") is not None else 0.0)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(catalog_duration) or catalog_duration <= 0:
+        return None
+    if not math.isfinite(requested_start) or requested_start < 0:
+        return None
+    if requested_start + duration_s > catalog_duration + 0.001:
+        return None
+    start_s = requested_start
+    end_s = start_s + duration_s
+    if end_s > catalog_duration + 0.001:
+        return None
+    return GuidedStorySongReference(
+        track_id=track_id,
+        title=title,
+        artist=artist or None,
+        start_s=round(start_s, 3),
+        end_s=round(end_s, 3),
+    ).model_dump(mode="json")
 
 
 def validate_guided_snapshot(raw: object) -> tuple[int, str, EditProposalSnapshot]:
@@ -1072,7 +1183,7 @@ def _text_elements(
     beat_windows: list[dict],
     policy: dict,
     *,
-    compiler_version: Literal[1, 2, 3, 4, 5],
+    compiler_version: Literal[1, 2, 3, 4, 5, 6],
 ) -> list[dict]:
     total_s = (
         canonical_narration_duration_s(snapshot.narration.duration_s)
@@ -1310,7 +1421,7 @@ def _compile_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
-    compiler_version: Literal[1, 2, 3, 4, 5],
+    compiler_version: Literal[1, 2, 3, 4, 5, 6],
 ) -> dict[str, Any]:
     """Compile a deterministic plan with an explicitly versioned allocator."""
 
@@ -1438,7 +1549,12 @@ def _compile_execution_plan_version(
                 target_s=target_duration_s,
                 mixed_media_timing=mixed_timing,
             )
-        normalized_track = _music_payload(track, duration_s=cursor)
+        normalized_track = (
+            _music_payload(track, duration_s=cursor) if compiler_version < 6 else None
+        )
+        song_reference = (
+            _song_reference(track, duration_s=cursor) if compiler_version >= 6 else None
+        )
         try:
             compiled = GuidedStoryExecutionPlan(
                 compiler_version=compiler_version,
@@ -1474,6 +1590,12 @@ def _compile_execution_plan_version(
                     }
                 ),
                 music=normalized_track,
+                song_reference=song_reference,
+                song_reference_track_duration_s=(
+                    float(track.get("catalog_duration_s") or track.get("duration_s"))
+                    if song_reference is not None and track is not None
+                    else None
+                ),
                 narration=snapshot.narration,
             )
         except Exception as exc:  # noqa: BLE001
@@ -1591,7 +1713,8 @@ def _compile_execution_plan_version(
             mixed_media_timing=mixed_timing,
         )
 
-    normalized_track = _music_payload(track, duration_s=cursor)
+    normalized_track = _music_payload(track, duration_s=cursor) if compiler_version < 6 else None
+    song_reference = _song_reference(track, duration_s=cursor) if compiler_version >= 6 else None
 
     try:
         compiled = GuidedStoryExecutionPlan(
@@ -1639,6 +1762,12 @@ def _compile_execution_plan_version(
                 else {"style_id": "guided_story_v1", "font": snapshot.font_family or "Inter-Bold"}
             ),
             music=normalized_track,
+            song_reference=song_reference,
+            song_reference_track_duration_s=(
+                float(track.get("catalog_duration_s") or track.get("duration_s"))
+                if song_reference is not None and track is not None
+                else None
+            ),
             narration=snapshot.narration,
         )
     except Exception as exc:  # noqa: BLE001
@@ -1736,6 +1865,23 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
     validation_track = (
         validated.music.model_dump(mode="json") if validated.music is not None else None
     )
+    if validated.song_reference is not None:
+        reference = validated.song_reference.model_dump(mode="json")
+        reference["catalog_duration_s"] = (
+            validated.song_reference_track_duration_s or reference["end_s"]
+        )
+        reference["beat_timestamps_s"] = []
+        validation_track = reference
+    elif (
+        validated.compiler_version >= 6
+        and validation_track is None
+        and validated.direction == "fast_montage"
+        and any(moment.beat_time_s is not None for moment in validated.story_timeline)
+    ):
+        # Older test/fixture match payloads may omit catalog identity while
+        # still supplying beat data. Preserve the deterministic snap inputs
+        # without manufacturing a persisted song reference.
+        validation_track = {"start_s": 0.0, "beat_timestamps_s": []}
     if validation_track is not None and validated.direction == "fast_montage":
         # Beat timestamps are compiler-only input and intentionally absent from
         # the persisted music receipt. Reconstruct only the exact beats that
@@ -2092,7 +2238,49 @@ def compile_guided_runtime_plan(
         selected_ids = list(dict.fromkeys(moment["media_id"] for moment in moments))
         audio = normalized_revision.get("audio") or {"mode": "none"}
         music = None
-        if audio.get("mode") == "track":
+        song_reference = (
+            canonical.song_reference.model_dump(mode="json") if canonical.song_reference else None
+        )
+        if canonical.compiler_version >= 6:
+            if audio.get("mode") == "track":
+                if (
+                    song_reference is None
+                    or str(audio.get("track_id")) != song_reference["track_id"]
+                ):
+                    raise GuidedStoryError(
+                        "guided_story_revision_invalid",
+                        "The revision song does not match the approved reference.",
+                    )
+                start_s = float(
+                    audio["start_s"]
+                    if audio.get("start_s") is not None
+                    else song_reference["start_s"]
+                )
+            else:
+                start_s = float(song_reference["start_s"]) if song_reference is not None else 0.0
+            if song_reference is not None:
+                revised_duration_s = max(
+                    float(segment["output_end_s"]) for segment in normalized_revision["segments"]
+                )
+                end_s = start_s + revised_duration_s
+                # The public reference intentionally carries no audio URL or
+                # catalog duration. The internal catalog-duration fence is the
+                # upper bound; reject an edit that cannot fit rather than
+                # silently shifting or clamping its timing.
+                catalog_end = float(
+                    canonical.song_reference_track_duration_s
+                    if canonical.song_reference_track_duration_s is not None
+                    else song_reference["end_s"]
+                )
+                if start_s < 0 or end_s > catalog_end + 0.001:
+                    raise GuidedStoryError(
+                        "guided_story_revision_invalid",
+                        "The revised story duration does not fit the pinned song reference.",
+                    )
+                song_reference = GuidedStorySongReference(
+                    **{**song_reference, "start_s": start_s, "end_s": end_s}
+                ).model_dump(mode="json")
+        elif audio.get("mode") == "track":
             music = {
                 "track_id": audio["track_id"],
                 "title": audio["title"],
@@ -2168,6 +2356,7 @@ def compile_guided_runtime_plan(
                     element.model_dump(mode="json") for element in projected_labels
                 ],
                 "music": music,
+                "song_reference": song_reference,
                 "editor_revision_number": normalized_revision["revision_number"],
                 "editor_revision_hash": normalized_revision["state_hash"],
                 "editor_sound_effects": list(normalized_revision.get("sound_effects") or []),
@@ -2880,6 +3069,104 @@ def _render_moments(
     return outputs, receipts
 
 
+def _mux_guided_source_audio(
+    assembled: str,
+    plan: dict[str, Any],
+    local_by_id: dict[str, str],
+    output: str,
+) -> str:
+    """Restore approved source audio after cloud's video-only transition join."""
+    if not bool((plan.get("montage_audio") or {}).get("preserve_source_audio")):
+        return assembled
+    inputs: list[str] = []
+    branches: list[str] = []
+    branch_labels: list[str] = []
+    for index, moment in enumerate(plan.get("story_timeline") or []):
+        source = local_by_id.get(moment.get("media_id"))
+        if moment.get("kind") != "video":
+            continue
+        if not source:
+            raise GuidedStoryError(
+                "guided_story_render_failed", "An approved video source is unavailable."
+            )
+        try:
+            probe = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "a:0",
+                    "-show_entries",
+                    "stream=index",
+                    "-of",
+                    "csv=p=0",
+                    source,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise GuidedStoryError(
+                "guided_story_render_failed", "Approved source audio could not be inspected."
+            ) from exc
+        if not probe.stdout.strip():
+            continue
+        input_index = len(inputs) + 1
+        inputs.append(source)
+        branch_labels.append(f"sa{index}")
+        start = float(moment.get("source_start_s") or 0.0)
+        end = float(moment.get("source_end_s") or start)
+        rate = float(moment.get("playback_rate") or 1.0)
+        filters = [f"[{input_index}:a]atrim=start={start}:end={end}", "asetpts=PTS-STARTPTS"]
+        if rate != 1.0:
+            from app.pipeline.reframe import _atempo_filter  # noqa: PLC0415
+
+            filters.append(_atempo_filter(rate))
+        delay = max(0, round(float(moment.get("output_start_s") or 0.0) * 1000))
+        filters.append(f"adelay={delay}:all=1")
+        branches.append(",".join(filters) + f"[sa{index}]")
+    if not branches:
+        _attach_silent_aac(assembled, output)
+        return output
+    duration = float(plan["resolved_duration_s"])
+    mix_inputs = "".join(f"[{label}]" for label in branch_labels)
+    raw_level = plan.get("editor_audio_level")
+    level = float(raw_level if raw_level is not None else 1.0)
+    filter_complex = ";".join(branches) + (
+        f";{mix_inputs}amix=inputs={len(branches)}:duration=longest:normalize=0,"
+        f"asetpts=N/SR/TB,atrim=duration={duration},apad=whole_dur={duration},"
+        f"asetpts=PTS-STARTPTS,volume={level}[aout]"
+    )
+    command = ["ffmpeg", "-y", "-i", assembled]
+    for source in inputs:
+        command.extend(["-i", source])
+    command.extend(
+        [
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "0:v:0",
+            "-map",
+            "[aout]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            output,
+        ]
+    )
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise GuidedStoryError(
+            "guided_story_render_failed", "Approved source audio could not be restored."
+        ) from exc
+    return output
+
+
 def _verify_receipt(
     plan: dict[str, Any],
     media_receipts: list[dict],
@@ -2990,6 +3277,7 @@ def _verify_receipt(
         "output_orientation_reason": plan["output_orientation_reason"],
         "music_applied": music_applied,
         "music": plan.get("music") if music_applied else None,
+        "song_reference": plan.get("song_reference"),
         "music_window_applied": (
             {
                 "start_s": float(plan["music"].get("start_s") or 0.0),
@@ -3017,6 +3305,11 @@ def _verify_receipt(
         "moment_stages": moment_receipts,
         "text_stages": text_receipts,
         "source_audio_options": list(plan.get("source_audio_options") or []),
+        "source_audio_preserved": (
+            bool((plan.get("montage_audio") or {}).get("preserve_source_audio"))
+            if plan.get("compiler_version", 0) >= 6
+            else None
+        ),
     }
     if plan.get("editor_revision_number") is not None:
         receipt_data["approved_text_ids"] = list(
@@ -3288,6 +3581,19 @@ def validate_ready_result(
         and receipt.expected_moment_ids == expected_moments
         and receipt.expected_media_ids == typed_plan.selected_media_ids
         and receipt.music == typed_plan.music
+        and receipt.song_reference == typed_plan.song_reference
+        and all(
+            result.get(key) == value
+            for key, value in song_reference_variant_fields(
+                typed_plan.model_dump(mode="json")
+            ).items()
+        )
+        and (
+            typed_plan.compiler_version < 6
+            or receipt.source_audio_preserved
+            == bool((typed_plan.montage_audio or {}).get("preserve_source_audio"))
+        )
+        and (typed_plan.compiler_version < 6 or receipt.music_applied is False)
         and staged_media == expected_media_stages
         and staged_moments == expected_moment_stages
         and cadence_receipt_ok
@@ -3865,6 +4171,13 @@ def render_execution_plan(
             expected_duration_s=float(plan["resolved_duration_s"]),
             canvas=canvas,
         )
+    if plan.get("compiler_version", 0) >= 6:
+        assembled = _mux_guided_source_audio(
+            assembled,
+            plan,
+            local_by_id,
+            os.path.join(tmpdir, "guided_story_source_audio.mp4"),
+        )
     if (plan.get("montage_audio") or {}).get("preview_source_beds"):
         plan["source_audio_options"] = _build_montage_audio_options(
             plan,
@@ -4050,6 +4363,7 @@ def render_execution_plan(
         "resolved_archetype": VARIANT_ID,
         "music_track_id": str(track.id) if track is not None else None,
         "track_title": str(music["title"]) if music else None,
+        **song_reference_variant_fields(plan),
         "music_start_s": float(music.get("start_s") or 0.0) if music else None,
         "style_set_id": plan["typography"]["style_id"],
         "intro_text": plan["text_elements"][0]["text"] if plan["text_elements"] else "",

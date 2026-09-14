@@ -2398,6 +2398,9 @@ export interface TextPlacementCandidate {
 }
 
 export interface PlanItemVariant {
+  source_audio_preserved?: boolean;
+  music_playback_mode?: "embedded" | "reference_only";
+  song_reference?: import("./generative-api").SongReference | null;
   variant_id: string;
   output_url: string | null;
   poster_path?: string | null;

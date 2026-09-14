@@ -3606,7 +3606,10 @@ def _run_generative_job_impl(
 def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int | None) -> None:
     """Use cloud decisions only; never enter a media renderer for proxy sources."""
     from app.kria.device_render import make_device_request  # noqa: PLC0415
-    from app.pipeline.guided_story import GuidedStoryExecutionPlan  # noqa: PLC0415
+    from app.pipeline.guided_story import (  # noqa: PLC0415
+        GuidedStoryExecutionPlan,
+        song_reference_variant_fields,
+    )
     from app.pipeline.phone_guided_plan import compile_phone_guided_plan  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
@@ -3678,6 +3681,7 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
                 "proposal_version": raw_plan["proposal_version"],
                 "media_digest": raw_plan["media_digest"],
                 "orientation": raw_plan.get("output_orientation", "portrait"),
+                **song_reference_variant_fields(raw_plan),
                 "ok": False,
             }
         ]
@@ -3982,29 +3986,46 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
             else _match_best_track(matcher_clip_metas(snapshot), job_id=job_id)
         )
         track_payload = None
-        if matched is not None and matched.audio_gcs_path:
-            from app.storage import object_metadata  # noqa: PLC0415
+        from app.pipeline.guided_story import COMPILER_VERSION  # noqa: PLC0415
 
+        matched_duration = getattr(matched, "duration_s", None) if matched is not None else None
+        if matched is not None and (
+            (matched_duration is not None and matched_duration > 0) or COMPILER_VERSION < 6
+        ):
             config = matched.track_config or {}
-            try:
-                audio_metadata = object_metadata(matched.audio_gcs_path)
-            except Exception as exc:  # noqa: BLE001
-                from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
-
-                raise GuidedStoryError(
-                    "guided_story_music_missing",
-                    "The music selected for this edit could not be pinned safely.",
-                ) from exc
+            requested_start = float(config.get("best_start_s", 0.0) or 0.0)
+            if matched_duration is not None and getattr(snapshot, "duration_s", None):
+                requested_start = min(
+                    max(0.0, requested_start),
+                    max(0.0, float(matched_duration) - float(snapshot.duration_s)),
+                )
             track_payload = {
                 "track_id": str(matched.id),
                 "title": str(matched.title),
-                "audio_gcs_path": str(matched.audio_gcs_path),
-                "generation": audio_metadata.generation,
-                "start_s": round(float(config.get("best_start_s", 0.0) or 0.0), 3),
+                "artist": getattr(matched, "artist", None),
+                "start_s": round(requested_start, 3),
                 "beat_timestamps_s": [
                     round(float(beat), 3) for beat in (matched.beat_timestamps_s or [])
                 ],
             }
+            if matched_duration is not None and matched_duration > 0:
+                track_payload["catalog_duration_s"] = float(matched_duration)
+            if COMPILER_VERSION < 6 and getattr(matched, "audio_gcs_path", None):
+                from app.storage import object_metadata  # noqa: PLC0415
+
+                try:
+                    audio_metadata = object_metadata(matched.audio_gcs_path)
+                except Exception as exc:  # noqa: BLE001
+                    from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+                    raise GuidedStoryError(
+                        "guided_story_music_missing",
+                        "The music selected for this edit could not be pinned safely.",
+                    ) from exc
+                track_payload.update(
+                    audio_gcs_path=str(matched.audio_gcs_path),
+                    generation=audio_metadata.generation,
+                )
         candidate = materialize_licensed_sfx(
             materialize_context_labels(compile_execution_plan(guided_snapshot, track=track_payload))
         )
@@ -4068,6 +4089,8 @@ def _claim_guided_story_attempt(
 ) -> tuple[str, dict[str, Any] | None]:
     """Claim one strict render, resume the same delivery, or reuse verified output."""
 
+    from app.pipeline.guided_story import song_reference_variant_fields  # noqa: PLC0415
+
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None or _cancelled_job_write_rejected(
@@ -4119,6 +4142,7 @@ def _claim_guided_story_attempt(
                 "output_orientation_reason",
                 "Legacy guided stories used the portrait canvas.",
             ),
+            **song_reference_variant_fields(plan),
             "render_generation_id": attempt_id,
             "render_claimed_at": now,
             "render_heartbeat_at": now,
@@ -13367,6 +13391,15 @@ def _update_variant_entry(
     """
     if cleanup_followup not in {"required", "none", "media_layers", "sfx_layer"}:
         raise ValueError(f"invalid cleanup_followup: {cleanup_followup}")
+    receipt = patch.get("render_receipt")
+    if isinstance(receipt, dict) and receipt.get("source_audio_preserved") is not None:
+        patch = {
+            **patch,
+            "music_track_id": None,
+            "music_playback_mode": "reference_only",
+            "song_reference": copy.deepcopy(receipt.get("song_reference")),
+            "source_audio_preserved": receipt.get("source_audio_preserved"),
+        }
     enriched_patch, generated_poster_paths = _attach_variant_posters(patch, job_id=job_id)
     patch.update(
         {
@@ -24919,6 +24952,15 @@ def _finalize_job_decision(
                     "text_mode": r["text_mode"],
                     "music_track_id": r.get("music_track_id"),
                     "track_title": r.get("track_title"),
+                    **{
+                        key: r[key]
+                        for key in (
+                            "music_playback_mode",
+                            "song_reference",
+                            "source_audio_preserved",
+                        )
+                        if key in r
+                    },
                     "style_set_id": r.get("style_set_id"),
                     "output_url": r.get("output_url"),
                     "video_path": r.get("video_path"),
