@@ -243,6 +243,66 @@ import SwiftData
         XCTAssertEqual(model.libraryState, .empty)
     }
 
+    func testLibraryLoadsAllCursorPagesAndDeduplicatesJobs() async throws {
+        let ids = (0...60).map { _ in UUID() }
+        let cursor = "2026-09-10T10:00:00+00:00"
+        let stub = LibraryPaginationStub(ids: ids, cursor: cursor)
+        NativeEditorURLProtocol.handler = { try stub.response(for: $0) }
+
+        let library = try await NativeEditorTestSupport.api().library()
+
+        XCTAssertEqual(stub.requestCount, 2)
+        XCTAssertEqual(stub.firstRequestLimit, "60")
+        XCTAssertEqual(stub.secondRequestCursor, cursor)
+        XCTAssertEqual(stub.secondRequestPercentEncodedQuery, "limit=60&cursor=2026-09-10T10:00:00%2B00:00")
+        XCTAssertEqual(library.map(\.id), ids)
+    }
+
+    func testLibraryRejectsRepeatedCursorRatherThanReturningPartialResults() async {
+        let cursor = "2026-09-10T10:00:00+00:00"
+        NativeEditorURLProtocol.handler = { _ in
+            (200, Self.libraryResponse(ids: [UUID()], nextCursor: cursor))
+        }
+
+        do {
+            _ = try await NativeEditorTestSupport.api().library()
+            XCTFail("Expected repeated cursor to fail")
+        } catch {
+            XCTAssertEqual(error as? APIError, .invalidResponse)
+        }
+    }
+
+    func testLibraryTransientFailurePreservesExistingLibraryWithoutPreviewFixtures() async {
+        let existingID = UUID()
+        var calls = 0
+        NativeEditorURLProtocol.handler = { _ in
+            calls += 1
+            return calls == 1
+                ? (200, Self.libraryResponse(ids: [existingID], nextCursor: nil))
+                : (500, Data())
+        }
+        let model = AppModel(api: NativeEditorTestSupport.api())
+        await model.loadLibrary()
+        let existing = try! XCTUnwrap(model.libraryProjects.first)
+
+        await model.loadLibrary()
+
+        XCTAssertEqual(model.libraryProjects, [existing])
+        XCTAssertEqual(model.libraryState, .loaded)
+        XCTAssertNotNil(model.errorMessage)
+    }
+
+    func testInitialLibraryFailureDoesNotInventPreviewProjects() async {
+        NativeEditorURLProtocol.handler = { _ in (500, Data()) }
+        let model = AppModel(api: NativeEditorTestSupport.api())
+
+        await model.loadLibrary()
+
+        XCTAssertTrue(model.libraryProjects.isEmpty)
+        XCTAssertEqual(model.libraryState, .failed(APIError.requestFailed.localizedDescription))
+        XCTAssertNotNil(model.errorMessage)
+    }
+
     func testCreateDeduplicatesWhileRequestIsOutstandingAndRecoversAfterFailure() async throws {
         let started = expectation(description: "Create request suspended")
         var held: ProjectActionDeferredProtocol?
@@ -328,6 +388,54 @@ import SwiftData
         return KriaAPI(baseURL: URL(string: "https://project-actions.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
     }
 
+    nonisolated fileprivate static func libraryResponse(ids: [UUID], nextCursor: String?) -> Data {
+        let jobs = ids.map {
+            "{\"id\":\"\($0.uuidString)\",\"mode\":\"generative\",\"status\":\"ready\",\"created_at\":\"2026-09-10T10:00:00Z\"}"
+        }.joined(separator: ",")
+        let cursor = nextCursor.map { "\"\($0)\"" } ?? "null"
+        return Data("{\"jobs\":[\(jobs)],\"next_cursor\":\(cursor)}".utf8)
+    }
+
+}
+
+private final class LibraryPaginationStub: @unchecked Sendable {
+    private let ids: [UUID]
+    private let cursor: String
+    private let lock = NSLock()
+    private var requests: [URLRequest] = []
+
+    init(ids: [UUID], cursor: String) {
+        self.ids = ids
+        self.cursor = cursor
+    }
+
+    func response(for request: URLRequest) throws -> (Int, Data) {
+        lock.withLock { requests.append(request) }
+        let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+        if query?.first(where: { $0.name == "cursor" })?.value == nil {
+            return (200, ProjectActionsTests.libraryResponse(ids: Array(ids[0...59]), nextCursor: cursor))
+        }
+        return (200, ProjectActionsTests.libraryResponse(ids: [ids[59], ids[60]], nextCursor: nil))
+    }
+
+    var requestCount: Int { lock.withLock { requests.count } }
+    var firstRequestLimit: String? {
+        lock.withLock {
+            URLComponents(url: requests.first?.url ?? URL(string: "https://invalid.test")!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "limit" })?.value
+        }
+    }
+    var secondRequestCursor: String? {
+        lock.withLock {
+            URLComponents(url: requests.dropFirst().first?.url ?? URL(string: "https://invalid.test")!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "cursor" })?.value
+        }
+    }
+    var secondRequestPercentEncodedQuery: String? {
+        lock.withLock {
+            URLComponents(url: requests.dropFirst().first?.url ?? URL(string: "https://invalid.test")!, resolvingAgainstBaseURL: false)?.percentEncodedQuery
+        }
+    }
 }
 
 

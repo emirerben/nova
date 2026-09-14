@@ -134,13 +134,8 @@ enum ProjectCollectionState: Equatable, Sendable {
         }
         catch {
             guard generation == collectionGeneration else { return }
-            #if DEBUG
-            libraryProjects = PreviewFixtures.projects.filter { $0.status == .ready }
-            libraryState = libraryProjects.isEmpty ? .empty : .loaded
-            #else
             errorMessage = error.localizedDescription
             libraryState = libraryProjects.isEmpty ? .failed(error.localizedDescription) : .loaded
-            #endif
         }
     }
     func createProject() async {
