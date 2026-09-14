@@ -18,17 +18,16 @@ import CoreImage
     public func mediaSelectionBounds(id: String, time: Double) -> TextSelectionBounds? {
         guard let instructions = preview.playerItem.videoComposition?.instructions as? [RecipeVideoInstruction],
               let instruction = instructions.first(where: { CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: 60_000)) }),
-              let layer = instruction.layers.first(where: { $0.clipID == id }), let size = layer.naturalSize else { return nil }
-        var rectangle = CGRect(origin: .zero, size: size).applying(layer.transform)
+              let layer = instruction.layers.first(where: { $0.clipID == id }), let naturalSize = layer.naturalSize else { return nil }
+        var unrotated = layer
         let rotation = layer.visualPlacement?.editorStyle?.rotationDegrees ?? 0
-        if var placement = layer.visualPlacement {
-            // Selection chrome rotates once around the actual unrotated media box.
-            // Using the rotated axis-aligned image extent would rotate it twice.
-            placement.editorStyle?.rotationDegrees = 0
-            rectangle = placement.position(CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: size)),
-                preferred: layer.preferredTransform, canvas: instruction.canvas, time: time,
-                clipStart: layer.start, clipEnd: layer.end).extent.intersection(instruction.canvas)
-        }
+        unrotated.visualPlacement?.editorStyle?.rotationDegrees = 0
+        // Use the same source crop and cover fit as the compositor so selection
+        // handles stay on the visible pixels after asymmetric source crops.
+        var rectangle = RecipeVideoCompositor.positionedSource(
+            CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: naturalSize)),
+            layer: unrotated, canvas: instruction.canvas, time: time).extent
+        if layer.visualPlacement != nil { rectangle = rectangle.intersection(instruction.canvas) }
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))
             rectangle = CGRect(x: layer.overlayCenter.x + (rectangle.minX - layer.overlayCenter.x) * scale,
@@ -41,8 +40,9 @@ import CoreImage
     }
 
     public func textSelectionBounds(id: String, time: Double) -> TextSelectionBounds? {
-        guard let first = preview.playerItem.videoComposition?.instructions.first as? RecipeVideoInstruction else { return nil }
-        return first.textStore?.selectionBounds(id: id, at: time)
+        guard let instructions = preview.playerItem.videoComposition?.instructions as? [RecipeVideoInstruction],
+              let instruction = instructions.first(where: { CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: 60_000)) }) else { return nil }
+        return instruction.textStore?.selectionBounds(id: id, at: time)
     }
 
     /// Freeze the surrounding scene once; the editor transforms the selected
@@ -88,6 +88,40 @@ import CoreImage
         return (slice(above: false), slice(above: true), cg,
             CGRect(x: extent.minX / canvas.width, y: 1 - extent.maxY / canvas.height,
                    width: extent.width / canvas.width, height: extent.height / canvas.height))
+    }
+
+    /// Splits an interactive media layer from the composed scene. The selected
+    /// pixels, its background, and its foreground are each rendered once so a
+    /// direct manipulation can move the real compositor output on every touch
+    /// sample without rebuilding the AV composition.
+    public func mediaInteractionLayers(id: String, time: Double) throws -> (below: AVVideoComposition, above: AVVideoComposition, media: AVVideoComposition, rect: CGRect) {
+        guard let composition = preview.playerItem.videoComposition,
+              let instruction = (composition.instructions as? [RecipeVideoInstruction])?.first(where: {
+                  CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: 600))
+              }),
+              let index = instruction.layers.firstIndex(where: { $0.clipID == id }),
+              let bounds = mediaSelectionBounds(id: id, time: time) else { throw MediaEngineError.exportFailed }
+        let selected = instruction.layers[index]
+        let textBelowSelected = selected.overlayAboveText == true
+        let activeText = try instruction.activeText(at: time)
+        func slice(layers: [RecipeVideoLayer], text: [RecipeTextLayer], transparent: Bool) -> AVVideoComposition {
+            let copy = composition.mutableCopy() as! AVMutableVideoComposition
+            copy.instructions = (composition.instructions as! [RecipeVideoInstruction]).map { original in
+                guard original.timeRange == instruction.timeRange else { return original }
+                return RecipeVideoInstruction(timeRange: original.timeRange, layers: layers, text: text,
+                    canvas: composition.renderSize, cameraPulses: original.cameraPulses,
+                    motionScenes: transparent ? nil : original.motionScenes,
+                    transparentBackground: transparent)
+            }
+            return copy
+        }
+        let below = slice(layers: Array(instruction.layers.prefix(index)),
+                          text: textBelowSelected ? activeText : [], transparent: false)
+        let above = slice(layers: Array(instruction.layers.suffix(from: index + 1)),
+                          text: textBelowSelected ? [] : activeText, transparent: true)
+        let media = slice(layers: [selected], text: [], transparent: true)
+        return (below, above, media, CGRect(x: bounds.centerX - bounds.width / 2,
+            y: bounds.centerY - bounds.height / 2, width: bounds.width, height: bounds.height))
     }
 
     public func updateText(recipe next: EditRecipe, assetURLs nextURLs: [String: URL]? = nil) throws {
@@ -180,6 +214,7 @@ import CoreImage
                 updated.overlayPopIn = clip.overlayPopIn == true
                 updated.overlayPreserveAlpha = clip.overlayPreserveAlpha
                 updated.visualPlacement = clip.visualPlacement
+                updated.sourceCrop = clip.sourceCrop
                 updated.visualOrder = overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? updated.visualOrder
                 updated.overlayCenter = CGPoint(x: current.renderSize.width / 2 + clip.transform.positionX, y: current.renderSize.height / 2 - clip.transform.positionY)
                 return updated

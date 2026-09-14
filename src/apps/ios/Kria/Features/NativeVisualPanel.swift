@@ -58,7 +58,8 @@ struct NativeVisualPanel: View {
     var body: some View {
         NativeEditorLanePanel(title: "Visuals", tabs: editorTabs, tab: $tab, onDone: {
             editingText = false; session.endTransaction(); onDone()
-        }, heading: editorHeading, onAdd: addAction) {
+        }, heading: editorHeading, onAdd: addAction,
+            onDelete: selected.flatMap { session.canDeleteSelection($0) ? { session.deleteSelection($0) } : nil }) {
             VStack(spacing: 12) {
                 if session.isAddingVisual { ProgressView("Opening visual…").frame(minHeight: 44) }
                 if mediaSelected && !session.canEdit("visual_editor_style") {
@@ -339,9 +340,10 @@ struct NativeVisualPanel: View {
                         Text("This saved composition keeps its original animation.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     }
                 }
+                if mediaSelected {
+                    NativeFootagePanel(session: session, selection: selected)
+                }
                 timing(selected)
-                Button("Remove visual", role: .destructive) { session.removeVisualSelection(selected); openLibrary() }
-                    .frame(minHeight: 44).accessibilityIdentifier("native-editor-remove-visual")
             }.disabled(!canEditSelection)
             if !canEditSelection {
                 Text("This visual is read-only in this edit.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)

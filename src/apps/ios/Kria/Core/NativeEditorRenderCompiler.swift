@@ -96,15 +96,33 @@ enum NativeEditorRenderError: Error, Equatable {
                 }
                 transition = Transition(kind: kind, duration: previous.transitionDurationS ?? 0.35)
             }
-            let sourceDuration = clip.trimOut - clip.trimIn
-            let duration = clip.end - clip.start
-            guard duration > 0, sourceDuration > 0 else { throw RecipeError.invalidTimeline }
+            let explicitRate = authoredSlot?.raw["playback_rate"]?.numberValue
+            if let explicitRate {
+                guard explicitRate.isFinite, (0.25...4).contains(explicitRate) else { throw RecipeError.invalidTimeline }
+            }
+            let outputDuration = clip.end - clip.start
+            // Playback rate consumes a different source span while the slot's
+            // timeline duration remains authoritative. If the source ends,
+            // retain its last decoded frame for the remaining clock time; this
+            // keeps narration and other audio tracks on their original clock.
+            let sourceSpan = max(0, clip.trimOut - clip.trimIn)
+            let authoredMovingDuration = max(0, authoredSlot?.durationS ?? outputDuration)
+            let requestedRate = explicitRate ?? sourceSpan / authoredMovingDuration
+            guard requestedRate.isFinite, (0.25...4).contains(requestedRate),
+                  outputDuration > 0, sourceSpan > 0 else { throw RecipeError.invalidTimeline }
+            // The timeline owns output duration. At slow rates consume only
+            // the source span that fits that clock, then hold the last frame.
+            let consumedSourceDuration = min(sourceSpan, outputDuration * requestedRate)
+            let movingDuration = consumedSourceDuration / requestedRate
+            let holdDuration = max(0, outputDuration - movingDuration)
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
-                sourceStart: clip.trimIn, sourceDuration: sourceDuration, timelineStart: clip.start,
-                rate: sourceDuration / duration, transition: transition,
-                volume: clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil))
+                sourceStart: clip.trimIn, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
+                rate: requestedRate, transition: transition,
+                volume: clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
+                holdDuration: holdDuration > 0 ? holdDuration : nil,
+                sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
         }
         var audioTracks: [TimelineTrack] = []
         let total = video.map { $0.timelineStart + $0.duration }.max() ?? 0
@@ -200,16 +218,19 @@ enum NativeEditorRenderError: Error, Equatable {
             let window = item.end - item.start
             let sourceStart = source.asset.duration == nil ? 0 : (overlay.raw["clip_trim_start_s"]?.numberValue ?? 0)
             let sourceEnd = source.asset.duration.map { min($0, overlay.raw["clip_trim_end_s"]?.numberValue ?? $0) }
-            let moving = min(window, sourceEnd.map { $0 - sourceStart } ?? window)
+            let playbackRate = overlay.raw["playback_rate"]?.numberValue ?? 1
+            guard playbackRate.isFinite, (0.25...4).contains(playbackRate) else { throw RecipeError.invalidTimeline }
+            let moving = min(window * playbackRate, sourceEnd.map { $0 - sourceStart } ?? window * playbackRate)
             guard moving > 0 else { throw RecipeError.invalidTimeline }
             overlays.append(TimelineClip(id: id, sourceAssetID: id, sourceStart: sourceStart, sourceDuration: moving,
-                timelineStart: item.start, transform: transform, volume: 0, holdDuration: max(0, window - moving),
+                timelineStart: item.start, rate: playbackRate, transform: transform, volume: 0, holdDuration: max(0, window - moving / playbackRate),
                 overlayAboveText: true, overlayPopIn: !fullscreen && overlay.raw["entrance_token"] == .string("pop_in"),
                 overlayPreserveAlpha: !fullscreen && source.preserveAlpha,
                 visualPlacement: editorStyle.map { VisualMediaPlacement(order: 0, contain: $0.fitMode == "contain", zoom: $0.zoom,
                     widthFraction: fullscreen ? nil : overlay.raw["scale"]?.numberValue ?? 0.35, xFraction: x, yFraction: y,
                     windowStart: item.start, windowEnd: item.end, editorStyle: $0) },
-                overlayDissolveSeed: overlay.raw["exit_token"]?.stringValue == "dissolve-out" ? UInt32(211 + (document.mediaOverlays.firstIndex(where: { $0.id == overlay.id }) ?? 0) * 53) : nil))
+                overlayDissolveSeed: overlay.raw["exit_token"]?.stringValue == "dissolve-out" ? UInt32(211 + (document.mediaOverlays.firstIndex(where: { $0.id == overlay.id }) ?? 0) * 53) : nil,
+                sourceCrop: try Self.sourceCrop(overlay.raw["source_crop"])))
         }
         func registerFont(_ font: URL) throws -> String {
             let fontID = "font-\(font.lastPathComponent)"
@@ -420,9 +441,12 @@ enum NativeEditorRenderError: Error, Equatable {
                 urls[alias] = source.url
                 let image = shot[isMedia ? "media_kind" : "kind"]?.stringValue == "image"
                 let shotStart = start + (isMedia ? 0 : shot["start_offset_s"]?.numberValue ?? 0)
-                let length = min(end - shotStart, isMedia ? end - start : shot["duration_s"]?.numberValue ?? end - start)
+                let timelineLength = min(end - shotStart, isMedia ? end - start : shot["duration_s"]?.numberValue ?? end - start)
                 let sourceStart = image ? 0 : shot["trim_start_s"]?.numberValue ?? 0
-                guard length > 0, image || (source.asset.duration ?? 0) + 0.001 >= sourceStart + length else { throw RecipeError.invalidTimeline }
+                let playbackRate = shot["playback_rate"]?.numberValue ?? 1
+                guard playbackRate.isFinite, (0.25...4).contains(playbackRate), timelineLength > 0 else { throw RecipeError.invalidTimeline }
+                let length = image ? timelineLength : min(timelineLength * playbackRate, max(0, (source.asset.duration ?? 0) - sourceStart))
+                guard image || length > 0 else { throw RecipeError.invalidTimeline }
                 let crop = shot[isMedia ? "transform" : "crop"]?.objectValue ?? [:]
                 let motion = VisualMediaPlacement.Motion(rawValue: shot["motion"]?.stringValue ?? "none")
                 guard let motion else { throw NativeEditorRenderError.unsupportedLane("visual motion") }
@@ -436,7 +460,9 @@ enum NativeEditorRenderError: Error, Equatable {
                     xFraction: shot["x_frac"]?.numberValue ?? 0.5, yFraction: shot["y_frac"]?.numberValue ?? 0.5,
                     windowStart: start, windowEnd: end, fadeIn: fadeIn, fadeOut: fadeOut, editorStyle: try Self.visualEditorStyle(block.raw["editor_style"]))
                 overlays.append(TimelineClip(id: alias, sourceAssetID: alias, sourceStart: sourceStart, sourceDuration: length,
-                    timelineStart: shotStart, volume: 0, visualPlacement: placement))
+                    timelineStart: shotStart, rate: image ? 1 : playbackRate, volume: 0,
+                    holdDuration: image ? nil : max(0, timelineLength - length / playbackRate), visualPlacement: placement,
+                    sourceCrop: try Self.sourceCrop(shot["source_crop"])))
             }
             switch block.kind {
             case "media": try addShot(block.raw.merging(["id": .string(block.id)]) { _, new in new }, isMedia: true)
@@ -508,6 +534,18 @@ enum NativeEditorRenderError: Error, Equatable {
         let style = try JSONDecoder().decode(VisualEditorStyle.self, from: JSONEncoder().encode(raw))
         try style.validate()
         return style
+    }
+
+    static func sourceCrop(_ raw: JSONValue?) throws -> NormalizedSourceRect? {
+        guard let raw, raw != .null else { return nil }
+        guard let object = raw.objectValue,
+              let x = object["x"]?.numberValue, let y = object["y"]?.numberValue,
+              let width = object["width"]?.numberValue, let height = object["height"]?.numberValue else {
+            throw RecipeError.invalidTimeline
+        }
+        let crop = NormalizedSourceRect(x: x, y: y, width: width, height: height)
+        try crop.validate()
+        return crop
     }
 
     /// Matches text_motion_v2.normalize_text_motion; absent v2 motion retains legacy timing.

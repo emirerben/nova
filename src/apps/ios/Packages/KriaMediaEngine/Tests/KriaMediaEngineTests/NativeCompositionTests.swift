@@ -214,6 +214,22 @@ final class NativeCompositionTests: XCTestCase {
         let geometry = try XCTUnwrap(preview.mediaSelectionBounds(id: "overlay", time: 2.2))
         XCTAssertEqual(geometry.centerX, 0.75, accuracy: 0.001)
         XCTAssertEqual(geometry.centerY, 0.75, accuracy: 0.001)
+        let split = try preview.mediaInteractionLayers(id: "overlay", time: 0.8)
+        let splitGenerator = AVAssetImageGenerator(asset: preview.preview.playerItem.asset)
+        splitGenerator.requestedTimeToleranceBefore = .zero; splitGenerator.requestedTimeToleranceAfter = .zero
+        splitGenerator.videoComposition = split.below
+        let below = try await splitGenerator.image(at: CMTime(seconds: 0.8, preferredTimescale: 600)).image
+        splitGenerator.videoComposition = split.media
+        let selected = try await splitGenerator.image(at: CMTime(seconds: 0.8, preferredTimescale: 600)).image
+        splitGenerator.videoComposition = split.above
+        let above = try await splitGenerator.image(at: CMTime(seconds: 0.8, preferredTimescale: 600)).image
+        let reconstructed = try XCTUnwrap(CIContext().createCGImage(
+            CIImage(cgImage: above).composited(over: CIImage(cgImage: selected).composited(over: CIImage(cgImage: below))),
+            from: CGRect(x: 0, y: 0, width: 96, height: 160)))
+        let referencePixels = rgba(try await reference.image(at: CMTime(seconds: 0.8, preferredTimescale: 600)).image)
+        let reconstructedPixels = rgba(reconstructed)
+        let error = zip(referencePixels, reconstructedPixels).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }
+        XCTAssertLessThan(Double(error) / Double(referencePixels.count), 1, "Media interaction layers reconstruct the compositor frame")
         let item = preview.preview.playerItem, source = preview.preview.playerItem.asset
         recipe.tracks[1].clips[0].transform.positionX = -24
         try preview.updateText(recipe: recipe)

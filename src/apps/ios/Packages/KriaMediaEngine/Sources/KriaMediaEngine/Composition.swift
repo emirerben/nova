@@ -68,7 +68,11 @@ struct PreviewAudioBinding: Sendable {
             guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.exportUnavailable }
             let sourceRange = CMTimeRange(start: time(clip.sourceStart), duration: time(clip.sourceDuration))
             try track.insertTimeRange(sourceRange, of: source, at: time(clip.timelineStart))
-            track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration), toDuration: time(clip.duration))
+            // A held video tail is visual-only. Keep source/narration audio on
+            // the moving segment's clock instead of stretching it across the
+            // frozen frame.
+            track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration),
+                                 toDuration: time(clip.sourceDuration / clip.rate))
             let parameter = AVMutableAudioMixInputParameters(track: track)
             applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows)
             audioParameters.append(parameter)
@@ -157,6 +161,7 @@ struct PreviewAudioBinding: Sendable {
                         overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true, overlayPreserveAlpha: clip.overlayPreserveAlpha,
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
+                    layers[layers.count - 1].sourceCrop = clip.sourceCrop
                     if clip.visualPlacement == nil && (recipeTrack.kind == .video || clip.overlayPreserveAlpha == nil) {
                         try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1, originalGain: recipeTrack.kind == .video)
                     }
@@ -175,6 +180,7 @@ struct PreviewAudioBinding: Sendable {
                         overlayPreserveAlpha: clip.overlayPreserveAlpha,
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
+                    layers[layers.count - 1].sourceCrop = clip.sourceCrop
                 }
                 if let seed = clip.overlayDissolveSeed {
                     layers[layers.count - 1].overlayDissolve = try NativeDissolveRenderer(width: recipe.canvas.width, height: recipe.canvas.height, seed: seed, maxBitmapBytes: 64 * 1024 * 1024, preset: .media)

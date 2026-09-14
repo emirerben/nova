@@ -4,6 +4,25 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+    func testFootageEditsPersistAndUndoWithoutChangingTimelineWindows() throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let original = session.document
+        let clip = try XCTUnwrap(session.timelineClips.first)
+        let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
+        let windows = session.timelineClips.map { [$0.start, $0.end] }
+        session.setFootagePlaybackRate(selection, rate: 0.5)
+        session.setFootageCrop(selection, crop: .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
+        let restored = EditorDocument(snapshot: session.document.encodeSnapshot())
+        XCTAssertEqual(restored.clips.first?.raw["playback_rate"], .number(0.5))
+        XCTAssertEqual(restored.clips.first?.raw["source_crop"]?.objectValue?["y"], .number(0.2))
+        XCTAssertEqual(session.timelineClips.map { [$0.start, $0.end] }, windows)
+        session.undo()
+        XCTAssertNil(session.footageCrop(for: selection))
+        XCTAssertEqual(session.footagePlaybackRate(for: selection), 0.5)
+        session.undo()
+        XCTAssertEqual(session.document, original)
+    }
+
     func testRenderedRebaseRefreshesGenerationSourcesButLocalEditsDoNot() async {
         let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(

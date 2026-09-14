@@ -51,7 +51,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
     /// Cross-kind selection is the source of truth. `selectedClipID` below is
     /// a source-compatible adapter for the first-pass clip views.
-    @Published private(set) var selection: EditorSelection? { didSet { prepareTextInteraction() } }
+    @Published private(set) var selection: EditorSelection? { didSet { prepareInteractionLayers() } }
     @Published private(set) var selectionRequest = 0
     /// A new text item is staged separately until Done. Cancel must not roll
     /// back unrelated edits or leave a placeholder in the persisted document.
@@ -84,8 +84,22 @@ enum NativeEditorLoadState: Equatable, Sendable {
         let rect: CGRect
     }
     @Published private(set) var textInteractionFrame: TextInteractionFrame?
+    struct MediaInteractionFrame {
+        let selection: EditorSelection
+        let time: Double
+        let below: UIImage
+        let above: UIImage
+        let media: UIImage
+        let rect: CGRect
+    }
+    @Published private(set) var mediaInteractionFrame: MediaInteractionFrame?
     private var textInteractionTask: Task<Void, Never>?
     private var textInteractionSequence = 0
+
+    private func prepareInteractionLayers() {
+        prepareTextInteraction()
+        prepareMediaInteraction()
+    }
 
     private func prepareTextInteraction() {
         guard !isDirectManipulating, !isPlaying, let selection, selection.kind == .text,
@@ -126,6 +140,57 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 guard !Task.isCancelled else { return }
                 #if DEBUG
                 NativePreviewDiagnostics.failure("text-interaction-prepare", error: error)
+                #endif
+            }
+        }
+    }
+
+    private func prepareMediaInteraction() {
+        guard !isDirectManipulating, !isPlaying, let selection,
+              selection.kind == .mediaOverlay || selection.kind == .visualBlock,
+              let preview = sourcePreview, let item = player?.currentItem,
+              sourcePreviewState == .ready else { return }
+        let mediaID: String
+        switch selection.kind {
+        case .mediaOverlay: mediaID = "overlay:" + selection.id
+        case .visualBlock: mediaID = "visual-\(selection.id)-\(selection.id)"
+        default: return
+        }
+        textInteractionTask?.cancel()
+        textInteractionSequence += 1
+        let sequence = textInteractionSequence
+        let time = min(currentTime, max(0, duration - 1.0 / 600))
+        textInteractionTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+                try Task.checkCancellation()
+                let layers = try preview.mediaInteractionLayers(id: mediaID, time: time)
+                @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
+                    let generator = AVAssetImageGenerator(asset: item.asset)
+                    generator.videoComposition = composition
+                    generator.maximumSize = CGSize(width: 1080, height: 1920)
+                    generator.requestedTimeToleranceBefore = .zero
+                    generator.requestedTimeToleranceAfter = .zero
+                    let cg: CGImage = try await withCheckedThrowingContinuation { continuation in
+                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: time, preferredTimescale: 600))]) { _, image, _, result, error in
+                            if result == .succeeded, let image { continuation.resume(returning: image) }
+                            else { continuation.resume(throwing: error ?? MediaEngineError.exportFailed) }
+                        }
+                    }
+                    return UIImage(cgImage: cg)
+                }
+                async let below = image(layers.below)
+                async let above = image(layers.above)
+                async let media = image(layers.media)
+                let rendered = try await (below, above, media)
+                guard let self, !Task.isCancelled, self.textInteractionSequence == sequence,
+                      self.selection == selection else { return }
+                self.mediaInteractionFrame = MediaInteractionFrame(selection: selection, time: time,
+                    below: rendered.0, above: rendered.1, media: rendered.2, rect: layers.rect)
+            } catch {
+                guard !Task.isCancelled else { return }
+                #if DEBUG
+                NativePreviewDiagnostics.failure("media-interaction-prepare", error: error)
                 #endif
             }
         }
@@ -445,7 +510,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             player?.pause()
             isPlaying = false
             if let time = player?.currentTime().seconds, time.isFinite { currentTime = time }
-            prepareTextInteraction()
+            prepareInteractionLayers()
         }
         isDirectManipulating = true
         beginTransaction()
@@ -453,6 +518,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     func endDirectManipulation() {
         endTransaction()
         isDirectManipulating = false
+        flushDeferredSourcePreviewUpdate()
     }
 
     /// Selects any timeline/preview object. Selection seeks without changing
@@ -544,9 +610,19 @@ enum NativeEditorLoadState: Equatable, Sendable {
             guard document.clips.indices.contains(window.sourceIndex) else { return nil }
             let slot = document.clips[window.sourceIndex]
             let id = clipID(for: slot.id)
-            let duration = max(minimumClipDuration, window.end - window.start)
+            // The output window may be extended to carry narration through its
+            // tail. Source trimming remains based on the authored moving clip,
+            // otherwise that hold would ask the decoder for frames beyond the
+            // source asset.
+            let authoredWindow = timelineProjection.baseClipWindows.first { $0.sourceIndex == window.sourceIndex }
+            let movingDuration = max(minimumClipDuration, slot.durationS ?? authoredWindow.map { $0.end - $0.start } ?? window.end - window.start)
             let sourceStart = max(0, slot.inS)
             let sourceDuration = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
+            let available = sourceDuration.map { max(0, $0 - sourceStart) }
+            let sourceSpan = min(
+                Self.number(slot.raw["native_source_span_s"]) ?? movingDuration,
+                available ?? .greatestFiniteMagnitude
+            )
             let assetID = slot.raw["asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? id
             return EditorClip(
                 id: id,
@@ -555,7 +631,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 start: window.start,
                 end: window.end,
                 trimIn: sourceStart,
-                trimOut: sourceStart + (Self.number(slot.raw["native_source_span_s"]) ?? duration),
+                trimOut: sourceStart + sourceSpan,
                 sourceDuration: sourceDuration,
                 muted: slot.raw["muted"] == .bool(true),
                 slotID: slot.id
@@ -1142,7 +1218,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         guard resolvedSources != nil, sourceCompiler != nil else { return }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
-        guard !isTimingGestureActive else {
+        guard !isTimingGestureActive, !isDirectManipulating else {
             sourcePreviewUpdateDeferred = true
             return
         }
@@ -1202,6 +1278,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             if let preview = sourcePreview, (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
                 sourcePreviewState = .ready
                 if !isPlaying { seek(to: currentTime) }
+                prepareInteractionLayers()
                 return
             }
             #if DEBUG
@@ -1221,6 +1298,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             } else {
                 seek(to: latestTime)
             }
+            prepareInteractionLayers()
             #if DEBUG
             NativePreviewDiagnostics.record("preview-ready")
             #endif
@@ -1376,7 +1454,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                     guard !Task.isCancelled, let self, self.scrubFrameGeneration == generation else { return }
                     self.scrubPreviewTime = frame.actualTime.seconds
                     self.scrubPreviewFrame = UIImage(cgImage: frame.image)
-                    self.prepareTextInteraction()
+                    self.prepareInteractionLayers()
                 } catch {
                     guard !Task.isCancelled, let self, self.scrubFrameGeneration == generation else { return }
                     #if DEBUG
@@ -2482,7 +2560,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         replace(with: next); changedSections.insert(section); refreshDirtyState(); refreshDuration()
     }
 
-    private func transactDocument(section: EditorSection, _ body: (inout EditorDocument) -> Void) {
+    func transactDocument(section: EditorSection, _ body: (inout EditorDocument) -> Void) {
         transactDocument(sections: [section], body)
     }
 
@@ -2493,7 +2571,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         document = next; changedSections.formUnion(sections); refreshDirtyState(); refreshDuration()
     }
 
-    private func canEditOperation(_ keys: [String], section: EditorSection) -> Bool {
+    func canEditOperation(_ keys: [String], section: EditorSection) -> Bool {
         for key in keys {
             if let capability = document.capabilities[key] { return capability.editable }
         }

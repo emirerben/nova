@@ -128,6 +128,10 @@ including revision checks and rename idempotency. Deletion is confirmed and
 blocked during rendering or pending uploads. Microphone chat input is deferred.
 Native system authentication, Photos, upload consent, and share sheets remain native.
 
+Native footage controls persist `playback_rate` and normalized `source_crop` in the editor document. Retiming keeps each timeline window fixed: slow motion consumes less source, while footage that ends early holds its last frame. Still images retain their placement duration, and held video tails do not stretch source audio. Crop coordinates use the decoded source with a top-left origin; rendering and selection geometry must agree for rotated footage. The controls participate in document undo and save.
+
+Media direct manipulation freezes the surrounding composed layers while the gesture updates the selected image. Rebuilding the source preview waits until the gesture ends; captions must remain present in the surrounding layers.
+
 For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
 `KRIA_BRAND_STATE` set to `format`, `footage`, `direction`, `rendering`, `ready`,
 `editor`, `projects`, `gallery`, `signin`, `account`, `consent`, or `recovery`.

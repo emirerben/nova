@@ -93,6 +93,10 @@ struct NativeVideoPreview: View {
     @State private var liveTextRotation: Double = 0
     @State private var liveTextTranslation = CGPoint.zero
     @State private var liveTextSampleCount = 0
+    @State private var liveMediaFrame: NativeEditorSession.MediaInteractionFrame?
+    @State private var liveMediaScale: CGFloat = 1
+    @State private var liveMediaRotation: Double = 0
+    @State private var liveMediaTranslation = CGPoint.zero
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
@@ -379,6 +383,9 @@ struct NativeVideoPreview: View {
             if hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y) <= 22 {
                 directMoveObjectID = selected.id
                 visualTransformBaseline = selected
+                if let prepared = session.mediaInteractionFrame,
+                   prepared.selection == selected.item.selection,
+                   abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
                 transformCenter = CGPoint(x: bounds.midX, y: bounds.midY)
                 transformStartVector = CGVector(dx: value.startLocation.x - bounds.midX, dy: value.startLocation.y - bounds.midY)
                 session.beginDirectManipulation()
@@ -388,8 +395,11 @@ struct NativeVideoPreview: View {
             let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
             let radius = hypot(start.dx, start.dy)
             guard radius > 1 else { return }
-            scaleHandler(for: baseline)?(baseline.scale * hypot(next.dx, next.dy) / radius)
+            let scale = baseline.scale * hypot(next.dx, next.dy) / radius
+            scaleHandler(for: baseline)?(scale)
             let rotation = baseline.rotation + (atan2(next.dy, next.dx) - atan2(start.dy, start.dx)) * 180 / .pi
+            liveMediaScale = scale / max(0.001, baseline.scale)
+            liveMediaRotation = rotation - baseline.rotation
             session.setVisualEditorStyle(baseline.item.selection, key: "rotation_deg", value: .number(max(-360, min(360, rotation))))
             return
         }
@@ -408,6 +418,9 @@ struct NativeVideoPreview: View {
             directMoveObjectID = object.id
             directMoveBaseline = position
             session.select(object.item, seekToStart: false)
+            if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
+               prepared.selection == object.item.selection,
+               abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
             session.beginDirectManipulation()
         }
         guard let objectID = directMoveObjectID,
@@ -426,6 +439,7 @@ struct NativeVideoPreview: View {
             updateTextAlignment(in: size)
         } else {
             onMove(position)
+            liveMediaTranslation = CGPoint(x: position.x - baseline.x, y: position.y - baseline.y)
         }
     }
 
@@ -438,6 +452,10 @@ struct NativeVideoPreview: View {
         visualTransformBaseline = nil
         transformCenter = nil
         transformStartVector = nil
+        liveMediaFrame = nil
+        liveMediaScale = 1
+        liveMediaRotation = 0
+        liveMediaTranslation = .zero
         if directResizeObjectID == nil { session.endDirectManipulation() }
     }
 
@@ -459,6 +477,9 @@ struct NativeVideoPreview: View {
                     if object.item.kind == .text {
                         directResizeTextBaseline = session.document.textElements.first { $0.id == object.item.id }
                     }
+                    if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
+                       prepared.selection == object.item.selection,
+                       abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
                     session.beginDirectManipulation()
                 }
                 guard let objectID = directResizeObjectID,
@@ -470,6 +491,7 @@ struct NativeVideoPreview: View {
                     updateTextAlignment(in: size)
                 } else {
                     onResize(baseline * value)
+                    liveMediaScale = value
                 }
             }
             .onEnded { _ in
@@ -478,6 +500,10 @@ struct NativeVideoPreview: View {
                 directResizeObjectID = nil
                 directResizeBaseline = nil
                 directResizeTextBaseline = nil
+                liveMediaFrame = nil
+                liveMediaScale = 1
+                liveMediaRotation = 0
+                liveMediaTranslation = .zero
                 if directMoveObjectID == nil { session.endDirectManipulation() }
             }
     }
@@ -601,6 +627,23 @@ struct NativeVideoPreview: View {
                 .accessibilityIdentifier("native-editor-preview-fallback")
             }
 
+            if let frozen = liveMediaFrame {
+                GeometryReader { proxy in
+                    let anchor = UnitPoint(x: frozen.rect.midX, y: frozen.rect.midY)
+                    ZStack(alignment: .topLeading) {
+                        Image(uiImage: frozen.below).resizable().frame(width: proxy.size.width, height: proxy.size.height)
+                        Image(uiImage: frozen.media).resizable()
+                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .scaleEffect(liveMediaScale, anchor: anchor)
+                            .rotationEffect(.degrees(liveMediaRotation), anchor: anchor)
+                            .offset(x: liveMediaTranslation.x * proxy.size.width,
+                                    y: liveMediaTranslation.y * proxy.size.height)
+                        Image(uiImage: frozen.above).resizable().frame(width: proxy.size.width, height: proxy.size.height)
+                    }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
             if let frozen = liveTextFrame, let baseline = liveTextBaseline {
                 GeometryReader { proxy in
                     let anchor = nativeTextPosition(baseline)
