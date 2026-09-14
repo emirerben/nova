@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.12.0] - 2026-09-14
+
+### Changed
+- fix: enable guided caption display and native source controls (#1022) <!-- release-pr: 1022 -->
+
 ## [0.76.11.0] - 2026-09-13
 
 ### Changed
