@@ -273,6 +273,51 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    func testOrdinaryComposedPauseResumeDoesNotSeekOrRenderAnotherStill() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: url)
+        let original = try XCTUnwrap(session.player?.currentItem)
+        let item = AVPlayerItem(asset: original.asset)
+        item.videoComposition = original.videoComposition
+        let player = DelayedSeekPlayer(playerItem: item)
+        session.player = player
+        session.togglePlayback()
+        XCTAssertEqual(player.targets.count, 1, "Initial scrub surface needs one handoff")
+        player.completeSeek()
+        await Task.yield()
+        await Task.yield()
+        for _ in 0..<3 {
+            session.pausePlayback()
+            XCTAssertFalse(session.isPlaying)
+            XCTAssertNil(session.scrubPreviewFrame, "Pause retains the player surface")
+            session.togglePlayback()
+        }
+        XCTAssertEqual(player.targets.count, 1, "Ordinary resume must not restart decoding with an exact seek")
+        session.pausePlayback()
+    }
+
+    func testPauseDuringScrubHandoffRetainsTargetWithoutRestartingPlayback() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: url)
+        let player = DelayedSeekPlayer()
+        session.player = player
+        session.seek(to: 1.2)
+        session.togglePlayback()
+        session.reconcilePlaybackState(.paused)
+        XCTAssertTrue(session.isPlaying, "Transient paused observation must not cancel play intent")
+        session.pausePlayback()
+        XCTAssertEqual(session.currentTime, 1.2, accuracy: 0.001)
+        XCTAssertEqual(player.targets.count, 2)
+        player.completeSeek() // Invalidated paused seek.
+        player.completeSeek() // Actual playback handoff.
+        await Task.yield()
+        await Task.yield()
+        XCTAssertFalse(session.isPlaying)
+        XCTAssertEqual(player.rate, 0, "Late handoff completion must never restart a paused player")
+    }
+
     func testBufferingDuringPlayHandoffCannotLeaveScrubImageOverMovingVideo() async throws {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
         let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
@@ -294,6 +339,10 @@ final class NativeEditorSessionTests: XCTestCase {
         await Task.yield()
         session.reconcilePlaybackState(.playing)
         XCTAssertNil(session.scrubPreviewFrame, "A moving player must never stay covered by its old scrub still")
+        let seeks = player.targets.count
+        session.pausePlayback()
+        session.togglePlayback()
+        XCTAssertEqual(player.targets.count, seeks, "A recovered player must not retain a stale scrub target")
         player.pause()
     }
 
