@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.21.0] - 2026-09-14
+
+### Changed
+- fix(ios): smooth chat navigation and sidebar interactions (#1030) <!-- release-pr: 1030 -->
+
 ## [0.76.20.0] - 2026-09-14
 
 ### Changed
