@@ -46,6 +46,11 @@ struct NativeVisualPanel: View {
     private var editorHeading: String { selected.map { "Edit " + label($0).lowercased() } ?? "Add visual" }
     private var addAction: (() -> Void)? { selected == nil ? nil : { openLibrary() } }
 
+    private var removeAction: (() -> Void)? {
+        guard let selected, canEditSelection else { return nil }
+        return { session.removeVisualSelection(selected); openLibrary() }
+    }
+
     private func openLibrary() {
         editingText = false
         session.endTransaction()
@@ -59,7 +64,7 @@ struct NativeVisualPanel: View {
         NativeEditorLanePanel(title: "Visuals", tabs: editorTabs, tab: $tab, onDone: {
             editingText = false; session.endTransaction(); onDone()
         }, heading: editorHeading, onAdd: addAction,
-            onDelete: selected.flatMap { session.canDeleteSelection($0) ? { session.deleteSelection($0) } : nil }) {
+            onDelete: removeAction) {
             VStack(spacing: 12) {
                 if session.isAddingVisual { ProgressView("Opening visual…").frame(minHeight: 44) }
                 if mediaSelected && !session.canEdit("visual_editor_style") {
