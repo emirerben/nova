@@ -43,11 +43,14 @@ jobs:
             echo "Skipping stale iOS result: main advanced after this test run."
             exit 0
           fi
+          # Git metadata is a release input: checkout must complete before
+          # the archive or signing steps can run.
           if git diff --quiet "$HEAD_SHA^" "$HEAD_SHA" -- \
             src/apps/ios \
             scripts/ios \
             .github/workflows/ios.yml \
             .github/workflows/testflight.yml \
+            .claude/worktrees \
             src/apps/api/app/config.py \
             src/apps/api/app/services/mobile_auth.py; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
