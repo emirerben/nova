@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.19.0] - 2026-09-14
+
+### Changed
+- fix(ios): load all gallery videos and surface connection failures (#1027) <!-- release-pr: 1027 -->
+
 ## [0.76.18.0] - 2026-09-14
 
 ### Changed
