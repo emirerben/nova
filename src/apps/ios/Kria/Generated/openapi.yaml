@@ -3313,6 +3313,14 @@
             "title": "Origin",
             "type": "string"
           },
+          "playback_rate": {
+            "default": null,
+            "maximum": 4.0,
+            "minimum": 0.25,
+            "nullable": true,
+            "title": "Playback Rate",
+            "type": "number"
+          },
           "preview_gcs_path": {
             "default": null,
             "maxLength": 1024,
@@ -3340,6 +3348,11 @@
             "nullable": true,
             "title": "Source",
             "type": "string"
+          },
+          "source_crop": {
+            "$ref": "#/components/schemas/SourceCrop",
+            "default": null,
+            "nullable": true
           },
           "source_duration_s": {
             "default": null,
@@ -5138,6 +5151,45 @@
         "title": "SolidBackground",
         "type": "object"
       },
+      "SourceCrop": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Height",
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "SourceCrop",
+        "type": "object"
+      },
       "StaggeredContent": {
         "additionalProperties": false,
         "properties": {
@@ -6125,6 +6177,14 @@
             "title": "Parent Segment Id",
             "type": "string"
           },
+          "playback_rate": {
+            "default": null,
+            "maximum": 4.0,
+            "minimum": 0.25,
+            "nullable": true,
+            "title": "Playback Rate",
+            "type": "number"
+          },
           "removed": {
             "default": false,
             "title": "Removed",
@@ -6135,6 +6195,15 @@
             "nullable": true,
             "title": "Slot Id",
             "type": "string"
+          },
+          "source_crop": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "default": null,
+            "nullable": true,
+            "title": "Source Crop",
+            "type": "object"
           },
           "transition_after": {
             "default": "cut",

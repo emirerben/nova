@@ -62,6 +62,23 @@ class GuidedEditorSource(BaseModel):
     duration_s: float | None = Field(default=None, gt=0)
 
 
+class GuidedEditorSourceCrop(BaseModel):
+    """A normalized source-space crop rectangle for one video occurrence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> GuidedEditorSourceCrop:
+        if self.x + self.width > 1 + 1e-6 or self.y + self.height > 1 + 1e-6:
+            raise ValueError("source crop must stay within normalized source bounds")
+        return self
+
+
 class GuidedEditorSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -69,6 +86,13 @@ class GuidedEditorSegment(BaseModel):
     media_id: str = Field(min_length=1, max_length=100)
     source_start_s: float = Field(default=0.0, ge=0)
     source_end_s: float | None = Field(default=None, gt=0)
+    # Omission is intentional: absent fields preserve pre-KRI43 state hashes.
+    source_crop: GuidedEditorSourceCrop | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    playback_rate: float | None = Field(
+        default=None, ge=0.25, le=4.0, exclude_if=lambda value: value is None
+    )
     duration_s: float = Field(gt=0, le=MAX_GUIDED_EDITOR_DURATION_S)
     # Layout is authored per timeline occurrence, not per source media ID.
     # Keep it optional and omit nulls so revisions written before this field
@@ -155,6 +179,12 @@ class GuidedEditorRevision(BaseModel):
     visual_blocks: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
     motion_scenes: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     custom_effects: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    # Caption controls apply only to caption_cue-backed TextElements. Keeping
+    # this separate from the text lane preserves pinned narration timing and
+    # avoids manufacturing duplicate caption-cue records.
+    caption_meta: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     lane_hashes: dict[str, str] = Field(default_factory=dict)
     tombstones: list[dict[str, Any]] = Field(
         default_factory=list, max_length=MAX_GUIDED_EDITOR_TOMBSTONES
@@ -177,7 +207,14 @@ class GuidedEditorRevision(BaseModel):
         if any(segment.media_id not in source_ids for segment in self.segments):
             raise ValueError("guided editor segment references an unapproved source")
         if any(
-            segment.source_end_s is not None
+            (
+                segment.source_end_s
+                or (
+                    segment.source_start_s
+                    + segment.duration_s * float(segment.playback_rate or 1.0)
+                )
+            )
+            and segment.playback_rate is None
             and segment.media_id in source_ids
             and next(source for source in self.sources if source.media_id == segment.media_id).kind
             == "video"
@@ -185,7 +222,13 @@ class GuidedEditorRevision(BaseModel):
                 source for source in self.sources if source.media_id == segment.media_id
             ).duration_s
             is not None
-            and segment.source_end_s
+            and (
+                segment.source_end_s
+                or (
+                    segment.source_start_s
+                    + segment.duration_s * float(segment.playback_rate or 1.0)
+                )
+            )
             > next(
                 source for source in self.sources if source.media_id == segment.media_id
             ).duration_s
@@ -348,10 +391,39 @@ def normalize_guided_editor_revision(
     for segment in normalized["segments"]:
         segment["source_start_s"] = frame(segment.get("source_start_s") or 0.0)
         segment["duration_s"] = max(MIN_GUIDED_EDITOR_SEGMENT_S, frame(segment["duration_s"]))
-        segment["source_end_s"] = frame(
-            segment.get("source_end_s")
-            or float(segment["source_start_s"]) + float(segment["duration_s"])
+        rate = float(segment.get("playback_rate") or 1.0)
+        # A retimed occurrence consumes duration * rate from its pinned source.
+        # The start anchor is never moved; a short source simply shortens this
+        # occurrence and the existing cursor reflows later slots.
+        requested_end = float(segment["source_start_s"]) + float(segment["duration_s"]) * rate
+        source = next(
+            item for item in normalized["sources"] if item["media_id"] == segment["media_id"]
         )
+        # Only a KRI43 explicit rate owns source-window recomputation. Legacy
+        # revisions may intentionally encode slow motion as a shorter
+        # source_end_s with a longer output duration; clamping those here
+        # silently changes their saved duration and state hash on a resave.
+        if (
+            segment.get("playback_rate") is not None
+            and source.get("kind") == "video"
+            and source.get("duration_s") is not None
+        ):
+            requested_end = min(requested_end, float(source["duration_s"]))
+            available_output_s = (requested_end - float(segment["source_start_s"])) / rate
+            if available_output_s < MIN_GUIDED_EDITOR_SEGMENT_S - 1e-6:
+                raise ValueError("guided editor source window is too short for the editor floor")
+            segment["duration_s"] = max(MIN_GUIDED_EDITOR_SEGMENT_S, frame(available_output_s))
+            requested_end = float(segment["source_start_s"]) + float(segment["duration_s"]) * rate
+            requested_end = min(requested_end, float(source["duration_s"]))
+        # Keep legacy payloads byte-identical. A new speed owns source_end;
+        # default-speed revisions retain their existing explicit window.
+        if segment.get("playback_rate") is not None:
+            segment["source_end_s"] = frame(requested_end)
+        else:
+            segment["source_end_s"] = frame(
+                segment.get("source_end_s")
+                or float(segment["source_start_s"]) + float(segment["duration_s"])
+            )
         requested_start = frame(segment.get("output_start_s") or cursor)
         start = max(cursor, requested_start)
         duration = float(segment["duration_s"])
@@ -394,6 +466,12 @@ def normalize_guided_editor_revision(
             "tombstones",
         )
     }
+    if normalized.get("caption_meta") is not None:
+        normalized["lane_hashes"]["caption_meta"] = hashlib.sha256(
+            json.dumps(normalized["caption_meta"], sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
     normalized["state_hash"] = guided_editor_state_hash(normalized)
     return normalized
 

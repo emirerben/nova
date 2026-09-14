@@ -89,6 +89,8 @@ class GuidedStoryMoment(BaseModel):
     layout: Literal["fullscreen", "supporting_card"]
     source_start_s: float = Field(ge=0)
     source_end_s: float = Field(gt=0)
+    source_crop: dict[str, float] | None = None
+    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
     output_start_s: float = Field(ge=0)
     output_end_s: float = Field(gt=0)
     duration_s: float = Field(gt=0)
@@ -192,6 +194,7 @@ class GuidedStoryExecutionPlan(BaseModel):
     editor_visual_blocks: list[dict[str, Any]] = Field(default_factory=list)
     editor_motion_scenes: list[dict[str, Any]] = Field(default_factory=list)
     editor_custom_effects: list[dict[str, Any]] = Field(default_factory=list)
+    editor_caption_meta: dict[str, Any] | None = None
     editor_audio_level: float = Field(default=1.0, ge=0, le=1)
     editor_music_removed: bool = False
     editor_lane_hashes: dict[str, str] = Field(default_factory=dict)
@@ -222,7 +225,8 @@ class GuidedStoryExecutionPlan(BaseModel):
         if timeline_media != self.selected_media_ids:
             raise ValueError("timeline media must exactly match selected media")
         if (
-            self.narration is not None
+            self.editor_revision_number is None
+            and self.narration is not None
             and abs(
                 float(self.resolved_duration_s)
                 - canonical_narration_duration_s(self.narration.duration_s)
@@ -2057,6 +2061,16 @@ def compile_guided_runtime_plan(
                         segment.get("source_end_s")
                         or float(segment["source_start_s"]) + float(segment["duration_s"])
                     ),
+                    **(
+                        {"source_crop": segment["source_crop"]}
+                        if segment.get("source_crop")
+                        else {}
+                    ),
+                    **(
+                        {"playback_rate": float(segment["playback_rate"])}
+                        if segment.get("playback_rate") is not None
+                        else {}
+                    ),
                     "output_start_s": start,
                     "output_end_s": end,
                     "duration_s": float(segment["duration_s"]),
@@ -2129,7 +2143,15 @@ def compile_guided_runtime_plan(
                 "proposal_version": proposal_version,
                 "media_digest": media_digest,
                 "approved_duration_s": float(canonical.approved_duration_s),
-                "resolved_duration_s": round(max(moment["output_end_s"] for moment in moments), 3),
+                "resolved_duration_s": round(
+                    max(
+                        max(moment["output_end_s"] for moment in moments),
+                        canonical_narration_duration_s(canonical.narration.duration_s)
+                        if canonical.narration is not None
+                        else 0.0,
+                    ),
+                    3,
+                ),
                 "output_orientation": normalized_revision.get("orientation", "portrait"),
                 "output_orientation_reason": (
                     "The creator selected this output format in the editor."
@@ -2153,6 +2175,7 @@ def compile_guided_runtime_plan(
                 "editor_visual_blocks": list(normalized_revision.get("visual_blocks") or []),
                 "editor_motion_scenes": list(normalized_revision.get("motion_scenes") or []),
                 "editor_custom_effects": list(normalized_revision.get("custom_effects") or []),
+                "editor_caption_meta": normalized_revision.get("caption_meta"),
                 "editor_audio_level": float(audio.get("level", 1.0)),
                 "editor_music_removed": bool(audio.get("removed", False)),
                 "editor_lane_hashes": dict(normalized_revision.get("lane_hashes") or {}),
@@ -2446,6 +2469,51 @@ def _enforce_strict_story_duration(source: str, output: str, *, target_s: float)
     return output
 
 
+def _hold_final_frame_to_duration(source: str, output: str, *, target_s: float) -> str:
+    """Extend a short visual timeline by cloning its final frame.
+
+    Voiceover timing is immutable. A revision may exhaust its available
+    footage after retiming, but it must never truncate the pinned narration.
+    """
+
+    actual_s = float(probe_video(source).duration_s)
+    if actual_s >= target_s - _DURATION_MATCH_TOLERANCE_S:
+        return source
+    hold_s = target_s - actual_s
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            source,
+            "-vf",
+            f"tpad=stop_mode=clone:stop_duration={hold_s:.6f}",
+            "-t",
+            f"{target_s:.6f}",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-y",
+            output,
+        ],
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    if result.returncode != 0 or not os.path.exists(output) or os.path.getsize(output) == 0:
+        raise GuidedStoryError(
+            "guided_story_render_failed", "The short footage could not be held to narration."
+        )
+    return output
+
+
 def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str], list[dict]]:
     from PIL import Image, ImageOps  # noqa: PLC0415
 
@@ -2700,6 +2768,8 @@ def _render_video_moment(
     look_adjustments: dict[str, float] | None = None,
     exact_duration: bool = False,
     preserve_audio: bool = False,
+    source_crop: dict[str, float] | None = None,
+    playback_rate: float = 1.0,
 ) -> None:
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
 
@@ -2723,6 +2793,8 @@ def _render_video_moment(
             look_preset=look_preset,
             look_adjustments=look_adjustments,
             exact_duration=exact_duration,
+            source_crop=source_crop,
+            speed_factor=playback_rate,
         )
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(
@@ -2768,6 +2840,8 @@ def _render_moments(
                 look_adjustments=moment.get("look_adjustments"),
                 exact_duration=exact_mixed_duration,
                 preserve_audio=bool((plan.get("montage_audio") or {}).get("preserve_source_audio")),
+                source_crop=moment.get("source_crop"),
+                playback_rate=float(moment.get("playback_rate") or 1.0),
             )
         probe = probe_video(output)
         if (
@@ -2790,6 +2864,12 @@ def _render_moments(
                 "image_motion": moment.get("image_motion"),
                 "source_start_s": round(float(moment.get("source_start_s", 0.0)), 3),
                 "source_end_s": round(float(moment.get("source_end_s", moment["duration_s"])), 3),
+                **({"source_crop": moment["source_crop"]} if moment.get("source_crop") else {}),
+                **(
+                    {"playback_rate": float(moment["playback_rate"])}
+                    if moment.get("playback_rate") is not None
+                    else {}
+                ),
                 "output_duration_s": round(float(probe.duration_s), 3),
                 "width": probe.width,
                 "height": probe.height,
@@ -2824,7 +2904,10 @@ def _verify_receipt(
     for row in moment_receipts:
         if row["media_id"] not in actual_media:
             actual_media.append(row["media_id"])
-    expected_text = [row["id"] for row in plan["text_elements"]]
+    hidden_caption_ids = set(plan.get("editor_hidden_caption_ids") or [])
+    expected_text = [
+        row["id"] for row in plan["text_elements"] if row["id"] not in hidden_caption_ids
+    ]
     expected_context = [row["id"] for row in plan.get("context_label_text_elements") or []]
     expected_narration_labels = [
         row["id"] for row in plan.get("narration_label_text_elements") or []
@@ -3073,11 +3156,24 @@ def validate_ready_result(
 
     expected_beats = [row.beat_id for row in typed_plan.beat_windows]
     expected_moments = [row.moment_id for row in typed_plan.story_timeline]
-    expected_text = [row.id for row in typed_plan.text_elements]
+    hidden_caption_ids: set[str] = set()
+    if (typed_plan.editor_caption_meta or {}).get("enabled") is False:
+        hidden_caption_ids = {
+            row.id
+            for row in typed_plan.text_elements
+            if (row.source_params or {}).get("source") == CAPTION_CUE_SOURCE
+        }
+    expected_text = [row.id for row in typed_plan.text_elements if row.id not in hidden_caption_ids]
     expected_context = [row.id for row in typed_plan.context_label_text_elements]
     expected_narration_labels = [row.id for row in typed_plan.narration_label_text_elements]
     current_text = [str(row.get("id")) for row in list(result.get("text_elements") or [])]
-    expected_editable_text = [*expected_text, *expected_narration_labels]
+    # Hidden caption pixels are intentionally absent from the receipt, but the
+    # canonical revision still retains every editable identity for a later
+    # re-enable/save round trip.
+    expected_editable_text = [
+        *[row.id for row in typed_plan.text_elements],
+        *expected_narration_labels,
+    ]
     approved_text = receipt.approved_text_ids or receipt.expected_text_ids
     timeline_by_media: dict[str, GuidedStoryMoment] = {}
     for moment in typed_plan.story_timeline:
@@ -3636,6 +3732,45 @@ def _tag_guided_text_overlays(
     return compiled
 
 
+def _apply_guided_caption_meta(
+    elements: list[TextElement], meta: dict[str, Any] | None
+) -> tuple[list[TextElement], set[str]]:
+    """Project caption metadata without mutating pinned cue timing or identity."""
+
+    if not meta:
+        return elements, set()
+    hidden: set[str] = set()
+    revised: list[TextElement] = []
+    for element in elements:
+        if (element.source_params or {}).get("source") != CAPTION_CUE_SOURCE:
+            revised.append(element)
+            continue
+        if meta.get("enabled") is False:
+            hidden.add(element.id)
+            revised.append(element)
+            continue
+        patch: dict[str, Any] = {}
+        appearance = meta.get("appearance") if isinstance(meta.get("appearance"), dict) else {}
+        if appearance.get("alignment") in {"left", "center", "right"}:
+            patch["alignment"] = appearance["alignment"]
+        for key in ("stroke_color", "shadow_color", "shadow_opacity"):
+            if appearance.get(key) is not None:
+                patch[key] = appearance[key]
+        if meta.get("y_frac") is not None:
+            patch.update({"position": "custom", "y_frac": float(meta["y_frac"])})
+        if meta.get("font_set") and meta.get("font"):
+            patch["font_family"] = meta["font"]
+        for key in ("size_px", "color", "highlight_color", "stroke_width", "shadow_enabled"):
+            if meta.get(key) is not None:
+                patch[key] = meta[key]
+        if meta.get("style") == "word":
+            patch["effect"] = "pop-in"
+        elif meta.get("style") == "sentence":
+            patch["effect"] = "static"
+        revised.append(element.model_copy(update=patch) if patch else element)
+    return revised, hidden
+
+
 def render_execution_plan(
     plan: dict[str, Any],
     *,
@@ -3747,6 +3882,11 @@ def render_execution_plan(
             "A recorded voiceover plan cannot also select a music track.",
         )
     if narration is not None:
+        assembled = _hold_final_frame_to_duration(
+            assembled,
+            os.path.join(tmpdir, "guided_story_assembled_held.mp4"),
+            target_s=float(plan["resolved_duration_s"]),
+        )
         clean_base = os.path.join(tmpdir, "guided_story_base.mp4")
         _mix_pinned_narration(
             assembled,
@@ -3795,13 +3935,21 @@ def render_execution_plan(
 
     final_path = os.path.join(tmpdir, "guided_story_final.mp4")
     elements = [TextElement.model_validate(row) for row in plan["text_elements"]]
+    elements, hidden_caption_ids = _apply_guided_caption_meta(
+        elements, plan.get("editor_caption_meta")
+    )
+    plan["editor_hidden_caption_ids"] = sorted(hidden_caption_ids)
     context_elements = [
         TextElement.model_validate(row) for row in plan.get("context_label_text_elements") or []
     ]
     narration_label_elements = [
         TextElement.model_validate(row) for row in plan.get("narration_label_text_elements") or []
     ]
-    render_elements = [*elements, *context_elements, *narration_label_elements]
+    render_elements = [
+        *[element for element in elements if element.id not in hidden_caption_ids],
+        *context_elements,
+        *narration_label_elements,
+    ]
     if render_elements:
         # Context labels historically use ``generative_sequence`` so the editor
         # can project them as a separate lane. The Skia renderer coalesces that
@@ -3819,7 +3967,16 @@ def render_execution_plan(
                 source_elements,
             )
 
-        overlays = compile_and_tag(elements)
+        from app.pipeline.guided_caption_presentation import (  # noqa: PLC0415
+            project_guided_caption_overlays,
+        )
+
+        overlays = project_guided_caption_overlays(
+            compile_and_tag(
+                [element for element in elements if element.id not in hidden_caption_ids]
+            ),
+            plan.get("editor_caption_meta"),
+        )
         context_overlays = compile_and_tag(context_elements)
         narration_label_overlays = compile_and_tag(narration_label_elements)
         for overlay in context_overlays:

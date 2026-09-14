@@ -922,6 +922,26 @@ class TimelineSlotEdit(BaseModel):
     # Guided Story media fit is per timeline occurrence. Legacy clients omit
     # this field and the write path falls back to the current/canonical value.
     layout: Literal["fullscreen", "supporting_card"] | None = None
+    source_crop: dict[str, float] | None = None
+    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+
+    @field_validator("source_crop")
+    @classmethod
+    def validate_source_crop(cls, value: dict[str, float] | None) -> dict[str, float] | None:
+        if value is None:
+            return None
+        required = {"x", "y", "width", "height"}
+        if set(value) != required:
+            raise ValueError("source_crop requires x, y, width, and height")
+        try:
+            x, y, width, height = (float(value[key]) for key in ("x", "y", "width", "height"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("source_crop values must be numeric") from exc
+        if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < width <= 1 and 0 < height <= 1):
+            raise ValueError("source_crop must be normalized")
+        if x + width > 1 + 1e-6 or y + height > 1 + 1e-6:
+            raise ValueError("source_crop must stay within source bounds")
+        return {"x": x, "y": y, "width": width, "height": height}
 
     @field_validator("look_preset", mode="before")
     @classmethod
@@ -3895,6 +3915,60 @@ def validate_sound_effects_for_user(
     return normalize_generated_sound_effects(validated)
 
 
+async def resolve_editor_sound_effect_placements(
+    placements: list[dict], *, user_id: str, plan_item_id: str | None, db: Any
+) -> list[dict]:
+    """Resolve curated SFX identities before the synchronous editor validator.
+
+    The editor wire is allowed to carry a catalog ``sound_effect_id`` but never
+    a trusted catalog GCS path. User-upload paths still go through the normal
+    ownership-prefix validator below.
+    """
+
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import SoundEffect  # noqa: PLC0415
+
+    # Resolve all catalog identities in one query. Editor commits can carry up
+    # to 100 placements, and querying each identity individually makes that
+    # normal case needlessly expensive. Keep the placement-order loop below so
+    # missing or audio-less identities retain the previous first-error
+    # semantics. Do not filter archived rows: existing placements must keep
+    # working after an admin archives an asset.
+    effect_ids = {
+        effect_id
+        for effect_id in (placement.get("sound_effect_id") for placement in placements)
+        if effect_id
+    }
+    effects_by_id: dict[str, Any] = {}
+    if effect_ids:
+        effects = (
+            (await db.execute(select(SoundEffect).where(SoundEffect.id.in_(effect_ids))))
+            .scalars()
+            .all()
+        )
+        effects_by_id = {str(effect.id): effect for effect in effects}
+
+    resolved: list[dict] = []
+    for raw in placements:
+        placement = dict(raw)
+        effect_id = placement.get("sound_effect_id")
+        if effect_id:
+            effect = effects_by_id.get(str(effect_id))
+            if effect is None or not effect.audio_gcs_path:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Sound effect {effect_id!r} not found or has no audio.",
+                )
+            placement["src_gcs_path"] = effect.audio_gcs_path
+            placement["label"] = placement.get("label") or effect.name
+            placement["duration_s"] = placement.get("duration_s") or effect.duration_s
+        resolved.append(placement)
+    return validate_sound_effects_for_user(
+        sfx_raw=resolved, user_id=user_id, plan_item_id=plan_item_id
+    )
+
+
 def _caption_reburn_enqueue_thunk(
     job_id: str, variant_id: str, render_gen_id: str
 ) -> Callable[[], None]:
@@ -6056,7 +6130,17 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
 
             clips = {
                 name: operation()
-                for name in ("add", "remove", "reorder", "split", "trim", "transitions", "looks")
+                for name in (
+                    "add",
+                    "remove",
+                    "reorder",
+                    "split",
+                    "trim",
+                    "transitions",
+                    "looks",
+                    "source_crop",
+                    "playback_rate",
+                )
             }
             clips["transitions"] = operation(
                 settings.edit_transitions_enabled,
@@ -6086,6 +6170,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "automatic_cut": False,
                 "automatic_cut_reason": "guided_story_edit_unsupported",
                 "mix": False,
+                # Guided captions are caption_cue TextElements. The metadata
+                # control is safe because it never changes their audio-bound
+                # timing or source identity.
+                "caption_meta": operation(),
+                "caption_editor_style": bool(revision is not None),
                 "sfx": bool(settings.sound_effects_enabled),
                 "sfx_reason": None if settings.sound_effects_enabled else "sound_effects_disabled",
                 "overlays": bool(settings.media_overlays_enabled),
@@ -6100,6 +6189,24 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "visual_blocks_reason": None
                 if settings.visual_blocks_enabled
                 else "visual_blocks_disabled",
+                "media_source_controls": {
+                    "source_crop": operation(
+                        settings.media_overlays_enabled or settings.visual_blocks_enabled,
+                        (
+                            None
+                            if settings.media_overlays_enabled or settings.visual_blocks_enabled
+                            else "media_visuals_disabled"
+                        ),
+                    ),
+                    "playback_rate": operation(
+                        settings.media_overlays_enabled or settings.visual_blocks_enabled,
+                        (
+                            None
+                            if settings.media_overlays_enabled or settings.visual_blocks_enabled
+                            else "media_visuals_disabled"
+                        ),
+                    ),
+                },
                 "motion_scenes": bool(settings.motion_scenes_enabled),
                 "motion_scenes_reason": None
                 if settings.motion_scenes_enabled
@@ -7175,6 +7282,12 @@ def _guided_v2_timeline_projection(
                 "source_duration_s": source.get("duration_s"),
                 "in_s": segment.get("source_start_s"),
                 "duration_s": segment.get("duration_s"),
+                **({"source_crop": segment["source_crop"]} if segment.get("source_crop") else {}),
+                **(
+                    {"playback_rate": segment["playback_rate"]}
+                    if segment.get("playback_rate") is not None
+                    else {}
+                ),
                 "duration_beats": None,
                 "output_start_s": segment.get("output_start_s"),
                 "output_end_s": segment.get("output_end_s"),
@@ -7810,21 +7923,44 @@ def _guided_v2_revision_for_write(
         if duration < 0.1:
             raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION")
         source_duration = source.get("duration_s")
+        segment_id = slot.slot_id or uuid.uuid4().hex
+        inherited_segment = current_segment_by_id.get(segment_id)
+        if inherited_segment is None and slot.parent_segment_id:
+            inherited_segment = current_segment_by_id.get(str(slot.parent_segment_id))
+
+        # Omitted source controls mean "leave this occurrence alone".  Older
+        # guided revisions encoded a retime only in source_end_s, so recover
+        # that effective rate instead of silently reverting it to 1x on an
+        # otherwise conventional Save.  An explicit null is the clear/reset
+        # operation and deliberately returns to 1x.
+        playback_rate_set = "playback_rate" in slot.model_fields_set
+        if playback_rate_set:
+            playback_rate = float(slot.playback_rate or 1.0)
+        elif isinstance(inherited_segment, dict):
+            inherited_duration = float(inherited_segment.get("duration_s") or 0.0)
+            inherited_span = float(inherited_segment.get("source_end_s") or 0.0) - float(
+                inherited_segment.get("source_start_s") or 0.0
+            )
+            playback_rate = inherited_span / inherited_duration if inherited_duration > 0 else 1.0
+        else:
+            playback_rate = 1.0
         if source.get("kind") == "video" and source_duration is not None:
-            if slot.in_s < 0 or slot.in_s + duration > float(source_duration) + 0.05:
+            if (
+                slot.in_s < 0
+                or slot.in_s + duration * playback_rate > float(source_duration) + 0.05
+            ):
                 raise _timeline_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_SOURCE_BOUNDS"
                 )
         if order:
             cursor = max(0.0, cursor - effective_transitions[order - 1][1])
         transition, transition_duration = effective_transitions[order]
-        segment_id = slot.slot_id or uuid.uuid4().hex
         segment = {
             "segment_id": segment_id,
             "parent_segment_id": slot.parent_segment_id,
             "media_id": source["media_id"],
             "source_start_s": float(slot.in_s),
-            "source_end_s": float(slot.in_s) + duration,
+            "source_end_s": float(slot.in_s) + duration * playback_rate,
             "duration_s": round(duration, 3),
             "transition_after": transition,
             "transition_duration_s": transition_duration,
@@ -7834,6 +7970,18 @@ def _guided_v2_revision_for_write(
             else None,
             "output_start_s": round(cursor, 3),
         }
+        if "source_crop" in slot.model_fields_set:
+            if slot.source_crop is not None:
+                segment["source_crop"] = slot.source_crop
+        elif isinstance(inherited_segment, dict) and inherited_segment.get("source_crop"):
+            segment["source_crop"] = inherited_segment["source_crop"]
+        if playback_rate_set and slot.playback_rate is not None:
+            segment["playback_rate"] = playback_rate
+        elif not playback_rate_set and isinstance(inherited_segment, dict):
+            # Preserve an explicit persisted value; legacy source-span-only
+            # retimes stay legacy so their normalized hash does not churn.
+            if inherited_segment.get("playback_rate") is not None:
+                segment["playback_rate"] = inherited_segment["playback_rate"]
         # New clients send the occurrence's canonical fit. Older clients omit
         # it; preserve a layout already stored on this segment (including its
         # parent when a split child is being written) and otherwise retain the
@@ -8335,6 +8483,15 @@ def _guided_v2_revision_from_commit(
     if payload.guided_revision_number is None:
         raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
     raw = dict(payload.guided_revision or current)
+    if raw.get("caption_meta") is not None:
+        try:
+            raw["caption_meta"] = EditorCommitCaptionMeta.model_validate(
+                raw["caption_meta"]
+            ).model_dump(exclude_unset=True)
+        except ValueError as exc:
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID"
+            ) from exc
     # Source identity is approval-owned. A client may choose among the pool,
     # but cannot replace paths or generations in a revision payload.
     raw["sources"] = list(current.get("sources") or [])
@@ -8358,6 +8515,11 @@ def _guided_v2_revision_from_commit(
         raw["visual_blocks"] = visual_blocks
     if motion_scenes is not None:
         raw["motion_scenes"] = motion_scenes
+    if payload.caption_meta is not None:
+        # Guided captions are existing TextElements marked source=caption_cue.
+        # Persist the validated presentation state separately so neither their
+        # narration-bound source_params nor their timings are ever rewritten.
+        raw["caption_meta"] = payload.caption_meta.model_dump(exclude_unset=True)
     active_lane_ids = {
         lane: {
             str(value.get("id"))
@@ -8537,7 +8699,6 @@ def require_guided_story_editor_commit(
         # remain deliberately outside the story-native contract.
         excluded = (
             payload.caption_cues is not None
-            or payload.caption_meta is not None
             or payload.background_music is not None
             or payload.lyrics is not None
             or payload.camera_effects is not None
@@ -8904,7 +9065,7 @@ def _prepare_editor_commit(
 
     validated_caption_cues: list[dict] | None = None
     if payload.caption_cues is not None:
-        if not _is_editable_caption_variant(variant):
+        if not (_is_editable_caption_variant(variant) or guided_v2):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{CAPTION_TAB_COPY}.",
@@ -8917,7 +9078,7 @@ def _prepare_editor_commit(
     if payload.caption_meta is not None:
         # Meta toggles (style/font/enabled/position) are accepted for BOTH caption
         # archetypes — the fields and the reburn task are shared.
-        if not _is_editable_caption_variant(variant):
+        if not (_is_editable_caption_variant(variant) or guided_v2):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{CAPTION_TAB_COPY}.",

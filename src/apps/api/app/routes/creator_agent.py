@@ -3768,6 +3768,21 @@ async def _execute_creator_craft(
                 )
             )
             if has_editor_sections:
+                if editor_commit.sound_effects is not None:
+                    from app.routes.generative_jobs import (  # noqa: PLC0415
+                        resolve_editor_sound_effect_placements,
+                    )
+
+                    editor_commit = editor_commit.model_copy(
+                        update={
+                            "sound_effects": await resolve_editor_sound_effect_placements(
+                                editor_commit.sound_effects,
+                                user_id=str(user.id),
+                                plan_item_id=str(item.id),
+                                db=db,
+                            )
+                        }
+                    )
                 if speech_operation_id:
                     # The editor gateway validates against the client-pinned
                     # last-good generation. Speech staging may already have

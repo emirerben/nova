@@ -189,6 +189,114 @@ def test_revision_rejects_source_window_past_pinned_generation_duration() -> Non
         )
 
 
+def test_retime_and_normalized_crop_are_bounded_and_derive_source_window() -> None:
+    raw = _revision(
+        segments=[
+            {
+                "segment_id": "retimed",
+                "media_id": "clip-1",
+                "source_start_s": 1.0,
+                "duration_s": 3.0,
+                "playback_rate": 2.0,
+                "source_crop": {"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.7},
+            }
+        ]
+    )
+    normalized = normalize_guided_editor_revision(raw)
+    segment = normalized["segments"][0]
+    assert segment["source_end_s"] == 7.0
+    assert segment["playback_rate"] == 2.0
+    assert segment["source_crop"] == {"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.7}
+
+
+def test_short_retimed_source_shortens_and_reflows_later_segments() -> None:
+    raw = _revision(
+        segments=[
+            {
+                "segment_id": "first",
+                "media_id": "clip-1",
+                "source_start_s": 7.0,
+                "duration_s": 2.0,
+                "playback_rate": 2.0,
+            },
+            {
+                "segment_id": "second",
+                "media_id": "asset-1",
+                "duration_s": 1.0,
+            },
+        ]
+    )
+    normalized = normalize_guided_editor_revision(raw)
+    first, second = normalized["segments"]
+    assert first["duration_s"] == 0.5
+    assert first["source_end_s"] == 8.0
+    assert second["output_start_s"] == 0.5
+
+
+def test_legacy_implicit_slow_motion_keeps_its_authored_duration_and_hash() -> None:
+    """Pre-rate revisions store their slow factor in source span only."""
+    raw = _revision(
+        sources=[{**_revision()["sources"][0], "duration_s": 2.0}],
+        segments=[
+            {
+                "segment_id": "legacy-slow",
+                "media_id": "clip-1",
+                "source_start_s": 0.0,
+                "source_end_s": 1.95,
+                "duration_s": 5.0,
+                "output_start_s": 0.0,
+                "output_end_s": 5.0,
+            }
+        ],
+    )
+    normalized = normalize_guided_editor_revision(raw)
+    assert normalized["segments"][0]["duration_s"] == 5.0
+    # The pre-existing 30fps canonicalization remains stable; only the
+    # duration clamp must not rewrite the legacy slow-motion meaning.
+    assert normalized["segments"][0]["source_end_s"] == pytest.approx(1.933333)
+    assert normalize_guided_editor_revision(normalized)["state_hash"] == normalized["state_hash"]
+
+
+def test_explicit_retime_rejects_source_remainder_below_editor_floor() -> None:
+    with pytest.raises(ValueError, match="source window is too short"):
+        normalize_guided_editor_revision(
+            _revision(
+                sources=[{**_revision()["sources"][0], "duration_s": 2.0}],
+                segments=[
+                    {
+                        "segment_id": "too-short-at-4x",
+                        "media_id": "clip-1",
+                        "source_start_s": 1.9,
+                        "duration_s": 1.0,
+                        "playback_rate": 4.0,
+                    }
+                ],
+            )
+        )
+
+
+def test_caption_meta_round_trips_147_pinned_caption_records_without_rewriting_them() -> None:
+    captions = [
+        {
+            "id": f"narration-caption-{index}",
+            "text": "caption",
+            "start_s": index / 10,
+            "end_s": index / 10 + 0.1,
+            "source_params": {"source": "caption_cue", "identity": f"cue-{index}"},
+        }
+        for index in range(147)
+    ]
+    revision = normalize_guided_editor_revision(
+        _revision(
+            text_elements=captions,
+            caption_meta={"enabled": False, "style": "sentence", "size_px": 72},
+        )
+    )
+    assert len(revision["text_elements"]) == 147
+    assert revision["text_elements"][146]["source_params"]["source"] == "caption_cue"
+    assert revision["caption_meta"] == {"enabled": False, "style": "sentence", "size_px": 72}
+
+
 def test_revision_accepts_120_segments_and_rejects_121() -> None:
     sources = [
         {
