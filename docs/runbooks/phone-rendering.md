@@ -447,7 +447,9 @@ not claim pixel-identical rasterization or general typography/language coverage.
 Raw text-region RGB differences are retained in the comparison report rather
 than hidden by whole-frame averages.
 
-All 16 preview/export comparisons passed. At the 12 settled samples, the maximum
+All 16 preview/export comparisons completed without failures: 12 settled
+preview/export samples passed the parity gate, while the 4 ramp samples are
+diagnostic only. At the 12 settled samples, the maximum
 glyph mismatch outside a one-pixel neighborhood was 0.189% of observable glyph
 pixels (limit 0.5%); bounding-box edges differed by at most one pixel. The
 comparison excludes white source pixels using both the preview and encoded
