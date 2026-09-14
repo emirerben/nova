@@ -86,11 +86,15 @@ with open(ledger, encoding="utf-8") as source:
         # `outcome` describes the run itself (completed, failed, interrupted).
         if not isinstance(item, dict):
             continue
-        if local_date(item.get("finished_at")) != recap_date:
+        stopped_at = item.get("stopped_at") or item.get("finished_at")
+        if local_date(stopped_at) != recap_date:
             continue
-        required = ("founder", "tool", "ticket", "started_at", "finished_at", "elapsed_seconds", "outcome")
+        required = ("founder", "tool", "ticket", "started_at", "outcome")
         if not all(key in item for key in required):
             continue
+        item["stopped_at"] = stopped_at
+        item["active_seconds"] = item.get("active_seconds", item.get("elapsed_seconds", 0))
+        item["wait_seconds"] = item.get("wait_seconds", 0)
         runs.append(item)
 
 if not runs:
@@ -105,10 +109,24 @@ def duration(value: object) -> str:
     minutes, seconds = divmod(remainder, 60)
     return f"{hours}h {minutes}m" if hours else (f"{minutes}m {seconds}s" if minutes else f"{seconds}s")
 
-lines = [f"*Agent runs recap — {recap_date}*", f"{len(runs)} reported finish(es)."]
+def seconds(value: object) -> int:
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+active_total = sum(seconds(item["active_seconds"]) for item in runs)
+wait_total = sum(seconds(item["wait_seconds"]) for item in runs)
+lines = [
+    f"*Agent runs recap — {recap_date}*",
+    f"{len(runs)} reported stop(s) · active {duration(active_total)} · waiting {duration(wait_total)}.",
+]
 for item in runs:
     # Values are serialized by json.dumps below, so Slack receives text only.
-    lines.append(f"• {item['founder']} · {item['tool']} · {item['ticket']} · {duration(item['elapsed_seconds'])} · {item['outcome']}")
+    lines.append(
+        f"• {item['founder']} · {item['tool']} · {item['ticket']} · "
+        f"active {duration(item['active_seconds'])} · waiting {duration(item['wait_seconds'])} · {item['outcome']}"
+    )
 
 print(json.dumps({"text": "\n".join(lines)}, ensure_ascii=False))
 PY

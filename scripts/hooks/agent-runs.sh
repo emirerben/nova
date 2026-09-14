@@ -50,8 +50,10 @@ if raw_outcome in {"failed", "failure", "error"}:
     outcome = "failed"
 elif raw_outcome in {"cancelled", "canceled", "aborted", "interrupted", "timeout"}:
     outcome = "interrupted"
-else:
+elif raw_outcome in {"completed", "complete", "success", "succeeded", "ok"}:
     outcome = "completed"
+else:
+    outcome = "stopped"
 
 if session:
     print(f"{session}\x1f{ticket}\x1f{outcome}")
@@ -88,112 +90,142 @@ STATE_FILE="$STATE_DIR/$state_key.json"
 mkdir -p "$STATE_DIR" 2>/dev/null || exit 0
 chmod 700 "$STATE_DIR" 2>/dev/null || true
 
-if [ "$ACTION" = "start" ]; then
-  # A state file means this session has already received its initial prompt.
-  [ -e "$STATE_FILE" ] && exit 0
-  LOCK_DIR="$STATE_DIR/.start-$state_key.lock"
-  mkdir "$LOCK_DIR" 2>/dev/null || exit 0
-  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
-  [ -e "$STATE_FILE" ] && exit 0
-
-  FOUNDER="${NOVA_AGENT_RUNS_FOUNDER:-$(git config user.name 2>/dev/null || true)}"
-  [ -n "$FOUNDER" ] || FOUNDER="unknown"
-  STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  STARTED_EPOCH="$(date +%s)"
-  TMP_FILE="$(mktemp "$STATE_DIR/.run.XXXXXX" 2>/dev/null || true)"
-  [ -n "$TMP_FILE" ] || exit 0
+write_state() {
+  local content="$1" tmp
+  tmp="$(mktemp "$STATE_DIR/.run.XXXXXX" 2>/dev/null || true)"
+  [ -n "$tmp" ] || return 1
   umask 077
-  if [ -z "$TICKET" ]; then
-    TOOL="$TOOL" SESSION_ID="$SESSION_ID" python3 -c '
-import json, os, sys
-json.dump({"tool": os.environ["TOOL"], "session_id": os.environ["SESSION_ID"], "tracked": False}, sys.stdout, separators=(",", ":"))
-' >"$TMP_FILE" 2>/dev/null || { rm -f "$TMP_FILE"; exit 0; }
-    chmod 600 "$TMP_FILE" 2>/dev/null || true
-    mv "$TMP_FILE" "$STATE_FILE" 2>/dev/null || true
+  printf '%s' "$content" >"$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  chmod 600 "$tmp" 2>/dev/null || true
+  mv "$tmp" "$STATE_FILE" 2>/dev/null
+}
+
+read_state() {
+  python3 -c '
+import json, sys
+try:
+    state = json.load(open(sys.argv[1]))
+    if isinstance(state, dict):
+        print(json.dumps(state, separators=(",", ":")))
+except (OSError, ValueError, TypeError):
+    pass
+' "$STATE_FILE" 2>/dev/null || true
+}
+
+LOCK_DIR="$STATE_DIR/.session-$state_key.lock"
+mkdir "$LOCK_DIR" 2>/dev/null || exit 0
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+
+if [ "$ACTION" = "start" ]; then
+  NOW_EPOCH="$(date +%s)"
+  NOW_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  STATE="$(read_state)"
+  if [ -z "$STATE" ]; then
+    if [ -z "$TICKET" ]; then
+      TOOL="$TOOL" SESSION_ID="$SESSION_ID" python3 -c '
+import json, os
+print(json.dumps({"tool": os.environ["TOOL"], "session_id": os.environ["SESSION_ID"], "tracked": False}, separators=(",", ":")))
+' | { read -r ignored_state; write_state "$ignored_state"; }
+      exit 0
+    fi
+    FOUNDER="${NOVA_AGENT_RUNS_FOUNDER:-$(git config user.name 2>/dev/null || true)}"
+    [ -n "$FOUNDER" ] || FOUNDER="unknown"
+    STATE="$(FOUNDER="$FOUNDER" TOOL="$TOOL" TICKET="$TICKET" SESSION_ID="$SESSION_ID" NOW_AT="$NOW_AT" NOW_EPOCH="$NOW_EPOCH" python3 -c '
+import json, os
+print(json.dumps({
+    "founder": os.environ["FOUNDER"], "tool": os.environ["TOOL"], "ticket": os.environ["TICKET"],
+    "session_id": os.environ["SESSION_ID"], "started_at": os.environ["NOW_AT"],
+    "active_seconds": 0, "wait_seconds": 0, "last_started_epoch": int(os.environ["NOW_EPOCH"]),
+    "last_stopped_epoch": None, "tracked": True,
+}, separators=(",", ":")))
+' 2>/dev/null || true)"
+    [ -n "$STATE" ] || exit 0
+    write_state "$STATE" || exit 0
+    PAYLOAD="$(STATE="$STATE" python3 -c '
+import json, os
+s = json.loads(os.environ["STATE"])
+print(json.dumps({"text": "Agent task started | founder={founder} | tool={tool} | ticket={ticket} | started_at={started_at}".format(**s)}, separators=(",", ":")))
+' 2>/dev/null || true)"
+    [ -n "$PAYLOAD" ] && post_json "$PAYLOAD" || true
     exit 0
   fi
-  FOUNDER="$FOUNDER" TOOL="$TOOL" TICKET="$TICKET" SESSION_ID="$SESSION_ID" STARTED_AT="$STARTED_AT" STARTED_EPOCH="$STARTED_EPOCH" \
-    python3 -c '
-import json, os, sys
-json.dump({
-    "founder": os.environ["FOUNDER"],
-    "tool": os.environ["TOOL"],
-    "ticket": os.environ["TICKET"],
-    "session_id": os.environ["SESSION_ID"],
-    "started_at": os.environ["STARTED_AT"],
-    "started_epoch": int(os.environ["STARTED_EPOCH"]),
-    "tracked": True,
-}, sys.stdout, separators=(",", ":"))
-' >"$TMP_FILE" 2>/dev/null || { rm -f "$TMP_FILE"; exit 0; }
-  chmod 600 "$TMP_FILE" 2>/dev/null || true
-  mv "$TMP_FILE" "$STATE_FILE" 2>/dev/null || exit 0
 
-  PAYLOAD="$(FOUNDER="$FOUNDER" TOOL="$TOOL" TICKET="$TICKET" STARTED_AT="$STARTED_AT" python3 -c '
+  TRACKED="$(STATE="$STATE" python3 -c 'import json,os; print("yes" if json.loads(os.environ["STATE"]).get("tracked") else "no")' 2>/dev/null || true)"
+  [ "$TRACKED" = "yes" ] || exit 0
+  CURRENT_TICKET="$(STATE="$STATE" python3 -c 'import json,os; print(json.loads(os.environ["STATE"]).get("ticket", ""))' 2>/dev/null || true)"
+  # A logical task stays anchored to its initial KRI key for this session.
+  # Starting a different ticket requires a new Codex/Claude session.
+  [ -n "$TICKET" ] && [ "$TICKET" != "$CURRENT_TICKET" ] && exit 0
+
+  RESUMED="$(STATE="$STATE" NOW_EPOCH="$NOW_EPOCH" python3 -c '
 import json, os
-text = "Agent run started | founder={founder} | tool={tool} | ticket={ticket} | started_at={started_at}".format(
-    founder=os.environ["FOUNDER"], tool=os.environ["TOOL"], ticket=os.environ["TICKET"], started_at=os.environ["STARTED_AT"]
-)
+s = json.loads(os.environ["STATE"])
+last = s.get("last_stopped_epoch")
+wait = max(0, int(os.environ["NOW_EPOCH"]) - int(last)) if last is not None else 0
+s["wait_seconds"] = int(s.get("wait_seconds", 0)) + wait
+s["pending_wait_seconds"] = wait
+s["last_started_epoch"] = int(os.environ["NOW_EPOCH"])
+s["last_stopped_epoch"] = None
+print(json.dumps({"state": s, "wait": wait}, separators=(",", ":")))
+' 2>/dev/null || true)"
+  [ -n "$RESUMED" ] || exit 0
+  STATE="$(RESULT="$RESUMED" python3 -c 'import json,os; print(json.dumps(json.loads(os.environ["RESULT"])["state"], separators=(",", ":")))')"
+  WAIT_INCREMENT="$(RESULT="$RESUMED" python3 -c 'import json,os; print(json.loads(os.environ["RESULT"])["wait"])')"
+  write_state "$STATE" || exit 0
+  PAYLOAD="$(STATE="$STATE" WAIT_INCREMENT="$WAIT_INCREMENT" NOW_AT="$NOW_AT" python3 -c '
+import json, os
+s = json.loads(os.environ["STATE"])
+text = ("Agent task resumed | founder={founder} | tool={tool} | ticket={ticket} | resumed_at={now} | "
+        "wait_seconds={wait} | total_wait_seconds={total}").format(
+    founder=s["founder"], tool=s["tool"], ticket=s["ticket"], now=os.environ["NOW_AT"],
+    wait=os.environ["WAIT_INCREMENT"], total=s["wait_seconds"])
 print(json.dumps({"text": text}, separators=(",", ":")))
 ' 2>/dev/null || true)"
   [ -n "$PAYLOAD" ] && post_json "$PAYLOAD" || true
   exit 0
 fi
 
-[ -r "$STATE_FILE" ] || exit 0
-LOCK_DIR="$STATE_DIR/.finish-$state_key.lock"
-mkdir "$LOCK_DIR" 2>/dev/null || exit 0
-trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
-[ -r "$STATE_FILE" ] || exit 0
-TRACKED="$(python3 -c '
-import json, sys
-try:
-    print("yes" if json.load(open(sys.argv[1])).get("tracked", True) else "no")
-except (OSError, ValueError, TypeError):
-    pass
-' "$STATE_FILE" 2>/dev/null || true)"
-if [ "$TRACKED" = "no" ]; then
-  rm -f "$STATE_FILE" 2>/dev/null || true
-  exit 0
-fi
-
-STATE="$(python3 -c '
-import json, sys
-try:
-    state = json.load(open(sys.argv[1]))
-    required = ("founder", "tool", "ticket", "started_at", "started_epoch")
-    if all(key in state for key in required):
-        print(json.dumps(state, separators=(",", ":")))
-except (OSError, ValueError, TypeError):
-    pass
-' "$STATE_FILE" 2>/dev/null || true)"
+STATE="$(read_state)"
 [ -n "$STATE" ] || exit 0
+TRACKED="$(STATE="$STATE" python3 -c 'import json,os; print("yes" if json.loads(os.environ["STATE"]).get("tracked") else "no")' 2>/dev/null || true)"
+[ "$TRACKED" = "yes" ] || exit 0
 
 NOW_EPOCH="$(date +%s)"
-FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-FINISH_FIELDS="$(STATE="$STATE" NOW_EPOCH="$NOW_EPOCH" FINISHED_AT="$FINISHED_AT" OUTCOME="$OUTCOME" python3 -c '
+STOPPED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+CHECKPOINT="$(STATE="$STATE" NOW_EPOCH="$NOW_EPOCH" STOPPED_AT="$STOPPED_AT" OUTCOME="$OUTCOME" python3 -c '
 import json, os
-state = json.loads(os.environ["STATE"])
-elapsed = max(0, int(os.environ["NOW_EPOCH"]) - int(state["started_epoch"]))
+s = json.loads(os.environ["STATE"])
+started = s.get("last_started_epoch")
+if started is None:
+    raise SystemExit(0)
+active = max(0, int(os.environ["NOW_EPOCH"]) - int(started))
+s["active_seconds"] = int(s.get("active_seconds", 0)) + active
+s["last_started_epoch"] = None
+s["last_stopped_epoch"] = int(os.environ["NOW_EPOCH"])
+wait = int(s.get("pending_wait_seconds", 0))
+s["pending_wait_seconds"] = 0
 record = {
-    "founder": state["founder"], "tool": state["tool"], "ticket": state["ticket"],
-    "started_at": state["started_at"], "finished_at": os.environ["FINISHED_AT"],
-    "elapsed_seconds": elapsed, "outcome": os.environ["OUTCOME"],
+    "founder": s["founder"], "tool": s["tool"], "ticket": s["ticket"], "started_at": s["started_at"],
+    "stopped_at": os.environ["STOPPED_AT"], "active_seconds": active,
+    "wait_seconds": wait, "total_active_seconds": s["active_seconds"],
+    "total_wait_seconds": s.get("wait_seconds", 0), "outcome": os.environ["OUTCOME"],
 }
-print(json.dumps(record, separators=(",", ":")))
+print(json.dumps({"state": s, "record": record}, separators=(",", ":")))
 ' 2>/dev/null || true)"
-[ -n "$FINISH_FIELDS" ] || exit 0
-
-PAYLOAD="$(RECORD="$FINISH_FIELDS" python3 -c '
+[ -n "$CHECKPOINT" ] || exit 0
+STATE="$(RESULT="$CHECKPOINT" python3 -c 'import json,os; print(json.dumps(json.loads(os.environ["RESULT"])["state"], separators=(",", ":")))')"
+RECORD="$(RESULT="$CHECKPOINT" python3 -c 'import json,os; print(json.dumps(json.loads(os.environ["RESULT"])["record"], separators=(",", ":")))')"
+write_state "$STATE" || exit 0
+PAYLOAD="$(RECORD="$RECORD" python3 -c '
 import json, os
 r = json.loads(os.environ["RECORD"])
-text = ("Agent run finished | founder={founder} | tool={tool} | ticket={ticket} | "
-        "finished_at={finished_at} | elapsed_seconds={elapsed_seconds} | outcome={outcome}").format(**r)
+text = ("Agent task stopped — waiting for next prompt | founder={founder} | tool={tool} | ticket={ticket} | stopped_at={stopped_at} | "
+        "active_seconds={active_seconds} | total_active_seconds={total_active_seconds} | "
+        "total_wait_seconds={total_wait_seconds} | outcome={outcome}").format(**r)
 print(json.dumps({"text": text}, separators=(",", ":")))
 ' 2>/dev/null || true)"
 [ -n "$PAYLOAD" ] || exit 0
 post_json "$PAYLOAD" || exit 0
-
-printf '%s\n' "$FINISH_FIELDS" >>"$STATE_DIR/completed-runs.jsonl" 2>/dev/null || exit 0
+printf '%s\n' "$RECORD" >>"$STATE_DIR/completed-runs.jsonl" 2>/dev/null || exit 0
 chmod 600 "$STATE_DIR/completed-runs.jsonl" 2>/dev/null || true
-rm -f "$STATE_FILE" 2>/dev/null || true
 exit 0

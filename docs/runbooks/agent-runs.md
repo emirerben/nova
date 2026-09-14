@@ -8,12 +8,18 @@ Nova’s checked-in Codex Desktop and Claude Code hooks call the same reporter o
 `UserPromptSubmit` and `Stop`. Start a run with a ticket in its **initial**
 prompt, for example `KRI-123: implement the requested change`. The reporter
 ignores sessions whose first prompt lacks a `KRI-xx` key, even if a later prompt
-mentions one. A normal tracked run posts one start and one finish entry; the
-finish supplies elapsed duration and outcome.
+mentions one. The initial ticket anchors the whole session: every later prompt
+resumes that ticket automatically, even when the follow-up contains no ticket.
 
-To smoke-test both integrations after adding the webhook, start and finish one
+Every `Stop` posts a checkpoint rather than declaring the task complete. A
+checkpoint records active agent time, then the next prompt measures the human
+wait before resuming. This keeps a four-hour wait out of active time while
+recording it separately as waiting time. Start a new session to track a
+different KRI ticket.
+
+To smoke-test both integrations after adding the webhook, start and stop one
 Codex Desktop run and one Claude Code run with an initial `KRI-123` prompt, then
-confirm four metadata-only entries in private `#agent-runs`.
+confirm metadata-only start and stop entries in private `#agent-runs`.
 
 ## Set up
 
@@ -54,10 +60,10 @@ Disable it without deleting configuration:
 launchctl bootout gui/$(id -u)/com.nova.agent-runs-recap
 ```
 
-To remove the local feature, disable it first, then remove `~/Library/LaunchAgents/com.nova.agent-runs-recap.plist`, `~/.nova/agent-runs.env`, and (only if no longer wanted) `~/.nova/agent-runs/`. The last directory contains local completion metadata and idempotency markers.
+To remove the local feature, disable it first, then remove `~/Library/LaunchAgents/com.nova.agent-runs-recap.plist`, `~/.nova/agent-runs.env`, and (only if no longer wanted) `~/.nova/agent-runs/`. The last directory contains local checkpoint metadata and idempotency markers.
 
 ## Privacy and failure behavior
 
-The ledger is local at `~/.nova/agent-runs/completed-runs.jsonl`. Inclusion in that ledger means a finish was reported successfully; its `outcome` describes the run (`completed`, `failed`, or `interrupted`). The recap includes every ledger row whose `finished_at` falls on the local calendar date. Slack receives only founder, tool, ticket identifier, elapsed duration, outcome, and the total count. It never receives prompts, transcripts, command output, file paths, source video details, or raw ledger JSON.
+The ledger is local at `~/.nova/agent-runs/completed-runs.jsonl`. Inclusion in that ledger means a stop checkpoint was reported successfully. Each row carries its active-time increment, wait-time increment, cumulative totals, and outcome state. The recap includes every ledger row whose `stopped_at` falls on the local calendar date and separately totals active and waiting time. Slack receives only founder, tool, ticket identifier, timestamps, active/wait duration, cumulative totals, outcome, and the total count. It never receives prompts, transcripts, command output, file paths, source video details, or raw ledger JSON.
 
 The config is sourced only when it is owned by and readable by the current user. Missing configuration, an empty ledger, malformed local records, or a Slack failure are fail-open: they do not interrupt agent-run reporting. Check `~/.nova/logs/launchd-agent-runs-recap.err.log` if a scheduled recap is missing.
