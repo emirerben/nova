@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.20.0] - 2026-09-14
+
+### Changed
+- fix(ios): make editor pause and resume respond without redundant rendering (#1029) <!-- release-pr: 1029 -->
+
 ## [0.76.19.0] - 2026-09-14
 
 ### Changed
