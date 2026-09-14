@@ -29,7 +29,7 @@ packages:
 settings:
   base:
     SWIFT_VERSION: 6.0
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: "$(KRIA_DEVELOPMENT_TEAM)"
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
     SWIFT_EMIT_LOC_STRINGS: YES
@@ -81,6 +81,7 @@ targets:
         PRODUCT_NAME: Kria
         INFOPLIST_FILE: Kria/Support/Info.plist
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Kria/Kria.entitlements
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -90,6 +91,8 @@ targets:
           PRODUCT_BUNDLE_IDENTIFIER: com.kria.app.staging
         Release:
           PRODUCT_BUNDLE_IDENTIFIER: com.kria.app
+          CODE_SIGN_STYLE: Manual
+          PROVISIONING_PROFILE_SPECIFIER: "$(KRIA_PROVISIONING_PROFILE_SPECIFIER)"
     scheme:
       testTargets:
         - KriaTests

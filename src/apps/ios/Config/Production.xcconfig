@@ -2,5 +2,10 @@
 API_BASE_URL = https:/$()/nova-video.fly.dev
 AUTH_MODE = apple
 KRIA_MEDIA_ENGINE = remote
+// CI supplies these values for a signed distribution archive. Keeping the
+// checked-in defaults empty means an accidental Release archive cannot ship
+// with a non-functional authentication surface or an unspecified team.
+KRIA_DEVELOPMENT_TEAM =
 KRIA_GOOGLE_CLIENT_ID =
-KRIA_GOOGLE_REDIRECT_SCHEME = kria-google
+KRIA_GOOGLE_REDIRECT_SCHEME =
+KRIA_PROVISIONING_PROFILE_SPECIFIER =

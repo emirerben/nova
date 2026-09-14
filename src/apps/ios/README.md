@@ -70,3 +70,11 @@ can override `API_BASE_URL`, `KRIA_GOOGLE_CLIENT_ID`, and
 The app has no production credentials in source. Set environment-specific API
 values in the xcconfig files or in the Xcode scheme, and keep real secrets in
 the developer's keychain/CI secret store.
+
+## TestFlight
+
+Production archives are signed only through `scripts/ios/archive-testflight.sh`;
+it rejects empty signing and OAuth configuration before Xcode starts. Continuous
+delivery lives in the `TestFlight` GitHub workflow and publishes approved builds
+to the configured external group. See [the TestFlight runbook](../../../docs/runbooks/testflight.md)
+for the account, API, and GitHub environment setup required before its first run.

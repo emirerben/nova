@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+# Keep the CI upload client reproducible. Upgrade intentionally in a dedicated
+# release-tooling change after validating an archive and TestFlight upload.
+gem "fastlane", "2.229.1"
