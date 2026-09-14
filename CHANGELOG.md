@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.15.0] - 2026-09-14
+
+### Changed
+- fix: restore cost-aware Codex delegation (#1020) <!-- release-pr: 1020 -->
+
 ## [0.76.14.0] - 2026-09-14
 
 ### Changed
