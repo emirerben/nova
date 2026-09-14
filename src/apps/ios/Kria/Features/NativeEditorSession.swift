@@ -1220,20 +1220,29 @@ enum NativeEditorLoadState: Equatable, Sendable {
             pausePlayback()
             return
         }
-        // AVPlayer does not automatically restart after an end notification.
-        // Make replay deterministic and keep clock and transport in lockstep.
+        // Scrubbing renders stills independently of AVPlayer. Only that handoff
+        // (or replay) needs a seek; ordinary resume keeps the decoded surface.
         if duration > 0, currentTime >= duration - playbackEndTolerance {
-            player.seek(to: .zero)
             currentTime = 0
+            playbackSeekTarget = 0
         }
-        let target = min(currentTime, max(0, duration - 1.0 / 600))
-        let hadScrubFrame = scrubPreviewFrame != nil
-        cancelScrubFrames(clearImage: false)
-        if hadScrubFrame || player.currentItem?.videoComposition != nil {
+        if seekInFlight || pendingSeekTime != nil { playbackSeekTarget = currentTime }
+        seekRecoveryTask?.cancel()
+        seekRecoveryTask = nil
+        seekSequence += 1
+        seekInFlight = false
+        pendingSeekTime = nil
+        isPlaying = true
+        if let target = playbackSeekTarget {
+            cancelScrubFrames(clearImage: false)
             let generation = scrubFrameGeneration
+            playbackHandoffInFlight = true
             player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak player] finished in
                 Task { @MainActor [weak self, weak player] in
-                    guard finished, let self, self.player === player, self.scrubFrameGeneration == generation, self.isPlaying else { return }
+                    guard let self, self.player === player, self.scrubFrameGeneration == generation else { return }
+                    self.playbackHandoffInFlight = false
+                    guard finished else { return }
+                    self.playbackSeekTarget = nil
                     self.scrubPreviewFrame = nil
                     self.scrubPreviewTime = nil
                 }
@@ -1241,13 +1250,17 @@ enum NativeEditorLoadState: Equatable, Sendable {
         }
         activatePreviewAudio()
         player.play()
-        isPlaying = true
     }
 
     func pausePlayback() {
         player?.pause()
         isPlaying = false
-        _ = requestScrubFrame(at: currentTime)
+        // Preserve a scrub target while its seek is still pending. Otherwise
+        // freeze at the player's actual clock, not the last 50ms UI sample.
+        if playbackSeekTarget == nil, let player, player.currentItem?.status == .readyToPlay {
+            let seconds = player.currentTime().seconds
+            if seconds.isFinite { currentTime = min(max(0, seconds), max(0, duration)) }
+        }
     }
 
     /// Editor playback is media audio, including when the silent switch is on.
@@ -1255,7 +1268,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private func activatePreviewAudio() {
         do {
             let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playback, mode: .moviePlayback)
+            if audio.category != .playback || audio.mode != .moviePlayback {
+                try audio.setCategory(.playback, mode: .moviePlayback)
+            }
             try audio.setActive(true)
         } catch {
             #if DEBUG
@@ -1264,6 +1279,8 @@ enum NativeEditorLoadState: Equatable, Sendable {
         }
     }
 
+    private var playbackSeekTarget: TimeInterval?
+    private var playbackHandoffInFlight = false
     private var pendingSeekTime: TimeInterval?
     private var seekInFlight = false
     private var seekSequence = 0
@@ -1307,7 +1324,8 @@ enum NativeEditorLoadState: Equatable, Sendable {
             scrubFramePlayerItem = item
             scrubFrameComposition = composition
         }
-        pendingScrubFrameTime = min(time, max(0, duration - 1.0 / 600))
+        playbackSeekTarget = min(time, max(0, duration - 1.0 / 600))
+        pendingScrubFrameTime = playbackSeekTarget
         guard scrubFrameTask == nil, let generator = scrubFrameGenerator else { return true }
         let generation = scrubFrameGeneration
         scrubFrameTask = Task { @MainActor [weak self, generator] in
@@ -1344,6 +1362,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
 
     private func cancelScrubFrames(clearImage: Bool = true) {
+        playbackHandoffInFlight = false
         scrubFrameGeneration += 1
         scrubFrameTask?.cancel()
         scrubFrameTask = nil
@@ -2925,6 +2944,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
 
     private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {
+        playbackSeekTarget = nil
         cancelScrubFrames()
         seekRecoveryTask?.cancel()
         seekRecoveryTask = nil
@@ -2971,7 +2991,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             MainActor.assumeIsolated {
                 guard let self, self.player === next else { return }
                 let seconds = time.seconds
-                if seconds.isFinite && self.isPlaying && !self.seekInFlight && self.pendingSeekTime == nil {
+                if seconds.isFinite && self.isPlaying && !self.seekInFlight && self.pendingSeekTime == nil && self.playbackSeekTarget == nil {
                     self.currentTime = min(max(0, seconds), max(0, self.duration))
                 }
                 self.reconcilePlaybackState(next.timeControlStatus)
@@ -2994,7 +3014,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
         // Waiting for a composed frame is not a pause. Keep the play request
         // alive so the seek handoff cannot strand a scrub still over the player.
         if status == .waitingToPlayAtSpecifiedRate { return }
+        if status == .paused && playbackHandoffInFlight { return }
         let nextIsPlaying = status == .playing
+        if nextIsPlaying && !playbackHandoffInFlight { playbackSeekTarget = nil }
         if nextIsPlaying, scrubPreviewFrame != nil {
             scrubPreviewFrame = nil
             scrubPreviewTime = nil
