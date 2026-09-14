@@ -93,6 +93,16 @@ final class ProjectsUITests: XCTestCase {
         assertSettled(open: true)
         drag(from: app.frame.width - 20, by: -width * 0.7)
         assertSettled(open: false)
+        func flick(from x: CGFloat, by distance: CGFloat) {
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: app.frame.height * 0.5))
+            start.press(forDuration: 0.05,
+                        thenDragTo: start.withOffset(CGVector(dx: distance, dy: 0)),
+                        withVelocity: .fast, thenHoldForDuration: 0)
+        }
+        flick(from: 10, by: width * 0.35)
+        assertSettled(open: true)
+        flick(from: app.frame.width - 20, by: -width * 0.35)
+        assertSettled(open: false)
     }
 
     private func createFreshChat(in app: XCUIApplication) {

@@ -145,8 +145,10 @@ struct ChatWorkspaceView: View {
                 let wasHorizontal = horizontalDrawerDrag == true
                 horizontalDrawerDrag = nil
                 guard wasHorizontal else { return }
-                let releasedOffset = (showsProjects ? width : 0) + value.translation.width
-                setDrawerOpen(releasedOffset > width / 2)
+                // Honor a deliberate flick; cancellation still settles by the
+                // actual position so the drawer can never remain half open.
+                let projectedOffset = (showsProjects ? width : 0) + value.predictedEndTranslation.width
+                setDrawerOpen(projectedOffset > width / 2)
             }
     }
 }
