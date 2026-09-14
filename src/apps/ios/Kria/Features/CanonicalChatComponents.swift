@@ -158,6 +158,7 @@ struct ProjectDrawerRow: View {
             Text(project.workspaceStatusLabel).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
         }
         .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).padding(.horizontal, 12)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
