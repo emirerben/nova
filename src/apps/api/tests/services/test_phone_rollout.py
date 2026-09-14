@@ -10,6 +10,163 @@ from app.services.phone_rollout import validate_phone_pilot_recipe
 from tests.pipeline.test_phone_guided_plan import fixture
 
 
+def _default_font_recipe(family, *, giant=False):
+    from app.agents._schemas.text_element import TextElement
+
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id="title",
+            text="This view",
+            start_s=0.5,
+            end_s=2.5,
+            font_family=family,
+            effect="fade-in",
+            size_px=64,
+            theme_transition={"type": "giant-title-wipe"} if giant else None,
+        )
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    # CoreText on macOS chooses opsz=12; production Linux chooses opsz=9.
+    # Linux CI checks the actual compiler output before this platform adaptation.
+    import sys
+
+    for run in recipe.text_layers[0].runs:
+        if sys.platform == "linux":
+            assert run.font_variations["opsz"] == 9
+        else:
+            run.font_variations["opsz"] = 9
+    return recipe
+
+
+def test_qualified_font_does_not_qualify_giant_title(monkeypatch):
+    recipe = _default_font_recipe("Fraunces", giant=True)
+    assert recipe.text_layers[0].giant_title is not None
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    with pytest.raises(ValueError, match="font instance"):
+        validate_phone_pilot_recipe(recipe)
+
+
+@pytest.mark.parametrize("family", ["Fraunces", "DM Sans"])
+def test_default_variable_fonts_require_exact_qualification_and_capability(family, monkeypatch):
+    recipe = _default_font_recipe(family)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(recipe.required_capabilities - {"authoredText"}),
+    )
+    with pytest.raises(ValueError, match="capability"):
+        validate_phone_pilot_recipe(recipe)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "axes",
+        "empty_axes",
+        "extra_axis",
+        "missing_axis",
+        "hash",
+        "size",
+        "catalog",
+        "family",
+        "effect",
+    ],
+)
+def test_default_font_qualification_cannot_expand_by_alias_or_coordinates(change, monkeypatch):
+    recipe = _default_font_recipe("Fraunces")
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    run = recipe.text_layers[0].runs[0]
+    if change == "axes":
+        run.font_variations["opsz"] = 12
+    elif change == "empty_axes":
+        run.font_variations.clear()
+    elif change == "extra_axis":
+        run.font_variations["FAKE"] = 0
+    elif change == "missing_axis":
+        run.font_variations.pop("SOFT")
+    elif change == "effect":
+        recipe.text_layers[0].effect = "static"
+    else:
+        asset = next(a for a in recipe.asset_manifest.assets if a.id == run.font_asset_id)
+        if change in {"hash", "size"}:
+            fingerprint = asset.fingerprint.model_copy(
+                update={
+                    "sha256" if change == "hash" else "byte_count": "f" * 64
+                    if change == "hash"
+                    else 1
+                }
+            )
+            replacement = asset.model_copy(update={"fingerprint": fingerprint})
+        else:
+            replacement = asset.model_copy(
+                update={
+                    "catalog" if change == "catalog" else "catalog_id": "music"
+                    if change == "catalog"
+                    else "Other.ttf"
+                }
+            )
+        recipe.asset_manifest = recipe.asset_manifest.model_copy(
+            update={
+                "assets": tuple(
+                    replacement if a.id == asset.id else a for a in recipe.asset_manifest.assets
+                )
+            }
+        )
+    with pytest.raises(ValueError, match="font instance"):
+        validate_phone_pilot_recipe(recipe)
+
+
+def test_qualified_font_does_not_qualify_authored_phases(monkeypatch):
+    from app.agents._schemas.text_animation_phases import TextAnimationPhases
+
+    recipe = _default_font_recipe("DM Sans")
+    recipe.text_layers[0].animation_phases = TextAnimationPhases(loop="float")
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    with pytest.raises(ValueError, match="phases"):
+        validate_phone_pilot_recipe(recipe)
+
+
+def test_guided_default_title_and_body_compile_through_phone_pilot(monkeypatch):
+    import sys
+
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.guided_story import _text_elements
+    from app.schemas.edit_proposal import EditProposalSnapshot
+    from tests.pipeline.test_guided_story import _guided_snapshot
+
+    snapshot = EditProposalSnapshot.model_validate(_guided_snapshot()["approved_proposal"])
+    snapshot.duration_s = 3
+    snapshot.story_beats = snapshot.story_beats[:1]
+    elements = _text_elements(
+        snapshot, [{"start_s": 0, "end_s": 3}], {"text_effect": "fade-in"}, compiler_version=6
+    )
+    plan, bindings = fixture()
+    plan.text_elements = [TextElement.model_validate(element) for element in elements]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert {
+        asset.catalog_id for asset in recipe.asset_manifest.assets if asset.kind == "library"
+    } == {"Fraunces-Bold.ttf", "DMSans-Bold.ttf"}
+    if sys.platform != "linux":
+        for layer in recipe.text_layers:
+            for run in layer.runs:
+                run.font_variations["opsz"] = 9
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+
+
 def test_account_cohort_obeys_kill_switch(monkeypatch):
     enrolled, outsider = uuid.uuid4(), uuid.uuid4()
     monkeypatch.setattr(settings, "phone_render_user_ids", [enrolled])

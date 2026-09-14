@@ -410,3 +410,84 @@ to ignore fade_in_ms/fade_out_ms, matching the dispatcher.
 
 See the [coverage ledger](../reviews/kri-29/coverage.md) for the concrete catalog
 and combination matrix. This is implementation coverage, not rollout or device verification.
+
+### Default variable-font fade-in qualification (2026-09-14)
+
+Guided plans use Fraunces for their title and DM Sans for body text. Both
+bundled faces are variable fonts. `resolved_font_variations()` preserves their
+Linux Skia design coordinates even when the creator never asks to vary a font.
+The original pilot guard rejected those ordinary defaults with a misleading
+phases/backgrounds error, after a job had already started.
+
+`services/phone_rollout.py` now recognizes only these exact font instances for
+plain `fade-in` layers. Catalog ID, SHA-256, byte count and the complete coordinate
+dictionary must match; renaming an alias or replacing font bytes cannot qualify
+another face. Axes and positioned glyphs are preserved. Giant-title combinations,
+other variable fonts/coordinates, phases, backgrounds, caption-pop and active-only
+karaoke remain gated. `authoredText` must still be explicitly enabled in
+`PHONE_RENDER_VERIFIED_FEATURES`; a font exception does not bypass that check.
+
+| Font | Bytes | Coordinates | SHA-256 |
+| --- | ---: | --- | --- |
+| Fraunces-Bold.ttf | 360440 | opsz=9, wght=900, SOFT=0, WONK=1 | 177ff6c0f14e5550a3c624247cd1189611d4eb65d000b14944c63d967958abbb |
+| DMSans-Bold.ttf | 240164 | opsz=9, wght=400 | 8cd08d97e89c24d0aa92edd2f0f4c8ee6195eee9b7c9f154865a58b02f0c1c0d |
+
+Qualification used the Linux production renderer/font bundle and an iPhone14,2
+running iOS 26.6.1, Debug bundle `com.kria.app.dev` (0.1.0/1). The phone vector
+painter matched the repository implementation; installed font hashes and sizes
+matched the table. Account-free bundled footage exercised real preview frame
+requests, backwards seeking and six-second H.264 exports. Fraunces and DM Sans
+exports took 1.08s and 1.10s respectively. This is not sustained playback FPS or a
+60-second performance qualification.
+
+Synthetic samples at 0.6, 1.0, 3.0 and 5.3 seconds compare the same text input on
+Linux and the physical phone. Settled glyph bounds agree within one pixel; the
+remaining differences are antialiasing, outline and shadow edges. The test does
+not claim pixel-identical rasterization or general typography/language coverage.
+Raw text-region RGB differences are retained in the comparison report rather
+than hidden by whole-frame averages.
+
+All 16 preview/export comparisons completed without failures: 12 settled
+preview/export samples passed the parity gate, while the 4 ramp samples are
+diagnostic only. At the 12 settled samples, the maximum
+glyph mismatch outside a one-pixel neighborhood was 0.189% of observable glyph
+pixels (limit 0.5%); bounding-box edges differed by at most one pixel. The
+comparison excludes white source pixels using both the preview and encoded
+no-text baselines: separate H.264 encodes can move existing white source lettering
+across a white-pixel threshold. Reports retain the observable glyph count and
+mismatch count. A synthetic 20px glyph displacement fails the same gate. RGB
+text-region mean absolute error was 7.61–10.26/255 and is diagnostic, not a claim
+of identical shadow/antialias rasterization.
+
+Reproduce with the API dependencies available (generate/render on **Linux**, not
+macOS, which picks optical-size 12 by default):
+
+```bash
+cd src/apps/api
+PYTHONPATH=. python ../../../scripts/generate-device-effects.py --default-fonts-only
+PYTHONPATH=. python ../../../scripts/verify-phone-font-parity.py render \
+  --fixtures ../ios/Kria/Resources/device-effects.json --output /tmp/font-cloud
+```
+
+Build/install the Debug app and launch with `-device-effects -device-effects-auto
+-device-effects-only baseline-no-text,fade-in-fraunces-default,fade-in-dm-sans-default`.
+The app writes `Documents/DeviceEffects/report.json` and
+`Documents/DeviceEffects/frames/<case>/{preview,export}-<time>.png`. Copy only those
+synthetic artifacts to a local directory and run:
+
+```bash
+python scripts/verify-phone-font-parity.py compare \
+  --cloud /tmp/font-cloud --device /tmp/font-device-frames --report /tmp/font-parity.json
+```
+
+Guards: `tests/services/test_phone_rollout.py` covers exact instances, tampered
+bytes, coordinates, catalog identity, capability opt-in, unsupported effects and
+the real guided default title/body compiler. Linux
+`tests/pipeline/test_native_text_contract.py` pins the font instances against
+Skia and the font metadata.
+
+Deployment order: deploy this narrow server guard first, then append
+`authoredText` to the existing verified-feature list on API and worker. Preserve
+all existing capabilities; do not enable unrelated renderer features. Removing
+`authoredText` restores the prior capability gate. Keep saved plans unchanged;
+ordinary retry can reuse a failed confirmed plan when its retry budget remains.
