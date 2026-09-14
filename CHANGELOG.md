@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.14.0] - 2026-09-14
+
+### Changed
+- KRI-49: automate private agent-run reporting (#1024) <!-- release-pr: 1024 -->
+
 ## [0.76.13.0] - 2026-09-14
 
 ### Changed
