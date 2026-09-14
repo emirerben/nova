@@ -135,10 +135,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(self.text, r"github\.event\.workflow_run\.conclusion\s*==\s*['\"]success['\"]")
         self.assertRegex(self.text, r"github\.event\.workflow_run\.head_branch\s*==\s*['\"]main['\"]")
 
-    def test_checks_out_exact_successful_sha_and_rejects_stale_ref(self):
+    def test_checks_out_exact_successful_sha_and_rejects_conflicting_stale_ref(self):
         self.assertIn("github.event.workflow_run.head_sha", self.text)
         self.assertRegex(self.text, r"(?s)checkout@[^\n]+.*?ref:\s*\$\{\{\s*github\.event\.workflow_run\.head_sha")
         self.assertRegex(self.text, r"(?is)(stale|head_sha|rev-parse|merge-base|ancestor).*(?:exit|fail|error)|(?:exit|fail|error).*(?:stale|head_sha|rev-parse|merge-base|ancestor)")
+        self.assertRegex(self.text, r'git diff --quiet "\$HEAD_SHA" "FETCH_HEAD" --')
+        self.assertIn("Main advanced only outside release inputs", self.text)
 
     def test_release_uses_protected_environment_and_never_echoes_secrets(self):
         self.assertRegex(self.text, r"(?m)^\s*environment\s*:\s*testflight-production\s*$")
