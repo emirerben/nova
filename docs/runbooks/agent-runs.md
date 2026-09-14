@@ -1,18 +1,18 @@
 # Agent-run Slack recap
 
-KRI-49 records successful agent-run finishes locally and can send one small Slack recap on weekdays at 06:00 local time. It is opt-in: installation writes the LaunchAgent file but does not load it.
+Agent-run reporting records successful KRI issue runs locally and can send one small Slack recap on weekdays at 06:00 local time. It is opt-in: installation writes the LaunchAgent file but does not load it.
 
 ## Lifecycle reporting
 
 Nova’s checked-in Codex Desktop and Claude Code hooks call the same reporter on
 `UserPromptSubmit` and `Stop`. Start a run with a ticket in its **initial**
-prompt, for example `KRI-49: validate automatic run reporting`. The reporter
+prompt, for example `KRI-123: implement the requested change`. The reporter
 ignores sessions whose first prompt lacks a `KRI-xx` key, even if a later prompt
 mentions one. A normal tracked run posts one start and one finish entry; the
 finish supplies elapsed duration and outcome.
 
 To smoke-test both integrations after adding the webhook, start and finish one
-Codex Desktop run and one Claude Code run with an initial `KRI-49` prompt, then
+Codex Desktop run and one Claude Code run with an initial `KRI-123` prompt, then
 confirm four metadata-only entries in private `#agent-runs`.
 
 ## Set up
