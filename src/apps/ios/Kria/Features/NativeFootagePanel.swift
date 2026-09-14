@@ -4,24 +4,38 @@ import KriaMediaEngine
 struct NativeFootagePanel: View {
     @ObservedObject var session: NativeEditorSession
     let selection: EditorSelection
-    @State private var rate = 1.0
     @State private var crop = NormalizedSourceRect(x: 0, y: 0, width: 1, height: 1)
 
     var body: some View {
-        Section("Speed") {
-            NativeEditorSlider(session: session, value: $rate, in: 0.25...4, step: 0.05) { Text("Playback rate") }
-                .onChange(of: rate) { _, value in session.setFootagePlaybackRate(selection, rate: value) }
-            Text("Changes footage speed while animation timing stays separate.").font(.footnote).foregroundStyle(.secondary)
+        Group {
+            Section("Speed") {
+                NativeEditorSlider(
+                    session: session,
+                    value: Binding(
+                        get: { session.footagePlaybackRate(for: selection) },
+                        set: { session.setFootagePlaybackRate(selection, rate: $0) }
+                    ),
+                    in: 0.25...4,
+                    step: 0.05
+                ) { Text("Playback rate") }
+                Text("Changes footage speed while animation timing stays separate.").font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("Freeform crop") {
+                NativeCropCanvas(crop: $crop, onBegin: { session.beginTransaction() }, onCommit: { value in
+                    session.setFootageCrop(selection, crop: value)
+                    session.endTransaction()
+                })
+                Button("Reset crop") { session.setFootageCrop(selection, crop: nil); crop = .init(x: 0, y: 0, width: 1, height: 1) }
+                    .disabled(crop == .init(x: 0, y: 0, width: 1, height: 1))
+            }
         }
-        Section("Freeform crop") {
-            NativeCropCanvas(crop: $crop, onBegin: { session.beginTransaction() }, onCommit: { value in
-                session.setFootageCrop(selection, crop: value)
-                session.endTransaction()
-            })
-            Button("Reset crop") { session.setFootageCrop(selection, crop: nil); crop = .init(x: 0, y: 0, width: 1, height: 1) }
-                .disabled(crop == .init(x: 0, y: 0, width: 1, height: 1))
+        // Recreate the controls when the inspector follows another item. This
+        // also guarantees an in-flight crop gesture settles with its original
+        // selection instead of writing its final value to the next item.
+        .id(selection)
+        .onAppear {
+            crop = session.footageCrop(for: selection) ?? .init(x: 0, y: 0, width: 1, height: 1)
         }
-        .onAppear { rate = session.footagePlaybackRate(for: selection); crop = session.footageCrop(for: selection) ?? .init(x: 0, y: 0, width: 1, height: 1) }
     }
 }
 
@@ -30,6 +44,8 @@ private struct NativeCropCanvas: View {
     let onBegin: () -> Void
     let onCommit: (NormalizedSourceRect) -> Void
     @State private var baseline: NormalizedSourceRect?
+    @GestureState private var moveGestureActive = false
+    @GestureState private var resizeGestureActive = false
     private let minimum = 0.08
 
     var body: some View {
@@ -50,6 +66,13 @@ private struct NativeCropCanvas: View {
         .aspectRatio(9 / 16, contentMode: .fit)
         .frame(maxWidth: 220)
         .accessibilityIdentifier("native-editor-freeform-crop")
+        .onChange(of: moveGestureActive) { _, active in
+            if !active && !resizeGestureActive { finish() }
+        }
+        .onChange(of: resizeGestureActive) { _, active in
+            if !active && !moveGestureActive { finish() }
+        }
+        .onDisappear(perform: finish)
     }
 
     private enum Corner { case topLeading, topTrailing, bottomLeading, bottomTrailing }
@@ -58,21 +81,30 @@ private struct NativeCropCanvas: View {
             .gesture(handleGesture(corner, size: size))
     }
     private func moveGesture(size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 3).onChanged { value in
+        DragGesture(minimumDistance: 3)
+        .updating($moveGestureActive) { _, active, _ in active = true }
+        .onChanged { value in
             if baseline == nil { baseline = crop; onBegin() }
             guard let base = baseline else { return }
             crop = normalized(base, dx: value.translation.width / size.width, dy: value.translation.height / size.height)
         }.onEnded { _ in finish() }
     }
     private func handleGesture(_ corner: Corner, size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 0).onChanged { value in
+        DragGesture(minimumDistance: 0)
+        .updating($resizeGestureActive) { _, active, _ in active = true }
+        .onChanged { value in
             if baseline == nil { baseline = crop; onBegin() }
             guard let base = baseline else { return }
             let dx = value.translation.width / size.width, dy = value.translation.height / size.height
             crop = resized(base, corner: corner, dx: dx, dy: dy)
         }.onEnded { _ in finish() }
     }
-    private func finish() { let value = crop; baseline = nil; onCommit(value) }
+    private func finish() {
+        guard baseline != nil else { return }
+        let value = crop
+        baseline = nil
+        onCommit(value)
+    }
     private func normalized(_ value: NormalizedSourceRect, dx: Double, dy: Double) -> NormalizedSourceRect {
         let x = min(max(0, value.x + dx), 1 - value.width), y = min(max(0, value.y + dy), 1 - value.height)
         return .init(x: x, y: y, width: value.width, height: value.height)

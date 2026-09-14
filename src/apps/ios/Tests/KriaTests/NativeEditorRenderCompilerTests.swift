@@ -372,6 +372,7 @@ import KriaMediaEngine
             var draft = NativeEditorUITestFixtures.captionVisuals
             var document = EditorDocument(snapshot: draft.serverSnapshot)
             document.visualBlocks[0].raw["media_kind"] = .string(kind)
+            document.visualBlocks[0].raw["playback_rate"] = .number(2)
             draft.serverSnapshot = document.encodeSnapshot()
             let session = NativeEditorSession(draft: draft)
             let media = ResolvedEditorSource(clipIndex: -1, mediaID: "fixture",

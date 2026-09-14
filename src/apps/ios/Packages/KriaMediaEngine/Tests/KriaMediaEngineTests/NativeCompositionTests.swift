@@ -506,6 +506,51 @@ final class NativeCompositionTests: XCTestCase {
         XCTAssertNotEqual(try SHA256Fingerprinter().fingerprint(file: original), try SHA256Fingerprinter().fingerprint(file: destination))
     }
 
+    @MainActor func testFrozenVideoTailDoesNotStretchRetimedSourceAudio() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let video = try await makeVideo(directory: directory, name: "silent", color: CGColor(gray: 0.5, alpha: 1))
+        let audio = directory.appendingPathComponent("tone.caf")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_000))
+        buffer.frameLength = 48_000
+        for index in 0..<48_000 { buffer.floatChannelData![0][index] = Float(0.5 * sin(Double(index) * 2 * .pi * 440 / 48_000)) }
+        do {
+            let file = try AVAudioFile(forWriting: audio, settings: format.settings)
+            try file.write(from: buffer)
+        }
+        let combined = AVMutableComposition()
+        for (url, type) in [(video, AVMediaType.video), (audio, AVMediaType.audio)] {
+            let originals = try await AVURLAsset(url: url).loadTracks(withMediaType: type)
+            let original = try XCTUnwrap(originals.first)
+            let track = try XCTUnwrap(combined.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid))
+            try track.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 0.9, preferredTimescale: 600)), of: original, at: .zero)
+        }
+        let sourceURL = directory.appendingPathComponent("source.mov")
+        let writer = try XCTUnwrap(AVAssetExportSession(asset: combined, presetName: AVAssetExportPresetHighestQuality))
+        try await writer.export(to: sourceURL, as: .mov)
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: sourceURL)
+        let source = MediaAsset(id: "source", relativePath: "source.mov", fingerprint: fingerprint)
+        let manifest = try RenderAssetManifest(assets: [RenderAssetReference(id: "source", fingerprint: RenderFingerprint(fingerprint), source: .original(mediaID: "source"))])
+        let clip = TimelineClip(id: "held", sourceAssetID: "source", sourceStart: 0.1, sourceDuration: 0.5,
+            timelineStart: 0.25, rate: 2, holdDuration: 1)
+        let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160),
+            assets: [source], tracks: [TimelineTrack(id: "video", kind: .video, clips: [clip])], assetManifest: manifest)
+        let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["source": sourceURL])
+        let tracks = try await preview.playerItem.asset.loadTracks(withMediaType: .audio)
+        let track = try XCTUnwrap(tracks.first as? AVCompositionTrack)
+        let segments = track.segments.filter { !$0.isEmpty }
+        XCTAssertEqual(segments.count, 1)
+        let mapping = try XCTUnwrap(segments.first).timeMapping
+        XCTAssertEqual(mapping.source.start.seconds, 0.1, accuracy: 0.001)
+        XCTAssertEqual(mapping.source.duration.seconds, 0.5, accuracy: 0.001)
+        XCTAssertEqual(mapping.target.start.seconds, 0.25, accuracy: 0.001)
+        XCTAssertEqual(mapping.target.duration.seconds, 0.25, accuracy: 0.001,
+            "The frozen one-second video tail must not slow the source audio")
+        XCTAssertEqual(preview.description.duration, 1.5, accuracy: 0.001)
+    }
+
     @MainActor private func makeVideo(directory: URL, name: String, color: CGColor, preferred: CGAffineTransform = .identity, asymmetric: Bool = false) async throws -> URL {
         let url = directory.appendingPathComponent("\(name).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)

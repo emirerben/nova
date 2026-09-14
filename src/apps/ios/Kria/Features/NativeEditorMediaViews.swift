@@ -97,6 +97,8 @@ struct NativeVideoPreview: View {
     @State private var liveMediaScale: CGFloat = 1
     @State private var liveMediaRotation: Double = 0
     @State private var liveMediaTranslation = CGPoint.zero
+    @GestureState private var directMoveGestureActive = false
+    @GestureState private var directResizeGestureActive = false
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
@@ -330,11 +332,12 @@ struct NativeVideoPreview: View {
 
     private func directMoveGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .local)
+            .updating($directMoveGestureActive) { _, active, _ in active = true }
             .onChanged { (value: DragGesture.Value) in
                 handleDirectMoveChanged(value, in: size)
             }
             .onEnded { (_: DragGesture.Value) in
-                finishDirectMove()
+                if !directResizeGestureActive { settleDirectManipulation() }
             }
     }
 
@@ -443,11 +446,15 @@ struct NativeVideoPreview: View {
         }
     }
 
-    private func finishDirectMove() {
-        guard directMoveObjectID != nil else { return }
+    private func settleDirectManipulation() {
+        let hasActiveManipulation = directMoveObjectID != nil || directResizeObjectID != nil || session.isDirectManipulating
+        guard hasActiveManipulation else { return }
         commitLiveText()
         directMoveObjectID = nil
         directMoveBaseline = nil
+        directResizeObjectID = nil
+        directResizeBaseline = nil
+        directResizeTextBaseline = nil
         transformBaseline = nil
         visualTransformBaseline = nil
         transformCenter = nil
@@ -456,11 +463,19 @@ struct NativeVideoPreview: View {
         liveMediaScale = 1
         liveMediaRotation = 0
         liveMediaTranslation = .zero
-        if directResizeObjectID == nil { session.endDirectManipulation() }
+        liveTextBaseline = nil
+        liveTextBounds = nil
+        liveTextFrame = nil
+        liveTextScale = 1
+        liveTextRotation = 0
+        liveTextTranslation = .zero
+        liveTextSampleCount = 0
+        if session.isDirectManipulating { session.endDirectManipulation() }
     }
 
     private func directResizeGesture(in size: CGSize) -> some Gesture {
         MagnificationGesture()
+            .updating($directResizeGestureActive) { _, active, _ in active = true }
             .onChanged { value in
                 if directResizeObjectID == nil {
                     guard let selection = session.selection,
@@ -495,16 +510,7 @@ struct NativeVideoPreview: View {
                 }
             }
             .onEnded { _ in
-                guard directResizeObjectID != nil else { return }
-                commitLiveText()
-                directResizeObjectID = nil
-                directResizeBaseline = nil
-                directResizeTextBaseline = nil
-                liveMediaFrame = nil
-                liveMediaScale = 1
-                liveMediaRotation = 0
-                liveMediaTranslation = .zero
-                if directMoveObjectID == nil { session.endDirectManipulation() }
+                if !directMoveGestureActive { settleDirectManipulation() }
             }
     }
 
@@ -701,6 +707,13 @@ struct NativeVideoPreview: View {
         .clipped()
         .accessibilityValue(uiTestingPreviewValue)
         .onAppear(perform: refreshObjects)
+        .onChange(of: directMoveGestureActive) { _, active in
+            if !active && !directResizeGestureActive { settleDirectManipulation() }
+        }
+        .onChange(of: directResizeGestureActive) { _, active in
+            if !active && !directMoveGestureActive { settleDirectManipulation() }
+        }
+        .onDisappear(perform: settleDirectManipulation)
         .onChange(of: session.document) { _, _ in refreshObjects() }
         .onChange(of: session.scrubPreviewFrame) { _, _ in
             if !session.isDirectManipulating {

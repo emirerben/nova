@@ -81,17 +81,7 @@ struct NativeVisualPanel: View {
                 }
             }
         }
-        .sheet(isPresented: $showsImporter, onDismiss: { Task { await session.refreshVisualLibrary() } }) {
-            NavigationStack {
-                ScrollView {
-                    FootagePickerView(projectID: projectID, uploads: uploads, maximumClipCount: session.visualLibraryLimit,
-                        attachedClipCount: session.visualLibrary.count, role: .visual, itemID: session.visualItemID)
-                        .padding(16)
-                }
-                .navigationTitle("Add photo or video")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showsImporter = false } } }
-            }.presentationDetents([.medium, .large])
-        }
+        .sheet(isPresented: $showsImporter, onDismiss: { Task { await session.refreshVisualLibrary() } }) { visualImporter }
         .onChange(of: uploads.records) { _, _ in Task { await session.refreshVisualLibrary() } }
         .task {
             await session.refreshVisualLibrary()
@@ -112,6 +102,29 @@ struct NativeVisualPanel: View {
         }
         .onChange(of: tab) { _, _ in editingText = false; session.endTransaction() }
         .onDisappear { session.endTransaction() }
+    }
+
+    private var visualImporter: some View {
+        NavigationStack {
+            ScrollView {
+                FootagePickerView(
+                    projectID: projectID,
+                    uploads: uploads,
+                    maximumClipCount: session.visualLibraryLimit,
+                    attachedClipCount: session.visualLibrary.count,
+                    role: .visual,
+                    itemID: session.visualItemID
+                )
+                .padding(16)
+            }
+            .navigationTitle("Add photo or video")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showsImporter = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private var browse: some View {
