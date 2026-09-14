@@ -336,6 +336,8 @@ private struct CreationWorkspaceView: View {
                     .padding(.bottom, 28)
                     .frame(maxWidth: .infinity)
                 }
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .scrollDismissesKeyboard(.interactively)
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation history")
@@ -412,6 +414,8 @@ private struct CreationWorkspaceView: View {
                         Color.clear.frame(height: 1).id("conversation-end")
                     }.padding(16)
                 }
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
             }
@@ -506,7 +510,11 @@ private struct CreationWorkspaceView: View {
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { proxy.scrollTo("conversation-end", anchor: .bottom) }
+        // History arrives asynchronously when switching chats. Position it in
+        // the same layout transaction instead of showing a catch-up scroll.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { proxy.scrollTo("conversation-end", anchor: .bottom) }
     }
 
     private func send(message submittedMessage: String? = nil) async {
