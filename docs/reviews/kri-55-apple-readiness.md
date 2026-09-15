@@ -173,8 +173,9 @@ describes Apple sign-in and stored provider identifiers accurately.
 - Full native UI run: 49 tests executed, 47 passed initially. The existing
   long-press timing test passed unchanged in isolation. The new accessibility5
   inspector test passed after replacing overshooting swipes with short directed
-  drags and handling lazily exposed color controls. All 49 have passing evidence;
-  the complete suite was not rerun after the test-only correction.
+  drags and handling lazily exposed color controls. The focused reruns passed;
+  the complete suite was not rerun after the test-only correction, so this is
+  not a clean post-correction 49-test suite result.
 
 ### Open release blockers
 
