@@ -530,19 +530,7 @@ struct NativeVideoPreview: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.black
-            if session.sourcePreviewState == .preparing {
-                ProgressView("Preparing preview")
-                    .tint(.white).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if case .failed(let message) = session.sourcePreviewState {
-                VStack(spacing: 12) {
-                    Text("Preview unavailable").font(KriaFont.body(14).weight(.semibold))
-                    Text(message).font(KriaFont.body(12)).multilineTextAlignment(.center)
-                        .padding(.horizontal, 16)
-                    Button("Retry") { Task { await session.prepareSourcePreview() } }
-                }
-                .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let player = session.player {
+            if session.canDisplayCurrentPlayer, let player = session.player {
                 ZStack {
                     VideoPlayer(player: player)
                         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
@@ -557,6 +545,18 @@ struct NativeVideoPreview: View {
                             .accessibilityHidden(true)
                     }
                 }
+            } else if session.sourcePreviewState == .preparing {
+                ProgressView("Preparing preview")
+                    .tint(.white).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if case .failed(let message) = session.sourcePreviewState {
+                VStack(spacing: 12) {
+                    Text("Preview unavailable").font(KriaFont.body(14).weight(.semibold))
+                    Text(message).font(KriaFont.body(12)).multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                    Button("Retry") { Task { await session.prepareSourcePreview() } }
+                }
+                .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 BundledPosterImage(name: "montage")
                     .scaledToFill()
@@ -578,6 +578,27 @@ struct NativeVideoPreview: View {
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(24)
+            }
+
+            if case .failed(let message) = session.sourcePreviewState, session.isShowingRenderedFallback {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Showing finished render")
+                        .font(KriaFont.body(12).weight(.semibold))
+                    Text(message)
+                        .font(KriaFont.body(11))
+                        .lineLimit(2)
+                    Button("Retry") { Task { await session.prepareSourcePreview() } }
+                        .accessibilityIdentifier("native-editor-retry-source-preview")
+                        .font(KriaFont.body(11).weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(10)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("native-editor-preview-fallback")
             }
 
             if let frozen = liveTextFrame, let baseline = liveTextBaseline {

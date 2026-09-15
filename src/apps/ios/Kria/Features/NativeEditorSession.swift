@@ -140,6 +140,9 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var pendingScrubFrameTime: TimeInterval?
     private var scrubFrameGeneration = 0
     @Published private(set) var sourcePreviewState: NativeSourcePreviewState = .idle
+    private var finishedRenderURL: URL?
+    private var finishedRenderDuration: TimeInterval?
+    private var finishedRenderPlayer: AVPlayer?
     private var sourcePreview: LivePreviewComposition?
     private var sourceCompiler: NativeEditorRenderCompiler?
     private var sourceResolver: NativeEditorSourceResolver?
@@ -164,6 +167,25 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var sourcePreviewGeneration: String?
     private var sourcePreviewUpdateDeferred = false
     var hasSourcePreview: Bool { sourcePreviewState == .ready }
+    /// A source-composited player is editable. A failed source preparation can
+    /// instead show only the server-rendered video, with canvas interaction
+    /// deliberately disabled until a retry produces a source preview.
+    var isShowingRenderedFallback: Bool {
+        guard case .failed = sourcePreviewState else { return false }
+        return player != nil && player === finishedRenderPlayer
+    }
+
+    var canDisplayCurrentPlayer: Bool {
+        guard player != nil else { return false }
+        switch sourcePreviewState {
+        case .idle, .ready:
+            return true
+        case .preparing:
+            return player === finishedRenderPlayer
+        case .failed:
+            return isShowingRenderedFallback
+        }
+    }
     @Published private(set) var isDirectManipulating = false
     @Published private(set) var canEditTimeline = true
     @Published private(set) var canEditText = true
@@ -824,11 +846,14 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     #if DEBUG
     /// Account-free verification still uses the production compiler and compositor.
-    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:]) async {
+    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:], forceFailure: Bool = false) async {
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
         sourcePreviewState = .preparing
         do {
+            if forceFailure {
+                throw SourceAssetError.missingOriginal("fixture-source")
+            }
             if delayedLoad {
                 loadState = .loaded
                 try await Task.sleep(for: .milliseconds(600))
@@ -863,7 +888,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
-            sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+            failSourcePreview(error)
         }
     }
     #endif
@@ -965,7 +990,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
-            sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+            failSourcePreview(error)
         }
     }
 
@@ -1198,7 +1223,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
-            sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+            failSourcePreview(error)
         }
     }
 
@@ -1210,12 +1235,11 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
 
     func togglePlayback() {
-        guard sourcePreviewState == .idle || sourcePreviewState == .ready else {
+        guard canDisplayCurrentPlayer, let player else {
             player?.pause()
             isPlaying = false
             return
         }
-        guard let player else { isPlaying = false; return }
         if isPlaying {
             pausePlayback()
             return
@@ -2939,8 +2963,28 @@ enum NativeEditorLoadState: Equatable, Sendable {
         _ = clips; _ = index
     }
     private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil) {
-        guard sourcePreviewState == .idle else { return }
+        // A completed cloud render remains a useful, non-editable fallback
+        // when composing a source preview fails. Always retain the latest
+        // authoritative URL, even if an editable source player currently owns
+        // the canvas; failures can then restore the correct finished render.
+        finishedRenderURL = url
+        finishedRenderDuration = preferredDuration
+        let previewFailed: Bool
+        if case .failed = sourcePreviewState { previewFailed = true } else { previewFailed = false }
+        guard sourcePreviewState == .idle || previewFailed || player == nil else { return }
         installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
+        finishedRenderPlayer = player
+    }
+
+    private func failSourcePreview(_ error: Error) {
+        restoreFinishedRenderFallback()
+        sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+    }
+
+    private func restoreFinishedRenderFallback() {
+        guard let finishedRenderURL, player !== finishedRenderPlayer else { return }
+        installPlayer(item: AVPlayerItem(url: finishedRenderURL), preferredDuration: finishedRenderDuration)
+        finishedRenderPlayer = player
     }
 
     private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {

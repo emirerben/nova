@@ -12,8 +12,6 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
     case captions = "Captions"
     case visuals = "Visuals"
     case sounds = "Sounds"
-    case overlays = "Overlays"
-    case styles = "Styles"
 
     var id: String { rawValue }
 
@@ -24,8 +22,6 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .captions: "captions.bubble"
         case .visuals: "camera.filters"
         case .sounds: "waveform"
-        case .overlays: "square.on.square"
-        case .styles: "paintpalette"
         }
     }
 
@@ -36,8 +32,6 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .captions: "Turn captions on or off and choose a style"
         case .visuals: "Browse visual lanes and adjust supported effects"
         case .sounds: "Adjust the music volume"
-        case .overlays: "Browse and adjust media overlay cards"
-        case .styles: "Choose a text style preset"
         }
     }
 }

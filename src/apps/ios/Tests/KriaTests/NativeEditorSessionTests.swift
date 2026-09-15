@@ -297,6 +297,43 @@ final class NativeEditorSessionTests: XCTestCase {
         session.pausePlayback()
     }
 
+    func testFixtureSourceFailureRetainsAndPlaysInitialFinishedRender() async throws {
+        let renderURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: renderURL)
+        let initialPlayer = try XCTUnwrap(session.player)
+
+        await session.prepareFixtureSourcePreview(
+            url: URL(fileURLWithPath: "/tmp/kria-invalid-source-fixture.mp4"),
+            forceFailure: true
+        )
+
+        guard case .failed = session.sourcePreviewState else { return XCTFail("Fixture source failure must remain visible") }
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertTrue(session.player === initialPlayer, "The initial finished-render player remains available")
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.pausePlayback()
+    }
+
+    func testFixtureSourceFailureDoesNotPlayStaleEditablePreview() async throws {
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertTrue(session.hasSourcePreview)
+
+        await session.prepareFixtureSourcePreview(
+            url: URL(fileURLWithPath: "/tmp/kria-invalid-source-fixture.mp4"),
+            forceFailure: true
+        )
+
+        guard case .failed = session.sourcePreviewState else { return XCTFail("Fixture source failure must remain visible") }
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertFalse(session.canDisplayCurrentPlayer)
+        session.togglePlayback()
+        XCTAssertFalse(session.isPlaying, "A stale editable preview cannot play after source preparation fails")
+    }
+
     func testPauseDuringScrubHandoffRetainsTargetWithoutRestartingPlayback() async throws {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
         let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
@@ -996,7 +1033,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.saveState, .loadFailed("Kria couldn’t complete that request. Check your connection and try again."))
     }
 
-    func testHydratedProjectDoesNotSubstituteFinishedOutputForMissingSources() async throws {
+    func testHydratedProjectRetainsFinishedOutputWhenSourcePreviewFails() async throws {
         let threadID = UUID()
         let jobID = UUID()
         let fallbackURL = URL(fileURLWithPath: "/tmp/kria-refreshed-fallback.mp4")
@@ -1035,8 +1072,13 @@ final class NativeEditorSessionTests: XCTestCase {
 
         await session.load(project: project, api: fake)
 
-        XCTAssertNil(session.player)
+        let player = try XCTUnwrap(session.player)
         guard case .failed = session.sourcePreviewState else { return XCTFail("Missing sources must remain explicit") }
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying, "A finished render remains playable while source preview is unavailable")
+        XCTAssertTrue(session.player === player, "The failed source preview must not discard the finished render")
+        session.pausePlayback()
         XCTAssertEqual(fake.lastVariantID, "original_text")
     }
 

@@ -308,11 +308,15 @@ struct NativeEditorView: View {
 
     private func loadEditor() async {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-source-text"),
-           let url = Bundle.main.url(forResource: "montage", withExtension: "mp4") {
+        let arguments = ProcessInfo.processInfo.arguments
+        let sourceFailure = arguments.contains("-ui-testing-editor-source-failure")
+        if sourceFailure || arguments.contains("-ui-testing-editor-source-text") {
             let delayed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source")
             if delayed, session.loadState == .loaded { return }
-            await session.prepareFixtureSourcePreview(url: url, delayedLoad: delayed)
+            let url = sourceFailure
+                ? URL(fileURLWithPath: "/tmp/kria-missing-source-preview.mp4")
+                : Bundle.main.url(forResource: "montage", withExtension: "mp4")!
+            await session.prepareFixtureSourcePreview(url: url, delayedLoad: delayed, forceFailure: sourceFailure)
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
@@ -426,8 +430,6 @@ private struct NativeEditorInspectorView: View {
                 case .tool(.captions): NativeCaptionsInspector(session: session)
                 case .tool(.visuals): NativeEffectBrowserInspector(session: session, kinds: [.visualBlock, .motionScene, .cameraEffect, .carousel], title: "Visual lanes")
                 case .tool(.sounds): NativeSoundsInspector(session: session)
-                case .tool(.overlays): NativeEffectBrowserInspector(session: session, kinds: [.mediaOverlay], title: "Overlays")
-                case .tool(.styles): NativeStylesInspector(session: session)
                 case .tool: NativeEditorUnavailableView(title: "Editor", reason: "This tool is not available for the current render.", systemImage: "lock")
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
