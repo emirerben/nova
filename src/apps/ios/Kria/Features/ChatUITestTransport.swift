@@ -70,7 +70,16 @@ private final class CreationChatFixture: @unchecked Sendable {
         if path == "/creation-threads" {
             if request.httpMethod == "POST" {
                 let id = UUID().uuidString
-                let thread: [String: Any] = ["id": id, "title": "Untitled project", "status": "active", "revision": 0, "runtime_version": runtime, "state": [:], "events": [], "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
+                let fixtureEvents: [[String: Any]] = ProcessInfo.processInfo.environment["KRIA_CHAT_LONG_HISTORY"] == "1"
+                    ? (0..<24).map { index in
+                        ["id": UUID().uuidString, "sequence": index, "revision": index + 1,
+                         "role": index.isMultiple(of: 2) ? "user" : "assistant",
+                         "event_type": index.isMultiple(of: 2) ? "user_message" : "assistant_response",
+                         "content": "Long conversation message number \(index + 1) for drawer indicator diagnostics.",
+                         "payload": [:], "created_at": "2026-09-10T10:00:00Z"]
+                    }
+                    : []
+                let thread: [String: Any] = ["id": id, "title": "Untitled project", "status": "active", "revision": fixtureEvents.count, "runtime_version": runtime, "state": [:], "events": fixtureEvents, "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
                 threads[id] = thread
                 return response(thread, status: 201)
             }

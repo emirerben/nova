@@ -328,7 +328,7 @@ private struct CreationWorkspaceView: View {
             )
 
             ScrollViewReader { proxy in
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 20) {
                         ForEach(Array(transcript.enumerated()), id: \.element.id) { index, message in
                             ChatMessageRow(message: message).id(message.id)
@@ -435,7 +435,7 @@ private struct CreationWorkspaceView: View {
         VStack(spacing: 0) {
             Text("Kria").font(KriaFont.body(17).weight(.semibold)).padding(.top, 20)
             ScrollViewReader { proxy in
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 20) {
                         ForEach(transcript) { message in ChatMessageRow(message: message).id(message.id) }
                         if approval != nil { stageContent }
