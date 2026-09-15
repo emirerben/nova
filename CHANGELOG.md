@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.29.0] - 2026-09-15
+
+### Changed
+- fix(ios): pass TestFlight build number as string (#1038) <!-- release-pr: 1038 -->
+
 ## [0.76.28.0] - 2026-09-15
 
 ### Changed
