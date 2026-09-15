@@ -13,6 +13,10 @@ final class ProjectsUITests: XCTestCase {
         menu.tap()
         app.buttons["Rename project"].tap()
         XCTAssertTrue(app.textFields["rename-project-title"].waitForExistence(timeout: 3))
+        let renamePanel = app.descendants(matching: .any)["rename-project-panel"].firstMatch
+        XCTAssertTrue(renamePanel.waitForExistence(timeout: 3))
+        XCTAssertLessThan(renamePanel.frame.height, app.frame.height * 0.4,
+                          "Rename should stay a compact floating panel")
         app.buttons["Cancel"].tap()
         XCTAssertEqual(app.staticTexts["workspace-project-title"].label, originalTitle)
         menu.tap()

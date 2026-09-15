@@ -441,8 +441,9 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
         view.delegate = context.coordinator
         view.font = .preferredFont(forTextStyle: .body)
         view.adjustsFontForContentSizeCategory = true
-        view.backgroundColor = .clear
-        view.textColor = .label
+        view.backgroundColor = UIColor(KriaColor.paper)
+        view.textColor = UIColor(KriaColor.ink)
+        view.keyboardAppearance = .light
         view.returnKeyType = .default
         view.textContainer.widthTracksTextView = false
         view.textContainer.heightTracksTextView = false

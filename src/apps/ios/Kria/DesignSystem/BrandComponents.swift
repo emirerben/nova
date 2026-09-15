@@ -113,10 +113,14 @@ struct ProjectActionsMenu: View {
                         .buttonStyle(CanonicalPrimaryButtonStyle())
                         .disabled(busy || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.count > 120)
                     Text("Up to 120 characters.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                    Spacer()
                 }.padding(24).navigationTitle("Rename project").navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { renaming = false }.disabled(busy) } }
-            }.kriaPage().presentationDetents([.medium, .large]).interactiveDismissDisabled(busy)
+            }
+            .kriaPage()
+            .accessibilityIdentifier("rename-project-panel")
+            .presentationDetents([.height(250)])
+            .presentationCornerRadius(28)
+            .interactiveDismissDisabled(busy)
         }
         .alert("Delete this project?", isPresented: $deleting) {
             Button("Cancel", role: .cancel) {}

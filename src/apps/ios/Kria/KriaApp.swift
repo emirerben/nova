@@ -36,7 +36,12 @@ import SwiftData
         )
     }
     var body: some Scene {
-        WindowGroup { RootView().environmentObject(auth).environmentObject(model) }
+        WindowGroup {
+            RootView()
+                .environmentObject(auth)
+                .environmentObject(model)
+                .preferredColorScheme(.light)
+        }
             .modelContainer(container)
     }
     private static func fallbackContainer() -> ModelContainer {
