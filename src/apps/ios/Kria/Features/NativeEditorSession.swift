@@ -30,6 +30,17 @@ enum NativeEditorLoadState: Equatable, Sendable {
     case failed(String)
 }
 
+enum NativeEditorVideoDownloadRoute: Equatable {
+    case sourcePreview
+    case localFile(URL)
+    case server(NativeEditorVideoDownloadTarget)
+}
+
+struct NativeEditorTemporaryVideo {
+    let fileURL: URL
+    let cleanupURL: URL
+}
+
 @MainActor final class NativeEditorPlaybackClock: ObservableObject {
     @Published var currentTime: TimeInterval = 0
 }
@@ -361,11 +372,58 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     var videoDownloadTarget: NativeEditorVideoDownloadTarget? {
         guard let jobID, let variantKey else { return nil }
-        return NativeEditorVideoDownloadTarget(jobID: jobID, variantID: variantKey)
+        let generation = document.revision.baseGeneration.isEmpty ? nil : document.revision.baseGeneration
+        return NativeEditorVideoDownloadTarget(
+            jobID: jobID,
+            variantID: variantKey,
+            expectedGenerationID: generation,
+            expectedOutputPath: finishedRenderURL?.path
+        )
     }
 
     var canDownloadCurrentVideo: Bool {
         videoDownloadTarget != nil && !hasUnsavedChanges && !isSaving && pendingPreviewGeneration == nil
+    }
+
+    func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
+        if sourcePreviewState == .ready,
+           let sourcePreview,
+           player?.currentItem === sourcePreview.preview.playerItem {
+            return .sourcePreview
+        }
+        if let deviceLocalFile,
+           let asset = player?.currentItem?.asset as? AVURLAsset,
+           asset.url.standardizedFileURL == deviceLocalFile.standardizedFileURL {
+            return .localFile(deviceLocalFile)
+        }
+        if player === finishedRenderPlayer, let target = videoDownloadTarget {
+            return .server(target)
+        }
+        throw NativeEditorVideoDownloadError.unavailable
+    }
+
+    func exportDisplayedSourcePreview() async throws -> NativeEditorTemporaryVideo {
+        guard sourcePreviewState == .ready,
+              let sourcePreview,
+              player?.currentItem === sourcePreview.preview.playerItem else {
+            throw NativeEditorVideoDownloadError.unavailable
+        }
+        let snapshot = sourcePreview.exportSnapshot()
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "kria-editor-download-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let output = directory.appending(path: "current-preview.mp4")
+        do {
+            let checkpoint = try await AVFoundationLocalExporter(
+                stateStore: FileExportStateStore(directory: directory.appending(path: "state", directoryHint: .isDirectory))
+            ).export(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs, outputURL: output)
+            guard checkpoint.status == .completed, checkpoint.outputURL == output else {
+                throw NativeEditorVideoDownloadError.unavailable
+            }
+            return NativeEditorTemporaryVideo(fileURL: output, cleanupURL: directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     private struct ActiveTrim {

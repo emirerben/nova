@@ -321,6 +321,15 @@ struct FinishedVideoDownloader {
 struct NativeEditorVideoDownloadTarget: Equatable, Sendable {
     let jobID: UUID
     let variantID: String
+    let expectedGenerationID: String?
+    let expectedOutputPath: String?
+
+    init(jobID: UUID, variantID: String, expectedGenerationID: String? = nil, expectedOutputPath: String? = nil) {
+        self.jobID = jobID
+        self.variantID = variantID
+        self.expectedGenerationID = expectedGenerationID
+        self.expectedOutputPath = expectedOutputPath
+    }
 }
 
 enum NativeEditorVideoDownloadError: Error, LocalizedError {
@@ -346,6 +355,11 @@ struct NativeEditorVideoDownloader {
         // Fetch the selected editor variant at action time. The job-level
         // playback endpoint may point at a different library-preview variant.
         let variant = try await api.editorVariant(jobID: target.jobID, variantID: target.variantID)
+        let generation = variant["render_generation_id"]?.stringValue
+            ?? variant["render_finished_at"]?.stringValue
+        if let expected = target.expectedGenerationID, generation != expected {
+            throw NativeEditorVideoDownloadError.rendering
+        }
         guard let output = variant["output_url"]?.stringValue,
               let url = URL(string: output) else {
             let status = variant["render_status"]?.stringValue
@@ -353,6 +367,9 @@ struct NativeEditorVideoDownloader {
                 throw NativeEditorVideoDownloadError.rendering
             }
             throw NativeEditorVideoDownloadError.unavailable
+        }
+        if let expected = target.expectedOutputPath, url.path != expected {
+            throw NativeEditorVideoDownloadError.rendering
         }
         return try await VideoFileDownloader(session: session).download(from: url)
     }

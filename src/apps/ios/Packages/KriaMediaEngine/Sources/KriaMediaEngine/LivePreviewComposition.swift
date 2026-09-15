@@ -2,6 +2,16 @@
 import AVFoundation
 import CoreImage
 
+public struct LivePreviewExportSnapshot: Sendable {
+    public let recipe: EditRecipe
+    public let assetURLs: [String: URL]
+
+    public init(recipe: EditRecipe, assetURLs: [String: URL]) {
+        self.recipe = recipe
+        self.assetURLs = assetURLs
+    }
+}
+
 /// Owns a source composition across editor changes. Text-only updates replace
 /// immutable compositor instructions without reloading or seeking source tracks.
 @MainActor public final class LivePreviewComposition {
@@ -13,6 +23,12 @@ import CoreImage
         self.recipe = recipe
         self.assetURLs = assetURLs
         self.preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: assetURLs)
+    }
+
+    /// Freeze the inputs that own the visible composition before an async export.
+    /// Later editor mutations update this object but cannot change the snapshot.
+    public func exportSnapshot() -> LivePreviewExportSnapshot {
+        LivePreviewExportSnapshot(recipe: recipe, assetURLs: assetURLs)
     }
 
     public func mediaSelectionBounds(id: String, time: Double) -> TextSelectionBounds? {

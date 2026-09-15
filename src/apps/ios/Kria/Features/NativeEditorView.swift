@@ -327,18 +327,20 @@ struct NativeEditorView: View {
         defer { isDownloading = false }
         do {
             let localFile: URL
-            let removeAfterSaving: Bool
-            if let deviceLocalFile {
-                localFile = deviceLocalFile
-                removeAfterSaving = false
-            } else {
-                guard let target = session.videoDownloadTarget else {
-                    throw NativeEditorVideoDownloadError.unavailable
-                }
+            let cleanupURL: URL?
+            switch try session.videoDownloadRoute(deviceLocalFile: deviceLocalFile) {
+            case .sourcePreview:
+                let exported = try await session.exportDisplayedSourcePreview()
+                localFile = exported.fileURL
+                cleanupURL = exported.cleanupURL
+            case let .localFile(file):
+                localFile = file
+                cleanupURL = nil
+            case let .server(target):
                 localFile = try await NativeEditorVideoDownloader().download(api: model.api, target: target)
-                removeAfterSaving = true
+                cleanupURL = localFile
             }
-            defer { if removeAfterSaving { try? FileManager.default.removeItem(at: localFile) } }
+            defer { if let cleanupURL { try? FileManager.default.removeItem(at: cleanupURL) } }
             try await PhotoLibrarySaver().saveVideo(at: localFile)
             downloadNotice = EditorDownloadNotice(title: "Saved to Photos", message: "Your current video is ready in Photos.")
         } catch {

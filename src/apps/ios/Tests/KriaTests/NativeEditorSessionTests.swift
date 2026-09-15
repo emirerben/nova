@@ -343,6 +343,33 @@ final class NativeEditorSessionTests: XCTestCase {
         session.pausePlayback()
     }
 
+    func testDownloadUsesVisibleSourcePreviewInsteadOfOlderDeviceFile() async throws {
+        let olderDeviceFile = URL(fileURLWithPath: "/tmp/kria-older-device-render.mp4")
+        let session = NativeEditorSession(
+            draft: NativeEditorUITestFixtures.sourceText,
+            initialPlaybackURL: olderDeviceFile
+        )
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+
+        XCTAssertTrue(session.hasSourcePreview)
+        XCTAssertEqual(try session.videoDownloadRoute(deviceLocalFile: olderDeviceFile), .sourcePreview)
+    }
+
+    func testDisplayedSourcePreviewExportsAPlayableVideo() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+
+        let exported = try await session.exportDisplayedSourcePreview()
+        defer { try? FileManager.default.removeItem(at: exported.cleanupURL) }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: exported.fileURL.path))
+        let duration = try await AVURLAsset(url: exported.fileURL).load(.duration).seconds
+        XCTAssertEqual(duration, session.duration, accuracy: 0.05)
+    }
+
     func testProjectSessionUsesFreshPlaybackHandoffBeforeHydration() throws {
         let staleURL = URL(fileURLWithPath: "/tmp/kria-stale-project-render.mp4")
         let freshURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))

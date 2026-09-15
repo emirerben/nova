@@ -560,6 +560,32 @@ final class KriaTests: XCTestCase {
         }
     }
 
+    func testEditorDownloadRejectsOutputFromDifferentGeneration() async throws {
+        let jobID = PreviewFixtures.projectID
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/generative-jobs/\(jobID.uuidString)/status")
+            return (200, Data(#"{"job_id":"job","variants":[{"variant_id":"selected","render_status":"ready","render_generation_id":"generation-old","output_url":"https://storage.example.test/old.mp4"}]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+
+        do {
+            _ = try await NativeEditorVideoDownloader().download(
+                api: api,
+                target: NativeEditorVideoDownloadTarget(
+                    jobID: jobID,
+                    variantID: "selected",
+                    expectedGenerationID: "generation-current",
+                    expectedOutputPath: "/current.mp4"
+                )
+            )
+            XCTFail("Expected a stale render generation to be rejected")
+        } catch let error as NativeEditorVideoDownloadError {
+            guard case .rendering = error else {
+                return XCTFail("Expected rendering error, got \(error)")
+            }
+        }
+    }
+
     func testEditorVariantLoadsAuthoritativeStatusProjection() async throws {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.url?.path, "/generative-jobs/\(PreviewFixtures.projectID.uuidString)/status")
