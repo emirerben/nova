@@ -92,6 +92,7 @@ targets:
         Release:
           PRODUCT_BUNDLE_IDENTIFIER: com.emirerben.kria
           CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
           PROVISIONING_PROFILE_SPECIFIER: "$(KRIA_PROVISIONING_PROFILE_SPECIFIER)"
     scheme:
       testTargets:

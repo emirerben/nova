@@ -54,6 +54,11 @@ class EntitlementAndProjectTests(unittest.TestCase):
         # XcodeGen must consume CI's signing team and provisioning profile.
         self.assertRegex(text, r"DEVELOPMENT_TEAM\s*:\s*[^\n]+\$\([^)]*TEAM[^)]*\)")
         self.assertRegex(release, r"(?:PROVISIONING_PROFILE|PRODUCT_BUNDLE_IDENTIFIER)\s*:")
+        self.assertRegex(
+            release,
+            r"CODE_SIGN_IDENTITY\s*:\s*Apple Distribution",
+            "Release archives must use the installed Apple Distribution certificate",
+        )
 
     def test_production_config_declares_runtime_google_settings(self):
         text = PRODUCTION_CONFIG.read_text()
