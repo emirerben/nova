@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.30.0] - 2026-09-15
+
+### Changed
+- fix(ios): preserve rename alert across retry (#1039) <!-- release-pr: 1039 -->
+
 ## [0.76.29.0] - 2026-09-15
 
 ### Changed
