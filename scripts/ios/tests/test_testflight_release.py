@@ -162,6 +162,11 @@ class WorkflowTests(unittest.TestCase):
             r"SIGNING_KEYCHAIN_PASSWORD:\s*\$\{\{\s*secrets\.SIGNING_KEYCHAIN_PASSWORD\s*\}\}",
         )
 
+    def test_pins_a_bundler_version_supported_by_the_pinned_fastlane_client(self):
+        self.assertIn("gem install bundler:2.7.2 --no-document", self.text)
+        self.assertRegex(self.text, r"bundle _2\.7\.2_ install --gemfile fastlane/Gemfile")
+        self.assertRegex(self.text, r"bundle _2\.7\.2_ exec fastlane ios testflight")
+
 
 if __name__ == "__main__":
     unittest.main()
