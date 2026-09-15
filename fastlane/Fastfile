@@ -4,7 +4,9 @@ platform :ios do
   desc("Upload the already-signed Kria IPA and distribute it to external TestFlight testers")
   lane :testflight do
     marketing_version = ENV.fetch("KRIA_MARKETING_VERSION")
-    build_number = ENV.fetch("KRIA_BUILD_NUMBER").to_i
+    # Fastlane's upload action requires this argument to remain a String.
+    # Convert only at the numeric deduplication comparison below.
+    build_number = ENV.fetch("KRIA_BUILD_NUMBER")
     api_key = app_store_connect_api_key(
       key_id: ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
       issuer_id: ENV.fetch("APP_STORE_CONNECT_ISSUER_ID"),
@@ -19,7 +21,7 @@ platform :ios do
       initial_build_number: 0,
     ).to_i
 
-    if latest_build >= build_number
+    if latest_build >= build_number.to_i
       UI.important("TestFlight already has build #{latest_build} for #{marketing_version}; skipping duplicate upload #{build_number}.")
     else
       upload_to_testflight(
