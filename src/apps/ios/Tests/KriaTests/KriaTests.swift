@@ -457,6 +457,35 @@ final class KriaTests: XCTestCase {
         XCTAssertTrue(url.query?.contains("Expires=123") == true)
     }
 
+    func testFinishedVideoDownloadRefreshesSignedURLBeforeTransfer() async throws {
+        let store = MemoryTokenStore(MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900))
+        let lock = NSLock()
+        var requestedURLs: [URL] = []
+        let freshURL = URL(string: "https://storage.example.test/fresh.mp4?Expires=999")!
+        URLProtocolStub.handler = { request in
+            lock.withLock { requestedURLs.append(request.url!) }
+            if request.url?.path == "/me/jobs/\(PreviewFixtures.projectID.uuidString)/playback-url" {
+                return (200, Data("{\"video_url\":\"\(freshURL.absoluteString)\"}".utf8))
+            }
+            XCTAssertEqual(request.url, freshURL)
+            return (200, Data("fresh-video".utf8))
+        }
+        let session = stubSession()
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: session)
+
+        let result = try await FinishedVideoDownloader(session: session)
+            .download(api: api, jobID: PreviewFixtures.projectID)
+        defer { try? FileManager.default.removeItem(at: result.fileURL) }
+
+        let urls = lock.withLock { requestedURLs }
+        XCTAssertEqual(urls.map(\.path), [
+            "/me/jobs/\(PreviewFixtures.projectID.uuidString)/playback-url",
+            "/fresh.mp4",
+        ])
+        XCTAssertEqual(result.playbackURL, freshURL)
+        XCTAssertEqual(try Data(contentsOf: result.fileURL), Data("fresh-video".utf8))
+    }
+
     func testEditorVariantLoadsAuthoritativeStatusProjection() async throws {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.url?.path, "/generative-jobs/\(PreviewFixtures.projectID.uuidString)/status")

@@ -249,8 +249,7 @@ struct ResultsView: View {
         isRefreshingPlayback = true
         defer { isRefreshingPlayback = false }
         do {
-            let jobID = project.activeJobID ?? project.id
-            let url = try await model.api.playbackURL(jobID: jobID)
+            let url = try await model.api.playbackURL(jobID: playbackJobID)
             player?.pause()
             playbackURL = url
             player = AVPlayer(url: url)
@@ -266,9 +265,8 @@ struct ResultsView: View {
         songReference = NativeSongReference(variant: variant)
     }
     private func saveToPhotos() async {
-        guard let playbackURL else { return }
         do {
-            let localFile = try await downloadVideo(from: playbackURL)
+            let localFile = try await downloadFreshVideo()
             defer { try? FileManager.default.removeItem(at: localFile) }
             try await PhotoLibrarySaver().saveVideo(at: localFile)
             message = "Saved to Photos."
@@ -276,31 +274,54 @@ struct ResultsView: View {
     }
 
     private func prepareShare() async {
-        guard let playbackURL else { return }
         isPreparingShare = true
         defer { isPreparingShare = false }
         do {
             removeShareFile()
-            shareFileURL = try await downloadVideo(from: playbackURL)
+            shareFileURL = try await downloadFreshVideo()
             showShare = true
         } catch { message = error.localizedDescription }
     }
 
-    private func downloadVideo(from remoteURL: URL) async throws -> URL {
-        let (temporary, response) = try await URLSession.shared.download(from: remoteURL)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw APIError.requestFailed
-        }
-        let destination = FileManager.default.temporaryDirectory
-            .appending(path: "kria-\(UUID().uuidString).mp4")
-        try FileManager.default.moveItem(at: temporary, to: destination)
-        return destination
+    private var playbackJobID: UUID {
+        libraryJobID ?? project.activeJobID ?? project.id
+    }
+
+    private func downloadFreshVideo() async throws -> URL {
+        let result = try await FinishedVideoDownloader().download(
+            api: model.api,
+            jobID: playbackJobID
+        )
+        playbackURL = result.playbackURL
+        return result.fileURL
     }
 
     private func removeShareFile() {
         guard let shareFileURL else { return }
         try? FileManager.default.removeItem(at: shareFileURL)
         self.shareFileURL = nil
+    }
+}
+
+struct FinishedVideoDownloader {
+    let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    func download(api: any KriaAPIClient, jobID: UUID) async throws -> (fileURL: URL, playbackURL: URL) {
+        // Signed storage URLs expire. Resolve one at the moment the user acts
+        // instead of reusing the URL that happened to load with the screen.
+        let playbackURL = try await api.playbackURL(jobID: jobID)
+        let (temporary, response) = try await session.download(from: playbackURL)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw APIError.requestFailed
+        }
+        let destination = FileManager.default.temporaryDirectory
+            .appending(path: "kria-\(UUID().uuidString).mp4")
+        try FileManager.default.moveItem(at: temporary, to: destination)
+        return (destination, playbackURL)
     }
 }
 
