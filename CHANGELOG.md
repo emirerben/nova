@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.24.0] - 2026-09-15
+
+### Changed
+- fix(ios): permit metadata after tested release (#1033) <!-- release-pr: 1033 -->
+
 ## [0.76.23.0] - 2026-09-14
 
 ### Changed
