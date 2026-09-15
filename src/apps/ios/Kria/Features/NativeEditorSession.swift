@@ -359,6 +359,15 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var promptRefreshSequence: UInt64 = 0
     private let playbackEndTolerance: TimeInterval = 0.05
 
+    var videoDownloadTarget: NativeEditorVideoDownloadTarget? {
+        guard let jobID, let variantKey else { return nil }
+        return NativeEditorVideoDownloadTarget(jobID: jobID, variantID: variantKey)
+    }
+
+    var canDownloadCurrentVideo: Bool {
+        videoDownloadTarget != nil && !hasUnsavedChanges && !isSaving && pendingPreviewGeneration == nil
+    }
+
     private struct ActiveTrim {
         let clipID: UUID
         let edge: NativeTrimEdge

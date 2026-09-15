@@ -387,12 +387,22 @@ final class NativeEditorInspectorUITests: XCTestCase {
 
         XCTAssertFalse(app.buttons["native-editor-tool-styles"].exists)
         XCTAssertFalse(app.buttons["native-editor-tool-overlays"].exists)
-        for tool in ["text", "captions", "visuals", "sounds"] {
-            let button = app.buttons["native-editor-tool-\(tool)"]
-            if !button.isHittable { toolRail.swipeLeft() }
-            XCTAssertTrue(button.waitForExistence(timeout: 2), "\(tool) must remain in the tool rail")
-            XCTAssertTrue(button.isHittable, "\(tool) must remain reachable")
+        let tools = ["text", "captions", "visuals", "sounds"]
+        let buttons = tools.map { app.buttons["native-editor-tool-\($0)"] }
+        for button in buttons {
+            XCTAssertTrue(button.waitForExistence(timeout: 2), "Every tool must remain in the tool rail")
+            XCTAssertTrue(button.isHittable, "Every tool must remain reachable without horizontal scrolling")
         }
+        let widths = buttons.map(\.frame.width)
+        for width in widths.dropFirst() { XCTAssertEqual(width, widths[0], accuracy: 2) }
+        XCTAssertEqual(buttons[0].frame.minX, toolRail.frame.minX + 8, accuracy: 2)
+        XCTAssertEqual(buttons[3].frame.maxX, toolRail.frame.maxX - 8, accuracy: 2)
+        for index in 1..<buttons.count {
+            XCTAssertEqual(buttons[index].frame.minX - buttons[index - 1].frame.maxX, 2, accuracy: 2)
+        }
+
+        XCTAssertTrue(app.buttons["native-editor-save"].exists)
+        XCTAssertTrue(app.buttons["native-editor-download"].exists)
     }
 
     func testFinishedRenderFallbackRemainsPlayableAndDisablesCanvasManipulation() {

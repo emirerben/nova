@@ -486,6 +486,36 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: result.fileURL), Data("fresh-video".utf8))
     }
 
+    func testEditorDownloadFetchesFreshURLForSelectedVariantBeforeTransfer() async throws {
+        let store = MemoryTokenStore(MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900))
+        let lock = NSLock()
+        var requestedURLs: [URL] = []
+        let jobID = PreviewFixtures.projectID
+        let freshURL = URL(string: "https://storage.example.test/selected.mp4?Expires=999")!
+        URLProtocolStub.handler = { request in
+            lock.withLock { requestedURLs.append(request.url!) }
+            if request.url?.path == "/generative-jobs/\(jobID.uuidString)/status" {
+                return (200, Data(#"{"job_id":"job","status":"variants_ready","variants":[{"variant_id":"other","render_status":"ready","output_url":"https://storage.example.test/other.mp4"},{"variant_id":"selected","render_status":"ready","output_url":"https://storage.example.test/selected.mp4?Expires=999"}]}"#.utf8))
+            }
+            XCTAssertEqual(request.url, freshURL)
+            return (200, Data("selected-video".utf8))
+        }
+        let session = stubSession()
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: session)
+
+        let file = try await NativeEditorVideoDownloader(session: session).download(
+            api: api,
+            target: NativeEditorVideoDownloadTarget(jobID: jobID, variantID: "selected")
+        )
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        XCTAssertEqual(lock.withLock { requestedURLs }.map(\.path), [
+            "/generative-jobs/\(jobID.uuidString)/status",
+            "/selected.mp4",
+        ])
+        XCTAssertEqual(try Data(contentsOf: file), Data("selected-video".utf8))
+    }
+
     func testEditorVariantLoadsAuthoritativeStatusProjection() async throws {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.url?.path, "/generative-jobs/\(PreviewFixtures.projectID.uuidString)/status")

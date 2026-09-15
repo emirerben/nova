@@ -314,14 +314,61 @@ struct FinishedVideoDownloader {
         // Signed storage URLs expire. Resolve one at the moment the user acts
         // instead of reusing the URL that happened to load with the screen.
         let playbackURL = try await api.playbackURL(jobID: jobID)
-        let (temporary, response) = try await session.download(from: playbackURL)
+        return (try await VideoFileDownloader(session: session).download(from: playbackURL), playbackURL)
+    }
+}
+
+struct NativeEditorVideoDownloadTarget: Equatable, Sendable {
+    let jobID: UUID
+    let variantID: String
+}
+
+enum NativeEditorVideoDownloadError: Error, LocalizedError {
+    case unavailable
+    case rendering
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable: "This video isn’t available to download yet."
+        case .rendering: "Save your changes and wait for the updated video before downloading."
+        }
+    }
+}
+
+struct NativeEditorVideoDownloader {
+    let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    func download(api: any KriaAPIClient, target: NativeEditorVideoDownloadTarget) async throws -> URL {
+        // Fetch the selected editor variant at action time. The job-level
+        // playback endpoint may point at a different library-preview variant.
+        let variant = try await api.editorVariant(jobID: target.jobID, variantID: target.variantID)
+        if let status = variant["render_status"]?.stringValue, status != "ready" {
+            throw NativeEditorVideoDownloadError.rendering
+        }
+        guard let output = variant["output_url"]?.stringValue,
+              let url = URL(string: output) else {
+            throw NativeEditorVideoDownloadError.unavailable
+        }
+        return try await VideoFileDownloader(session: session).download(from: url)
+    }
+}
+
+private struct VideoFileDownloader {
+    let session: URLSession
+
+    func download(from url: URL) async throws -> URL {
+        let (temporary, response) = try await session.download(from: url)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw APIError.requestFailed
         }
         let destination = FileManager.default.temporaryDirectory
             .appending(path: "kria-\(UUID().uuidString).mp4")
         try FileManager.default.moveItem(at: temporary, to: destination)
-        return (destination, playbackURL)
+        return destination
     }
 }
 

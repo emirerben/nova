@@ -310,36 +310,36 @@ struct NativeEditorToolRail: View {
     let onSelect: (NativeEditorTool) -> Void
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(NativeEditorTool.allCases.filter { $0 != .kria }) { tool in
-                    Button { selected = tool; onSelect(tool) } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: tool.icon)
-                                .font(.system(size: 17, weight: .medium))
-                            Text(tool.rawValue)
-                                .font(KriaFont.body(11).weight(.medium))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
-                        .frame(width: 60, height: 58)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .fill(selected == tool ? KriaColor.ink : .clear)
-                                .frame(height: 2)
-                                .padding(.horizontal, 10)
-                        }
+        HStack(spacing: 2) {
+            ForEach(NativeEditorTool.allCases.filter { $0 != .kria }) { tool in
+                Button { selected = tool; onSelect(tool) } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: tool.icon)
+                            .font(.system(size: 17, weight: .medium))
+                        Text(tool.rawValue)
+                            .font(KriaFont.body(11).weight(.medium))
+                            .lineLimit(1)
                     }
-                    .accessibilityLabel(tool.rawValue)
-                    .accessibilityHint(tool.accessibilityHint)
-                    .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
+                    .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
+                    .frame(maxWidth: .infinity, minHeight: 58)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(selected == tool ? KriaColor.ink : .clear)
+                            .frame(height: 2)
+                            .padding(.horizontal, 10)
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel(tool.rawValue)
+                .accessibilityHint(tool.accessibilityHint)
+                .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
             }
-            .padding(.horizontal, 8)
         }
+        .padding(.horizontal, 8)
         .frame(height: 66)
         .background(KriaColor.paper)
         .overlay(alignment: .top) { Rectangle().fill(KriaColor.line).frame(height: 1) }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native-editor-tool-rail")
     }
 }

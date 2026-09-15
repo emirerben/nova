@@ -21,6 +21,8 @@ struct NativeEditorView: View {
     @State private var timelineExpansion: CGFloat = 0
     @State private var timelineDragOrigin: CGFloat?
     @State private var timelineResizeFeedback = 0
+    @State private var isDownloading = false
+    @State private var downloadNotice: EditorDownloadNotice?
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
@@ -151,6 +153,9 @@ struct NativeEditorView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
             .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
+            .alert(item: $downloadNotice) { notice in
+                Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
+            }
             .interactiveDismissDisabled(session.hasUnsavedChanges)
             .confirmationDialog(
                 "Save your changes before leaving?",
@@ -186,7 +191,9 @@ struct NativeEditorView: View {
         VStack(spacing: 0) {
             NativeEditorProjectHeader(
                 title: project.workspaceTitle, session: session,
-                onBack: requestBack, onChat: conversation == nil ? requestBack : onBack
+                onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
+                isDownloading: isDownloading,
+                onDownload: { Task { await downloadCurrentVideo() } }
             )
             NativeEditorSaveBanner(session: session)
             if let presentation = session.editorSongReferencePresentation {
@@ -314,6 +321,31 @@ struct NativeEditorView: View {
         return model.deviceRenders.presentations[key]?.localFile
     }
 
+    private func downloadCurrentVideo() async {
+        guard !isDownloading, session.canDownloadCurrentVideo else { return }
+        isDownloading = true
+        defer { isDownloading = false }
+        do {
+            let localFile: URL
+            let removeAfterSaving: Bool
+            if let deviceLocalFile {
+                localFile = deviceLocalFile
+                removeAfterSaving = false
+            } else {
+                guard let target = session.videoDownloadTarget else {
+                    throw NativeEditorVideoDownloadError.unavailable
+                }
+                localFile = try await NativeEditorVideoDownloader().download(api: model.api, target: target)
+                removeAfterSaving = true
+            }
+            defer { if removeAfterSaving { try? FileManager.default.removeItem(at: localFile) } }
+            try await PhotoLibrarySaver().saveVideo(at: localFile)
+            downloadNotice = EditorDownloadNotice(title: "Saved to Photos", message: "Your current video is ready in Photos.")
+        } catch {
+            downloadNotice = EditorDownloadNotice(title: "Couldn’t save video", message: error.localizedDescription)
+        }
+    }
+
     private func loadEditor() async {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
@@ -358,6 +390,12 @@ struct NativeEditorView: View {
             onBack()
         }
     }
+}
+
+private struct EditorDownloadNotice: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 private struct NativeEditorLoadSurface: View {

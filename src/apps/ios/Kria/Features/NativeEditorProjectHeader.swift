@@ -5,6 +5,8 @@ struct NativeEditorProjectHeader: View {
     @ObservedObject var session: NativeEditorSession
     let onBack: () -> Void
     let onChat: () -> Void
+    let isDownloading: Bool
+    let onDownload: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,12 +20,18 @@ struct NativeEditorProjectHeader: View {
                     .font(KriaFont.body(13).weight(.semibold))
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
-                Button { Task { await session.save() } } label: {
+                Button("Save") { Task { await session.save() } }
+                    .font(KriaFont.body(13).weight(.semibold))
+                    .frame(minWidth: 48, minHeight: 44)
+                    .disabled(session.isSaving || !session.hasUnsavedChanges)
+                    .accessibilityLabel(session.isSaving ? "Saving changes" : session.hasUnsavedChanges ? "Save changes" : "Changes saved")
+                    .accessibilityIdentifier("native-editor-save")
+                Button(action: onDownload) {
                     Image(systemName: "square.and.arrow.down").frame(width: 44, height: 44)
                 }
-                .disabled(session.isSaving || !session.hasUnsavedChanges)
-                .accessibilityLabel(session.isSaving ? "Saving" : session.hasUnsavedChanges ? "Save changes" : "Saved")
-                .accessibilityIdentifier("native-editor-save")
+                .disabled(isDownloading || !session.canDownloadCurrentVideo)
+                .accessibilityLabel(isDownloading ? "Saving video to Photos" : "Download video")
+                .accessibilityIdentifier("native-editor-download")
             }
             .padding(.horizontal, 4)
             HStack(spacing: 4) {
