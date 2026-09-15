@@ -39,9 +39,22 @@ jobs:
           set -euo pipefail
           git fetch origin main --depth=1
           if [ "$(git rev-parse HEAD)" != "$(git rev-parse FETCH_HEAD)" ]; then
-            echo "eligible=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping stale iOS result: main advanced after this test run."
-            exit 0
+            # The release-metadata workflow can append a [skip ci] commit after
+            # the tested merge.  It is safe to release the tested SHA only when
+            # every intervening change is outside the release inputs below.
+            if ! git diff --quiet "$HEAD_SHA" "FETCH_HEAD" -- \
+              src/apps/ios \
+              scripts/ios \
+              .github/workflows/ios.yml \
+              .github/workflows/testflight.yml \
+              .claude/worktrees \
+              src/apps/api/app/config.py \
+              src/apps/api/app/services/mobile_auth.py; then
+              echo "eligible=false" >> "$GITHUB_OUTPUT"
+              echo "Skipping stale iOS result: main advanced with a release input."
+              exit 0
+            fi
+            echo "Main advanced only outside release inputs; releasing the tested SHA."
           fi
           # Git metadata is a release input: checkout must complete before
           # the archive or signing steps can run.
