@@ -90,7 +90,11 @@ struct ProjectActionsMenu: View {
     @State private var deleting = false
     @State private var title = ""
     @State private var busy = false
-    @State private var error: String?
+    // Rename and delete each present a native alert. Keeping their errors
+    // separate prevents a rename retry's automatic alert dismissal from
+    // momentarily activating the delete-error presenter.
+    @State private var renameError: String?
+    @State private var deleteError: String?
     @State private var renameIdentity = UUID().uuidString
     @State private var submittedTitle: String?
     private var current: ProjectSummary { model.projects.first { $0.id == project.id } ?? project }
@@ -98,20 +102,20 @@ struct ProjectActionsMenu: View {
 
     var body: some View {
         Menu {
-            Button("Rename project") { title = current.workspaceTitle; submittedTitle = nil; renameIdentity = UUID().uuidString; error = nil; renaming = true }
-            Button(deletionBlocked ? "Delete after rendering or uploading" : "Delete project", role: .destructive) { error = nil; deleting = true }
+            Button("Rename project") { title = current.workspaceTitle; submittedTitle = nil; renameIdentity = UUID().uuidString; renameError = nil; renaming = true }
+            Button(deletionBlocked ? "Delete after rendering or uploading" : "Delete project", role: .destructive) { deleteError = nil; deleting = true }
                 .disabled(deletionBlocked)
         } label: { KriaIcon(.more).frame(width: 44, height: 44) }
         .disabled(busy).accessibilityLabel("Project actions for \(current.workspaceTitle)")
         .alert("Rename project", isPresented: $renaming) {
             TextField("Project name", text: $title)
                 .accessibilityIdentifier("rename-project-title")
-            Button("Cancel", role: .cancel) { error = nil }
+            Button("Cancel", role: .cancel) { renameError = nil }
                 .disabled(busy)
             Button(busy ? "Saving…" : "OK") { rename() }
                 .disabled(busy || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.count > 120)
         } message: {
-            Text(error ?? "Enter a name up to 120 characters.")
+            Text(renameError ?? "Enter a name up to 120 characters.")
         }
         .alert("Delete this project?", isPresented: $deleting) {
             Button("Cancel", role: .cancel) {}
@@ -119,29 +123,30 @@ struct ProjectActionsMenu: View {
                 busy = true
                 Task {
                     do { try await model.deleteProject(current) }
-                    catch { self.error = "The project couldn’t be deleted. It may have changed or still be rendering. Try again after refreshing." }
+                    catch { self.deleteError = "The project couldn’t be deleted. It may have changed or still be rendering. Try again after refreshing." }
                     busy = false
                 }
             }
         } message: { Text("This permanently deletes the project and its rendered videos and media. This cannot be undone.") }
-        .alert("Couldn’t delete project", isPresented: Binding(get: { error != nil && !renaming }, set: { if !$0 { error = nil } })) {
-            Button("OK", role: .cancel) { error = nil }
-        } message: { Text(error ?? "") }
+        .alert("Couldn’t delete project", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+            Button("OK", role: .cancel) { deleteError = nil }
+        } message: { Text(deleteError ?? "") }
     }
     private func rename() {
         guard !busy else { return }
         let cleaned = title.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         if submittedTitle != cleaned { renameIdentity = UUID().uuidString; submittedTitle = cleaned }
+        renameError = nil
         busy = true
         Task {
             do {
                 try await model.renameProject(current, title: cleaned, clientEventID: renameIdentity)
-                renaming = false; error = nil; submittedTitle = nil; renameIdentity = UUID().uuidString
+                renaming = false; renameError = nil; submittedTitle = nil; renameIdentity = UUID().uuidString
             } catch {
                 if error as? APIError == .conflict {
                     renameIdentity = UUID().uuidString
-                    self.error = "This project changed elsewhere. The latest version is loaded; review your name and save again."
-                } else { self.error = "The name couldn’t be saved. Your text is still here; try again." }
+                    self.renameError = "This project changed elsewhere. The latest version is loaded; review your name and save again."
+                } else { self.renameError = "The name couldn’t be saved. Your text is still here; try again." }
                 renaming = true
             }
             busy = false
