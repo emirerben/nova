@@ -9,6 +9,7 @@ struct NativeEditorView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var session: NativeEditorSession
+    @StateObject private var exporter = NativeEditorExporter()
     @State private var selectedTool: NativeEditorTool?
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
@@ -140,6 +141,9 @@ struct NativeEditorView: View {
                         .presentationDragIndicator(.visible)
                 }
             }
+            .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
+                if let file = exporter.sharedFile { ShareSheetView(url: file) }
+            }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
             .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
@@ -156,7 +160,10 @@ struct NativeEditorView: View {
                 Text("Unsaved editor changes are stored only on this device until you save.")
             }
             .task { await loadEditor() }
-            .onDisappear { session.pausePlayback() }
+            .onDisappear {
+                session.pausePlayback()
+                exporter.removeSharedFile()
+            }
         }
     }
 
@@ -177,10 +184,11 @@ struct NativeEditorView: View {
         let previewHeight = max(80, defaultPreviewHeight - timelineExpansion * resizeRange - (showsContext ? 52 : 0))
         VStack(spacing: 0) {
             NativeEditorProjectHeader(
-                title: project.workspaceTitle, session: session,
+                title: project.workspaceTitle, session: session, exporter: exporter,
                 onBack: requestBack, onChat: conversation == nil ? requestBack : onBack
             )
             NativeEditorSaveBanner(session: session)
+            NativeEditorExportBanner(exporter: exporter)
             if let presentation = session.editorSongReferencePresentation {
                 NativeSongReferenceCard(presentation: presentation)
                     .padding(.horizontal, 16)

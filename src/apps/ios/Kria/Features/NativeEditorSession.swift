@@ -193,6 +193,52 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     private let projectID: UUID
     private var etag: String = ""
+    /// Finished render supplied before any API load (fixtures, project
+    /// summaries). A loaded project exports by re-reading its variant instead.
+    private let initialRenderURL: URL?
+
+    /// Why the header cannot export right now, or nil when the loaded render
+    /// already contains every saved edit. Exporting in any of these states
+    /// would hand the creator an older cut than the one they are looking at.
+    var exportBlockReason: String? {
+        if isSaving { return "Wait for your edit to finish saving." }
+        if hasUnsavedChanges || pendingText != nil { return "Save your changes to export them." }
+        if !pendingRenderRetrySections.isEmpty { return "Retry the render to export your latest edit." }
+        if pendingPreviewGeneration != nil { return "Your saved edit is still rendering." }
+        switch saveState {
+        case .saving: return "Wait for your edit to finish saving."
+        case .previewPending, .previewFailed: return "Your saved edit is still rendering."
+        case .renderRetryNeeded: return "Retry the render to export your latest edit."
+        case .conflict: return "Reload the latest version to export it."
+        case .refreshFailed: return "Reopen the editor to export the latest version."
+        case .loadFailed: return "This edit didn’t load, so it can’t be exported."
+        case .idle, .saved, .failed: return nil
+        }
+    }
+
+    /// The render export should download. The player can still hold an older
+    /// output after a chat-driven rebase, and signed URLs expire, so a loaded
+    /// project re-reads its variant and exports only a ready render.
+    func exportRenderURL() async throws -> URL {
+        if let exportBlockReason { throw NativeEditorExportError.blocked(exportBlockReason) }
+        guard let api, let jobID, let variantKey else {
+            guard let initialRenderURL else { throw NativeEditorExportError.unavailable }
+            return initialRenderURL
+        }
+        let variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+        if let exportBlockReason { throw NativeEditorExportError.blocked(exportBlockReason) }
+        switch variant["render_status"]?.stringValue {
+        case "ready", nil:
+            guard let output = variant["output_url"]?.stringValue, let url = URL(string: output) else {
+                throw NativeEditorExportError.unavailable
+            }
+            return url
+        case "failed":
+            throw NativeEditorExportError.renderFailed
+        default:
+            throw NativeEditorExportError.stillRendering
+        }
+    }
 
     var draft: EditorDraft {
         get {
@@ -299,6 +345,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         var initialDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
         initialDocument.revision.number = draft.revision
         self.projectID = draft.projectID
+        self.initialRenderURL = initialPlaybackURL
         self.etag = draft.etag
         self.compatibilitySnapshot = draft.serverSnapshot
         self.document = initialDocument

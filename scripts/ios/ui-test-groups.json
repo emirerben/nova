@@ -22,6 +22,7 @@
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
       "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
+      "KriaUITests/EditorUITests/testNativeEditorHeaderSeparatesSavedStateFromExport",
       "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock",
       "KriaUITests/EditorUITests/testNativeEditorPlaysTheRenderedAssetThroughItsRealEndAndReplays",
       "KriaUITests/EditorUITests/testNativeEditorLongTextEditPreservesDurationAndClipGeometry",
@@ -82,6 +83,7 @@
     "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift": "editor",
     "src/apps/ios/Kria/Core/NativeEditorSources.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorProjectHeader.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorExport.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorTextPanel.swift": "editor",
     "src/apps/ios/Kria/Features/NativeTextCreationPanel.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/AppleTextAccessibilityUITests.swift": "editor",

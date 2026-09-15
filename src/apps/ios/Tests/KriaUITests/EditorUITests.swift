@@ -52,6 +52,42 @@ final class EditorUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview"].firstMatch.exists)
     }
 
+    func testNativeEditorHeaderSeparatesSavedStateFromExport() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor"]
+        app.launch()
+
+        let save = app.buttons["native-editor-save"]
+        let export = app.buttons["native-editor-export"]
+        XCTAssertTrue(save.waitForExistence(timeout: 8))
+        XCTAssertEqual(save.label, "Saved")
+        XCTAssertFalse(save.isEnabled, "A clean editor has nothing to save")
+        XCTAssertTrue(export.isEnabled)
+
+        app.buttons["native-editor-tool-text"].tap()
+        let input = app.descendants(matching: .any)["native-editor-new-text-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        input.tap()
+        input.typeText("Export gate")
+        app.buttons["native-editor-text-done"].tap()
+        app.buttons["native-editor-text-inspector-done"].tap()
+
+        XCTAssertEqual(save.label, "Save changes")
+        XCTAssertTrue(save.isEnabled)
+        export.tap()
+        XCTAssertTrue(app.buttons["Save your changes to export them."].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Save to Photos"].exists, "Unsaved edits never export an older cut")
+
+        // A clean editor exports its finished render through the share sheet.
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(export.waitForExistence(timeout: 8))
+        export.tap()
+        XCTAssertTrue(app.buttons["Save to Photos"].waitForExistence(timeout: 3))
+        app.buttons["Share"].tap()
+        XCTAssertTrue(app.buttons["Share video"].waitForExistence(timeout: 5))
+    }
+
     func testNativeEditorFixturePlaysAndAdvancesTheClock() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor"]
