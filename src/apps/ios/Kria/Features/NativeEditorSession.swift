@@ -382,14 +382,31 @@ struct NativeEditorTemporaryVideo {
     }
 
     var canDownloadCurrentVideo: Bool {
-        videoDownloadTarget != nil && !hasUnsavedChanges && !isSaving && pendingPreviewGeneration == nil
+        let displayedVideoIsCurrent: Bool
+        switch sourcePreviewState {
+        case .ready:
+            displayedVideoIsCurrent = sourcePreview.map { player?.currentItem === $0.preview.playerItem } ?? false
+        case .failed:
+            displayedVideoIsCurrent = player != nil && player === finishedRenderPlayer
+        case .idle, .preparing:
+            displayedVideoIsCurrent = false
+        }
+        return videoDownloadTarget != nil && displayedVideoIsCurrent
+            && !hasUnsavedChanges && !isSaving && pendingPreviewGeneration == nil
     }
 
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
-        if sourcePreviewState == .ready,
-           let sourcePreview,
-           player?.currentItem === sourcePreview.preview.playerItem {
+        switch sourcePreviewState {
+        case .ready:
+            guard let sourcePreview,
+                  player?.currentItem === sourcePreview.preview.playerItem else {
+                throw NativeEditorVideoDownloadError.unavailable
+            }
             return .sourcePreview
+        case .failed:
+            break
+        case .idle, .preparing:
+            throw NativeEditorVideoDownloadError.unavailable
         }
         if let deviceLocalFile,
            let asset = player?.currentItem?.asset as? AVURLAsset,

@@ -357,6 +357,22 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(try session.videoDownloadRoute(deviceLocalFile: olderDeviceFile), .sourcePreview)
     }
 
+    func testDownloadRejectsStaleFinishedRenderWhileCurrentPreviewPrepares() async throws {
+        let olderRender = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(
+            draft: NativeEditorUITestFixtures.sourceText,
+            initialPlaybackURL: olderRender
+        )
+
+        let preparation = Task {
+            await session.prepareFixtureSourcePreview(url: olderRender, delayedLoad: true)
+        }
+        await Task.yield()
+
+        XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: olderRender))
+        await preparation.value
+    }
+
     func testDisplayedSourcePreviewExportsAPlayableVideo() async throws {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
         let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
