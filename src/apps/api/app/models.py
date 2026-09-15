@@ -750,6 +750,25 @@ class JobStorageDeletion(Base):
     )
 
 
+class AppleRevocationOutbox(Base):
+    """Credential-revocation debt that outlives the erased User row."""
+
+    __tablename__ = "apple_revocation_outbox"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    encrypted_refresh_token: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+    client_id: Mapped[str] = mapped_column(Text, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    __table_args__ = (
+        CheckConstraint("attempts >= 0", name="ck_apple_revocation_outbox_attempts_nonnegative"),
+        Index("idx_apple_revocation_outbox_due", "next_attempt_at"),
+        Index("idx_apple_revocation_outbox_lease", "lease_until"),
+    )
+
+
 class TikTokPublication(Base):
     """One user-consented TikTok delivery attempt.
 

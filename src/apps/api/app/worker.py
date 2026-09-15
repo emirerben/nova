@@ -58,6 +58,7 @@ celery_app = Celery(
         "app.tasks.omni_generate",
         "app.tasks.tiktok",
         "app.tasks.account_lifecycle",
+        "app.tasks.apple_revocation",
         "app.tasks.edit_training_exports",
         "app.tasks.edit_training_artifacts",
         "app.tasks.creator_quality_review",
@@ -102,6 +103,8 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "tasks.cleanup_cancelled_job",
     "tasks.purge_job_storage",
     "tasks.sweep_job_storage_deletions",
+    "tasks.revoke_apple_credential",
+    "tasks.sweep_apple_revocations",
     "app.tasks.tiktok.poll_tiktok_publications",
     "app.tasks.tiktok.schedule_tiktok_account_syncs",
     "app.tasks.tiktok.cleanup_tiktok_publications",
@@ -213,6 +216,10 @@ celery_app.conf.update(
         },
         "sweep-job-storage-deletions-every-5-min": {
             "task": "tasks.sweep_job_storage_deletions",
+            "schedule": 300.0,
+        },
+        "sweep-apple-revocations-every-5-min": {
+            "task": "tasks.sweep_apple_revocations",
             "schedule": 300.0,
         },
         "cleanup-temporary-media-uploads-every-5-min": {

@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "apple-appstore-reviewer": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/apple-appstore-reviewer/SKILL.md",
+      "computedHash": "25cb84d301e17fb5840a4d2409e9a7d341d6e195fb2272b110518512a7f0dbc3"
+    },
     "improve": {
       "source": "shadcn/improve",
       "sourceType": "github",

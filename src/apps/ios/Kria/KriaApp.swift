@@ -8,6 +8,18 @@ import SwiftData
     private let container: ModelContainer
     init() {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-account") {
+            let container = Self.fallbackContainer()
+            self.container = container
+            let store = AccountUITestTokenStore()
+            let api = AccountUITestTransport.api(tokenStore: store)
+            let auth = AuthStore(tokenStore: store, api: api)
+            let payload = Data("{\"sub\":\"\(UUID().uuidString)\"}".utf8).base64EncodedString()
+            try? auth.signIn(with: MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture-refresh", expiresIn: 3600), displayName: "Test creator")
+            _auth = StateObject(wrappedValue: auth)
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
             let container = Self.fallbackContainer()
             self.container = container
@@ -24,7 +36,12 @@ import SwiftData
         )
     }
     var body: some Scene {
-        WindowGroup { RootView().environmentObject(auth).environmentObject(model) }
+        WindowGroup {
+            RootView()
+                .environmentObject(auth)
+                .environmentObject(model)
+                .preferredColorScheme(.light)
+        }
             .modelContainer(container)
     }
     private static func fallbackContainer() -> ModelContainer {
@@ -45,6 +62,7 @@ import SwiftData
 struct RootView: View {
     @EnvironmentObject private var auth: AuthStore
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
         Group {
             #if DEBUG
@@ -63,16 +81,27 @@ struct RootView: View {
             }
             else if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") { ChatWorkspaceView() }
             else if !auth.isSignedIn { SignInView() }
-            else { ChatWorkspaceView() }
+            else { signedInContent }
             #else
             if !auth.isSignedIn { SignInView() }
-            else { ChatWorkspaceView() }
+            else { signedInContent }
             #endif
         }
         .kriaPage()
         .background(KriaColor.paper.ignoresSafeArea())
+        #if DEBUG
+        .environment(\.dynamicTypeSize, ProcessInfo.processInfo.arguments.contains("-ui-testing-account") && ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] == "accessibility5" ? .accessibility5 : dynamicTypeSize)
+        #endif
         .onChange(of: auth.isSignedIn) { _, signedIn in
             if !signedIn { Task { await model.deviceRenders.stopAll() } }
+        }
+    }
+
+    @ViewBuilder private var signedInContent: some View {
+        if auth.hasAIConsent {
+            ChatWorkspaceView()
+        } else {
+            AIConsentView(accept: { auth.acceptAIConsent() }, decline: { auth.signOut() })
         }
     }
 }
@@ -127,6 +156,7 @@ private struct NativeEditorUITestHost: View {
 
     private var dynamicTypeSize: DynamicTypeSize {
         switch ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] {
+        case "accessibility5": return .accessibility5
         case "accessibility3": return .accessibility3
         case "accessibility2": return .accessibility2
         case "xxLarge": return .xxLarge

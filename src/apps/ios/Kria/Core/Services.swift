@@ -99,6 +99,8 @@ protocol KriaAPIClient: Sendable {
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession
     func revokeMobileSession(_ refreshToken: String) async throws
+    func requestAccountDeletion() async throws -> AccountDeletionRequest
+    func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
@@ -127,6 +129,8 @@ protocol KriaAPIClient: Sendable {
 /// editor saves fail explicitly when the production commit endpoint is not
 /// implemented by a substitute.
 extension KriaAPIClient {
+    func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
+    func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
 
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse { throw APIError.unsupported }
@@ -684,6 +688,12 @@ struct KriaAPI: KriaAPIClient {
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession { try await request(path: "auth/mobile/exchange", method: "POST", bodyData: try JSONEncoder().encode(["id_token": credential.token, "provider": provider, "nonce": credential.nonce]), decode: MobileSession.self) }
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession { try await request(path: "auth/mobile/refresh", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: MobileSession.self) }
     func revokeMobileSession(_ refreshToken: String) async throws { _ = try await request(path: "auth/mobile/revoke", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: RevokeResponse.self) }
+    func requestAccountDeletion() async throws -> AccountDeletionRequest {
+        try await request(path: "me/account/delete-request", method: "POST", bodyData: nil, decode: AccountDeletionRequest.self)
+    }
+    func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws {
+        _ = try await request(path: "me/account/delete-confirm", method: "POST", bodyData: JSONEncoder().encode(confirmation), decode: EmptyProjectResponse.self)
+    }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: UUID().uuidString)
     }
@@ -783,6 +793,15 @@ struct KriaAPI: KriaAPIClient {
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         if http.statusCode == 401 { clearExpiredSession(); throw APIError.sessionExpired }
+        if path.hasPrefix("me/account/delete-") {
+            if http.statusCode == 503 { throw AccountDeletionError.unavailable }
+            if http.statusCode == 400 { throw AccountDeletionError.invalidConfirmation }
+            if http.statusCode == 409,
+               let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let detail = body["detail"] as? [String: Any], detail["code"] as? String == "apple_authorization_required" {
+                throw AccountDeletionError.appleAuthorizationRequired(detail["apple_authorization_count"] as? Int ?? 1)
+            }
+        }
         if http.statusCode == 409 || http.statusCode == 412 {
             let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let detail = body?["detail"] as? String

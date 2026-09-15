@@ -13,12 +13,16 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from cryptography.fernet import Fernet
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.routes import me
+from app.services.mobile_auth import ProviderClaims
 
 _KEY = Fernet.generate_key().decode()
 
@@ -70,6 +74,22 @@ def _db(execute_results: list) -> AsyncMock:
         # dedicated memory tests cover the new tables themselves.
         if "creator_memory_" in str(statement):
             return _scalars([])
+        # KRI-55 adds lifecycle serialization and an Apple identity snapshot;
+        # legacy fixtures have no Apple identities and retain their original
+        # deletion-order assertions below.
+        sql = str(statement)
+        if "pg_advisory_xact_lock" in sql:
+            return MagicMock()
+        if "count(mobile_identities.id)" in sql:
+            result = MagicMock()
+            result.scalar_one.return_value = 0
+            return result
+        if "mobile_identities" in sql:
+            return _scalars([])
+        if "SELECT users.id" in sql:
+            result = MagicMock()
+            result.scalar_one_or_none.return_value = object()
+            return result
         return next(remaining)
 
     db.execute = AsyncMock(side_effect=execute)
@@ -96,11 +116,16 @@ def test_delete_request_dispatches_email_with_valid_token() -> None:
     _override(user, _db([]))
     with (
         patch("app.routes.me.settings.token_encryption_key", _KEY),
+        patch("app.routes.me.settings.resend_api_key", "test-resend"),
         patch("app.tasks.account_lifecycle.send_account_deletion_email.delay") as mock_delay,
     ):
         resp = client.post("/me/account/delete-request")
     assert resp.status_code == 202
-    assert resp.json() == {"requested": True}
+    assert resp.json() == {
+        "requested": True,
+        "apple_authorization_required": False,
+        "apple_authorization_count": 0,
+    }
     mock_delay.assert_called_once()
     email_arg, token_arg = mock_delay.call_args.args
     assert email_arg == user.email
@@ -114,6 +139,37 @@ def test_delete_request_503s_when_encryption_key_unset() -> None:
     with patch("app.routes.me.settings.token_encryption_key", ""):
         resp = client.post("/me/account/delete-request")
     assert resp.status_code == 503
+
+
+def test_delete_request_fails_when_email_or_apple_revocation_is_not_configured() -> None:
+    user = _user()
+    _override(user, _db([]))
+    with patch("app.routes.me.settings.token_encryption_key", _KEY):
+        assert client.post("/me/account/delete-request").status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_delete_request_checks_apple_configuration_before_enqueuing_email(
+    monkeypatch,
+) -> None:
+    user = _user()
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one.return_value = 1
+    db.execute.return_value = result
+    delayed = MagicMock()
+    monkeypatch.setattr(me.settings, "token_encryption_key", _KEY)
+    monkeypatch.setattr(me.settings, "resend_api_key", "configured")
+    monkeypatch.setattr(
+        me,
+        "validate_apple_revocation_configuration",
+        lambda: (_ for _ in ()).throw(me.AppleRevocationError("apple_revocation_not_configured")),
+    )
+    monkeypatch.setattr("app.tasks.account_lifecycle.send_account_deletion_email.delay", delayed)
+    with pytest.raises(HTTPException) as raised:
+        await me.request_account_deletion(user, db)
+    assert raised.value.status_code == 503
+    delayed.assert_not_called()
 
 
 # ── POST /me/account/delete-confirm ─────────────────────────────────────────────
@@ -137,6 +193,145 @@ def test_delete_confirm_rejects_token_minted_for_a_different_user() -> None:
     # 404, not 403 — matches this file's IDOR convention (never confirm the
     # token was well-formed for an account that isn't the caller's).
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_apple_missing_or_foreign_proofs_do_not_consume_codes(monkeypatch) -> None:
+    """Subject-set validation is complete before Apple's one-use exchange."""
+    user = _user()
+    token = Fernet(_KEY.encode()).encrypt(str(user.id).encode()).decode()
+    identity = MagicMock(subject="linked-apple-subject")
+
+    async def execute(statement):
+        sql = str(statement)
+        if "pg_advisory_xact_lock" in sql:
+            return MagicMock()
+        if "SELECT users.id" in sql:
+            result = MagicMock()
+            result.scalar_one_or_none.return_value = object()
+            return result
+        if "mobile_identities" in sql:
+            return _scalars([identity])
+        raise AssertionError(sql)
+
+    db = AsyncMock()
+    db.execute.side_effect = execute
+    foreign = ProviderClaims(
+        provider="apple",
+        subject="foreign-subject",
+        issuer="https://appleid.apple.com",
+        email="creator@example.com",
+        name=None,
+        email_verified=True,
+        client_id="com.example.kria",
+    )
+    verify = AsyncMock(return_value=foreign)
+    exchange = AsyncMock()
+    monkeypatch.setattr(me.settings, "token_encryption_key", _KEY)
+    monkeypatch.setattr(me, "verify_provider_id_token", verify)
+    monkeypatch.setattr(me, "exchange_deletion_authorization", exchange)
+
+    with pytest.raises(HTTPException) as raised:
+        await me.confirm_account_deletion(
+            me.DeleteConfirmBody(
+                token=token,
+                apple_authorizations=[
+                    me.AppleDeletionAuthorization(
+                        id_token="x" * 20, nonce="n" * 8, authorization_code="code"
+                    )
+                ],
+            ),
+            user,
+            db,
+        )
+    assert raised.value.status_code == 409
+    assert raised.value.detail["code"] == "apple_authorization_required"
+    exchange.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_valid_apple_proof_persists_encrypted_outbox_before_commit_and_dispatches_after(
+    monkeypatch,
+) -> None:
+    """The irreversible code exchange becomes durable before erasing the user."""
+    user = _user()
+    token = Fernet(_KEY.encode()).encrypt(str(user.id).encode()).decode()
+    identity = MagicMock(subject="linked-subject")
+    calls: list[str] = []
+    added: list[object] = []
+    db = AsyncMock()
+    db.add = MagicMock(side_effect=lambda row: added.append(row))
+
+    def scalar(value):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = value
+        return result
+
+    async def execute(statement):
+        sql = str(statement)
+        if "pg_advisory_xact_lock" in sql:
+            return MagicMock()
+        if "SELECT users.id" in sql:
+            return scalar(object())
+        if "mobile_identities" in sql:
+            return _scalars([identity])
+        if "content_plans" in sql:
+            return _scalars([])
+        if "personas" in sql:
+            return MagicMock()
+        if "FROM jobs" in sql:
+            return _scalars([])
+        if "oauth_tokens" in sql:
+            return _scalars([])
+        if "creator_memory_" in sql:
+            return _scalars([])
+        return MagicMock()
+
+    db.execute.side_effect = execute
+
+    async def commit():
+        calls.append("commit")
+
+    db.commit.side_effect = commit
+    claims = ProviderClaims(
+        provider="apple",
+        subject="linked-subject",
+        issuer="https://appleid.apple.com",
+        email="creator@example.com",
+        name=None,
+        email_verified=True,
+        client_id="com.kria.ios",
+    )
+    credential = MagicMock(encrypted_refresh_token=b"encrypted-refresh", client_id="com.kria.ios")
+    monkeypatch.setattr(me.settings, "token_encryption_key", _KEY)
+    monkeypatch.setattr(me, "verify_provider_id_token", AsyncMock(return_value=claims))
+    exchange = AsyncMock(return_value=credential)
+    monkeypatch.setattr(me, "exchange_deletion_authorization", exchange)
+    monkeypatch.setattr(me, "_delete_job_storage_after_commit", AsyncMock())
+    monkeypatch.setattr("app.tasks.account_lifecycle.purge_user_storage.delay", lambda *_: None)
+    from app.tasks.apple_revocation import revoke_apple_credential
+
+    monkeypatch.setattr(
+        revoke_apple_credential, "apply_async", lambda *_args, **_kwargs: calls.append("dispatch")
+    )
+
+    response = await me.confirm_account_deletion(
+        me.DeleteConfirmBody(
+            token=token,
+            apple_authorizations=[
+                me.AppleDeletionAuthorization(
+                    id_token="x" * 20, nonce="n" * 8, authorization_code="one-use"
+                )
+            ],
+        ),
+        user,
+        db,
+    )
+    assert response.status_code == 204
+    exchange.assert_awaited_once()
+    outbox = next(row for row in added if row.__class__.__name__ == "AppleRevocationOutbox")
+    assert outbox.encrypted_refresh_token == b"encrypted-refresh"
+    assert calls == ["commit", "dispatch"]
 
 
 def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
@@ -188,8 +383,8 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
         resp = client.post("/me/account/delete-confirm", json={"token": token})
 
     assert resp.status_code == 204
-    assert db.execute.await_count == 13
-    lock_sql = [str(call.args[0]) for call in db.execute.await_args_list[:3]]
+    assert db.execute.await_count == 16
+    lock_sql = [str(call.args[0]) for call in db.execute.await_args_list[3:6]]
     assert "content_plans" in lock_sql[0]
     assert "personas" in lock_sql[1]
     assert "jobs" in lock_sql[2]

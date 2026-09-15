@@ -51,6 +51,10 @@ class ProviderClaims:
     email: str
     name: str | None
     email_verified: bool
+    # The exact configured client accepted from aud/azp.  Optional preserves
+    # construction in older callers/tests while new deletion revocation binds
+    # Apple refresh credentials to this client.
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -132,7 +136,9 @@ async def _verify_signature(
         raise MobileAuthError("invalid_id_token", "Invalid identity token signature") from exc
 
 
-async def verify_provider_id_token(token: str, provider: Provider, nonce: str) -> ProviderClaims:
+async def verify_provider_id_token(
+    token: str, provider: Provider, nonce: str, *, require_email: bool = True
+) -> ProviderClaims:
     """Verify a Google/Apple ID token against the server's configured clients."""
     if provider not in ("google", "apple") or not token or not nonce:
         raise MobileAuthError("invalid_id_token")
@@ -144,16 +150,27 @@ async def verify_provider_id_token(token: str, provider: Provider, nonce: str) -
     issuer = claims.get("iss")
     audience = claims.get("aud")
     allowed = _audiences(provider)
+    client_id: str | None = None
     if isinstance(audience, str):
         aud_ok = audience in allowed
+        if aud_ok:
+            client_id = audience
     elif isinstance(audience, list) and all(isinstance(value, str) for value in audience):
         # OIDC permits an audience array only when ``azp`` identifies the
         # authorized party.  Requiring it for multi-audience tokens prevents a
         # token minted for another client from being accepted merely because
         # one unrelated audience happens to be configured here.
-        aud_ok = bool(set(audience) & allowed) and (
-            len(audience) == 1 or (isinstance(claims.get("azp"), str) and claims["azp"] in allowed)
+        accepted_audiences = set(audience) & allowed
+        azp = claims.get("azp")
+        aud_ok = bool(accepted_audiences) and (
+            len(audience) == 1 or (isinstance(azp, str) and azp in accepted_audiences)
         )
+        if aud_ok:
+            client_id = (
+                azp
+                if isinstance(azp, str) and azp in accepted_audiences
+                else next(iter(accepted_audiences))
+            )
     else:
         aud_ok = False
     if not _issuer_ok(provider, issuer) or not allowed or not aud_ok:
@@ -173,17 +190,21 @@ async def verify_provider_id_token(token: str, provider: Provider, nonce: str) -
         raise MobileAuthError("invalid_id_token", "Identity token lifetime is invalid") from exc
     if not isinstance(claims.get("sub"), str) or not claims["sub"].strip():
         raise MobileAuthError("invalid_id_token", "Identity token subject is missing")
-    if not isinstance(claims.get("email"), str) or "@" not in claims["email"]:
+    email = claims.get("email")
+    email_is_valid = isinstance(email, str) and "@" in email
+    email_is_verified = email_is_valid and _verified(claims.get("email_verified"))
+    if require_email and not email_is_valid:
         raise MobileAuthError("email_required", "A verified email is required")
-    if not _verified(claims.get("email_verified")):
+    if require_email and not email_is_verified:
         raise MobileAuthError("email_unverified", "A verified email is required")
     return ProviderClaims(
         provider=provider,
         subject=claims["sub"],
         issuer=str(issuer),
-        email=claims["email"].strip().casefold(),
+        email=email.strip().casefold() if isinstance(email, str) else "",
         name=claims.get("name") if isinstance(claims.get("name"), str) else None,
-        email_verified=True,
+        email_verified=email_is_verified,
+        client_id=client_id,
     )
 
 

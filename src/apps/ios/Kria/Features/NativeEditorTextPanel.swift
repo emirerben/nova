@@ -13,6 +13,8 @@ struct NativeEditorTextPanel: View {
     @State private var typing = false
     @FocusState private var editingSize: Bool
     @State private var sizeInput = ""
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .body) private var editorHeight: CGFloat = 100
 
     init(id: String, session: NativeEditorSession, initialTab: Tab = .style, embeddedAnimation: Bool = false, onDone: @escaping () -> Void) {
         self.id = id; self.session = session; self.onDone = onDone
@@ -22,6 +24,7 @@ struct NativeEditorTextPanel: View {
 
     private var item: EditorTextElement? { session.document.textElements.first { $0.id == id } }
     private let palette = ["#FFFFFF", "#30352C", "#FFF0A6", "#9BCAFF", "#E7DDF5"]
+    private var usesAccessibilityLayout: Bool { dynamicTypeSize.isAccessibilitySize }
 
     @ViewBuilder var body: some View {
         if embeddedAnimation {
@@ -54,12 +57,19 @@ struct NativeEditorTextPanel: View {
                         NativeExplicitLineTextEditor(text: Binding(
                             get: { item?.text ?? "" }, set: { session.updateTextContent(id: id, content: $0) }
                         ), focused: $typing, identifier: "native-editor-text-content")
-                        .frame(height: 100)
+                        .frame(minHeight: editorHeight)
                         .padding(8)
                         .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-                        HStack {
-                            timingField("Start", isStart: true)
-                            timingField("End", isStart: false)
+                        if usesAccessibilityLayout {
+                            VStack(spacing: 8) {
+                                timingField("Start", isStart: true)
+                                timingField("End", isStart: false)
+                            }
+                        } else {
+                            HStack {
+                                timingField("Start", isStart: true)
+                                timingField("End", isStart: false)
+                            }
                         }
                     case .style: styleControls
                     case .animation: animationControls
@@ -127,70 +137,22 @@ struct NativeEditorTextPanel: View {
                 } label: { Label(string("editor_preset", "Simple"), systemImage: "chevron.down") }
                 .accessibilityIdentifier("native-editor-text-preset")
             }
-            .padding(.horizontal, 14).frame(height: 44)
+            .padding(.horizontal, 14).frame(minHeight: 44)
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(KriaColor.line))
 
-            HStack(spacing: 10) {
-                Menu {
-                    ForEach(["Inter Regular", "Inter", "Fraunces", "Space Grotesk"], id: \.self) { family in
-                        Button(family) { session.setTextStyle(id: id, style: family) }
-                    }
-                } label: {
-                    HStack { Text(string("font_family", "Inter")).lineLimit(1); Spacer(); Image(systemName: "chevron.down") }
-                        .padding(.horizontal, 12).frame(height: 44)
-                        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
+            if usesAccessibilityLayout {
+                VStack(spacing: 8) {
+                    fontMenu(expanded: true)
+                    alignmentControl(expanded: true)
                 }
-                .accessibilityIdentifier("native-editor-text-font")
-                HStack(spacing: 0) {
-                    ForEach(["left", "center", "right"], id: \.self) { alignment in
-                        Button { session.setTextAlignment(id: id, alignment: alignment) } label: {
-                            Image(systemName: "text.align\(alignment)")
-                                .frame(width: 40, height: 44)
-                                .background(string("alignment", "center") == alignment ? KriaColor.selectionSoft : KriaColor.softZinc)
-                        }
-                        .accessibilityLabel("Align text \(alignment)")
-                        .accessibilityAddTraits(string("alignment", "center") == alignment ? .isSelected : [])
-                    }
-                }.clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-            HStack(spacing: 12) {
-                Text("Size")
-                Spacer()
-                Button {
-                    commitSize(); editingSize = false
-                    session.setTextSize(id: id, sizePX: max(8, currentSize - 4))
-                } label: { Image(systemName: "minus").frame(width: 44, height: 44) }
-                .accessibilityLabel("Decrease text size")
-                TextField("Size", text: Binding(
-                    get: { editingSize ? sizeInput : sizeLabel },
-                    set: { sizeInput = $0 }
-                ))
-                .focused($editingSize)
-                .keyboardType(.decimalPad)
-                .multilineTextAlignment(.center)
-                .monospacedDigit()
-                .frame(width: 76, height: 44)
-                .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityLabel("Text size")
-                .accessibilityIdentifier("native-editor-text-size")
-                Button {
-                    commitSize(); editingSize = false
-                    session.setTextSize(id: id, sizePX: currentSize + 4)
-                } label: { Image(systemName: "plus").frame(width: 44, height: 44) }
-                .accessibilityLabel("Increase text size")
-            }
-            HStack(spacing: 10) {
-                Text("Color").frame(width: 46, alignment: .leading)
-                ForEach(palette, id: \.self) { hex in
-                    Button { session.setTextColor(id: id, color: hex) } label: {
-                        Circle().fill(nativeEditorColor(hex))
-                            .overlay(Circle().stroke(string("color", "#FFFFFF") == hex ? KriaColor.sky : KriaColor.line, lineWidth: 2))
-                            .frame(width: 28, height: 28).frame(minWidth: 32, minHeight: 44)
-                    }.accessibilityLabel("Text color \(hex)")
+            } else {
+                HStack(spacing: 10) {
+                    fontMenu(expanded: false)
+                    alignmentControl(expanded: false)
                 }
-                ColorPicker("Custom color", selection: colorBinding("color", fallback: "#FFFFFF"), supportsOpacity: false)
-                    .labelsHidden().accessibilityLabel("Custom text color")
             }
+            sizeControl
+            colorControl
             propertyRow("Outline", key: "stroke_width", range: 0...20, unit: "px", colorKey: "stroke_color")
             propertyRow("Shadow", key: "shadow_opacity", range: 0...1, unit: "%", colorKey: "shadow_color")
             positionControl("Horizontal position", key: "x_frac", fallback: 0.5)
@@ -205,6 +167,106 @@ struct NativeEditorTextPanel: View {
             .accessibilityLabel("Text rotation")
             .accessibilityValue("\(Int(item?.raw["rotation_deg"]?.numberValue ?? 0)) degrees")
             .accessibilityIdentifier("native-editor-text-rotation")
+        }
+    }
+
+    private func fontMenu(expanded: Bool) -> some View {
+        Menu {
+            ForEach(["Inter Regular", "Inter", "Fraunces", "Space Grotesk"], id: \.self) { family in
+                Button(family) { session.setTextStyle(id: id, style: family) }
+            }
+        } label: {
+            HStack { Text(string("font_family", "Inter")).lineLimit(1); Spacer(); Image(systemName: "chevron.down") }
+                .padding(.horizontal, 12).frame(maxWidth: expanded ? .infinity : nil, minHeight: 44)
+                .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .accessibilityIdentifier("native-editor-text-font")
+    }
+
+    private func alignmentControl(expanded: Bool) -> some View {
+        HStack(spacing: 0) {
+            ForEach(["left", "center", "right"], id: \.self) { alignment in
+                Button { session.setTextAlignment(id: id, alignment: alignment) } label: {
+                    Image(systemName: "text.align\(alignment)")
+                        .frame(minWidth: 44, maxWidth: expanded ? .infinity : nil, minHeight: 44)
+                        .background(string("alignment", "center") == alignment ? KriaColor.selectionSoft : KriaColor.softZinc)
+                }
+                .accessibilityLabel("Align text \(alignment)")
+                .accessibilityAddTraits(string("alignment", "center") == alignment ? .isSelected : [])
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder private var sizeControl: some View {
+        if usesAccessibilityLayout {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Size")
+                HStack(spacing: 12) { sizeButtons }
+            }
+        } else {
+            HStack(spacing: 12) {
+                Text("Size")
+                Spacer()
+                sizeButtons
+            }
+        }
+    }
+
+    private var sizeButtons: some View {
+        Group {
+            Button {
+                commitSize(); editingSize = false
+                session.setTextSize(id: id, sizePX: max(8, currentSize - 4))
+            } label: { Image(systemName: "minus").frame(minWidth: 44, minHeight: 44) }
+            .accessibilityLabel("Decrease text size")
+            TextField("Size", text: Binding(
+                get: { editingSize ? sizeInput : sizeLabel },
+                set: { sizeInput = $0 }
+            ))
+            .focused($editingSize)
+            .keyboardType(.decimalPad)
+            .multilineTextAlignment(.center)
+            .monospacedDigit()
+            .frame(minWidth: 76, minHeight: 44)
+            .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityLabel("Text size")
+            .accessibilityIdentifier("native-editor-text-size")
+            Button {
+                commitSize(); editingSize = false
+                session.setTextSize(id: id, sizePX: currentSize + 4)
+            } label: { Image(systemName: "plus").frame(minWidth: 44, minHeight: 44) }
+            .accessibilityLabel("Increase text size")
+        }
+    }
+
+    @ViewBuilder private var colorControl: some View {
+        if usesAccessibilityLayout {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Color")
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                    colorChoices
+                }
+            }
+        } else {
+            HStack(spacing: 4) {
+                Text("Color").frame(width: 46, alignment: .leading)
+                colorChoices
+            }
+        }
+    }
+
+    private var colorChoices: some View {
+        Group {
+            ForEach(palette, id: \.self) { hex in
+                Button { session.setTextColor(id: id, color: hex) } label: {
+                    Circle().fill(nativeEditorColor(hex))
+                        .overlay(Circle().stroke(string("color", "#FFFFFF") == hex ? KriaColor.sky : KriaColor.line, lineWidth: 2))
+                        .frame(width: 28, height: 28).frame(minWidth: 44, minHeight: 44)
+                }.accessibilityLabel("Text color \(hex)")
+            }
+            ColorPicker("Custom color", selection: colorBinding("color", fallback: "#FFFFFF"), supportsOpacity: false)
+                .labelsHidden().frame(minWidth: 44, minHeight: 44).accessibilityLabel("Custom text color")
         }
     }
 
@@ -247,33 +309,56 @@ struct NativeEditorTextPanel: View {
             Picker("Animation phase", selection: $phase) {
                 ForEach(Phase.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
-            HStack(spacing: 6) {
-                ForEach(phase == .loop ? ["None", "Pulse", "Bounce", "Float"] : ["None", "Fade", "Pop", "Slide", "Typewriter"], id: \.self) { effect in
-                    Button { session.setTextPhase(id: id, phase: phaseKey, effect: effect.lowercased()) } label: {
-                        VStack(spacing: 6) {
-                            Text(effect == "Typewriter" ? "Te|" : "Text")
-                                .font(KriaFont.body(20).weight(.semibold))
-                                .frame(maxWidth: .infinity, minHeight: 52)
-                                .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 9))
-                                .overlay(RoundedRectangle(cornerRadius: 9).stroke(selectedPhase == effect.lowercased() ? KriaColor.sky : .clear, lineWidth: 2))
-                            Text(effect).font(KriaFont.body(11)).lineLimit(1).minimumScaleFactor(0.8)
-                        }
-                    }
-                    .accessibilityLabel("\(phase.rawValue) animation \(effect)")
-                    .accessibilityAddTraits(selectedPhase == effect.lowercased() ? .isSelected : [])
+            if usesAccessibilityLayout {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 10) {
+                    animationEffects
+                }
+            } else {
+                HStack(spacing: 6) {
+                    animationEffects
                 }
             }
-            HStack {
-                Text("Speed").frame(width: 68, alignment: .leading)
-                NativeEditorSlider(session: session, value: Binding(
-                    get: { phases["speed"]?.numberValue ?? 1 },
-                    set: { session.setTextAnimationSpeed(id: id, speed: $0) }
-                ), in: 0.25...3, step: 0.25) { Text("Animation speed") }
-                Text("\((phases["speed"]?.numberValue ?? 1).formatted())×").frame(width: 42)
+            if usesAccessibilityLayout {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Speed")
+                    animationSpeedControl
+                }
+            } else {
+                HStack {
+                    Text("Speed").frame(width: 68, alignment: .leading)
+                    animationSpeedControl
+                }
             }
             Text("Changes motion speed. Text timing stays the same.")
                 .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var animationEffects: some View {
+        ForEach(phase == .loop ? ["None", "Pulse", "Bounce", "Float"] : ["None", "Fade", "Pop", "Slide", "Typewriter"], id: \.self) { effect in
+            Button { session.setTextPhase(id: id, phase: phaseKey, effect: effect.lowercased()) } label: {
+                VStack(spacing: 6) {
+                    Text(effect == "Typewriter" ? "Te|" : "Text")
+                        .font(KriaFont.body(20).weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 9))
+                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(selectedPhase == effect.lowercased() ? KriaColor.sky : .clear, lineWidth: 2))
+                    Text(effect).font(KriaFont.body(11)).lineLimit(1).minimumScaleFactor(0.8)
+                }
+            }
+            .accessibilityLabel("\(phase.rawValue) animation \(effect)")
+            .accessibilityAddTraits(selectedPhase == effect.lowercased() ? .isSelected : [])
+        }
+    }
+
+    private var animationSpeedControl: some View {
+        HStack {
+            NativeEditorSlider(session: session, value: Binding(
+                get: { phases["speed"]?.numberValue ?? 1 },
+                set: { session.setTextAnimationSpeed(id: id, speed: $0) }
+            ), in: 0.25...3, step: 0.25) { Text("Animation speed") }
+            Text("\((phases["speed"]?.numberValue ?? 1).formatted())×").frame(minWidth: 42)
         }
     }
 
@@ -301,9 +386,26 @@ struct NativeEditorTextPanel: View {
         })
     }
     private func propertyRow(_ title: String, key: String, range: ClosedRange<Double>, unit: String, colorKey: String) -> some View {
+        Group {
+            if usesAccessibilityLayout {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                    propertyControls(title, key: key, range: range, unit: unit, colorKey: colorKey)
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Text(title).frame(width: 66, alignment: .leading)
+                    propertyControls(title, key: key, range: range, unit: unit, colorKey: colorKey)
+                }
+            }
+        }
+        .frame(minHeight: 44)
+    }
+
+    private func propertyControls(_ title: String, key: String, range: ClosedRange<Double>, unit: String, colorKey: String) -> some View {
         HStack(spacing: 12) {
-            Text(title).frame(width: 66, alignment: .leading)
-            ColorPicker(title, selection: colorBinding(colorKey, fallback: "#18181B"), supportsOpacity: false).labelsHidden()
+            ColorPicker(title, selection: colorBinding(colorKey, fallback: "#18181B"), supportsOpacity: false)
+                .labelsHidden().frame(minWidth: 44, minHeight: 44)
             NativeEditorSlider(session: session, value: Binding(
                 get: { item?.raw[key]?.numberValue ?? 0 },
                 set: {
@@ -312,8 +414,8 @@ struct NativeEditorTextPanel: View {
                 }
             ), in: range) { Text(title) }
             Text("\(Int((item?.raw[key]?.numberValue ?? 0) * (unit == "%" ? 100 : 1)))\(unit)")
-                .monospacedDigit().frame(width: 44, alignment: .trailing)
-        }.frame(minHeight: 40)
+                .monospacedDigit().frame(minWidth: 44, alignment: .trailing)
+        }
     }
 }
 
@@ -337,9 +439,11 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
     func makeUIView(context: Context) -> ExplicitLineTextView {
         let view = ExplicitLineTextView()
         view.delegate = context.coordinator
-        view.font = .systemFont(ofSize: 17)
-        view.backgroundColor = .clear
-        view.textColor = .label
+        view.font = .preferredFont(forTextStyle: .body)
+        view.adjustsFontForContentSizeCategory = true
+        view.backgroundColor = UIColor(KriaColor.paper)
+        view.textColor = UIColor(KriaColor.ink)
+        view.keyboardAppearance = .light
         view.returnKeyType = .default
         view.textContainer.widthTracksTextView = false
         view.textContainer.heightTracksTextView = false
