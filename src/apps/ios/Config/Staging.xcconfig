@@ -2,5 +2,6 @@
 API_BASE_URL = https:/$()/staging.usekria.com
 AUTH_MODE = apple
 KRIA_MEDIA_ENGINE = remote
+KRIA_PRODUCT_BUNDLE_IDENTIFIER = com.emirerben.kria.staging
 KRIA_GOOGLE_CLIENT_ID =
 KRIA_GOOGLE_REDIRECT_SCHEME = kria-staging-google

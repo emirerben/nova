@@ -1,0 +1,3 @@
+// Copy with scripts/ios/configure-live-development.sh. Never commit the local copy.
+KRIA_DEVELOPMENT_TEAM = ABCDE12345
+KRIA_PRODUCT_BUNDLE_IDENTIFIER = com.yasin.kria.dev

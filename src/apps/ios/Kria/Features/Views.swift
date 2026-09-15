@@ -17,15 +17,17 @@ struct SignInView: View {
             Text("Make something\nworth sharing.").font(KriaFont.display(42)).foregroundStyle(KriaColor.ink)
             Text("Kria turns the footage in your camera roll into a considered short-form cut.").font(KriaFont.body(17)).foregroundStyle(KriaColor.zinc).fixedSize(horizontal: false, vertical: true)
             Spacer()
+            #if !LIVE_GOOGLE_ONLY
             SignInWithAppleButton(.signIn, onRequest: handleAppleRequest, onCompletion: handleApple)
                 .signInWithAppleButtonStyle(.black).frame(height: 52).clipShape(Capsule()).accessibilityLabel("Sign in with Apple")
-            Button("Continue with Google") { Task { await signInWithGoogle() } }.buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity)
-            #if DEBUG
-            Button("Continue with local account") {
-                do { try auth.signIn(with: MobileSession(accessToken: "local-access", refreshToken: "local-refresh", expiresIn: 3600), displayName: "Local creator") }
-                catch { message = error.localizedDescription }
-            }.buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity)
             #endif
+            Button("Continue with Google") { Task { await signInWithGoogle() } }.buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity)
+            if AppConfiguration.current.allowsDevelopmentAuth {
+                Button("Continue with local account") {
+                    do { try auth.signIn(with: MobileSession(accessToken: "local-access", refreshToken: "local-refresh", expiresIn: 3600), displayName: "Local creator") }
+                    catch { message = error.localizedDescription }
+                }.buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity)
+            }
             if let message { Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
             Text("By signing in, you agree to Kria’s Terms and Privacy Policy.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             KriaLegalLinks()
