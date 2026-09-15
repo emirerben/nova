@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.26.0] - 2026-09-15
+
+### Changed
+- fix(ios): trust OpenAPI archive plugin (#1035) <!-- release-pr: 1035 -->
+
 ## [0.76.25.0] - 2026-09-15
 
 ### Changed
