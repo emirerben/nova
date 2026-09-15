@@ -114,7 +114,7 @@ struct ProjectsDrawer: View {
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Recent chats").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk).padding(.horizontal, 12)
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 3) {
                         if model.projects.isEmpty {
                             Text("No projects yet").font(KriaFont.body(14)).padding(12)
