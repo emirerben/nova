@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftData
+import CryptoKit
 
 enum ProjectCollectionState: Equatable, Sendable {
     case idle
@@ -12,30 +13,42 @@ enum ProjectCollectionState: Equatable, Sendable {
 
 @MainActor final class AuthStore: ObservableObject {
     private static let invalidatedSessionKey = "kria.mobile-session.invalidated"
+    private static let aiConsentVersion = "current1"
     @Published private(set) var isSignedIn = false
     @Published private(set) var displayName: String?
+    @Published private(set) var hasAIConsent = false
     private let tokenStore: TokenStore
     private let api: KriaAPIClient
+    private let defaults: UserDefaults
     private var sessionExpiredSubscription: AnyCancellable?
-    init(tokenStore: TokenStore = KeychainTokenStore()) {
+    init(tokenStore: TokenStore = KeychainTokenStore(), api: (any KriaAPIClient)? = nil, defaults: UserDefaults = .standard) {
         self.tokenStore = tokenStore
-        self.api = KriaAPI(tokenStore: tokenStore)
-        isSignedIn = !UserDefaults.standard.bool(forKey: Self.invalidatedSessionKey) && (try? tokenStore.read()) != nil
+        self.api = api ?? KriaAPI(tokenStore: tokenStore)
+        self.defaults = defaults
+        let session = try? tokenStore.read()
+        isSignedIn = !defaults.bool(forKey: Self.invalidatedSessionKey) && session != nil
+        if isSignedIn, let session { hasAIConsent = defaults.bool(forKey: Self.aiConsentKey(for: session)) }
         sessionExpiredSubscription = NotificationCenter.default.publisher(for: .kriaSessionExpired)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.expireSession() }
     }
+    func acceptAIConsent() {
+        guard isSignedIn, let session = try? tokenStore.read() else { return }
+        defaults.set(true, forKey: Self.aiConsentKey(for: session))
+        hasAIConsent = true
+    }
     func signIn(with session: MobileSession, displayName: String?) throws {
         try tokenStore.write(session)
-        UserDefaults.standard.set(false, forKey: Self.invalidatedSessionKey)
+        defaults.set(false, forKey: Self.invalidatedSessionKey)
         self.displayName = displayName
         isSignedIn = true
+        hasAIConsent = defaults.bool(forKey: Self.aiConsentKey(for: session))
     }
     func signOut() {
         let refreshToken = try? tokenStore.read()?.refreshToken
         // Persist the logical logout before touching Keychain. If secure-item
         // deletion fails, a process restart must not resurrect that session.
-        UserDefaults.standard.set(true, forKey: Self.invalidatedSessionKey)
+        defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
         displayName = nil
         isSignedIn = false
@@ -44,10 +57,27 @@ enum ProjectCollectionState: Equatable, Sendable {
         }
     }
     private func expireSession() {
-        UserDefaults.standard.set(true, forKey: Self.invalidatedSessionKey)
+        defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
         displayName = nil
         isSignedIn = false
+    }
+
+    private static func aiConsentKey(for session: MobileSession) -> String {
+        let identity = jwtSubject(in: session.accessToken) ?? "refresh:\(session.refreshToken)"
+        let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return "kria.ai-consent.version/\(aiConsentVersion).\(digest)"
+    }
+
+    private static func jwtSubject(in token: String) -> String? {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var value = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        value += String(repeating: "=", count: (4 - value.count % 4) % 4)
+        guard let data = Data(base64Encoded: value),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return ["sub", "user_id", "email"].compactMap { payload[$0] as? String }.first
     }
 }
 

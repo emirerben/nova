@@ -840,6 +840,8 @@ private struct NativePreviewObjectView: View {
 /// Horizontal panning seeks the preview to the time underneath the playhead.
 struct NativeMiniStrip: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .caption2) private var laneLabelSize: CGFloat = 9
+    @ScaledMetric(relativeTo: .caption2) private var laneLabelWidth: CGFloat = 66
     @ObservedObject var session: NativeEditorSession
     @ObservedObject private var clock: NativeEditorPlaybackClock
     @State private var zoom: CGFloat = 1
@@ -959,7 +961,7 @@ struct NativeMiniStrip: View {
                 ScrollView(.vertical, showsIndicators: laneCount > 4) {
                     HStack(alignment: .top, spacing: 6) {
                         laneLabels
-                            .frame(width: 66, alignment: .leading)
+                            .frame(width: laneLabelWidth, alignment: .leading)
                         timeline
                     }
                     .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .topLeading)
@@ -1066,7 +1068,7 @@ struct NativeMiniStrip: View {
             }
             if !clips.isEmpty { laneLabel("AUDIO") }
         }
-        .font(.system(size: 9, weight: .bold, design: .rounded))
+        .font(.system(size: laneLabelSize, weight: .bold, design: .rounded))
         .tracking(0.8)
         .foregroundStyle(KriaColor.zinc)
     }

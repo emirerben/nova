@@ -28,6 +28,7 @@ struct SignInView: View {
             #endif
             if let message { Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
             Text("By signing in, you agree to Kria’s Terms and Privacy Policy.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+            KriaLegalLinks()
         }
         .frame(minHeight: max(0, viewport.size.height - 48), alignment: .leading)
         .padding(24).frame(maxWidth: 520).frame(maxWidth: .infinity, alignment: .leading)
@@ -210,6 +211,7 @@ struct GalleryView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var auth: AuthStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var filter: GalleryFilter = .all
 
     private var projects: [ProjectSummary] {
@@ -295,7 +297,7 @@ struct GalleryView: View {
                             .padding(.top, 34)
                         }
                     } else {
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())], spacing: 20) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: 20) {
                             ForEach(projects) { project in
                                 if project.status == .ready {
                                     NavigationLink(destination: ResultsView(project: project, libraryJobID: project.id)) {
@@ -378,7 +380,7 @@ private struct GalleryProjectCard: View {
 
             Text(project.workspaceTitle)
                 .font(KriaFont.body(13).weight(.semibold))
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
             Text(project.updatedAt, style: .relative)
                 .font(KriaFont.body(11))
                 .foregroundStyle(KriaColor.zinc)
@@ -388,7 +390,9 @@ private struct GalleryProjectCard: View {
 
 struct AccountView: View {
     @EnvironmentObject private var auth: AuthStore
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showsDeletion = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
@@ -403,10 +407,17 @@ struct AccountView: View {
                 #if DEBUG
                 NavigationLink("Media diagnostics", destination: MediaDiagnosticView()).frame(minHeight: 44)
                 #endif
+                KriaLegalLinks()
+                Button("Delete account", role: .destructive) { showsDeletion = true }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("account-delete")
                 Button("Sign out", role: .destructive) { auth.signOut() }.buttonStyle(KriaSecondaryButtonStyle())
             }.padding(24).frame(maxWidth: 560, alignment: .leading).frame(maxWidth: .infinity)
         }.background(KriaColor.paper).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .sheet(isPresented: $showsDeletion) {
+                NavigationStack { AccountDeletionView(api: model.api) }
+            }
     }
 }
 
@@ -536,7 +547,10 @@ struct CloudUploadConsentView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("Upload your originals.").font(KriaFont.display(30))
                     Text("Kria will upload the full-quality originals you select and keep them with this project so it can render in the cloud. Delete the project to remove its uploaded footage. You can cancel while an upload is in progress.").foregroundStyle(KriaColor.mutedInk)
-                    Toggle("I consent to Kria using these originals for this edit", isOn: $consent)
+                    Text("Selected media, including faces and voices, may be shared with Google Gemini and OpenAI for analysis, transcription, and editing.")
+                        .foregroundStyle(KriaColor.mutedInk)
+                    Link("Privacy Policy", destination: KriaLegal.privacyURL).frame(minHeight: 44)
+                    Toggle("I agree to share these originals with Kria, Google Gemini, and OpenAI for this edit", isOn: $consent)
                 }.padding(24).frame(maxWidth: 560).frame(maxWidth: .infinity)
             }
             .safeAreaInset(edge: .bottom) {

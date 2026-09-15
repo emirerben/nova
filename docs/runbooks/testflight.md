@@ -24,6 +24,37 @@ must accept both values before the first TestFlight upload:
 Deploy that API configuration before releasing the app. The workflow waits for
 the matching Fly deploy whenever either mobile-auth configuration source changes.
 
+### Account deletion and privacy prerequisites
+
+Before external testing, configure the API and worker with `APPLE_TEAM_ID`,
+`APPLE_KEY_ID`, and `APPLE_PRIVATE_KEY` (the Sign in with Apple P-256 `.p8` key,
+not an App Store Connect upload key). The key must authorize the App ID accepted
+by `MOBILE_APPLE_CLIENT_IDS`. `TOKEN_ENCRYPTION_KEY` must remain available to both
+process groups: Apple refresh credentials are encrypted in a durable revocation
+outbox until Apple confirms revocation. Migration `0106` creates that outbox;
+Celery Beat dispatches pending revocations every five minutes. Monitor pending rows and
+worker failures after exercising deletion with a dedicated test account.
+
+Configure `RESEND_API_KEY` and the account-deletion email sender. Register and
+verify that sender/domain with Apple's private email relay so Apple users who
+hide their email can receive the confirmation code. Test delivery to a real relay
+address before submission. Deletion requests return an unavailable error when
+required email or Apple configuration is absent.
+
+In App Store Connect, review the app privacy answers against the bundled
+`PrivacyInfo.xcprivacy` and the public privacy policy. The app collects account
+identity, selected media/audio, conversation content, and project interactions
+for app functionality, and discloses Google Gemini and OpenAI before AI use.
+Confirm the policy, support details, content rights, and reviewer notes with the
+account holder. Repository declarations do not update App Store Connect.
+
+KRI-55's 2026-09-15 production secret-name check found the mobile-auth client IDs,
+JWT secret, and token encryption key present, but the three Apple revocation
+settings and `RESEND_API_KEY` absent. Resolve and verify these release blockers
+before sending the repaired build to external testers. See
+[`docs/reviews/kri-55-apple-readiness.md`](../reviews/kri-55-apple-readiness.md)
+for validation and remaining review checks.
+
 ## GitHub environment
 
 Create the protected `testflight-production` environment. Store the signed

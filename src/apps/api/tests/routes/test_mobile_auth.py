@@ -56,6 +56,41 @@ def _user(*, provider: str = "google") -> SimpleNamespace:
     )
 
 
+@pytest.mark.asyncio
+async def test_link_rechecks_user_with_populate_existing_after_lifecycle_lock(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
+    user = _user()
+    access = AccessClaims(
+        user_id=user.id,
+        session_id=uuid.uuid4(),
+        token_id=uuid.uuid4(),
+        token_version=1,
+        issued_at=int(time.time()),
+        expires_at=int(time.time()) + 900,
+    )
+    db = _db()
+    db.get = AsyncMock(return_value=None)
+    monkeypatch.setattr(auth, "decode_access_token", MagicMock(return_value=access))
+    monkeypatch.setattr(auth, "verify_provider_id_token", AsyncMock(return_value=_claims()))
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/auth/mobile/link",
+            "headers": [(b"authorization", b"Bearer access")],
+        }
+    )
+    with pytest.raises(HTTPException) as raised:
+        await auth.mobile_link(
+            auth.MobileExchangeRequest(provider="google", id_token="token", nonce="nonce"),
+            request,
+            user,
+            db,
+        )
+    assert raised.value.status_code == 401
+    db.get.assert_awaited_once_with(auth.User, user.id, populate_existing=True)
+
+
 def _claims(provider: str = "google", subject: str = "provider-subject") -> ProviderClaims:
     return ProviderClaims(
         provider=provider,

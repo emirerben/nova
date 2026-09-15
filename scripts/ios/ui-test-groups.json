@@ -12,7 +12,12 @@
     "projects": [
       "KriaUITests/ProjectsUITests/testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint",
       "KriaUITests/ProjectsUITests/testProjectActionsCanBeCancelledWithoutChangingProject",
-      "KriaUITests/ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry"
+      "KriaUITests/ProjectsUITests/testRenameValidatesNameAndRetainsInputAfterFailedSaveAndRetry",
+      "KriaUITests/AccountPrivacyUITests/testAIConsentRequiresExplicitChoiceAndDeclineReturnsToSignInAtLargeText",
+      "KriaUITests/AccountPrivacyUITests/testAccountDeletionIsReachableBeforeAIConsentAndShowsServiceFailure",
+      "KriaUITests/AccountPrivacyUITests/testDeletionRequiresConfirmationAndFailedCodeKeepsAccountOpen",
+      "KriaUITests/AccountPrivacyUITests/testAcceptingAIConsentEntersWorkspace",
+      "KriaUITests/AccountPrivacyUITests/testConfirmedAccountDeletionReturnsToSignIn"
     ],
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
@@ -47,7 +52,8 @@
       "KriaUITests/NativeCaptionVisualUITests/testExistingVisualOpensEditorAndAddActionOpensLibrary",
       "KriaUITests/NativeCaptionVisualUITests/testAddingCameraEffectOpensItsSpecificEditor",
       "KriaUITests/NativeCaptionVisualUITests/testVisualControlsEditAndPlaybackRemainAvailable",
-      "KriaUITests/NativeEditorInspectorUITests/testPreviewResizeIsAvailableAcrossEditorPanels"
+      "KriaUITests/NativeEditorInspectorUITests/testPreviewResizeIsAvailableAcrossEditorPanels",
+      "KriaUITests/AppleTextAccessibilityUITests/testTextInspectorKeepsEditingAndStyleControlsReachableAtAccessibilityTextSize"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -77,6 +83,8 @@
     "src/apps/ios/Kria/Core/NativeEditorSources.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorProjectHeader.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorTextPanel.swift": "editor",
-    "src/apps/ios/Kria/Features/NativeTextCreationPanel.swift": "editor"
+    "src/apps/ios/Kria/Features/NativeTextCreationPanel.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/AppleTextAccessibilityUITests.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/AccountPrivacyUITests.swift": "projects"
   }
 }

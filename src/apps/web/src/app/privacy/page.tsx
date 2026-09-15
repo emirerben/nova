@@ -97,7 +97,7 @@ export default function PrivacyPage() {
             <div>
               <dt className="text-[11px] uppercase tracking-[0.1em] text-[#a1a1aa]">What we collect</dt>
               <dd>
-                Your name and email (via Google sign-in), the video/audio/images you upload, your answers to our
+                Your name, email, and sign-in provider identifier (via Google or Apple sign-in), the video/audio/images you upload, your answers to our
                 onboarding questions, and — only if you give us your handle — your public TikTok profile.
               </dd>
             </div>
@@ -152,8 +152,10 @@ export default function PrivacyPage() {
         {/* ── 1 ─────────────────────────────────────────────────────────── */}
         <Section n="1" title="Information We Collect">
           <p>
-            <strong>Account information.</strong> When you sign in with Google, we receive and store your name and
-            email address. We do not store your Google password, profile photo, or Google account ID.
+            <strong>Account information.</strong> When you sign in with Google or Apple, we receive your email
+            address and, when provided, your name. Native sign-in also stores the provider&apos;s account identifier
+            to recognize your account. Apple may provide a private relay email address. We do not store your
+            Google or Apple password.
           </p>
           <p>
             <strong>Content you upload.</strong> Video clips, images, and voiceover audio recordings you upload for

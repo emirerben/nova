@@ -160,6 +160,11 @@ class Settings(BaseSettings):
     mobile_upload_retention_hours: int = Field(default=24, ge=1, le=24)
     mobile_google_client_ids: list[str] = []
     mobile_apple_client_ids: list[str] = []
+    # Apple client-secret signing material used only to revoke credentials
+    # during account erasure. Ordinary mobile sign-in never reads these.
+    apple_team_id: str = ""
+    apple_key_id: str = ""
+    apple_private_key: str = ""
 
     # HMAC key for pseudonymous creator/plan-item dataset groups. Exports fail
     # closed when unset or too short; it must not reuse an auth credential.

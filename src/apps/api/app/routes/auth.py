@@ -23,6 +23,18 @@ from app.auth import _verify_internal_key, get_current_user
 from app.config import settings
 from app.database import get_db
 from app.models import MobileIdentity, MobileSession, User
+from app.services.auth_locks import (
+    account_lifecycle_lock_key,
+)
+from app.services.auth_locks import (
+    acquire_auth_locks as _acquire_auth_locks,
+)
+from app.services.auth_locks import (
+    auth_email_lock_key as _auth_email_lock_key,
+)
+from app.services.auth_locks import (
+    auth_identity_lock_key as _auth_identity_lock_key,
+)
 from app.services.mobile_auth import (
     MobileAuthError,
     decode_access_token,
@@ -35,26 +47,6 @@ from app.services.mobile_auth import (
 
 log = structlog.get_logger(__name__)
 router = APIRouter()
-
-
-def _auth_email_lock_key(email: str) -> str:
-    return f"native-auth:email:{email.lower()}"
-
-
-def _auth_identity_lock_key(provider: str, subject: str) -> str:
-    return f"native-auth:identity:{provider}:{subject}"
-
-
-async def _acquire_auth_locks(db: AsyncSession, *keys: str) -> None:
-    """Serialize auth decisions whose unique rows may not exist yet.
-
-    Row locks cannot protect an absent identity or user. PostgreSQL advisory
-    transaction locks cover that gap and are released automatically on commit
-    or rollback. Sorting is required when a request takes both locks so two
-    requests cannot deadlock by acquiring the same keys in a different order.
-    """
-    for key in sorted(set(keys)):
-        await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
 
 
 class GoogleUpsertRequest(BaseModel):
@@ -358,6 +350,14 @@ async def mobile_link(
         claims = await verify_provider_id_token(body.id_token, body.provider, body.nonce)
     except MobileAuthError as exc:
         raise _mobile_error(exc) from exc
+    # Take lifecycle lock before the normal sorted absent-row locks. This
+    # serializes a newly linked Apple subject with account erasure.
+    await _acquire_auth_locks(db, account_lifecycle_lock_key(current_user.id))
+    # ``current_user`` may already be present in this AsyncSession's identity
+    # map. Force a round trip after waiting on the lifecycle lock; otherwise a
+    # concurrently committed deletion could be masked by that cached object.
+    if await db.get(User, current_user.id, populate_existing=True) is None:
+        raise HTTPException(status_code=401, detail="User not found")
     await _acquire_auth_locks(
         db,
         _auth_email_lock_key(claims.email),

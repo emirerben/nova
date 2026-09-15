@@ -42,6 +42,7 @@ from app.database import get_db
 from app.kria.recipes import EditRecipeV1, adapt_authoritative_job_snapshot
 from app.models import (
     VIDEO_FEEDBACK_THUMB_SIGNALS,
+    AppleRevocationOutbox,
     ContentPlan,
     CreationThread,
     CreatorMemoryItem,
@@ -50,6 +51,7 @@ from app.models import (
     Job,
     JobClip,
     JobStorageDeletion,
+    MobileIdentity,
     OAuthToken,
     Persona,
     PlanItem,
@@ -60,6 +62,12 @@ from app.models import (
     VideoFeedback,
 )
 from app.services import tiktok_client
+from app.services.apple_account_revocation import (
+    AppleRevocationError,
+    exchange_deletion_authorization,
+    validate_apple_revocation_configuration,
+)
+from app.services.auth_locks import account_lifecycle_lock_key, acquire_auth_locks
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
     PlanPersonaOwnershipError,
@@ -80,6 +88,7 @@ from app.services.job_storage_paths import (
     normalize_job_storage_path,
     owned_job_output_path,
 )
+from app.services.mobile_auth import MobileAuthError, ProviderClaims, verify_provider_id_token
 from app.services.public_assembly_plan import (
     project_public_assembly_plan,
     project_public_assembly_plan_with_metadata,
@@ -2826,6 +2835,8 @@ def _account_delete_fernet() -> Fernet:
 
 class DeleteRequestResponse(BaseModel):
     requested: bool
+    apple_authorization_required: bool = False
+    apple_authorization_count: int = 0
 
 
 @router.post(
@@ -2833,7 +2844,9 @@ class DeleteRequestResponse(BaseModel):
     response_model=DeleteRequestResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def request_account_deletion(user: CurrentUser) -> DeleteRequestResponse:
+async def request_account_deletion(
+    user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> DeleteRequestResponse:
     """Step 1 of 2: email the caller a one-time confirmation code.
 
     No DB write here — the code is minted fresh from the caller's own id, so a
@@ -2841,14 +2854,60 @@ async def request_account_deletion(user: CurrentUser) -> DeleteRequestResponse:
     """
     from app.tasks.account_lifecycle import send_account_deletion_email  # noqa: PLC0415
 
+    count = (
+        await db.execute(
+            select(func.count(MobileIdentity.id)).where(
+                MobileIdentity.user_id == user.id, MobileIdentity.provider == "apple"
+            )
+        )
+    ).scalar_one()
+    if not getattr(settings, "resend_api_key", ""):
+        raise HTTPException(status_code=503, detail="Account deletion email is not configured")
+    if count:
+        try:
+            validate_apple_revocation_configuration()
+        except AppleRevocationError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": exc.code, "message": "Apple account deletion is not configured"},
+            ) from exc
     token = _account_delete_fernet().encrypt(str(user.id).encode()).decode()
-    send_account_deletion_email.delay(user.email, token)
+    try:
+        send_account_deletion_email.delay(user.email, token)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail="Account deletion email is unavailable"
+        ) from exc
     log.info("account_deletion_requested", user_id=str(user.id))
-    return DeleteRequestResponse(requested=True)
+    return DeleteRequestResponse(
+        requested=True,
+        apple_authorization_required=bool(count),
+        apple_authorization_count=count,
+    )
+
+
+class AppleDeletionAuthorization(BaseModel):
+    id_token: str = Field(min_length=20, max_length=20_000)
+    nonce: str = Field(min_length=8, max_length=512)
+    authorization_code: str = Field(min_length=4, max_length=4096)
 
 
 class DeleteConfirmBody(BaseModel):
-    token: str
+    token: str = Field(min_length=1, max_length=4096)
+    apple_authorizations: list[AppleDeletionAuthorization] = Field(
+        default_factory=list, max_length=8
+    )
+
+
+def _apple_authorization_required(count: int) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "apple_authorization_required",
+            "message": "Re-authorize with Apple in the Kria iPhone app to finish account deletion.",
+            "apple_authorization_count": count,
+        },
+    )
 
 
 @router.post("/account/delete-confirm", status_code=status.HTTP_204_NO_CONTENT)
@@ -2908,6 +2967,76 @@ async def confirm_account_deletion(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Confirmation code does not match the signed-in account",
         )
+
+    # Serializes identity linking with the deletion snapshot. Do this before
+    # the existing plan/persona/job lock order, then recheck the row because a
+    # prior erasure could have committed while this request waited.
+    await acquire_auth_locks(db, account_lifecycle_lock_key(user.id))
+    if (await db.execute(select(User.id).where(User.id == user.id))).scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    apple_identities = (
+        (
+            await db.execute(
+                select(MobileIdentity)
+                .where(MobileIdentity.user_id == user.id, MobileIdentity.provider == "apple")
+                .order_by(MobileIdentity.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    expected_subjects = {identity.subject for identity in apple_identities}
+    if not expected_subjects:
+        if body.apple_authorizations:
+            raise HTTPException(status_code=400, detail={"code": "apple_authorization_invalid"})
+        apple_credentials = []
+    else:
+        # Verify every ID token first. This must precede any code exchange:
+        # Apple authorization codes are one-use and cannot be retried.
+        supplied: list[tuple[AppleDeletionAuthorization, ProviderClaims]] = []
+        try:
+            for proof in body.apple_authorizations:
+                claims = await verify_provider_id_token(proof.id_token, "apple", proof.nonce)
+                supplied.append((proof, claims))
+        except MobileAuthError as exc:
+            raise HTTPException(
+                status_code=400, detail={"code": "apple_authorization_invalid"}
+            ) from exc
+        subjects = [claims.subject for _, claims in supplied]
+        if len(subjects) != len(set(subjects)) or set(subjects) != expected_subjects:
+            # Same response for missing, duplicate, foreign and mixed proofs;
+            # it reveals only the number already returned by delete-request.
+            raise _apple_authorization_required(len(expected_subjects))
+        try:
+            apple_credentials = [
+                await exchange_deletion_authorization(
+                    authorization_code=proof.authorization_code,
+                    nonce=proof.nonce,
+                    supplied_claims=claims,
+                )
+                for proof, claims in supplied
+            ]
+        except AppleRevocationError as exc:
+            # Configuration/crypto preflight errors happen before a code is
+            # consumed. Exchange errors leave the account untouched as well.
+            code = exc.code
+            raise HTTPException(
+                status_code=503
+                if code
+                in {
+                    "apple_revocation_not_configured",
+                    "apple_client_secret_invalid",
+                    "token_encryption_unavailable",
+                }
+                else 400,
+                detail={
+                    "code": code,
+                    "message": (
+                        "Apple authorization could not be completed. "
+                        "Try again in the Kria iPhone app."
+                    ),
+                },
+            ) from exc
 
     # Follow the repository mutation order before taking any Job lock. Plan
     # editors acquire ContentPlan -> Persona -> PlanItem -> Job.
@@ -3064,6 +3193,15 @@ async def confirm_account_deletion(
     )
     db.add(account_prefix_outbox)
     deletion_outbox_ids.append(account_prefix_outbox.id)
+    apple_outbox_ids: list[uuid.UUID] = []
+    for credential in apple_credentials:
+        outbox = AppleRevocationOutbox(
+            id=uuid.uuid4(),
+            encrypted_refresh_token=credential.encrypted_refresh_token,
+            client_id=credential.client_id,
+        )
+        db.add(outbox)
+        apple_outbox_ids.append(outbox.id)
 
     # 1. Sever job → plan_item back-refs before the content_plan cascade fires.
     await db.execute(
@@ -3126,6 +3264,7 @@ async def confirm_account_deletion(
     await db.commit()
 
     from app.tasks.account_lifecycle import purge_user_storage  # noqa: PLC0415
+    from app.tasks.apple_revocation import revoke_apple_credential  # noqa: PLC0415
     from app.worker import celery_app  # noqa: PLC0415
 
     if celery_task_ids:
@@ -3146,6 +3285,11 @@ async def confirm_account_deletion(
 
     for outbox_id in deletion_outbox_ids[:_ACCOUNT_DELETE_IMMEDIATE_OUTBOX_DISPATCH_LIMIT]:
         await _delete_job_storage_after_commit(outbox_id)
+    for outbox_id in apple_outbox_ids:
+        try:
+            revoke_apple_credential.apply_async(args=[str(outbox_id)])
+        except Exception:  # durable outbox + Beat will retry
+            log.warning("apple_revocation_dispatch_failed", outbox_id=str(outbox_id))
     if len(deletion_outbox_ids) > _ACCOUNT_DELETE_IMMEDIATE_OUTBOX_DISPATCH_LIMIT:
         log.info(
             "account_delete_outbox_dispatch_deferred",
@@ -3153,7 +3297,10 @@ async def confirm_account_deletion(
             deferred=(len(deletion_outbox_ids) - _ACCOUNT_DELETE_IMMEDIATE_OUTBOX_DISPATCH_LIMIT),
         )
 
-    purge_user_storage.delay(str(user.id), job_ids, raw_paths)
+    try:
+        purge_user_storage.delay(str(user.id), job_ids, raw_paths)
+    except Exception as exc:  # account erasure succeeds; durable manifests own the retry path
+        log.warning("purge_user_storage_dispatch_failed", user_id=str(user.id), error=str(exc))
 
     log.info("account_deleted", user_id=str(user.id), job_count=len(job_ids))
     return Response(status_code=204)
