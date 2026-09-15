@@ -267,7 +267,7 @@ struct ResultsView: View {
     private func saveToPhotos() async {
         guard let playbackURL else { return }
         do {
-            let localFile = try await downloadVideo(from: playbackURL)
+            let localFile = try await RenderedVideoDownloader().localCopy(of: playbackURL)
             defer { try? FileManager.default.removeItem(at: localFile) }
             try await PhotoLibrarySaver().saveVideo(at: localFile)
             message = "Saved to Photos."
@@ -280,20 +280,9 @@ struct ResultsView: View {
         defer { isPreparingShare = false }
         do {
             removeShareFile()
-            shareFileURL = try await downloadVideo(from: playbackURL)
+            shareFileURL = try await RenderedVideoDownloader().localCopy(of: playbackURL)
             showShare = true
         } catch { message = error.localizedDescription }
-    }
-
-    private func downloadVideo(from remoteURL: URL) async throws -> URL {
-        let (temporary, response) = try await URLSession.shared.download(from: remoteURL)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw APIError.requestFailed
-        }
-        let destination = FileManager.default.temporaryDirectory
-            .appending(path: "kria-\(UUID().uuidString).mp4")
-        try FileManager.default.moveItem(at: temporary, to: destination)
-        return destination
     }
 
     private func removeShareFile() {

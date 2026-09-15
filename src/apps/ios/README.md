@@ -30,7 +30,10 @@ editor loads the active plan item and selected render variant, gates each lane
 from server capabilities, batches local mutations into one undoable document,
 and submits one atomic renderer commit when the user taps Save. It keeps the
 saved state while the replacement preview renders, then reloads the new
-generation without discarding unrelated server-owned fields.
+generation without discarding unrelated server-owned fields. The header's
+Export menu saves the finished render to Photos or shares it. It re-reads the
+selected variant when tapped and exports only a ready render; unsaved, saving,
+or still-rendering edits show why export waits instead of handing out an older cut.
 `Kria/DesignSystem` owns the Sunlit semantic color roles, approved Kria wordmark,
 and accessible controls. `Kria/Features` owns the adaptive phone-first
 shells and flow surfaces. `Packages/KriaMediaEngine` is a local package seam;
