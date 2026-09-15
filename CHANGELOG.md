@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.27.0] - 2026-09-15
+
+### Changed
+- fix(ios): use distribution identity for release archives (#1037) <!-- release-pr: 1037 -->
+
 ## [0.76.26.0] - 2026-09-15
 
 ### Changed
