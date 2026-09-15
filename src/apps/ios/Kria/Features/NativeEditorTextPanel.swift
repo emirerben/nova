@@ -58,6 +58,8 @@ struct NativeEditorTextPanel: View {
                             get: { item?.text ?? "" }, set: { session.updateTextContent(id: id, content: $0) }
                         ), focused: $typing, identifier: "native-editor-text-content")
                         .frame(minHeight: editorHeight)
+                        .padding(8)
+                        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
                         if usesAccessibilityLayout {
                             VStack(spacing: 8) {
                                 timingField("Start", isStart: true)
@@ -117,7 +119,8 @@ struct NativeEditorTextPanel: View {
                 }
             ), format: .number.precision(.fractionLength(0...2)))
             .keyboardType(.decimalPad)
-            .textFieldStyle(.roundedBorder)
+            .padding(10)
+            .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 8))
             .accessibilityIdentifier("native-editor-text-time-" + (isStart ? "start" : "end"))
         }
     }
@@ -225,8 +228,8 @@ struct NativeEditorTextPanel: View {
             .keyboardType(.decimalPad)
             .multilineTextAlignment(.center)
             .monospacedDigit()
-            .textFieldStyle(.roundedBorder)
             .frame(minWidth: 76, minHeight: 44)
+            .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 8))
             .accessibilityLabel("Text size")
             .accessibilityIdentifier("native-editor-text-size")
             Button {
@@ -438,10 +441,9 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
         view.delegate = context.coordinator
         view.font = .preferredFont(forTextStyle: .body)
         view.adjustsFontForContentSizeCategory = true
-        view.backgroundColor = .secondarySystemBackground
-        view.textColor = .label
+        view.backgroundColor = UIColor(KriaColor.paper)
+        view.textColor = UIColor(KriaColor.ink)
         view.keyboardAppearance = .light
-        view.layer.cornerRadius = 8
         view.returnKeyType = .default
         view.textContainer.widthTracksTextView = false
         view.textContainer.heightTracksTextView = false

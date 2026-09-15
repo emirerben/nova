@@ -103,24 +103,15 @@ struct ProjectActionsMenu: View {
                 .disabled(deletionBlocked)
         } label: { KriaIcon(.more).frame(width: 44, height: 44) }
         .disabled(busy).accessibilityLabel("Project actions for \(current.workspaceTitle)")
-        .sheet(isPresented: $renaming) {
-            NavigationStack {
-                VStack(alignment: .leading, spacing: 20) {
-                    TextField("Project name", text: $title).font(KriaFont.body()).textFieldStyle(.roundedBorder)
-                        .accessibilityIdentifier("rename-project-title")
-                    if let error { Text(error).foregroundStyle(KriaColor.failureText).font(KriaFont.body(14)) }
-                    Button(busy ? "Saving…" : "Save name") { rename() }
-                        .buttonStyle(CanonicalPrimaryButtonStyle())
-                        .disabled(busy || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.count > 120)
-                    Text("Up to 120 characters.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                }.padding(24).navigationTitle("Rename project").navigationBarTitleDisplayMode(.inline)
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { renaming = false }.disabled(busy) } }
-            }
-            .kriaPage()
-            .accessibilityIdentifier("rename-project-panel")
-            .presentationDetents([.height(250)])
-            .presentationCornerRadius(28)
-            .interactiveDismissDisabled(busy)
+        .alert("Rename project", isPresented: $renaming) {
+            TextField("Project name", text: $title)
+                .accessibilityIdentifier("rename-project-title")
+            Button("Cancel", role: .cancel) { error = nil }
+                .disabled(busy)
+            Button(busy ? "Saving…" : "OK") { rename() }
+                .disabled(busy || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.count > 120)
+        } message: {
+            Text(error ?? "Enter a name up to 120 characters.")
         }
         .alert("Delete this project?", isPresented: $deleting) {
             Button("Cancel", role: .cancel) {}
@@ -151,6 +142,7 @@ struct ProjectActionsMenu: View {
                     renameIdentity = UUID().uuidString
                     self.error = "This project changed elsewhere. The latest version is loaded; review your name and save again."
                 } else { self.error = "The name couldn’t be saved. Your text is still here; try again." }
+                renaming = true
             }
             busy = false
         }

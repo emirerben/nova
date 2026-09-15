@@ -12,11 +12,11 @@ final class ProjectsUITests: XCTestCase {
         let originalTitle = app.staticTexts["workspace-project-title"].label
         menu.tap()
         app.buttons["Rename project"].tap()
-        XCTAssertTrue(app.textFields["rename-project-title"].waitForExistence(timeout: 3))
-        let renamePanel = app.descendants(matching: .any)["rename-project-panel"].firstMatch
+        let renamePanel = app.alerts["Rename project"]
         XCTAssertTrue(renamePanel.waitForExistence(timeout: 3))
-        XCTAssertLessThan(renamePanel.frame.height, app.frame.height * 0.4,
-                          "Rename should stay a compact floating panel")
+        XCTAssertTrue(renamePanel.textFields.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertLessThan(renamePanel.frame.height, app.frame.height * 0.5,
+                          "Rename should stay a compact native alert")
         app.buttons["Cancel"].tap()
         XCTAssertEqual(app.staticTexts["workspace-project-title"].label, originalTitle)
         menu.tap()
@@ -39,9 +39,11 @@ final class ProjectsUITests: XCTestCase {
         let originalTitle = app.staticTexts["workspace-project-title"].label
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Project actions for'")).firstMatch.tap()
         app.buttons["Rename project"].tap()
-        let field = app.textFields["rename-project-title"]
+        let renamePanel = app.alerts["Rename project"]
+        XCTAssertTrue(renamePanel.waitForExistence(timeout: 3))
+        let field = renamePanel.textFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 3))
-        let save = app.buttons["Save name"]
+        let save = app.alerts["Rename project"].buttons["OK"]
         func replaceName(_ value: String) {
             field.tap()
             let current = field.value as? String ?? ""
@@ -60,6 +62,7 @@ final class ProjectsUITests: XCTestCase {
         for _ in 0..<2 {
             save.tap()
             XCTAssertTrue(failure.waitForExistence(timeout: 3))
+            XCTAssertTrue(app.alerts["Rename project"].waitForExistence(timeout: 3))
             let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: save)
             XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 3), .completed)
             XCTAssertEqual(field.value as? String, proposed, "A failed save must retain the exact user's input")

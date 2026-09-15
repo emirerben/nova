@@ -736,7 +736,6 @@ struct ChatComposer: View {
                 .accessibilityHint(canAttach ? "" : "Choose a video format first")
             TextField("Tell Kria what you want…", text: $text, axis: .vertical)
                 .font(KriaFont.body(15)).lineLimit(1...4)
-                .textFieldStyle(.roundedBorder)
                 .frame(minHeight: 44).accessibilityLabel("Message Kria")
                 .submitLabel(.send).onSubmit { if canSend { send() } }
             Button(action: send) {
@@ -746,7 +745,8 @@ struct ChatComposer: View {
             }.disabled(!canSend).opacity(canSend ? 1 : 0.45)
                 .accessibilityLabel(isSending ? "Sending message" : "Send message")
         }
-        .padding(7)
+        .padding(7).background(WorkspaceSurface())
+        .overlay(RoundedRectangle(cornerRadius: 30).stroke(KriaColor.border, lineWidth: 1))
         .padding(.horizontal, 14).padding(.vertical, 12).background(WorkspaceSurface())
     }
 }
