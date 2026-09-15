@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.28.0] - 2026-09-15
+
+### Changed
+- feat: improve Apple privacy, account deletion, and accessibility readiness (#1036) <!-- release-pr: 1036 -->
+
 ## [0.76.27.0] - 2026-09-15
 
 ### Changed
