@@ -115,6 +115,7 @@ struct NativeCaptionPanel: View {
                                 session.document.captionCues.first { $0.id == cue.id }?.text ?? ""
                             }, set: { session.updateCaptionCue(id: cue.id, text: $0) }), axis: .vertical)
                             .focused($editingCueID, equals: cue.id)
+                            .textFieldStyle(.roundedBorder)
                             .accessibilityIdentifier("native-editor-caption-content-" + cue.id)
                         } else {
                             Text(cue.text).frame(maxWidth: .infinity, alignment: .leading)

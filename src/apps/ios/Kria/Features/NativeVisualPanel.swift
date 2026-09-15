@@ -208,7 +208,7 @@ struct NativeVisualPanel: View {
             }
             if let cardPreset {
                 TextField("Card text", text: $cardText, axis: .vertical).lineLimit(2...4)
-                    .padding(12).background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
+                    .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("native-editor-new-card-text")
                 HStack {
                     Button("Cancel") { self.cardPreset = nil }
@@ -325,7 +325,7 @@ struct NativeVisualPanel: View {
                     Text("Applies to footage. Adjust its range on the timeline.").font(KriaFont.body(12))
                 } else if let element = cardElement {
                     TextField("Card text", text: Binding(get: { cardElement?.text ?? "" }, set: { session.updateTextContent(id: element.id, content: $0) }), axis: .vertical)
-                        .focused($editingText).padding(12).background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
+                        .focused($editingText).textFieldStyle(.roundedBorder)
                     Picker("Font", selection: Binding(get: { cardElement?.raw["font_family"]?.stringValue ?? "Inter" }, set: { session.setTextStyle(id: element.id, style: $0) })) {
                         ForEach(["Inter Regular", "Inter", "Fraunces", "Space Grotesk"], id: \.self) { Text($0).tag($0) }
                     }.frame(minHeight: 44)
@@ -399,7 +399,7 @@ struct NativeVisualPanel: View {
                     TextField(start ? "Start" : "End", value: Binding(get: { start ? item?.start ?? 0 : item?.end ?? 0 }, set: {
                         session.setVisualTiming(selected, outputTime: $0, isStart: start)
                     }), format: .number.precision(.fractionLength(0...2)))
-                        .keyboardType(.decimalPad).padding(10).background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 8))
+                        .keyboardType(.decimalPad).textFieldStyle(.roundedBorder)
                 }
             }
         }

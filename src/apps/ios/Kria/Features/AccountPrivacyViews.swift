@@ -99,8 +99,7 @@ struct AccountDeletionView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .textContentType(.oneTimeCode)
-                        .padding(12)
-                        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
+                        .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("account-deletion-code")
                     if deletion.appleAuthorizationCount > 0 {
                         Text("Authorize with the same Apple account you linked to Kria so we can revoke Kria’s access when your account is deleted.")
