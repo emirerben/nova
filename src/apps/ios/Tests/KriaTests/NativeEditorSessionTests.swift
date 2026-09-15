@@ -21,8 +21,16 @@ final class NativeEditorSessionTests: XCTestCase {
 
         let refresh = expectation(description: "Resolve sources for rendered generation")
         fake.sourcePoolExpectation = refresh
+        let sourcePlayer = try! XCTUnwrap(session.player)
         XCTAssertTrue(session.rebaseCleanDraft(from: Self.variant(duration: 2, generation: "g2")))
         XCTAssertEqual(session.sourcePreviewState, .preparing, "Old preview must not remain ready")
+        let finishedURL = try! XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        session.installFinishedRenderPlayer(url: finishedURL)
+        XCTAssertTrue(session.canDisplayCurrentPlayer, "The completed render stays visible while editable sources rebuild")
+        XCTAssertFalse(session.player === sourcePlayer, "Authoritative playback replaces the stale source composition")
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.pausePlayback()
         await fulfillment(of: [refresh], timeout: 3)
         XCTAssertEqual(fake.sourcePoolCallCount, 2)
         XCTAssertEqual(session.document.revision.baseGeneration, "g2")
@@ -314,6 +322,22 @@ final class NativeEditorSessionTests: XCTestCase {
         session.togglePlayback()
         XCTAssertTrue(session.isPlaying)
         session.pausePlayback()
+    }
+
+    func testProjectSessionUsesFreshPlaybackHandoffBeforeHydration() throws {
+        let staleURL = URL(fileURLWithPath: "/tmp/kria-stale-project-render.mp4")
+        let freshURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let project = ProjectSummary(
+            id: UUID(), title: "Gallery edit", status: .ready, updatedAt: .now,
+            posterURL: nil, outputURL: staleURL
+        )
+
+        let session = NativeEditorSession(project: project, initialPlaybackURL: freshURL)
+
+        XCTAssertEqual(session.loadState, .idle)
+        XCTAssertTrue(session.canDisplayCurrentPlayer, "The result screen's player is available before editor hydration")
+        let asset = try XCTUnwrap(session.player?.currentItem?.asset as? AVURLAsset)
+        XCTAssertEqual(asset.url, freshURL)
     }
 
     func testFixtureSourceFailureDoesNotPlayStaleEditablePreview() async throws {

@@ -49,7 +49,11 @@ struct NativeEditorView: View {
                     initialPlaybackURL: initialPlaybackURL
                 )
             }
-                ?? NativeEditorSession(project: project, operations: LocalEditorOperations())
+                ?? NativeEditorSession(
+                    project: project,
+                    operations: LocalEditorOperations(),
+                    initialPlaybackURL: initialPlaybackURL
+                )
         )
     }
 
@@ -60,13 +64,17 @@ struct NativeEditorView: View {
                 case .loaded:
                     editor(viewport: viewport)
                 case .idle, .loading:
-                    NativeEditorLoadSurface(
-                        title: "Opening the editor…",
-                        detail: "Loading the latest cut and its editing controls.",
-                        isLoading: true,
-                        onBack: requestBack,
-                        retry: nil
-                    )
+                    if session.canDisplayCurrentPlayer {
+                        editor(viewport: viewport)
+                    } else {
+                        NativeEditorLoadSurface(
+                            title: "Opening the editor…",
+                            detail: "Loading the latest cut and its editing controls.",
+                            isLoading: true,
+                            onBack: requestBack,
+                            retry: nil
+                        )
+                    }
                 case .failed(let message):
                     NativeEditorLoadSurface(
                         title: "The editor couldn’t open",

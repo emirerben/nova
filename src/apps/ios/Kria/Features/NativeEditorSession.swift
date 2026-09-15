@@ -346,8 +346,16 @@ enum NativeEditorLoadState: Equatable, Sendable {
         #endif
     }
 
-    convenience init(project: ProjectSummary, operations: any EditorOperations = LocalEditorOperations()) {
-        self.init(draft: EditorDraft(projectID: project.id, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0), operations: operations, initialPlaybackURL: project.outputURL)
+    convenience init(
+        project: ProjectSummary,
+        operations: any EditorOperations = LocalEditorOperations(),
+        initialPlaybackURL: URL? = nil
+    ) {
+        self.init(
+            draft: EditorDraft(projectID: project.id, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0),
+            operations: operations,
+            initialPlaybackURL: initialPlaybackURL ?? project.outputURL
+        )
         // A production editor starts fail-closed until the authoritative
         // variant advertises its renderer capabilities. The draft initializer
         // remains locally editable for deterministic fixtures and unit tests.
@@ -2976,6 +2984,16 @@ enum NativeEditorLoadState: Equatable, Sendable {
         finishedRenderPlayer = player
     }
 
+    /// A newly completed server render is authoritative playback even while
+    /// its editable source composition is rebuilding. Replacing the stale
+    /// source player here keeps video visible through that preparation window.
+    func installFinishedRenderPlayer(url: URL, preferredDuration: TimeInterval? = nil) {
+        finishedRenderURL = url
+        finishedRenderDuration = preferredDuration
+        installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
+        finishedRenderPlayer = player
+    }
+
     private func failSourcePreview(_ error: Error) {
         restoreFinishedRenderFallback()
         sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
@@ -2983,8 +3001,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     private func restoreFinishedRenderFallback() {
         guard let finishedRenderURL, player !== finishedRenderPlayer else { return }
-        installPlayer(item: AVPlayerItem(url: finishedRenderURL), preferredDuration: finishedRenderDuration)
-        finishedRenderPlayer = player
+        installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
     }
 
     private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {
@@ -3165,7 +3182,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 if status == "ready", let output = variant["output_url"]?.stringValue, let url = URL(string: output) {
                     guard let self else { return }
                     self.rebaseCleanDraft(from: variant)
-                    self.installPlayer(url: url)
+                    self.installFinishedRenderPlayer(url: url, preferredDuration: self.authoritativeDuration)
                     self.pendingPreviewGeneration = nil
                     self.saveState = .saved
                     return

@@ -238,6 +238,7 @@ struct ResultsView: View {
         }) {
             NativeEditorView(
                 project: project,
+                initialPlaybackURL: playbackURL,
                 libraryJobID: libraryJobID,
                 onBack: { showsEditor = false }
             )
