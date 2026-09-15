@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.31.0] - 2026-09-15
+
+### Changed
+- feat(ios): add collaborator live Google auth (#1040) <!-- release-pr: 1040 -->
+
 ## [0.76.30.0] - 2026-09-15
 
 ### Changed
