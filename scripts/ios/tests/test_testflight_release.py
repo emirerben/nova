@@ -121,10 +121,15 @@ class FastlaneTests(unittest.TestCase):
         self.assertRegex(text, r"(?i)groups?\s*:\s*[^\n]*(external|testflight)")
         self.assertRegex(text, r"(?i)app_store_build_number")
         self.assertRegex(text, r"(?i)initial_build_number\s*:\s*0")
-        self.assertRegex(text, r"(?i)latest_build\s*>=\s*build_number")
+        self.assertRegex(text, r"(?i)latest_build\s*>=\s*build_number\.to_i")
         self.assertRegex(text, r"(?i)skip(?:ping)? duplicate|already has build")
         self.assertRegex(text, r"(?i)app_version\s*:\s*marketing_version")
         self.assertRegex(text, r"(?i)build_number\s*:\s*build_number")
+        self.assertRegex(
+            text,
+            r'build_number\s*=\s*ENV\.fetch\("KRIA_BUILD_NUMBER"\)(?!\.to_i)',
+            "upload_to_testflight requires the build number to stay a String",
+        )
         # The IPA is archived with App Store distribution before this upload
         # lane; keep the assertion coupled to the same release script.
         self.assertRegex(ARCHIVE.read_text(), r"(?i)app[-_ ]store")
