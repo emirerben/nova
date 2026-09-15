@@ -104,6 +104,9 @@ class ArchiveScriptTests(unittest.TestCase):
             self.text,
         )
 
+    def test_archive_allows_the_trusted_openapi_build_tool_plugin(self):
+        self.assertIn("-skipPackagePluginValidation", self.text)
+
 
 class FastlaneTests(unittest.TestCase):
     def test_lane_uses_app_store_distribution_and_external_group(self):

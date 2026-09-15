@@ -67,6 +67,7 @@ xcodebuild \
   -scheme Kria \
   -configuration Release \
   -destination 'generic/platform=iOS' \
+  -skipPackagePluginValidation \
   -archivePath "$archive_path" \
   DEVELOPMENT_TEAM="$KRIA_DEVELOPMENT_TEAM" \
   KRIA_DEVELOPMENT_TEAM="$KRIA_DEVELOPMENT_TEAM" \
