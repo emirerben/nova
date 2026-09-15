@@ -2,6 +2,7 @@
 API_BASE_URL = https:/$()/nova-video.fly.dev
 AUTH_MODE = apple
 KRIA_MEDIA_ENGINE = remote
+KRIA_PRODUCT_BUNDLE_IDENTIFIER = com.emirerben.kria
 // CI supplies these values for a signed distribution archive. Keeping the
 // checked-in defaults empty means an accidental Release archive cannot ship
 // with a non-functional authentication surface or an unspecified team.

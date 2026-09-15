@@ -1,9 +1,10 @@
 # Kria iOS
 
 The native iOS foundation targets iOS 18 and is generated from `project.yml` with
-XcodeGen. The app is intentionally credential-free: Development uses the local
-auth affordance and fixture-backed projects, while Release uses the Apple and
-Google auth provider seams and the typed `KriaAPIClient` contract.
+XcodeGen. The app keeps secrets out of source: Development uses the local auth
+affordance and fixture-backed projects, Live Development uses the production API
+and public Google OAuth client, and Release uses the Apple and Google auth
+provider seams and the typed `KriaAPIClient` contract.
 
 ## Generate and build
 
@@ -55,17 +56,17 @@ indeterminate state until a real server event is supplied, so it never invents
 percentages. Server timestamps are decoded with fractional-second and offset
 ISO-8601 compatibility.
 
-`Config/Development.xcconfig`, `Config/Staging.xcconfig`, and
-`Config/Production.xcconfig` are the only checked-in environment defaults.
-They provide `API_BASE_URL` and `KRIA_GOOGLE_*` build settings; put real client
-configuration in a local override or CI secret store. `Kria/Generated/openapi.yaml`
+The checked-in files under `Config/` are the environment defaults. They provide
+`API_BASE_URL` and `KRIA_GOOGLE_*` build settings. The Google client ID is a
+public application identifier; signing credentials remain local or in CI.
+`Kria/Generated/openapi.yaml`
 is generated from the server's Pydantic models; `make ios-verify` rejects
 contract drift before XcodeGen builds the OpenAPI plugin output.
 
-For a developer-specific Debug configuration, create the git-ignored
-`Config/Local.xcconfig`. `Development.xcconfig` includes it when present, so it
-can override `API_BASE_URL`, `KRIA_GOOGLE_CLIENT_ID`, and
-`KRIA_GOOGLE_REDIRECT_SCHEME` without changing tracked configuration.
+For a developer-specific signing configuration, generate the git-ignored
+`Config/Local.xcconfig` with `scripts/ios/configure-live-development.sh`. The
+standard Development configuration also includes this file when present and can
+still override local API or OAuth values manually.
 
 The app has no production credentials in source. Set environment-specific API
 values in the xcconfig files or in the Xcode scheme, and keep real secrets in

@@ -1,0 +1,10 @@
+// A real-account development build for collaborators using their own Apple
+// Personal Team. Google OAuth client IDs are public application identifiers,
+// not secrets. The production API already allowlists this iOS client.
+#include? "Local.xcconfig"
+
+API_BASE_URL = https:/$()/nova-video.fly.dev
+AUTH_MODE = google
+KRIA_MEDIA_ENGINE = local
+KRIA_GOOGLE_CLIENT_ID = 600393007296-u2latle2h5ssbms4on8meh4clitc43mt.apps.googleusercontent.com
+KRIA_GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.600393007296-u2latle2h5ssbms4on8meh4clitc43mt

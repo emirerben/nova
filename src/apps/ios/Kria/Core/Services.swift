@@ -35,7 +35,7 @@ struct AppConfiguration: Sendable {
         let environment = KriaEnvironment.current
         let configuredURL = (Bundle.main.object(forInfoDictionaryKey: "KriaAPIBaseURL") as? String)
             .flatMap(URL.init(string:))
-        #if DEBUG
+        #if DEV_AUTH
         return Self(environment: environment, apiBaseURL: configuredURL ?? environment.baseURL, allowsDevelopmentAuth: true)
         #else
         return Self(environment: environment, apiBaseURL: configuredURL ?? environment.baseURL, allowsDevelopmentAuth: false)

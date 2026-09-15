@@ -12,6 +12,46 @@ No Apple team or production bundle identifier is required for simulator builds.
 Development defaults come from `Config/Development.xcconfig`; production signing
 values belong in an untracked local override or CI secrets.
 
+## Real-account build for a collaborator
+
+Use the `Kria Live Development` scheme to run the current source on an iPhone
+with a real Kria account. It talks to the production API and uses a dedicated
+Google OAuth client registered for Yasin's development bundle, while the app is
+signed by his own Apple Personal Team. It does not require access to the Kria
+Apple Developer account.
+
+1. Clone the repository and install XcodeGen (`brew install xcodegen`). In Xcode,
+   open **Settings > Accounts**, add your Apple ID, and select your Personal Team.
+   Copy the 10-character Team ID.
+2. Create the ignored signing configuration with the collaborator bundle ID
+   registered to the dedicated Google iOS OAuth client:
+
+   ```bash
+   scripts/ios/configure-live-development.sh YOUR_TEAM_ID com.yasin.kria.dev
+   make ios-generate
+   open src/apps/ios/Kria.xcodeproj
+   ```
+
+3. In Xcode, select the **Kria Live Development** scheme and the connected
+   iPhone, then run. If iOS asks, enable **Settings > Privacy & Security >
+   Developer Mode**, restart the phone, and trust the developer identity under
+   **Settings > General > VPN & Device Management**.
+4. Tap **Continue with Google** and choose the Google address already used by
+   the Kria web app. The callback returns to Kria, exchanges the Google identity
+   token with `/auth/mobile/exchange`, and loads that account's existing projects.
+   Relaunch once to confirm the Keychain session restores.
+
+`com.yasin.kria.dev` is not interchangeable with another bundle identifier:
+Google's installed-app OAuth client is bound to that exact value. A different
+collaborator needs a separate iOS OAuth client, client ID, callback scheme, and
+production API allowlist entry.
+
+The scheme intentionally omits Sign in with Apple and its entitlement because a
+free Personal Team cannot sign the production Kria App ID. The standard `Kria`
+scheme remains the localhost/fixture workflow. To change the local team, rerun
+the setup command with `--force`; do not change the bundle identifier. Never
+commit `Config/Local.xcconfig`.
+
 ## Commands
 
 ```bash
