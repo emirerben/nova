@@ -516,6 +516,50 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: file), Data("selected-video".utf8))
     }
 
+    func testEditorDownloadUsesAvailableOutputEvenWhenVariantStatusIsNotReady() async throws {
+        let jobID = PreviewFixtures.projectID
+        let outputURL = URL(string: "https://storage.example.test/draft.mp4?Expires=999")!
+        URLProtocolStub.handler = { request in
+            if request.url?.path == "/generative-jobs/\(jobID.uuidString)/status" {
+                return (200, Data(#"{"job_id":"job","variants":[{"variant_id":"selected","render_status":"draft","output_url":"https://storage.example.test/draft.mp4?Expires=999"}]}"#.utf8))
+            }
+            XCTAssertEqual(request.url, outputURL)
+            return (200, Data("draft-video".utf8))
+        }
+        let session = stubSession()
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: session)
+
+        let file = try await NativeEditorVideoDownloader(session: session).download(
+            api: api,
+            target: NativeEditorVideoDownloadTarget(jobID: jobID, variantID: "selected")
+        )
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        XCTAssertEqual(try Data(contentsOf: file), Data("draft-video".utf8))
+    }
+
+    func testEditorDownloadReportsRenderingWhenVariantHasNoOutputYet() async throws {
+        let jobID = PreviewFixtures.projectID
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/generative-jobs/\(jobID.uuidString)/status")
+            return (200, Data(#"{"job_id":"job","variants":[{"variant_id":"selected","render_status":"rendering"}]}"#.utf8))
+        }
+        let session = stubSession()
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: session)
+
+        do {
+            _ = try await NativeEditorVideoDownloader(session: session).download(
+                api: api,
+                target: NativeEditorVideoDownloadTarget(jobID: jobID, variantID: "selected")
+            )
+            XCTFail("Expected an in-progress variant without output to be rejected")
+        } catch let error as NativeEditorVideoDownloadError {
+            guard case .rendering = error else {
+                return XCTFail("Expected rendering error, got \(error)")
+            }
+        }
+    }
+
     func testEditorVariantLoadsAuthoritativeStatusProjection() async throws {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.url?.path, "/generative-jobs/\(PreviewFixtures.projectID.uuidString)/status")

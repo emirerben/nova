@@ -346,11 +346,12 @@ struct NativeEditorVideoDownloader {
         // Fetch the selected editor variant at action time. The job-level
         // playback endpoint may point at a different library-preview variant.
         let variant = try await api.editorVariant(jobID: target.jobID, variantID: target.variantID)
-        if let status = variant["render_status"]?.stringValue, status != "ready" {
-            throw NativeEditorVideoDownloadError.rendering
-        }
         guard let output = variant["output_url"]?.stringValue,
               let url = URL(string: output) else {
+            let status = variant["render_status"]?.stringValue
+            if status == "pending" || status == "rendering" || status == "awaiting_device" {
+                throw NativeEditorVideoDownloadError.rendering
+            }
             throw NativeEditorVideoDownloadError.unavailable
         }
         return try await VideoFileDownloader(session: session).download(from: url)
