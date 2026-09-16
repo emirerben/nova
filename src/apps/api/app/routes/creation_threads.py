@@ -4256,6 +4256,13 @@ async def attach_media(
             raise HTTPException(status_code=503, detail="Media verification unavailable") from exc
         contract = proxy_contracts.get(media.media_id)
         if contract is not None:
+            # `media.kind` (this attachment request) and `contract.proxy.original.kind`
+            # (the reserved proxy descriptor) are declared independently; a mismatch
+            # would let e.g. an audio-shaped proxy skip the video geometry check above
+            # while claiming to attach as video. verify_registered alone doesn't catch
+            # this — it only compares duration/audio presence, not kind.
+            if contract.proxy.original.kind != media.kind:
+                raise HTTPException(422, "Media kind does not match its reserved proxy")
             try:
                 contract.proxy.verify_registered(duration_s, has_audio)
             except ValueError as exc:
