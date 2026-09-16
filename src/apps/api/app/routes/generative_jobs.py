@@ -75,6 +75,7 @@ from app.pipeline.look_presets import (
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 from app.routes.music_jobs import classify_slot_kind
 from app.routes.waitlist import get_real_ip
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.schemas.guided_edit_revision import (
     GUIDED_EDITOR_LANES,
     MAX_GUIDED_EDITOR_TEXT_ELEMENTS,
@@ -870,9 +871,9 @@ class LyricSeedsResponse(BaseModel):
 _TIMELINE_MAX_SLOTS = EDITOR_MAX_TIMELINE_SLOTS
 # Server-side guardrails on a user-edited timeline. Positive durations are
 # required below; beat timelines retain a natural one-beat minimum and no-grid
-# timelines retain half-second snapping. The ceiling matches the product's
-# sub-60s short-form contract.
-TIMELINE_MAX_TOTAL_S = 60.0
+# timelines retain half-second snapping. The ceiling matches the creator-agent
+# output-duration contract.
+TIMELINE_MAX_TOTAL_S = float(MAX_PROPOSAL_DURATION_S)
 # Only the montage text variants carry a user-editable slot timeline. Lyrics are
 # beat/line synced (re-cutting breaks sync), voiceover variants are fit to the
 # voice bed, talking_head has no slot layout at all.
@@ -8016,7 +8017,7 @@ def _guided_v2_revision_for_write(
                 segment["layout"] = inherited_layout
         segments.append(segment)
         cursor += duration
-    if cursor > 60.0 + 1e-6:
+    if cursor > TIMELINE_MAX_TOTAL_S + 1e-6:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_LONG")
     raw = {
         **current,

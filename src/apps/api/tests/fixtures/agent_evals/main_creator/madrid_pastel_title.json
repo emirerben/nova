@@ -80,7 +80,7 @@
         "max_media_refs": 50,
         "max_catalog_refs": 50,
         "max_commands": 4,
-        "max_output_duration_s": 60.0
+        "max_output_duration_s": 120.0
       },
       "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

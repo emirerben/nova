@@ -163,6 +163,12 @@ def test_explicit_fractional_duration_request_is_preserved(creator_request: str)
     assert recognize_total_duration_s(creator_request) == 12.7
 
 
+def test_two_minute_duration_is_accepted_at_every_planning_boundary() -> None:
+    assert recognize_total_duration_s("Make it 120 seconds") == 120
+    assert ProposalBrief(duration_s=120).duration_s == 120
+    assert CreativeStrategy(target_duration_s=120).target_duration_s == 120
+
+
 def test_cut_duration_is_not_confused_with_output_duration() -> None:
     assert recognize_total_duration_s("Alternate the clips every 0.7 seconds") is None
 
@@ -214,7 +220,7 @@ def test_fractional_capacity_never_budgets_an_unavailable_frame() -> None:
     assert sum(cut.output_duration_s for cut in cuts) <= target + 0.001
 
 
-@pytest.mark.parametrize("duration", [2.99, 60.01, float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize("duration", [2.99, 120.01, float("inf"), float("-inf"), float("nan")])
 def test_fractional_duration_keeps_finite_range_validation(duration: float) -> None:
     with pytest.raises(ValidationError):
         ProposalBrief(duration_s=duration)
@@ -241,7 +247,7 @@ def test_provider_schema_exposes_bounded_fractional_number(model: type, field: s
     schema = model.model_json_schema()["properties"][field]
     assert schema["type"] == "number"
     assert schema["minimum"] == 3
-    assert schema["maximum"] == 60
+    assert schema["maximum"] == 120
 
 
 def test_fractional_source_precision_allows_subframe_beat_sum_drift() -> None:

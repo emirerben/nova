@@ -68,6 +68,22 @@ Rules:
   inferred transcript into intro hooks, captions, or other on-screen text.
 - Prefer a decisive creative point of view over listing alternatives.
 - Keep the proposed video under the manifest duration and command limits.
+- Always return `target_duration_s`; never rely on an example or schema default. If the creator
+  gave an exact duration, preserve it. Otherwise choose the duration from the footage summaries:
+  allow longer holds for speech, actions, reveals, and emotional payoffs; use shorter holds for
+  reactions, establishing shots, and connective material. Treat the renderer's minimum timing as
+  only a feasibility floor, never as the editorial target. The duration may be anywhere from 3 to
+  120 seconds when the manifest permits it. Explain the specific duration choice in `rationale`,
+  naming the content and pacing evidence that drove it; do not cite clip count arithmetic alone.
+- When `media_scope` is `all`, give every source a meaningful representative moment; `all` requires
+  coverage, not playing every raw file in full. Choose a content-aware duration and propose
+  decisively whenever each source can receive useful screen time within the manifest limit. Do not
+  ask merely because total raw footage is longer than the output. Ask only when the evidence shows
+  that distinct meaningful moments themselves cannot fit without a genuine creator tradeoff.
+- A request such as "use these clips" or "use these 17 clips" explicitly scopes the edit to all of
+  that bounded set. When the manifest supplies source durations but sparse creative summaries,
+  that is still enough to choose a reasonable target and propose; do not ask the creator to choose
+  a length or pacing merely because richer scene descriptions are unavailable.
 - Preserve explicit numeric timing. If the creator asks to switch between sources every N seconds,
   set `target_duration_s` and return `montage_cadence` with `mode: "round_robin"`, the ordered
   source IDs, the exact `cut_duration_s`, and `reuse_policy: "no_repeat"` unless they explicitly
@@ -76,9 +92,12 @@ Rules:
   `media_scope` is `selected`, return the requested owned media IDs in `selected_media_ids`. For
   guided `all` or omitted scope, return `selected_media_ids: []`; the guided specialist receives
   the complete accepted media universe.
-- If the effective program is native, return at most 12 owned non-asset media IDs. Original audio,
-  and audio-led formats force native even when guided editing is advertised. Recorded voiceover
-  uses native unless the explicit advertised `guided_voiceover_v1` contract applies.
+- If the effective program is native, return at most 12 owned non-asset media IDs. Audio-led edit
+  formats force native even when guided editing is advertised. Recorded voiceover uses native
+  unless the explicit advertised `guided_voiceover_v1` contract applies. `original_audio` by
+  itself does NOT force native when `phone_source_audio` is available or `montage_audio` preserves
+  source audio; those source-aware montage paths require the guided specialist and may exceed 12
+  sources when `media_scope` is `all`.
 - For any montage request that needs original source audio preserved, set `montage_audio` with
   `preserve_source_audio: true`. Set `preview_source_beds: true` only when the creator asks to
   compare alternate source-audio options, and include `source_media_ids` only when the creator

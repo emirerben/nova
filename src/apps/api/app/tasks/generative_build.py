@@ -77,6 +77,7 @@ from app.pipeline.speech_cleanup_apply import (
     apply_speech_cleanup_to_audio,
     hydrate_job_speech_cleanup_snapshot,
 )
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
     MASONRY_MONTAGE_PRESET,
@@ -528,10 +529,10 @@ class CachedBaseCanvasMismatchError(CachedBaseUnusableError):
 # voice-prominence slider (1.0 = bed fully ducked, voice only; 0.0 = bed full).
 # Defaults differ per variant: voice-over-footage starts with footage muted, while
 # voice+music starts with the music audibly under the voice. Output is capped so a
-# long voiceover can never run past the footage OR the sub-60s short-form ceiling.
+# long voiceover can never run past the footage OR the platform's short-form ceiling.
 _VOICEOVER_ONLY_DEFAULT_MIX = 1.0
 _VOICEOVER_MUSIC_DEFAULT_MIX = 0.7
-_VOICEOVER_MAX_DURATION_S = 60.0
+_VOICEOVER_MAX_DURATION_S = float(MAX_PROPOSAL_DURATION_S)
 
 # Celery-safe tri-state sentinel for `regenerate_generative_variant`'s
 # `carousel_moment_override` kwarg (the editable-carousel dispatch path).
@@ -15435,10 +15436,10 @@ def _render_generative_variant(
                 available_footage_s=available_footage_s,
                 clip_durations_s=durations,
                 max_duration_s=min(
-                    float(settings.output_max_duration_s),
+                    float(MAX_PROPOSAL_DURATION_S),
                     creator_target_duration_s
                     if creator_target_duration_s is not None
-                    else float(settings.output_max_duration_s),
+                    else float(MAX_PROPOSAL_DURATION_S),
                 ),
             )
             min_slots = len(single_hero_recipe["slots"])
@@ -15595,7 +15596,7 @@ def _render_generative_variant(
                 float(slot.get("target_duration_s", slot.get("target_duration", 0.0)) or 0.0)
                 for slot in recipe_dict["slots"]
             )
-            if recipe_total <= 0 or recipe_total > settings.output_max_duration_s + 0.001:
+            if recipe_total <= 0 or recipe_total > MAX_PROPOSAL_DURATION_S + 0.001:
                 raise DayVlogPolicyError(
                     "duration_out_of_bounds",
                     "day_vlog duration exceeds the product limit.",
@@ -15779,7 +15780,7 @@ def _render_generative_variant(
             _validate_day_vlog_steps(
                 steps,
                 narrative_order,
-                max_duration_s=float(settings.output_max_duration_s),
+                max_duration_s=float(MAX_PROPOSAL_DURATION_S),
             )
         if strict_single_hero:
             if not single_hero_order:
@@ -15790,7 +15791,7 @@ def _render_generative_variant(
                 steps,
                 single_hero_order[0],
                 single_hero_order[1:],
-                max_duration_s=float(settings.output_max_duration_s),
+                max_duration_s=float(MAX_PROPOSAL_DURATION_S),
             )
         _record_render_subphase(
             job_id,
@@ -16118,7 +16119,7 @@ def _render_generative_variant(
                     "duration_unreadable",
                     f"{strict_name} output duration could not be verified.",
                 ) from exc
-            if not 0.1 <= actual_duration_s <= settings.output_max_duration_s + 0.05:
+            if not 0.1 <= actual_duration_s <= MAX_PROPOSAL_DURATION_S + 0.05:
                 error_type = SingleHeroPolicyError if strict_single_hero else DayVlogPolicyError
                 strict_name = "single_hero" if strict_single_hero else "day_vlog"
                 raise error_type(
@@ -16421,10 +16422,9 @@ def _render_generative_variant(
                 final_path,
                 expected_resolution=(canvas.width, canvas.height),
                 # The validator's default 45–59s contract belongs to the
-                # template pipeline. Generative montages are intentionally
-                # shorter; retain the universal sub-60s ceiling while still
-                # rejecting empty/truncated output.
-                expected_duration_range=(0.1, settings.output_max_duration_s),
+                # template pipeline. Generative montages use the creator-agent
+                # ceiling instead, while still rejecting empty/truncated output.
+                expected_duration_range=(0.1, MAX_PROPOSAL_DURATION_S),
             )
             if not validation.passed:
                 raise RuntimeError("; ".join(validation.errors))

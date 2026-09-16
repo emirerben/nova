@@ -236,7 +236,7 @@ describe("buildCopilotSnapshot", () => {
       [2, 6],
     ]);
     expect(snapshot.total_duration_s).toBe(6);
-    expect(snapshot.remaining_duration_s).toBe(54);
+    expect(snapshot.remaining_duration_s).toBe(114);
     expect(snapshot.allowed_op_families).toEqual(["text", "clip", "title", "history"]);
   });
 
@@ -940,9 +940,9 @@ describe("slot-less duration fallback", () => {
       [],
       { text_elements: true, timeline: true },
       [],
-      { videoDurationS: 82.4 },
+      { videoDurationS: 130.0 },
     );
-    expect(snapshot.total_duration_s).toBe(82.4);
+    expect(snapshot.total_duration_s).toBe(130.0);
     // Longer-than-cap subtitled videos have zero remaining budget, never negative.
     expect(snapshot.remaining_duration_s).toBe(0);
   });
@@ -954,7 +954,7 @@ describe("slot-less duration fallback", () => {
       [{ source_duration_s: 8 }],
       { text_elements: true, timeline: true },
       [],
-      { videoDurationS: 82.4 },
+      { videoDurationS: 130.0 },
     );
     expect(snapshot.total_duration_s).toBe(3);
   });

@@ -33,6 +33,8 @@ export const COPILOT_SNAPSHOT_MAX_BYTES = 18000;
 export const COPILOT_SNAPSHOT_HARD_MAX_BYTES = 524288;
 /** Keep a small envelope for request metadata and split-deploy overhead. */
 export const COPILOT_SNAPSHOT_RESERVE_BYTES = 2048;
+/** Mirrors the server's MAX_PROPOSAL_DURATION_S (schemas/edit_proposal.py). */
+export const COPILOT_MAX_DURATION_S = 120;
 export const COPILOT_BEAT_MARKS_MAX = 60;
 /** Tighter fallback applied by trimSnapshotToBudget when the snapshot exceeds
  * the byte budget — a second, coarser sampling of the already-capped list. */
@@ -559,7 +561,7 @@ export interface CopilotSnapshot {
   slots: CopilotSlotSnapshot[];
   has_narrated_captions: boolean;
   total_duration_s: number;
-  max_duration_s: 60;
+  max_duration_s: typeof COPILOT_MAX_DURATION_S;
   remaining_duration_s: number;
   /** Capacity advertised by the currently deployed API. A newer web build
    * must fail closed while an older backend is still rolling out. */
@@ -1365,8 +1367,8 @@ export function buildCopilotSnapshot(
     slots: snapSlots,
     has_narrated_captions: captionBars.length > 0,
     total_duration_s: total,
-    max_duration_s: 60,
-    remaining_duration_s: roundCopilotNumber(Math.max(0, 60 - total)),
+    max_duration_s: COPILOT_MAX_DURATION_S,
+    remaining_duration_s: roundCopilotNumber(Math.max(0, COPILOT_MAX_DURATION_S - total)),
     editor_limits: {
       max_timeline_slots:
         typeof capabilities?.timeline_max_slots === "number" &&

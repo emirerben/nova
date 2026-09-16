@@ -31,6 +31,112 @@ class FailingAgent:
         raise TerminalError("provider returned invalid fast-cut arithmetic")
 
 
+def test_all_media_capacity_uses_30fps_whole_second_fast_montage_target() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"phone-{index}",
+            gcs_path=f"users/test/phone-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=4.0,
+        )
+        for index in range(33)
+    ]
+
+    capacity = edit_direction_planner.assess_all_media_capacity(media, 24)
+
+    assert not capacity.guided_feasible
+    assert capacity.fast_montage_feasible
+    assert capacity.required_fast_duration_s == 27
+
+
+def test_all_media_capacity_rejects_whole_second_target_beyond_typed_hold_capacity() -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id=f"photo-{index}",
+            gcs_path=f"users/test/photo-{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(3)
+    ]
+
+    capacity = edit_direction_planner.assess_all_media_capacity(
+        media, 3, mixed_media_timing=profile
+    )
+
+    assert not capacity.fast_montage_feasible
+    assert capacity.required_fast_duration_s is None
+
+
+def test_all_media_capacity_allows_0_1s_mixed_videos_only_when_total_is_renderable() -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    short_media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"clip-{index}",
+            gcs_path=f"users/test/clip-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=0.1,
+        )
+        for index in range(30)
+    ] + [
+        MediaRef(
+            lane="asset",
+            media_id=f"photo-{index}",
+            gcs_path=f"users/test/photo-{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(2)
+    ]
+
+    capacity = edit_direction_planner.assess_all_media_capacity(
+        short_media, 4, mixed_media_timing=profile
+    )
+
+    assert capacity.fast_montage_feasible
+    assert capacity.current_fast_target_feasible
+    assert capacity.required_fast_duration_s == 4
+    assert not edit_direction_planner.assess_all_media_capacity(
+        short_media[:-1], 4, mixed_media_timing=profile
+    ).fast_montage_feasible
+
+
+def test_deterministic_guided_beats_covers_required_media_up_to_schema_limit() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"clip-{index}",
+            gcs_path=f"users/test/clip-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=2.0,
+        )
+        for index in range(17)
+    ]
+
+    beats = edit_direction_planner.deterministic_guided_beats(
+        media, 24, required_media_ids=[ref.media_id for ref in media]
+    )
+
+    assert {media_id for beat in beats for media_id in beat.media_ids} == {
+        ref.media_id for ref in media
+    }
+
+
 def test_round_robin_capacity_and_fallback_match_production_lengths() -> None:
     media = [
         MediaRef(

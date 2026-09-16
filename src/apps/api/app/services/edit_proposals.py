@@ -12,6 +12,7 @@ from app.config import settings
 from app.models import PlanItem
 from app.schemas.edit_proposal import (
     EDIT_CONVERSATION_MAX_TURNS,
+    MAX_PROPOSAL_DURATION_S,
     ApprovalMode,
     ApprovedProposalSnapshot,
     ConversationPhase,
@@ -395,7 +396,7 @@ def infer_direction_guidance(
     hypothesis = DirectionHypothesis(
         direction="fast_montage",
         pace="fast",
-        duration_s=max(3, min(60, duration_s)),
+        duration_s=max(3, min(MAX_PROPOSAL_DURATION_S, duration_s)),
         text_density="minimal",
         audio_role="music_led",
         rationale=(

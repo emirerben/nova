@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
@@ -19,6 +20,7 @@ from app.agents.edit_proposal import (
 )
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
+    MAX_PROPOSAL_DURATION_S,
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
@@ -35,6 +37,101 @@ from app.schemas.edit_proposal import (
 )
 
 log = structlog.get_logger()
+
+# These are the specialist output limits, not a product preference.  Keep the
+# all-media preflight aligned with DraftStoryBeat.media_ids (max_length=4) and
+# EditProposalAgentOutput.story_beats (max_length=10).
+GUIDED_STORY_MAX_BEATS = 10
+GUIDED_STORY_MAX_MEDIA_PER_BEAT = 4
+GUIDED_STORY_MAX_MEDIA = GUIDED_STORY_MAX_BEATS * GUIDED_STORY_MAX_MEDIA_PER_BEAT
+FAST_MONTAGE_NORMAL_MIN_CUT_FRAMES = int(round(0.8 * 30))
+
+
+@dataclass(frozen=True)
+class AllMediaCapacity:
+    """Deterministic preflight result for an explicit all-media request."""
+
+    guided_feasible: bool
+    fast_montage_feasible: bool
+    current_fast_target_feasible: bool
+    required_fast_duration_s: int | None
+    reason: str | None = None
+
+
+def assess_all_media_capacity(
+    media: Sequence[CadenceCapacityMedia],
+    target_duration_s: int | float,
+    *,
+    story_min_moment_s: float = GUIDED_STORY_MIN_MOMENT_S,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
+) -> AllMediaCapacity:
+    """Assess all-source coverage using the same source floors as the renderer.
+
+    Guided output is structurally limited to ten beats of four sources and
+    each source needs the guided-story minimum moment.  The fast alternative
+    uses the ordinary 0.8s montage floor in 30fps frames (a genuinely short
+    source may use the schema's 0.4s absolute floor), then rounds the display
+    duration *up* to a whole second.  This makes 33 normal clips require 27s.
+    """
+
+    refs = list(media)
+    if not refs:
+        return AllMediaCapacity(False, False, False, None, "no_media")
+    guided_feasible = (
+        len(refs) <= GUIDED_STORY_MAX_MEDIA
+        and float(target_duration_s) + 0.001 >= len(refs) * story_min_moment_s
+        and all(
+            ref.kind == "image"
+            or (ref.duration_s is not None and float(ref.duration_s) >= story_min_moment_s)
+            for ref in refs
+        )
+    )
+    minimum_frames = 0
+    maximum_frames = 0
+    quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
+    absolute_minimum_frames = int(round((0.1 if quick_mixed_timing else 0.4) * 30))
+    for ref in refs:
+        if quick_mixed_timing:
+            bounds = mixed_media_hold_bounds(ref.kind, mixed_media_timing)
+            minimum = int(math.ceil(bounds.minimum_s * 30 - 1e-6))
+            maximum = int(math.floor(bounds.maximum_s * 30 + 1e-6))
+        elif ref.kind == "image":
+            minimum = FAST_MONTAGE_NORMAL_MIN_CUT_FRAMES
+            maximum = int(round(1.2 * 30))
+        else:
+            minimum = FAST_MONTAGE_NORMAL_MIN_CUT_FRAMES
+            maximum = 0
+        if ref.kind == "video":
+            if ref.duration_s is None:
+                return AllMediaCapacity(guided_feasible, False, False, None, "missing_duration")
+            source_frames = math.floor(float(ref.duration_s) * 30 + 1e-6)
+            if source_frames < absolute_minimum_frames:
+                return AllMediaCapacity(guided_feasible, False, False, None, "unusable_source")
+            minimum = min(minimum, source_frames)
+            maximum = min(maximum or source_frames, source_frames)
+        if maximum < minimum:
+            return AllMediaCapacity(guided_feasible, False, False, None, "unusable_source")
+        minimum_frames += minimum
+        maximum_frames += maximum
+    required_duration_s = math.ceil(minimum_frames / 30)
+    maximum_duration_s = maximum_frames / 30
+    fast_feasible = (
+        3 <= required_duration_s <= MAX_PROPOSAL_DURATION_S
+        and required_duration_s <= maximum_duration_s + 1e-6
+    )
+    target_frames = int(round(float(target_duration_s) * 30))
+    current_fast_target_feasible = (
+        fast_feasible
+        and 3 <= float(target_duration_s) <= MAX_PROPOSAL_DURATION_S
+        and minimum_frames <= target_frames <= maximum_frames
+    )
+    return AllMediaCapacity(
+        guided_feasible,
+        fast_feasible,
+        current_fast_target_feasible,
+        required_duration_s if fast_feasible else None,
+        None if fast_feasible else "duration_over_limit",
+    )
 
 
 class CadenceCapacityMedia(Protocol):
@@ -207,7 +304,7 @@ def clamp_fast_montage_target_duration_s(
     exceed the unique footage duration. Saved snapshots are not rewritten.
     """
 
-    requested = max(3, min(60, duration_s))
+    requested = max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
     if video_reuse_policy == "allow_repeat":
         return requested
     if video_reuse_policy == "once":
@@ -687,7 +784,12 @@ def deterministic_fast_cuts(
     return cuts
 
 
-def deterministic_guided_beats(media: list[MediaRef], duration_s: int | float) -> list[StoryBeat]:
+def deterministic_guided_beats(
+    media: list[MediaRef],
+    duration_s: int | float,
+    *,
+    required_media_ids: Sequence[str] | None = None,
+) -> list[StoryBeat]:
     """Build conservative, metadata-free story structure from renderable owned media."""
 
     eligible = [
@@ -695,6 +797,12 @@ def deterministic_guided_beats(media: list[MediaRef], duration_s: int | float) -
         for ref in media
         if ref.kind == "image" or float(ref.duration_s or 0.0) >= GUIDED_STORY_MIN_MOMENT_S
     ]
+    required_ids = set(required_media_ids or ())
+    eligible_ids = {ref.media_id for ref in eligible}
+    if required_ids - {ref.media_id for ref in media}:
+        raise ValueError("guided story fallback is missing required media")
+    if required_ids - eligible_ids:
+        raise ValueError("guided story fallback cannot use every required source safely")
     if not eligible:
         raise ValueError("guided story fallback found no usable media")
 
@@ -710,13 +818,20 @@ def deterministic_guided_beats(media: list[MediaRef], duration_s: int | float) -
         if images:
             ordered.append(images.pop(0))
 
-    target_s = max(3, min(60, duration_s))
-    source_count = max(
-        1,
-        min(7, len(ordered), math.floor(target_s / GUIDED_STORY_MIN_MOMENT_S)),
-    )
-    selected = ordered[:source_count]
-    beat_count = min(5, source_count)
+    target_s = max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
+    if required_ids:
+        selected = [ref for ref in ordered if ref.media_id in required_ids]
+    else:
+        source_count = max(
+            1,
+            min(7, len(ordered), math.floor(target_s / GUIDED_STORY_MIN_MOMENT_S)),
+        )
+        selected = ordered[:source_count]
+    if len(selected) > GUIDED_STORY_MAX_MEDIA:
+        raise ValueError("guided story fallback exceeds specialist media capacity")
+    if target_s + 0.001 < len(selected) * GUIDED_STORY_MIN_MOMENT_S:
+        raise ValueError("guided story fallback cannot fit every required source")
+    beat_count = min(GUIDED_STORY_MAX_BEATS, len(selected))
     groups: list[list[MediaRef]] = [[] for _ in range(beat_count)]
     for index, ref in enumerate(selected):
         groups[index % beat_count].append(ref)
@@ -740,6 +855,11 @@ def deterministic_guided_beats(media: list[MediaRef], duration_s: int | float) -
         ("Closing", "One last look."),
         ("Another view", "A different angle on the moment."),
         ("Final frame", "A final frame to remember."),
+        ("Next chapter", "The story moves into another moment."),
+        ("More detail", "Another detail adds to the sequence."),
+        ("Later moment", "A later moment keeps the story moving."),
+        ("Before the close", "One more view sets up the ending."),
+        ("Last moment", "The final moment brings the story together."),
     ]
     return [
         StoryBeat(
@@ -822,13 +942,13 @@ def plan_direction_snapshot(
         montage_cadence = None
     narrated = source.narration is not None
     planning_duration_s = (
-        max(3, min(60, duration_s))
+        max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
         if narrated and direction == "fast_montage"
         else clamp_fast_montage_target_duration_s(
             media, duration_s, mixed_media_timing, video_reuse_policy
         )
         if direction == "fast_montage"
-        else max(3, min(60, duration_s))
+        else max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
     )
     output = None
     used_fallback = False
@@ -900,7 +1020,17 @@ def plan_direction_snapshot(
             raise ValueError("fast montage planner returned no source-aware cuts")
         beats = _compatibility_beats(cuts)
     elif output is None:
-        beats = deterministic_guided_beats(source.media, duration_s)
+        beats = deterministic_guided_beats(
+            source.media,
+            duration_s,
+            required_media_ids=(
+                [ref.media_id for ref in source.media]
+                if source.media_scope == "all"
+                else source.selected_media_ids
+                if source.media_scope == "selected"
+                else None
+            ),
+        )
     else:
         beats = [
             StoryBeat(
