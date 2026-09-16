@@ -107,7 +107,12 @@ struct DeviceRenderStatusCard: View {
     let presentation: DeviceRenderPresentation
     let retry: () -> Void
     let stop: () -> Void
+    /// Injectable so the save action doesn't require Photos authorization in
+    /// tests/previews — matches `EditorViews`' existing use of the same protocol.
+    var photoLibrarySaver: any PhotoLibrarySaving = PhotoLibrarySaver()
     @State private var playback: LocalPlayback?
+    @State private var isSaving = false
+    @State private var saveMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -123,6 +128,10 @@ struct DeviceRenderStatusCard: View {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) { localActions(file) }
                     VStack(alignment: .leading, spacing: 12) { localActions(file) }
+                }
+                if let saveMessage {
+                    Text(saveMessage).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                        .accessibilityIdentifier("device-render-save-message")
                 }
             }
             if [.needsAttention, .cancelled, .localReady].contains(presentation.phase) {
@@ -148,8 +157,30 @@ struct DeviceRenderStatusCard: View {
     @ViewBuilder private func localActions(_ file: URL) -> some View {
         Button("Play video") { playback = LocalPlayback(url: file) }
             .buttonStyle(KriaSecondaryButtonStyle())
+        // The local file is already fully rendered on-device — unlike
+        // EditorViews.saveToPhotos (cloud path), there's nothing to download first.
+        Button {
+            Task { await save(file) }
+        } label: {
+            if isSaving { ProgressView() } else { Label("Save", systemImage: "square.and.arrow.down") }
+        }
+        .buttonStyle(KriaSecondaryButtonStyle())
+        .disabled(isSaving)
+        .accessibilityIdentifier("device-render-save-to-photos")
         ShareLink(item: file) { Label("Share", systemImage: "square.and.arrow.up") }
             .buttonStyle(KriaSecondaryButtonStyle())
+    }
+
+    private func save(_ file: URL) async {
+        isSaving = true
+        saveMessage = nil
+        defer { isSaving = false }
+        do {
+            try await photoLibrarySaver.saveVideo(at: file)
+            saveMessage = "Saved to Photos."
+        } catch {
+            saveMessage = error.localizedDescription
+        }
     }
 
     private var title: String {

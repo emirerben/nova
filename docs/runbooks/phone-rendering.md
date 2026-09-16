@@ -145,8 +145,16 @@ proposal do not repair it.
   navigation; chat polls the device destination and starts only schema versions
   and capabilities explicitly advertised as verified by the server. Sign-out
   cancels its sessions. The status card distinguishes preparation, rendering,
-  local availability, syncing, and synced output, with local playback/sharing
+  local availability, syncing, and synced output, with local playback/sharing/
+  saving to Photos (KRI-96 — previously the local file offered Play and Share
+  only; `EditorViews.saveToPhotos` covered just the cloud `playbackURL` path)
   and sync retry. Supported editor saves issue a new device recipe revision.
+  Export progress is still indeterminate: `DeviceRenderCoordinator.perform`
+  calls `exporter.export(..., progress: nil)`, and `RecipeWriter`/
+  `ExportCheckpoint` already carry a `progress` field nothing threads through
+  the actor to the UI yet — open work, not attempted here (the receipt is the
+  actor's persisted, on-every-phase-change Codable state; a live per-frame
+  progress value needs its own non-persisted publish path, not a field on it).
   Account-pilot capabilities require explicit server configuration; general
   rollout still requires full device qualification.
 - Project proxy uploads now carry immutable original fingerprint, duration,
