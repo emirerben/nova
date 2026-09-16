@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.38.0] - 2026-09-16
+
+### Changed
+- fix(ios): stop drawer/editor UI test flakes blocking main (#1059) <!-- release-pr: 1059 -->
+
 ## [0.76.37.0] - 2026-09-16
 
 ### Changed
