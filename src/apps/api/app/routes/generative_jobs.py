@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
@@ -10665,12 +10665,18 @@ async def _load_agent_runs_for_nova_steps(db: AsyncSession, job_id: uuid.UUID) -
 async def get_generative_job_status(
     job_id: str,
     current_user: CurrentUserOrSynthetic,
+    http_response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobStatusResponse:
     """Poll generative job status. `variants` carries the per-variant render state.
 
     Also serves content_plan jobs (the plan item page polls this for variants).
+
+    `no-store`: `variants[].output_url` is a re-signed playback URL and the
+    render state changes underneath it, so a heuristically cached copy can
+    hand a client a stale variant it believes is current (KRI-91).
     """
+    http_response.headers["Cache-Control"] = "no-store"
     from app.services.phase_baselines import get_baselines, scale_render_variants  # noqa: PLC0415
 
     job = await _load_generative_job(

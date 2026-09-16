@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
@@ -2444,7 +2444,7 @@ async def test_detail_repairs_missing_job_projection_from_exact_creator_target(
     monkeypatch.setattr(routes, "_sync_agent", AsyncMock())
     monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
 
-    output = await get_thread(str(thread.id), user, db)
+    output = await get_thread(str(thread.id), user, db, Response())
 
     assert output is thread
     assert thread.active_job_id == job_id
@@ -2593,7 +2593,7 @@ async def test_detail_reconciles_failed_guided_planning_before_a_job_exists(
     monkeypatch.setattr(routes, "_sync_agent", sync_agent)
     monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
 
-    output = await get_thread(str(thread.id), user, db)
+    output = await get_thread(str(thread.id), user, db, Response())
 
     assert output is thread
     reconcile.assert_awaited_once_with(db, session)
@@ -2681,7 +2681,7 @@ async def test_detail_projects_job_discovered_during_creator_reconciliation(
     monkeypatch.setattr(routes, "_sync_agent", AsyncMock())
     monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
 
-    output = await get_thread(str(thread.id), user, db)
+    output = await get_thread(str(thread.id), user, db, Response())
 
     assert output.active_job_id == job_id
     assert repair_projection.await_count == 2
@@ -3113,7 +3113,7 @@ async def test_get_thread_repairs_projection_from_current_item_job(
     )
     monkeypatch.setattr("app.routes.creation_threads._response", AsyncMock(return_value=thread))
 
-    await get_thread(str(thread.id), SimpleNamespace(id=user_id), db)
+    await get_thread(str(thread.id), SimpleNamespace(id=user_id), db, Response())
 
     assert thread.active_job_id == job_id
     assert thread.state["generation"]["status"] == "queued"
