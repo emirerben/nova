@@ -370,7 +370,7 @@ describe("VariantCard layout preview cards (W3)", () => {
 
 
 describe("song timing reference", () => {
-  it("shows precise copyable posting details and hides stale song swap controls", async () => {
+  it("collapses to a thin summary row, then expands on tap to show precise copyable posting details and hide stale song swap controls", async () => {
     const writeText = jest.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     render(<VariantCard {...baseProps} tracks={[{ id: "t1", title: "Track" } as never]}
@@ -378,6 +378,11 @@ describe("song timing reference", () => {
         schema_version: 1, delivery: "external_platform", track_id: "t1", title: "Track",
         artist: "Artist", start_s: 42.35, end_s: 59.351,
       } })} />);
+    const toggle = screen.getByRole("button", { name: /Add the song when posting/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/42.350–59.351 seconds/)).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Track — Artist")).toBeInTheDocument();
     expect(screen.getByText(/42.350–59.351 seconds/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Swap song")).not.toBeInTheDocument();
