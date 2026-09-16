@@ -118,14 +118,37 @@ struct PreviewAudioBinding: Sendable {
                         track = created
                         reusableVideoTracks.append((created, end))
                     }
-                    let sourceRange = CMTimeRange(start: time(clip.sourceStart), duration: time(clip.sourceDuration))
+                    // The recipe's sourceDuration can claim a hair more
+                    // material than the source track actually has decodable
+                    // samples for — container-level duration metadata is
+                    // sometimes marginally ahead of the last real frame,
+                    // especially for a clip trimmed flush against the
+                    // source's own end. insertTimeRange+scaleTimeRange still
+                    // "declares" the composition covers the full requested
+                    // span even when the tail has nothing to decode, so the
+                    // renderer's sourceFrame(byTrackID:) later returns nil in
+                    // just that last fraction of a second — surfacing as
+                    // "one of the clips in this video is missing" for a clip
+                    // that is otherwise perfectly fine. Clamp to what the
+                    // track actually reports before inserting; track-reuse
+                    // bookkeeping (`end`, above) staying at the untrimmed,
+                    // more conservative value is harmless.
+                    let availableSourceDuration = try await max(0, source.load(.timeRange).duration.seconds - clip.sourceStart)
+                    let effectiveSourceDuration = availableSourceDuration > 0
+                        ? min(clip.sourceDuration, availableSourceDuration) : clip.sourceDuration
+                    let sourceRange = CMTimeRange(start: time(clip.sourceStart), duration: time(effectiveSourceDuration))
                     try track.insertTimeRange(sourceRange, of: source, at: time(clip.timelineStart))
-                    let movingDuration = clip.sourceDuration / clip.rate
+                    let movingDuration = effectiveSourceDuration / clip.rate
                     track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration), toDuration: time(movingDuration))
+                    // The layer's own end must match what was actually
+                    // inserted, not the idealized `end` used for track-reuse
+                    // bookkeeping above — otherwise a clamp here would just
+                    // move the same "missing" failure to a different clip.
+                    var layerEnd = clip.timelineStart + movingDuration
                     if let hold = clip.holdDuration, hold > 0 {
                         let fps = Double(try await source.load(.nominalFrameRate))
-                        let frameDuration = min(clip.sourceDuration, 1 / max(1, fps.isFinite && fps > 0 ? fps : 30))
-                        let tail = CMTimeRange(start: time(clip.sourceStart + clip.sourceDuration - frameDuration), duration: time(frameDuration))
+                        let frameDuration = min(effectiveSourceDuration, 1 / max(1, fps.isFinite && fps > 0 ? fps : 30))
+                        let tail = CMTimeRange(start: time(clip.sourceStart + effectiveSourceDuration - frameDuration), duration: time(frameDuration))
                         // Anchor the held tail to where the moving segment's
                         // scaled content actually ends, not to time(timelineStart
                         // + movingDuration) recomputed from Doubles. scaleTimeRange
@@ -140,6 +163,7 @@ struct PreviewAudioBinding: Sendable {
                         let tailStart = track.timeRange.end
                         try track.insertTimeRange(tail, of: source, at: tailStart)
                         track.scaleTimeRange(CMTimeRange(start: tailStart, duration: tail.duration), toDuration: time(hold))
+                        layerEnd = tailStart.seconds + hold
                     }
                     let size = try await source.load(.naturalSize)
                     let preferred = Self.coreImagePreferredTransform(try await source.load(.preferredTransform))
@@ -167,7 +191,7 @@ struct PreviewAudioBinding: Sendable {
                     }
                     layers.append(RecipeVideoLayer(trackID: track.trackID, image: nil,
                         transform: Self.transform(naturalSize: size, preferred: preferred, canvas: canvas, clip: clip),
-                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, look: clip.look, isPrimary: recipeTrack.kind == .video,
+                        start: clip.timelineStart, end: layerEnd, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, look: clip.look, isPrimary: recipeTrack.kind == .video,
                         clipID: clip.id, naturalSize: size, preferredTransform: preferred,
                         overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true, overlayPreserveAlpha: clip.overlayPreserveAlpha,
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),

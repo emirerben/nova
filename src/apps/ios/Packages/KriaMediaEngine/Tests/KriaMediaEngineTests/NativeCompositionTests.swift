@@ -37,6 +37,40 @@ final class NativeCompositionTests: XCTestCase {
         }
     }
 
+    /// KRI-99: a clip trimmed flush against its source's own end (rate 1,
+    /// no crop, no hold) failed to render in the last fraction of a second
+    /// — the recipe's sourceDuration can be a hair ahead of what the source
+    /// track actually has decodable samples for, so insertTimeRange +
+    /// scaleTimeRange still declared the composition covered that tail even
+    /// though there was nothing there to sample. Reproduces the underlying
+    /// defect directly (a recipe claiming more material than the source
+    /// track has) rather than depending on the specific timeline shape that
+    /// first surfaced it.
+    @MainActor func testClipDurationBeyondSourceTrackClampsInsteadOfLeavingAnUnsampleableTail() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = try await makeVideo(directory: directory, name: "flush-trim", color: CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        let videoTracks = try await AVURLAsset(url: url).loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(videoTracks.first)
+        let actualDuration = try await track.load(.timeRange).duration.seconds
+        // The recipe claims slightly more material than the source track
+        // actually has decodable samples for.
+        let claimedDuration = actualDuration + 0.05
+        let recipe = EditRecipe(canvas: Canvas(width: 96, height: 160),
+            assets: [MediaAsset(id: "source", relativePath: "source.mp4")],
+            tracks: [TimelineTrack(id: "video", kind: .video, clips: [TimelineClip(id: "clip", sourceAssetID: "source", sourceDuration: claimedDuration)])])
+        let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["source": url])
+        let generator = AVAssetImageGenerator(asset: preview.playerItem.asset)
+        generator.videoComposition = preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        // Before the fix, sampling near the tail of the claimed duration
+        // threw MediaEngineError.missingAsset — the composition declared
+        // coverage the source track could not actually back.
+        _ = try await generator.image(at: CMTime(seconds: max(0, claimedDuration - 0.01), preferredTimescale: 600)).image
+    }
+
     @MainActor func testLongStoryDecodesWithMoreThan64MBOfTimedText() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
