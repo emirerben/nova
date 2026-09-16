@@ -63,6 +63,10 @@ ACTIVE_CREATOR_PHASES = frozenset(
 TERMINAL_CREATOR_PHASES = frozenset({"completed", "failed", "cancelled"})
 MAX_PUBLIC_EVENTS = 40
 MAX_CREATOR_MEDIA_REFS = 50
+# Registered Visuals (pool assets) the planner and the confirm fence both see.
+# Reservations ("preparing"/"promoting"), cleanup claims and failed rows stay
+# out; analysis state within this set must never change manifest identity.
+CREATOR_VISIBLE_ASSET_STATES = ("uploaded", "queued", "analyzing", "ready")
 CREATOR_CONTEXT_MAX_CHARS = 3900
 EXECUTION_RECEIPT_LEASE_S = CREATOR_EXECUTION_RECEIPT_LEASE_S
 
@@ -294,13 +298,22 @@ async def resolve_item_creator_context(
             }
         )
 
+    # Registered Visuals are creator-visible footage from the moment they are
+    # registered; their AI analysis finishes later on the autoplace worker.
+    # Manifest membership must not depend on that analysis: a direction planned
+    # while a photo was still analyzing used to hash a manifest without it, and
+    # once the photo turned ready every "Create this video" was rejected by the
+    # confirm fence ("Footage or capabilities changed") with no way to recover
+    # (prod thread 168b17ec, 2026-09-16). Analysis evidence is still exposed to
+    # the planner only once a row is ready; failed rows stay out because the
+    # proposal build refuses them anyway.
     assets = (
         await db.execute(
             select(PlanItemAsset)
             .where(
                 PlanItemAsset.plan_item_id == item.id,
                 PlanItemAsset.user_id == persona.user_id,
-                PlanItemAsset.status == "ready",
+                PlanItemAsset.status.in_(CREATOR_VISIBLE_ASSET_STATES),
                 PlanItemAsset.deduplicated_to_asset_id.is_(None),
             )
             .order_by(PlanItemAsset.created_at)
@@ -324,22 +337,26 @@ async def resolve_item_creator_context(
                 label=context or None,
             )
         )
-        analysis = asset.analysis if isinstance(asset.analysis, dict) else {}
-        media_context.append(
-            {
-                "media_id": media_id,
-                "kind": kind,
-                "duration_s": _positive_duration_s(asset.duration_s),
-                "creator_context": context or None,
-                # AI evidence is clearly segregated and must never be copied to
-                # on-screen text (also enforced in the main prompt).
-                "analysis_only_not_copy": {
-                    key: _clean(analysis.get(key), 400)
-                    for key in ("summary", "description", "setting", "activity")
-                    if analysis.get(key)
-                },
-            }
-        )
+        analysis_ready = getattr(asset, "status", "ready") == "ready"
+        analysis = asset.analysis if analysis_ready and isinstance(asset.analysis, dict) else {}
+        context_entry: dict[str, Any] = {
+            "media_id": media_id,
+            "kind": kind,
+            "duration_s": _positive_duration_s(asset.duration_s),
+            "creator_context": context or None,
+            # AI evidence is clearly segregated and must never be copied to
+            # on-screen text (also enforced in the main prompt).
+            "analysis_only_not_copy": {
+                key: _clean(analysis.get(key), 400)
+                for key in ("summary", "description", "setting", "activity")
+                if analysis.get(key)
+            },
+        }
+        if not analysis_ready:
+            # Tell the planner the file exists but its evidence is still on
+            # its way, instead of silently hiding the file from the direction.
+            context_entry["analysis_status"] = "pending"
+        media_context.append(context_entry)
 
     # clip_gcs_paths is the legacy source of truth for older rows without
     # clip_assignments. Expose stable opaque IDs, never the paths themselves.

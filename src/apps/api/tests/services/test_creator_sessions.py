@@ -1057,3 +1057,95 @@ async def test_reconcile_adopts_guided_job_by_stable_attempt_across_version_chan
     assert changed is True
     assert session.target_job_id == job_id
     assert session.phase == "rendering"
+
+
+def _pending_visual_item() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        edit_format="montage",
+        audio_mode="kria",
+        voiceover_gcs_path=None,
+        current_job_id=None,
+        clip_gcs_paths=[],
+        clip_assignments=[
+            {"media_id": "ios-clip-1.mp4", "gcs_path": "users/u/1.mp4", "kind": "video"},
+        ],
+    )
+
+
+def _visual(asset_id: uuid.UUID, *, status: str, analysis: dict | None) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=asset_id,
+        kind="image",
+        status=status,
+        duration_s=None,
+        user_context=None,
+        analysis=analysis,
+    )
+
+
+async def _resolve_with_visuals(item, persona, visuals):
+    asset_result = MagicMock()
+    asset_result.scalars.return_value = visuals
+    track_result = MagicMock()
+    track_result.scalars.return_value = []
+    sfx_result = MagicMock()
+    sfx_result.scalars.return_value = []
+    db = AsyncMock()
+    db.execute.side_effect = [asset_result, track_result, sfx_result]
+    manifest, media_context = await creator_sessions.resolve_item_creator_context(
+        db, item, persona=persona
+    )
+    return manifest, media_context, db
+
+
+@pytest.mark.asyncio
+async def test_context_keeps_visuals_in_manifest_while_their_analysis_is_pending() -> None:
+    """Regression: prod thread 168b17ec (2026-09-16).
+
+    A direction planned while Visuals were still analyzing hashed a manifest
+    without them; once analysis finished, every confirm hit the
+    "Footage or capabilities changed" fence. Manifest identity must not depend
+    on the asynchronous analysis state of a registered Visual.
+    """
+
+    item = _pending_visual_item()
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    asset_id = uuid.uuid4()
+
+    pending, pending_context, db = await _resolve_with_visuals(
+        item, persona, [_visual(asset_id, status="analyzing", analysis=None)]
+    )
+    ready, ready_context, _ = await _resolve_with_visuals(
+        item,
+        persona,
+        [
+            _visual(
+                asset_id,
+                status="ready",
+                analysis={"summary": "A close-up photo of Lionel Messi"},
+            )
+        ],
+    )
+
+    # The Visual is footage as soon as it is registered, not once Gemini is done.
+    assert [media.media_id for media in pending.media] == ["ios-clip-1.mp4", f"asset-{asset_id}"]
+    assert pending.manifest_hash == ready.manifest_hash
+
+    # The planner is told the evidence is still on its way, and never sees
+    # analysis text before the row is ready.
+    pending_entry = pending_context[-1]
+    assert pending_entry["media_id"] == f"asset-{asset_id}"
+    assert pending_entry["analysis_status"] == "pending"
+    assert pending_entry["analysis_only_not_copy"] == {}
+    ready_entry = ready_context[-1]
+    assert "analysis_status" not in ready_entry
+    assert ready_entry["analysis_only_not_copy"] == {"summary": "A close-up photo of Lionel Messi"}
+
+    # The query itself admits every registered analysis state and nothing else:
+    # reservations, cleanup claims and failed rows stay invisible to the planner.
+    asset_query = db.execute.call_args_list[0].args[0]
+    compiled = str(asset_query.compile(compile_kwargs={"literal_binds": True}))
+    assert "plan_item_assets.status IN ('uploaded', 'queued', 'analyzing', 'ready')" in compiled
+    assert "plan_item_assets.status = 'ready'" not in compiled
+    assert "deduplicated_to_asset_id IS NULL" in compiled
