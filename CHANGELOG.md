@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.32.0] - 2026-09-16
+
+### Changed
+- fix: keep montage proposals within renderable capacity (#1042) <!-- release-pr: 1042 -->
+
 ## [0.76.31.0] - 2026-09-15
 
 ### Changed
