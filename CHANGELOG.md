@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.37.0] - 2026-09-16
+
+### Changed
+- fix(api): gallery and editor agree on which variant is "the" video (KRI-91) (#1046) <!-- release-pr: 1046 -->
+
 ## [0.76.36.0] - 2026-09-16
 
 ### Changed
