@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.36.0] - 2026-09-16
+
+### Changed
+- v0.76.32.0 fix(ios): export the visible editor preview (#1043) <!-- release-pr: 1043 -->
+
 ## [0.76.35.0] - 2026-09-16
 
 ### Changed
