@@ -30,6 +30,17 @@ enum NativeEditorLoadState: Equatable, Sendable {
     case failed(String)
 }
 
+enum NativeEditorVideoDownloadRoute: Equatable {
+    case sourcePreview
+    case localFile(URL)
+    case server(NativeEditorVideoDownloadTarget)
+}
+
+struct NativeEditorTemporaryVideo {
+    let fileURL: URL
+    let cleanupURL: URL
+}
+
 @MainActor final class NativeEditorPlaybackClock: ObservableObject {
     @Published var currentTime: TimeInterval = 0
 }
@@ -51,7 +62,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
     /// Cross-kind selection is the source of truth. `selectedClipID` below is
     /// a source-compatible adapter for the first-pass clip views.
-    @Published private(set) var selection: EditorSelection? { didSet { prepareTextInteraction() } }
+    @Published private(set) var selection: EditorSelection? { didSet { prepareInteractionLayers() } }
     @Published private(set) var selectionRequest = 0
     /// A new text item is staged separately until Done. Cancel must not roll
     /// back unrelated edits or leave a placeholder in the persisted document.
@@ -84,8 +95,22 @@ enum NativeEditorLoadState: Equatable, Sendable {
         let rect: CGRect
     }
     @Published private(set) var textInteractionFrame: TextInteractionFrame?
+    struct MediaInteractionFrame {
+        let selection: EditorSelection
+        let time: Double
+        let below: UIImage
+        let above: UIImage
+        let media: UIImage
+        let rect: CGRect
+    }
+    @Published private(set) var mediaInteractionFrame: MediaInteractionFrame?
     private var textInteractionTask: Task<Void, Never>?
     private var textInteractionSequence = 0
+
+    private func prepareInteractionLayers() {
+        prepareTextInteraction()
+        prepareMediaInteraction()
+    }
 
     private func prepareTextInteraction() {
         guard !isDirectManipulating, !isPlaying, let selection, selection.kind == .text,
@@ -131,6 +156,57 @@ enum NativeEditorLoadState: Equatable, Sendable {
         }
     }
 
+    private func prepareMediaInteraction() {
+        guard !isDirectManipulating, !isPlaying, let selection,
+              selection.kind == .mediaOverlay || selection.kind == .visualBlock,
+              let preview = sourcePreview, let item = player?.currentItem,
+              sourcePreviewState == .ready else { return }
+        let mediaID: String
+        switch selection.kind {
+        case .mediaOverlay: mediaID = "overlay:" + selection.id
+        case .visualBlock: mediaID = "visual-\(selection.id)-\(selection.id)"
+        default: return
+        }
+        textInteractionTask?.cancel()
+        textInteractionSequence += 1
+        let sequence = textInteractionSequence
+        let time = min(currentTime, max(0, duration - 1.0 / 600))
+        textInteractionTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+                try Task.checkCancellation()
+                let layers = try preview.mediaInteractionLayers(id: mediaID, time: time)
+                @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
+                    let generator = AVAssetImageGenerator(asset: item.asset)
+                    generator.videoComposition = composition
+                    generator.maximumSize = CGSize(width: 1080, height: 1920)
+                    generator.requestedTimeToleranceBefore = .zero
+                    generator.requestedTimeToleranceAfter = .zero
+                    let cg: CGImage = try await withCheckedThrowingContinuation { continuation in
+                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: time, preferredTimescale: 600))]) { _, image, _, result, error in
+                            if result == .succeeded, let image { continuation.resume(returning: image) }
+                            else { continuation.resume(throwing: error ?? MediaEngineError.exportFailed) }
+                        }
+                    }
+                    return UIImage(cgImage: cg)
+                }
+                async let below = image(layers.below)
+                async let above = image(layers.above)
+                async let media = image(layers.media)
+                let rendered = try await (below, above, media)
+                guard let self, !Task.isCancelled, self.textInteractionSequence == sequence,
+                      self.selection == selection else { return }
+                self.mediaInteractionFrame = MediaInteractionFrame(selection: selection, time: time,
+                    below: rendered.0, above: rendered.1, media: rendered.2, rect: layers.rect)
+            } catch {
+                guard !Task.isCancelled else { return }
+                #if DEBUG
+                NativePreviewDiagnostics.failure("media-interaction-prepare", error: error)
+                #endif
+            }
+        }
+    }
+
     @Published private(set) var scrubPreviewFrame: UIImage?
     private(set) var scrubPreviewTime: TimeInterval?
     private var scrubFrameGenerator: AVAssetImageGenerator?
@@ -140,6 +216,14 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var pendingScrubFrameTime: TimeInterval?
     private var scrubFrameGeneration = 0
     @Published private(set) var sourcePreviewState: NativeSourcePreviewState = .idle
+    private var finishedRenderURL: URL?
+    private var finishedRenderDuration: TimeInterval?
+    private var finishedRenderPlayer: AVPlayer?
+    /// Whether `finishedRenderPlayer`'s render is known to reflect the
+    /// document currently loaded (server `render_status == "ready"` at
+    /// install time), not a render that predates a save still catching up.
+    /// See `installPlayer(url:preferredDuration:isCurrent:)`.
+    private var finishedRenderIsCurrent = true
     private var sourcePreview: LivePreviewComposition?
     private var sourceCompiler: NativeEditorRenderCompiler?
     private var sourceResolver: NativeEditorSourceResolver?
@@ -164,6 +248,47 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var sourcePreviewGeneration: String?
     private var sourcePreviewUpdateDeferred = false
     var hasSourcePreview: Bool { sourcePreviewState == .ready }
+    /// A source-composited player is editable. A failed source preparation can
+    /// instead show only the server-rendered video, with canvas interaction
+    /// deliberately disabled until a retry produces a source preview.
+    var isShowingRenderedFallback: Bool {
+        guard case .failed = sourcePreviewState else { return false }
+        return player != nil && player === finishedRenderPlayer
+    }
+
+    var canDisplayCurrentPlayer: Bool {
+        guard player != nil else { return false }
+        switch sourcePreviewState {
+        case .idle:
+            // Before the first load resolves, the only player available is
+            // whatever `initialPlaybackURL` seeded — trustworthy when a
+            // caller just fetched it for this exact screen (e.g. ResultsView
+            // refreshing its own playback link), not when it merely fell
+            // back to a project summary's possibly long-stale `outputURL`
+            // (the shared chat-editor session's construction path). An
+            // untrusted seed shows the loading surface instead of a video
+            // that might already be wrong.
+            return seedIsTrusted
+        case .ready:
+            return true
+        case .preparing:
+            // While the local, editable source preview is still building
+            // from the current document, only show the finished render if
+            // it's known to already reflect that document (render_status
+            // was "ready" at load time). A render still catching up to the
+            // last save would otherwise flash pre-edit title/text styling
+            // for the few seconds this preparation takes — the loading
+            // surface is the honest state until the source preview, built
+            // straight from the current document, is ready.
+            return player === finishedRenderPlayer && finishedRenderIsCurrent
+        case .failed:
+            // Once source-preview construction has genuinely failed (not
+            // merely still preparing), a stale finished render is still
+            // strictly better than nothing — the user can at least see and
+            // download *a* video while a retry is pending.
+            return isShowingRenderedFallback
+        }
+    }
     @Published private(set) var isDirectManipulating = false
     @Published private(set) var canEditTimeline = true
     @Published private(set) var canEditText = true
@@ -246,6 +371,10 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var clipIDsBySlot: [String: UUID] = [:]
     private var compatibilityClipMetadata: [UUID: (sourceClipIndex: Int?, slotID: String?)] = [:]
     private var compatibilitySnapshot: [String: JSONValue] = [:]
+    /// Whether the player `installPlayer(url:)` seeded from `initialPlaybackURL`
+    /// at construction can be trusted before `load()` confirms it. See
+    /// `canDisplayCurrentPlayer`'s `.idle` case.
+    private let seedIsTrusted: Bool
     private var activeTrim: ActiveTrim?
     private var transactionBaseline: EditorDocument?
     private var draftProjectionCache: EditorDraft?
@@ -272,6 +401,121 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private var promptRefreshSequence: UInt64 = 0
     private let playbackEndTolerance: TimeInterval = 0.05
 
+    var videoDownloadTarget: NativeEditorVideoDownloadTarget? {
+        guard let jobID, let variantKey else { return nil }
+        let generation = document.revision.baseGeneration.isEmpty ? nil : document.revision.baseGeneration
+        return NativeEditorVideoDownloadTarget(
+            jobID: jobID,
+            variantID: variantKey,
+            expectedGenerationID: generation,
+            expectedOutputPath: finishedRenderURL?.path
+        )
+    }
+
+    var canDownloadCurrentVideo: Bool {
+        let displayedVideoIsCurrent: Bool
+        switch sourcePreviewState {
+        case .ready:
+            displayedVideoIsCurrent = sourcePreview.map { player?.currentItem === $0.preview.playerItem } ?? false
+        case .failed:
+            displayedVideoIsCurrent = player != nil && player === finishedRenderPlayer
+        case .idle, .preparing:
+            displayedVideoIsCurrent = false
+        }
+        return videoDownloadTarget != nil && displayedVideoIsCurrent
+            && !hasUnsavedChanges && !isSaving && pendingPreviewGeneration == nil
+    }
+
+    /// Why export is unavailable, in the user's own words — the same
+    /// conditions ``canDownloadCurrentVideo`` checks, explained. `nil` exactly
+    /// when export is available.
+    var exportBlockReason: String? {
+        guard !canDownloadCurrentVideo else { return nil }
+        if isSaving { return "Saving your changes…" }
+        if hasUnsavedChanges { return "Save your changes to export the current video." }
+        if pendingPreviewGeneration != nil { return "Kria is updating the preview. Try again in a moment." }
+        switch sourcePreviewState {
+        case .idle, .preparing:
+            return "Preparing the preview…"
+        case .failed, .ready:
+            // The source preview is ready or has fallen back to the rendered
+            // video, but the player hasn't caught up yet (a brief window
+            // during a rebuild) or the session has no job to export from.
+            return "This video isn’t ready to export yet."
+        }
+    }
+
+    func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
+        switch sourcePreviewState {
+        case .ready:
+            guard let sourcePreview,
+                  player?.currentItem === sourcePreview.preview.playerItem else {
+                throw NativeEditorVideoDownloadError.unavailable
+            }
+            return .sourcePreview
+        case .failed:
+            break
+        case .idle, .preparing:
+            throw NativeEditorVideoDownloadError.unavailable
+        }
+        if let deviceLocalFile,
+           let asset = player?.currentItem?.asset as? AVURLAsset,
+           asset.url.standardizedFileURL == deviceLocalFile.standardizedFileURL {
+            return .localFile(deviceLocalFile)
+        }
+        if player === finishedRenderPlayer, let target = videoDownloadTarget {
+            return .server(target)
+        }
+        throw NativeEditorVideoDownloadError.unavailable
+    }
+
+    /// Exports the exact composition on screen. On device this competes with
+    /// the live player for a hardware decode session (iOS caps concurrent
+    /// VideoToolbox sessions per app; the Simulator does not, which is why
+    /// this path passes there and fails on a phone). Releasing the player's
+    /// session first is the single highest-value fix; a lone retry after that
+    /// catches the remaining transient contention without masking a real
+    /// failure — unsupported source, storage, cancellation — which still
+    /// throws through to the caller rather than falling back to the last
+    /// cloud render. The user must always get what the preview shows.
+    func exportDisplayedSourcePreview() async throws -> NativeEditorTemporaryVideo {
+        guard sourcePreviewState == .ready,
+              let sourcePreview,
+              player?.currentItem === sourcePreview.preview.playerItem else {
+            throw NativeEditorVideoDownloadError.unavailable
+        }
+        let snapshot = sourcePreview.exportSnapshot()
+        let wasPlaying = isPlaying
+        pausePlayback()
+        defer { if wasPlaying { togglePlayback() } }
+        do {
+            return try await performLocalExport(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs)
+        } catch {
+            #if DEBUG
+            NativePreviewDiagnostics.failure("editor-export-first-attempt", error: error)
+            #endif
+            return try await performLocalExport(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs)
+        }
+    }
+
+    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL]) async throws -> NativeEditorTemporaryVideo {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "kria-editor-download-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let output = directory.appending(path: "current-preview.mp4")
+        do {
+            let checkpoint = try await AVFoundationLocalExporter(
+                stateStore: FileExportStateStore(directory: directory.appending(path: "state", directoryHint: .isDirectory))
+            ).export(recipe: recipe, assetURLs: assetURLs, outputURL: output)
+            guard checkpoint.status == .completed, checkpoint.outputURL == output else {
+                throw NativeEditorVideoDownloadError.unavailable
+            }
+            return NativeEditorTemporaryVideo(fileURL: output, cleanupURL: directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+
     private struct ActiveTrim {
         let clipID: UUID
         let edge: NativeTrimEdge
@@ -294,7 +538,8 @@ enum NativeEditorLoadState: Equatable, Sendable {
     init(
         draft: EditorDraft = EditorDraft(projectID: UUID(), clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0),
         operations: any EditorOperations = LocalEditorOperations(),
-        initialPlaybackURL: URL? = nil
+        initialPlaybackURL: URL? = nil,
+        trustsInitialPlaybackURL: Bool = true
     ) {
         var initialDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
         initialDocument.revision.number = draft.revision
@@ -304,6 +549,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         self.document = initialDocument
         self.cleanDocument = initialDocument
         self.operations = operations
+        self.seedIsTrusted = trustsInitialPlaybackURL
         rememberClipIDs(from: draft, in: initialDocument)
         rememberCompatibilityMetadata(from: draft)
         duration = timelineProjection.totalDuration
@@ -324,8 +570,23 @@ enum NativeEditorLoadState: Equatable, Sendable {
         #endif
     }
 
-    convenience init(project: ProjectSummary, operations: any EditorOperations = LocalEditorOperations()) {
-        self.init(draft: EditorDraft(projectID: project.id, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0), operations: operations, initialPlaybackURL: project.outputURL)
+    convenience init(
+        project: ProjectSummary,
+        operations: any EditorOperations = LocalEditorOperations(),
+        initialPlaybackURL: URL? = nil
+    ) {
+        self.init(
+            draft: EditorDraft(projectID: project.id, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0),
+            operations: operations,
+            initialPlaybackURL: initialPlaybackURL ?? project.outputURL,
+            // An explicit URL just came from a caller that fetched it for
+            // this exact screen (e.g. ResultsView's own playback refresh).
+            // Falling back to project.outputURL instead means trusting
+            // whatever a cached ProjectSummary happened to hold — the shared
+            // chat-editor session's path, and the source of KRI-91's stale
+            // "old video, then the correct one ~10s later" report.
+            trustsInitialPlaybackURL: initialPlaybackURL != nil
+        )
         // A production editor starts fail-closed until the authoritative
         // variant advertises its renderer capabilities. The draft initializer
         // remains locally editable for deterministic fixtures and unit tests.
@@ -415,7 +676,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             player?.pause()
             isPlaying = false
             if let time = player?.currentTime().seconds, time.isFinite { currentTime = time }
-            prepareTextInteraction()
+            prepareInteractionLayers()
         }
         isDirectManipulating = true
         beginTransaction()
@@ -423,6 +684,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
     func endDirectManipulation() {
         endTransaction()
         isDirectManipulating = false
+        flushDeferredSourcePreviewUpdate()
     }
 
     /// Selects any timeline/preview object. Selection seeks without changing
@@ -514,9 +776,19 @@ enum NativeEditorLoadState: Equatable, Sendable {
             guard document.clips.indices.contains(window.sourceIndex) else { return nil }
             let slot = document.clips[window.sourceIndex]
             let id = clipID(for: slot.id)
-            let duration = max(minimumClipDuration, window.end - window.start)
+            // The output window may be extended to carry narration through its
+            // tail. Source trimming remains based on the authored moving clip,
+            // otherwise that hold would ask the decoder for frames beyond the
+            // source asset.
+            let authoredWindow = timelineProjection.baseClipWindows.first { $0.sourceIndex == window.sourceIndex }
+            let movingDuration = max(minimumClipDuration, slot.durationS ?? authoredWindow.map { $0.end - $0.start } ?? window.end - window.start)
             let sourceStart = max(0, slot.inS)
             let sourceDuration = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
+            let available = sourceDuration.map { max(0, $0 - sourceStart) }
+            let sourceSpan = min(
+                Self.number(slot.raw["native_source_span_s"]) ?? movingDuration,
+                available ?? .greatestFiniteMagnitude
+            )
             let assetID = slot.raw["asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? id
             return EditorClip(
                 id: id,
@@ -525,7 +797,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 start: window.start,
                 end: window.end,
                 trimIn: sourceStart,
-                trimOut: sourceStart + (Self.number(slot.raw["native_source_span_s"]) ?? duration),
+                trimOut: sourceStart + sourceSpan,
                 sourceDuration: sourceDuration,
                 muted: slot.raw["muted"] == .bool(true),
                 slotID: slot.id
@@ -569,7 +841,11 @@ enum NativeEditorLoadState: Equatable, Sendable {
             setAuthoritativeDuration(Self.number(authoritativeVariant?["duration_s"]))
             refreshDuration()
             if let output = authoritativeVariant?["output_url"]?.stringValue, let url = URL(string: output) {
-                installPlayer(url: url, preferredDuration: authoritativeDuration)
+                // See installPlayer's isCurrent doc comment: render_status
+                // other than "ready" means this output_url predates the
+                // document just loaded above.
+                installPlayer(url: url, preferredDuration: authoritativeDuration,
+                    isCurrent: authoritativeVariant?["render_status"]?.stringValue == "ready")
             } else if allowPlaybackFallback, let jobID, let url = try? await api.playbackURL(jobID: jobID) {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
@@ -680,6 +956,21 @@ enum NativeEditorLoadState: Equatable, Sendable {
         }
     }
 
+    /// A shared session (`ChatWorkspaceView`'s editor tab) can be reused
+    /// across multiple editor opens within one chat visit. `loadState ==
+    /// .loaded` alone doesn't mean the displayed video is still current — the
+    /// workspace's own polling can observe a newer server revision (e.g. a
+    /// chat-driven edit finished rendering) while the editor was closed.
+    /// Without this, that second open would show the stale video
+    /// indefinitely rather than swapping once, ~10s later, like a first open.
+    private var loadedServerRevision: Int?
+
+    func needsReload(for project: ProjectSummary) -> Bool {
+        guard loadState == .loaded else { return true }
+        guard let loadedServerRevision else { return false }
+        return loadedServerRevision != project.serverRevision
+    }
+
     func load(project: ProjectSummary, api: any KriaAPIClient) async {
         loadState = .loading
         var resolvedProject = project
@@ -688,6 +979,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
            let refreshed = try? await api.project(threadID: project.id) {
             resolvedProject = refreshed.summary
         }
+        loadedServerRevision = resolvedProject.serverRevision
         conversationRuntimeVersion = resolvedProject.runtimeVersion
         if let jobID = resolvedProject.activeJobID,
            let itemID = resolvedProject.activePlanItemID,
@@ -806,7 +1098,12 @@ enum NativeEditorLoadState: Equatable, Sendable {
             setAuthoritativeDuration(Self.number(variant["duration_s"]))
             refreshDuration()
             if let output = variant["output_url"]?.stringValue, let url = URL(string: output) {
-                installPlayer(url: url, preferredDuration: authoritativeDuration)
+                // render_status other than "ready" means this output_url is
+                // a render that predates the document just loaded above (a
+                // save queued a re-render still in flight) — see
+                // installPlayer's isCurrent doc comment.
+                installPlayer(url: url, preferredDuration: authoritativeDuration,
+                    isCurrent: variant["render_status"]?.stringValue == "ready")
             } else if let url = try? await api.playbackURL(jobID: editorJobID) {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
@@ -824,11 +1121,14 @@ enum NativeEditorLoadState: Equatable, Sendable {
 
     #if DEBUG
     /// Account-free verification still uses the production compiler and compositor.
-    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:]) async {
+    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:], forceFailure: Bool = false) async {
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
         sourcePreviewState = .preparing
         do {
+            if forceFailure {
+                throw SourceAssetError.missingOriginal("fixture-source")
+            }
             if delayedLoad {
                 loadState = .loaded
                 try await Task.sleep(for: .milliseconds(600))
@@ -863,7 +1163,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
-            sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+            failSourcePreview(error)
         }
     }
     #endif
@@ -965,7 +1265,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
-            sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+            failSourcePreview(error)
         }
     }
 
@@ -1109,7 +1409,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         guard resolvedSources != nil, sourceCompiler != nil else { return }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
-        guard !isTimingGestureActive else {
+        guard !isTimingGestureActive, !isDirectManipulating else {
             sourcePreviewUpdateDeferred = true
             return
         }
@@ -1169,6 +1469,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             if let preview = sourcePreview, (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
                 sourcePreviewState = .ready
                 if !isPlaying { seek(to: currentTime) }
+                prepareInteractionLayers()
                 return
             }
             #if DEBUG
@@ -1188,6 +1489,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             } else {
                 seek(to: latestTime)
             }
+            prepareInteractionLayers()
             #if DEBUG
             NativePreviewDiagnostics.record("preview-ready")
             #endif
@@ -1198,7 +1500,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
-            sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+            failSourcePreview(error)
         }
     }
 
@@ -1210,12 +1512,11 @@ enum NativeEditorLoadState: Equatable, Sendable {
     }
 
     func togglePlayback() {
-        guard sourcePreviewState == .idle || sourcePreviewState == .ready else {
+        guard canDisplayCurrentPlayer, let player else {
             player?.pause()
             isPlaying = false
             return
         }
-        guard let player else { isPlaying = false; return }
         if isPlaying {
             pausePlayback()
             return
@@ -1344,7 +1645,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                     guard !Task.isCancelled, let self, self.scrubFrameGeneration == generation else { return }
                     self.scrubPreviewTime = frame.actualTime.seconds
                     self.scrubPreviewFrame = UIImage(cgImage: frame.image)
-                    self.prepareTextInteraction()
+                    self.prepareInteractionLayers()
                 } catch {
                     guard !Task.isCancelled, let self, self.scrubFrameGeneration == generation else { return }
                     #if DEBUG
@@ -2450,7 +2751,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         replace(with: next); changedSections.insert(section); refreshDirtyState(); refreshDuration()
     }
 
-    private func transactDocument(section: EditorSection, _ body: (inout EditorDocument) -> Void) {
+    func transactDocument(section: EditorSection, _ body: (inout EditorDocument) -> Void) {
         transactDocument(sections: [section], body)
     }
 
@@ -2461,7 +2762,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
         document = next; changedSections.formUnion(sections); refreshDirtyState(); refreshDuration()
     }
 
-    private func canEditOperation(_ keys: [String], section: EditorSection) -> Bool {
+    func canEditOperation(_ keys: [String], section: EditorSection) -> Bool {
         for key in keys {
             if let capability = document.capabilities[key] { return capability.editable }
         }
@@ -2938,9 +3239,52 @@ enum NativeEditorLoadState: Equatable, Sendable {
     private func reflowSlots(_ clips: inout [EditorTimelineSlot], from index: Int) {
         _ = clips; _ = index
     }
-    private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil) {
-        guard sourcePreviewState == .idle else { return }
+    private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil, isCurrent: Bool = true) {
+        // A completed cloud render remains a useful, non-editable fallback
+        // when composing a source preview fails. Always retain the latest
+        // authoritative URL, even if an editable source player currently owns
+        // the canvas; failures can then restore the correct finished render.
+        finishedRenderURL = url
+        finishedRenderDuration = preferredDuration
+        // `isCurrent` is false when the caller already knows this render
+        // predates the document it just loaded (server render_status not
+        // "ready" — a save queued a re-render that hasn't finished yet).
+        // canDisplayCurrentPlayer's `.preparing` case must not show that
+        // stale render during the ordinary editor-open window just because
+        // it's the only player installed so far — the freshly-edited title/
+        // text would flash the old style for the few seconds it takes the
+        // local source preview (built straight from the current document)
+        // to take over. Untrusted here only gates *display* during that
+        // window; restoreFinishedRenderFallback() still uses it if source
+        // preview construction genuinely fails, same as before — stale is
+        // still better than nothing once every other option is exhausted.
+        finishedRenderIsCurrent = isCurrent
+        let previewFailed: Bool
+        if case .failed = sourcePreviewState { previewFailed = true } else { previewFailed = false }
+        guard sourcePreviewState == .idle || previewFailed || player == nil else { return }
         installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
+        finishedRenderPlayer = player
+    }
+
+    /// A newly completed server render is authoritative playback even while
+    /// its editable source composition is rebuilding. Replacing the stale
+    /// source player here keeps video visible through that preparation window.
+    func installFinishedRenderPlayer(url: URL, preferredDuration: TimeInterval? = nil) {
+        finishedRenderURL = url
+        finishedRenderDuration = preferredDuration
+        finishedRenderIsCurrent = true
+        installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
+        finishedRenderPlayer = player
+    }
+
+    private func failSourcePreview(_ error: Error) {
+        restoreFinishedRenderFallback()
+        sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+    }
+
+    private func restoreFinishedRenderFallback() {
+        guard let finishedRenderURL, player !== finishedRenderPlayer else { return }
+        installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
     }
 
     private func installPlayer(item: AVPlayerItem, preferredDuration: TimeInterval? = nil) {
@@ -3121,7 +3465,7 @@ enum NativeEditorLoadState: Equatable, Sendable {
                 if status == "ready", let output = variant["output_url"]?.stringValue, let url = URL(string: output) {
                     guard let self else { return }
                     self.rebaseCleanDraft(from: variant)
-                    self.installPlayer(url: url)
+                    self.installFinishedRenderPlayer(url: url, preferredDuration: self.authoritativeDuration)
                     self.pendingPreviewGeneration = nil
                     self.saveState = .saved
                     return

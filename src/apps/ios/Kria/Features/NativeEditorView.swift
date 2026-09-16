@@ -9,6 +9,7 @@ struct NativeEditorView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var session: NativeEditorSession
+    @StateObject private var exporter = NativeEditorExporter()
     @State private var selectedTool: NativeEditorTool?
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
@@ -49,7 +50,11 @@ struct NativeEditorView: View {
                     initialPlaybackURL: initialPlaybackURL
                 )
             }
-                ?? NativeEditorSession(project: project, operations: LocalEditorOperations())
+                ?? NativeEditorSession(
+                    project: project,
+                    operations: LocalEditorOperations(),
+                    initialPlaybackURL: initialPlaybackURL
+                )
         )
     }
 
@@ -60,13 +65,17 @@ struct NativeEditorView: View {
                 case .loaded:
                     editor(viewport: viewport)
                 case .idle, .loading:
-                    NativeEditorLoadSurface(
-                        title: "Opening the editor…",
-                        detail: "Loading the latest cut and its editing controls.",
-                        isLoading: true,
-                        onBack: requestBack,
-                        retry: nil
-                    )
+                    if session.canDisplayCurrentPlayer {
+                        editor(viewport: viewport)
+                    } else {
+                        NativeEditorLoadSurface(
+                            title: "Opening the editor…",
+                            detail: "Loading the latest cut and its editing controls.",
+                            isLoading: true,
+                            onBack: requestBack,
+                            retry: nil
+                        )
+                    }
                 case .failed(let message):
                     NativeEditorLoadSurface(
                         title: "The editor couldn’t open",
@@ -143,6 +152,9 @@ struct NativeEditorView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
             .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
+            .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
+                if let file = exporter.sharedFile { ShareSheetView(url: file) }
+            }
             .interactiveDismissDisabled(session.hasUnsavedChanges)
             .confirmationDialog(
                 "Save your changes before leaving?",
@@ -156,7 +168,10 @@ struct NativeEditorView: View {
                 Text("Unsaved editor changes are stored only on this device until you save.")
             }
             .task { await loadEditor() }
-            .onDisappear { session.pausePlayback() }
+            .onDisappear {
+                session.pausePlayback()
+                exporter.removeSharedFile()
+            }
         }
     }
 
@@ -177,10 +192,13 @@ struct NativeEditorView: View {
         let previewHeight = max(80, defaultPreviewHeight - timelineExpansion * resizeRange - (showsContext ? 52 : 0))
         VStack(spacing: 0) {
             NativeEditorProjectHeader(
-                title: project.workspaceTitle, session: session,
-                onBack: requestBack, onChat: conversation == nil ? requestBack : onBack
+                title: project.workspaceTitle, session: session, exporter: exporter,
+                onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
+                onSaveToPhotos: { Task { await exporter.saveToPhotos(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
+                onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } }
             )
             NativeEditorSaveBanner(session: session)
+            NativeEditorExportBanner(exporter: exporter)
             if let presentation = session.editorSongReferencePresentation {
                 NativeSongReferenceCard(presentation: presentation)
                     .padding(.horizontal, 16)
@@ -308,17 +326,21 @@ struct NativeEditorView: View {
 
     private func loadEditor() async {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-source-text"),
-           let url = Bundle.main.url(forResource: "montage", withExtension: "mp4") {
+        let arguments = ProcessInfo.processInfo.arguments
+        let sourceFailure = arguments.contains("-ui-testing-editor-source-failure")
+        if sourceFailure || arguments.contains("-ui-testing-editor-source-text") {
             let delayed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source")
             if delayed, session.loadState == .loaded { return }
-            await session.prepareFixtureSourcePreview(url: url, delayedLoad: delayed)
+            let url = sourceFailure
+                ? URL(fileURLWithPath: "/tmp/kria-missing-source-preview.mp4")
+                : Bundle.main.url(forResource: "montage", withExtension: "mp4")!
+            await session.prepareFixtureSourcePreview(url: url, delayedLoad: delayed, forceFailure: sourceFailure)
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
         session.useDeviceRendering(model.deviceRenders)
-        guard session.loadState != .loaded else { return }
+        guard session.needsReload(for: project) else { return }
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)
         } else {
@@ -426,8 +448,6 @@ private struct NativeEditorInspectorView: View {
                 case .tool(.captions): NativeCaptionsInspector(session: session)
                 case .tool(.visuals): NativeEffectBrowserInspector(session: session, kinds: [.visualBlock, .motionScene, .cameraEffect, .carousel], title: "Visual lanes")
                 case .tool(.sounds): NativeSoundsInspector(session: session)
-                case .tool(.overlays): NativeEffectBrowserInspector(session: session, kinds: [.mediaOverlay], title: "Overlays")
-                case .tool(.styles): NativeStylesInspector(session: session)
                 case .tool: NativeEditorUnavailableView(title: "Editor", reason: "This tool is not available for the current render.", systemImage: "lock")
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
