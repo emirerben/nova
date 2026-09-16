@@ -186,6 +186,20 @@ function variantLabel(variantId: string | undefined): string {
   return (variantId ?? "Cut").replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+const CLARIFYING_QUESTION_EVENT_TYPES = new Set(["assistant_question", "agent_assistant_question"]);
+
+function messageOptions(message: CreationThreadMessage): string[] {
+  const options = message.payload?.options;
+  return Array.isArray(options)
+    ? options.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
+}
+
+function messageRecommendedOption(message: CreationThreadMessage): string | null {
+  const value = message.payload?.recommended_option;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 interface AutomaticMemoryReceipt {
   operationId: string;
   memoryRevision: number;
@@ -1434,6 +1448,15 @@ export default function ChatCreationWorkspace({
     await submitMessage(sourceThread, message);
   }
 
+  function selectQuestionOption(option: string) {
+    // A clarifying-question option is sent exactly as displayed — the backend
+    // matches it by casefolded, whitespace-collapsed equality against the
+    // fenced mapping it handed back with the question, so it must not go
+    // through the offline-queue/composer draft path a hand-typed message does.
+    if (productionPreview || !thread || thinking || offline) return;
+    void submitMessage(thread, option);
+  }
+
   useEffect(() => {
     if (offline || !queuedMessageRef.current || !thread || thinking) return;
     const queued = queuedMessageRef.current;
@@ -2032,6 +2055,27 @@ export default function ChatCreationWorkspace({
             : [];
           return <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className="space-y-3">
             {message.content ? <ChatMessage role={message.role} animate={index === messages.length - 1}>{message.content}</ChatMessage> : null}
+            {index === messages.length - 1 && CLARIFYING_QUESTION_EVENT_TYPES.has(message.eventType) && messageOptions(message).length > 0 ? (
+              <div className="flex flex-wrap gap-2" aria-label="Suggested answers">
+                {messageOptions(message).map((option) => (
+                  <div key={option} className="flex flex-col items-start gap-1">
+                    {option === messageRecommendedOption(message) ? (
+                      <span className="text-[11px] font-medium uppercase tracking-wide text-lime-800">Recommended</span>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 whitespace-normal text-left"
+                      aria-label={`${option}${option === messageRecommendedOption(message) ? " (recommended)" : ""}`}
+                      disabled={productionPreview || thinking}
+                      onClick={() => selectQuestionOption(option)}
+                    >
+                      {option}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {queuedRuntimeTurn && message.payload?.turn_id === queuedRuntimeTurn.turnId ? <ChatArtifactCard badge={<Badge variant="outline">After this render</Badge>} title="One follow-up is queued" description="Kria saved this request and will pick it up when the current work settles."><div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button type="button" variant="outline" className="min-h-11" disabled={productionPreview || busy} onClick={() => void cancelQueuedRuntimeTurn(false)}>Cancel request</Button><Button type="button" variant="outline" className="min-h-11" disabled={productionPreview || busy} onClick={() => void cancelQueuedRuntimeTurn(true)}>Change request</Button></div></ChatArtifactCard> : null}
             {message.artifact === "draft" && message.id === latestRuntimeDraftId ? <ChatArtifactCard badge={<Badge variant="secondary">Draft saved</Badge>} title="Your edit is ready to review" description={changes.length > 0 ? changes.join(" · ") : "Kria applied the direction as a reversible draft."}><Button type="button" variant="outline" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void undoRuntimeDraft()}><RefreshCw /> Undo draft</Button></ChatArtifactCard> : null}
             {message.artifact === "approval" && approvalId && pendingRuntimeApprovalIds.has(approvalId) ? <AgentApprovalCard badge={<Badge variant="secondary">Approval required</Badge>} title="Start this render?" description={`${String(message.payload?.consequence_summary ?? "Render the saved draft.")}${message.payload?.cost_summary ? ` ${String(message.payload.cost_summary)}.` : ""}`} actions={<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button type="button" variant="outline" className="min-h-11" disabled={productionPreview || busy} onClick={() => void decideRuntimeApproval(approvalId, "deny")}>Not yet</Button><Button type="button" className="min-h-11" disabled={productionPreview || busy} onClick={() => void decideRuntimeApproval(approvalId, "approve")}><Sparkles />{busy ? "Recording approval…" : "Approve and render"}</Button></div>} /> : null}

@@ -104,6 +104,74 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertNil(message)
     }
 
+    func testSuccessfulUnchangedPollClearsStaleRecoveryMessage() {
+        var message: String? = "Kria lost the live connection. Your conversation is safe."
+
+        clearChatRefreshRecoveryMessage(&message)
+
+        XCTAssertNil(message)
+    }
+
+    func testSuccessfulUnchangedPollPreservesNonRecoveryMessage() {
+        var message: String? = "Your message wasn’t sent. The request timed out."
+
+        clearChatRefreshRecoveryMessage(&message)
+
+        XCTAssertEqual(message, "Your message wasn’t sent. The request timed out.")
+    }
+
+    func testSuccessfulPollClearsUnconfirmedSendRecoveryMessage() {
+        var message: String? = "Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely."
+
+        clearChatRefreshRecoveryMessage(&message)
+
+        XCTAssertNil(message)
+    }
+
+    func testAssistantQuestionExposesTappableOptionsAndRecommendation() throws {
+        let event = ThreadEvent(
+            id: "capacity-question",
+            sequence: 1,
+            revision: 1,
+            role: "assistant",
+            eventType: "agent_assistant_question",
+            content: "This edit cannot show all 34 clips in 30 seconds.",
+            payload: [
+                "options": .array([
+                    .string("Keep 30 seconds with the strongest clips"),
+                    .string("Keep 30 seconds and include everything with faster pacing"),
+                ]),
+                "recommended_option": .string("Keep 30 seconds with the strongest clips"),
+            ],
+            createdAt: .now
+        )
+
+        let message = try XCTUnwrap(ChatTranscriptMessage.from(event: event))
+
+        XCTAssertEqual(message.options, [
+            "Keep 30 seconds with the strongest clips",
+            "Keep 30 seconds and include everything with faster pacing",
+        ])
+        XCTAssertEqual(message.recommendedOption, "Keep 30 seconds with the strongest clips")
+    }
+
+    func testNonQuestionAssistantEventIgnoresStrayOptionsPayload() throws {
+        let event = ThreadEvent(
+            id: "strategy",
+            sequence: 1,
+            revision: 1,
+            role: "assistant",
+            eventType: "agent_assistant_strategy",
+            content: "Here’s the direction I’ll use.",
+            payload: ["options": .array([.string("should not render")])],
+            createdAt: .now
+        )
+
+        let message = try XCTUnwrap(ChatTranscriptMessage.from(event: event))
+
+        XCTAssertEqual(message.options, [])
+    }
+
     func testClipSelectionCapacityHonorsServerLimitAcrossRepeatedSelections() {
         let initial = ClipSelectionCapacity(maximum: 1, existing: 0, reserved: 0)
         XCTAssertEqual(initial.acceptedCount(requested: 4), 1)

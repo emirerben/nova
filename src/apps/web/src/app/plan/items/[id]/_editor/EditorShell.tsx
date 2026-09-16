@@ -156,7 +156,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
-import { nextAddedKey, type DraftSlot } from "@/app/generative/timeline-math";
+import { MAX_TOTAL_SECONDS, nextAddedKey, type DraftSlot } from "@/app/generative/timeline-math";
 import { timelineReducer } from "@/app/generative/timeline-reducer";
 import {
   barsToCaptionCues,
@@ -3819,7 +3819,7 @@ export default function EditorShell({
       let added: DraftSlot | undefined;
       if (guidedStoryV2) {
         const source = clip.clips.find((candidate) => candidate.clip_index === clipIndex);
-        const roomS = Math.max(0, 60 - slotLayout.totalDurationS);
+        const roomS = Math.max(0, MAX_TOTAL_SECONDS - slotLayout.totalDurationS);
         if (roomS < 0.1) {
           notify("This cut has no room for another clip. Shorten or remove a clip first.");
           return;
@@ -7855,6 +7855,18 @@ export default function EditorShell({
               : selection?.kind === "motion"
                 ? "Edit block"
               : "Edit";
+  const showSongReferenceNotice = referenceOnlyMusic && !!variant.song_reference;
+  // Reserve room in the mobile stage-height budget for the notice's
+  // collapsed (default) height -- it expands on tap, but the canvas isn't
+  // re-measured live, so this only budgets for the closed state. The
+  // toolbar row itself is unaffected either way (see the flex-col wrapper
+  // below): it can only ever shrink the canvas, never the toolbar.
+  const songNoticeOffsetPx = showSongReferenceNotice ? 64 : 0;
+  const songReferenceNotice = showSongReferenceNotice ? (
+    <div className="shrink-0 px-3 py-2">
+      <SongReferenceNotice reference={variant.song_reference} />
+    </div>
+  ) : null;
 
   return (
     <div
@@ -8039,13 +8051,11 @@ export default function EditorShell({
         />
       )}
 
-      {referenceOnlyMusic && variant.song_reference && (
-        <div className="px-3 py-2"><SongReferenceNotice reference={variant.song_reference} /></div>
-      )}
-
       {/* ── Middle row: rail · drawer · canvas · inspector · edge rail ── */}
       {layoutMode === "light" ? (
-        <div className="relative min-h-0">
+        <div className="flex min-h-0 flex-col overflow-hidden">
+          {songReferenceNotice}
+        <div className="relative min-h-0 flex-1">
           <EditorCanvas
             variant={variant}
             sourceAudioMix={sourceAudioMix}
@@ -8117,11 +8127,11 @@ export default function EditorShell({
             stageHeightCss={
               POCKET_UI
                 ? pocketSheetOpen && pocket.detent === "half"
-                  ? "46dvh - 128px"
+                  ? `46dvh - ${128 + songNoticeOffsetPx}px`
                   : pocketStripSelection?.type === "clip"
-                    ? "100dvh - 398px"
-                    : "100dvh - 350px"
-                : "100dvh - 152px"
+                    ? `100dvh - ${398 + songNoticeOffsetPx}px`
+                    : `100dvh - ${350 + songNoticeOffsetPx}px`
+                : `100dvh - ${152 + songNoticeOffsetPx}px`
             }
             canvas={activeCanvas}
           />
@@ -8173,10 +8183,13 @@ export default function EditorShell({
             </Button>
           )}
         </div>
+        </div>
       ) : (
+        <div className="flex min-h-0 flex-col overflow-hidden">
+          {songReferenceNotice}
         <div
           className={[
-            "relative grid min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden",
+            "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden",
             layoutMode === "full"
               ? "grid-cols-[auto_auto_1fr_auto]"
               : "grid-cols-[auto_1fr_auto]",
@@ -8499,6 +8512,7 @@ export default function EditorShell({
         />
         )}
       </div>
+        </div>
       )}
 
       {/* ── Timeline region (260px): TransportBar + scale-driven editor

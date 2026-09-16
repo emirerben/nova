@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 
 
 class MontageReviewCutInput(BaseModel):
@@ -16,7 +17,7 @@ class MontageReviewCutInput(BaseModel):
     media_id: str = Field(min_length=1, max_length=100)
     source_start_s: float = Field(ge=0)
     source_end_s: float = Field(gt=0)
-    output_duration_s: float = Field(ge=0.1, le=60.0)
+    output_duration_s: float = Field(ge=0.1, le=MAX_PROPOSAL_DURATION_S)
 
     @model_validator(mode="after")
     def validate_window(self) -> MontageReviewCutInput:

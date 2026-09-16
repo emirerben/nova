@@ -25,6 +25,7 @@ from app.routes.generative_jobs import (
     variant_render_baseline,
     visual_block_variant_duration,
 )
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 
 _IMAGE_SUFFIXES = {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"}
 _PORTABLE_FAMILIES = {
@@ -202,8 +203,8 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
         "base_generation": variant_render_baseline(variant),
         "has_narrated_captions": bool(cues)
         or variant.get("resolved_archetype") in {"subtitled", "talking_head"},
-        "max_duration_s": 60,
-        "remaining_duration_s": max(0.0, 60.0 - duration),
+        "max_duration_s": MAX_PROPOSAL_DURATION_S,
+        "remaining_duration_s": max(0.0, float(MAX_PROPOSAL_DURATION_S) - duration),
         "slots": slots,
         "text_bars": text_bars,
         "total_duration_s": duration,

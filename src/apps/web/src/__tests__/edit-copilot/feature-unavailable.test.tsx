@@ -50,8 +50,8 @@ function snapshot(): CopilotSnapshot {
     slots: [],
     has_narrated_captions: false,
     total_duration_s: 5,
-    max_duration_s: 60,
-    remaining_duration_s: 55,
+    max_duration_s: 120,
+    remaining_duration_s: 115,
     allowed_op_families: ["text", "clip"],
   } as CopilotSnapshot;
 }

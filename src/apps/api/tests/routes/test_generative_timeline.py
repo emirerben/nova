@@ -721,11 +721,11 @@ async def test_edit_round_trips_untouched_fast_one_beat_slot(monkeypatch):
 async def test_edit_too_long_cap(monkeypatch):
     await _expect_422(
         monkeypatch,
-        _timeline_job(beat_grid=[], src_dur=120.0),
+        _timeline_job(beat_grid=[], src_dur=240.0),
         [
-            {"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 30.0},
-            {"slot_id": "s2", "clip_index": 1, "in_s": 0.0, "duration_s": 30.0},
-            {"slot_id": None, "clip_index": 0, "in_s": 0.0, "duration_s": 1.0},  # 61s total
+            {"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 60.0},
+            {"slot_id": "s2", "clip_index": 1, "in_s": 0.0, "duration_s": 60.0},
+            {"slot_id": None, "clip_index": 0, "in_s": 0.0, "duration_s": 1.0},  # 121s total
         ],
         "TIMELINE_TOO_LONG",
     )

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents._schemas.creator_agent import MAX_CREATOR_OUTPUT_DURATION_S
 from app.config import settings
 from app.models import Job
 from app.services.speech_cleanup_identity import (
@@ -60,7 +61,7 @@ class OmniAssetStartBody(BaseModel):
     draft_revision: str = Field(min_length=1, max_length=100)
     action: OmniAction
     prompt: str = Field(min_length=1, max_length=500)
-    insert_at_s: float = Field(ge=0.0, le=60.0)
+    insert_at_s: float = Field(ge=0.0, le=MAX_CREATOR_OUTPUT_DURATION_S)
     duration_s: float = Field(ge=3.0, le=10.0)
     source_clip_index: int | None = Field(default=None, ge=0)
     source_start_s: float | None = Field(default=None, ge=0.0)

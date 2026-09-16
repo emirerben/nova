@@ -2218,6 +2218,14 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
                 "reason",
                 "code",
                 "edit_format",
+                # Clarifying-question affordances: option strings the client can
+                # render as tappable choices, which one to highlight, and which
+                # deterministic gate raised the question. Without these the
+                # client can only show prose and the reply must be hand-typed
+                # verbatim to match the backend's exact-string mapping.
+                "options",
+                "recommended_option",
+                "reason_code",
             }
         }
         await _append(

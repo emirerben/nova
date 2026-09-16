@@ -30,6 +30,7 @@ from app.models import (
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     MAIN_CREATOR_FAIL_CLOSED,
+    MAX_PROPOSAL_DURATION_S,
     EditProposal,
     EditProposalSnapshot,
     FastMontageCut,
@@ -515,8 +516,11 @@ def adapt_target_duration_s(
     """
 
     if allow_source_reuse:
-        return max(MIN_GUIDED_DURATION_S, min(brief_duration_s, 60))
-    return max(MIN_GUIDED_DURATION_S, min(brief_duration_s, feasible_s, 60))
+        return max(MIN_GUIDED_DURATION_S, min(brief_duration_s, MAX_PROPOSAL_DURATION_S))
+    return max(
+        MIN_GUIDED_DURATION_S,
+        min(brief_duration_s, feasible_s, MAX_PROPOSAL_DURATION_S),
+    )
 
 
 def cadence_target_duration_s(brief, media: list[MediaRef]) -> int | float | None:  # noqa: ANN001
@@ -1250,8 +1254,10 @@ def _run_draft_attempt(
         EditProposalMedia,
     )
     from app.services.edit_direction_planner import (  # noqa: PLC0415
+        CreatorTextInfeasibleError,
         deterministic_fast_cuts,
         deterministic_guided_beats,
+        deterministic_labeled_beats,
     )
     from app.services.edit_proposals import approve_proposal  # noqa: PLC0415
 
@@ -1466,7 +1472,7 @@ def _run_draft_attempt(
                     db.commit()
             return
         target_duration_s = (
-            max(MIN_GUIDED_DURATION_S, min(60, narration.duration_s))
+            max(MIN_GUIDED_DURATION_S, min(MAX_PROPOSAL_DURATION_S, narration.duration_s))
             if narration is not None
             else cadence_target_s
             or adapt_target_duration_s(
@@ -1635,6 +1641,10 @@ def _run_draft_attempt(
                     montage_audio=brief.montage_audio,
                     montage_cadence=brief.montage_cadence,
                     video_reuse_policy=video_reuse_policy,
+                    opening_title=brief.opening_title,
+                    opening_title_duration_s=brief.opening_title_duration_s,
+                    shot_labels=brief.shot_labels,
+                    closing_title=brief.closing_title,
                     media=agent_media,
                 ),
                 ctx=RunContext(
@@ -1693,6 +1703,10 @@ def _run_draft_attempt(
                             montage_cadence=brief.montage_cadence,
                             video_reuse_policy=video_reuse_policy,
                             review_feedback=review_feedback,
+                            opening_title=brief.opening_title,
+                            opening_title_duration_s=brief.opening_title_duration_s,
+                            shot_labels=brief.shot_labels,
+                            closing_title=brief.closing_title,
                             media=agent_media,
                         ),
                         ctx=RunContext(
@@ -1767,10 +1781,56 @@ def _run_draft_attempt(
                 ),
             )
             fallback_beats = _fast_story_beats(fallback_cuts)
+        elif output is None and brief.shot_labels:
+            # Recovery keeps the creator's exact labels; generic fallback copy
+            # must never replace them (Barcelona trailer, job ac795019).
+            fallback_cuts = None
+            try:
+                fallback_beats = deterministic_labeled_beats(
+                    media,
+                    target_duration_s,
+                    shot_labels=brief.shot_labels,
+                    opening_title=brief.opening_title,
+                    opening_title_duration_s=brief.opening_title_duration_s,
+                    closing_title=brief.closing_title,
+                )
+            except CreatorTextInfeasibleError as exc:
+                with sync_session() as db:
+                    locked = _locked_item(db, iid, ownership_epoch)
+                    item = locked[0] if locked else None
+                    current = parse_edit_proposal(item.edit_proposal) if item else None
+                    if (
+                        item
+                        and current
+                        and current.generation_attempt_id == attempt_id
+                        and current.status == "drafting"
+                    ):
+                        _fail(
+                            item,
+                            current,
+                            "creator_text_infeasible",
+                            f"Kria couldn't fit your {len(brief.shot_labels)} shot labels onto "
+                            "these clips. Add clips or shorten the video, then try again.",
+                            detail=_exc_detail(exc),
+                        )
+                        db.commit()
+                return
         else:
             fallback_cuts = None
             fallback_beats = (
-                deterministic_guided_beats(media, target_duration_s) if output is None else None
+                deterministic_guided_beats(
+                    media,
+                    target_duration_s,
+                    required_media_ids=(
+                        [ref.media_id for ref in media]
+                        if brief.media_scope == "all"
+                        else brief.selected_media_ids
+                        if brief.media_scope == "selected"
+                        else None
+                    ),
+                )
+                if output is None
+                else None
             )
         snapshot = EditProposalSnapshot(
             direction=brief.direction,
@@ -1781,6 +1841,9 @@ def _run_draft_attempt(
             # specialist/copy-writer title for every render.
             title=brief.opening_title or (output.title if output is not None else "A few moments"),
             opening_title=brief.opening_title,
+            opening_title_duration_s=brief.opening_title_duration_s,
+            shot_labels=brief.shot_labels,
+            closing_title=brief.closing_title,
             font_family=brief.font_family,
             text_color=brief.text_color,
             image_layout=brief.image_layout,
@@ -1792,7 +1855,13 @@ def _run_draft_attempt(
                         beat_id=str(uuid.uuid4()),
                         topic=beat.topic,
                         thought=beat.thought,
-                        thought_source="ai_draft",
+                        # parse() already bound labeled beats to the exact
+                        # confirmed labels; they are creator copy, not drafts.
+                        thought_source=(
+                            "user"
+                            if brief.shot_labels and beat.thought in brief.shot_labels
+                            else "ai_draft"
+                        ),
                         media_ids=beat.media_ids,
                         layout=beat.layout,
                         duration_s=beat.duration_s,

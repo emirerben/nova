@@ -3013,6 +3013,69 @@ async def test_sync_agent_never_projects_a_cross_tenant_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_agent_forwards_clarifying_question_options_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard for KRI-87: an assistant_question's options,
+    recommended_option, and reason_code must reach the thread projection --
+    otherwise no client can render a tappable reply to the all-media-capacity
+    preflight, and the user is stuck retyping a message the backend's
+    exact-string matcher will never accept."""
+    import app.routes.creation_threads as routes
+
+    user_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user_id,
+        active_creator_agent_session_id=session_id,
+        state={},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user_id,
+        status="awaiting_confirmation",
+        revision=1,
+        active_plan=None,
+    )
+    event = SimpleNamespace(
+        id=uuid.uuid4(),
+        event_type="assistant_question",
+        payload={
+            "message": "This edit cannot show all 34 clips in 30 seconds.",
+            "reason_code": "all_media_capacity",
+            "options": [
+                "Keep 30 seconds with the strongest clips",
+                "Keep 30 seconds and include everything with faster pacing",
+            ],
+            "recommended_option": "Keep 30 seconds with the strongest clips",
+            "all_media_capacity": {"manifest_hash": "should-never-leak"},
+        },
+    )
+    scalars = SimpleNamespace(all=lambda: [event])
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=session),
+        execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: scalars)),
+    )
+    append_mock = AsyncMock()
+    monkeypatch.setattr(routes, "_append", append_mock)
+
+    await routes._sync_agent(db, thread)
+
+    assert append_mock.await_count == 1
+    payload = append_mock.await_args.kwargs["payload"]
+    assert payload["options"] == [
+        "Keep 30 seconds with the strongest clips",
+        "Keep 30 seconds and include everything with faster pacing",
+    ]
+    assert payload["recommended_option"] == "Keep 30 seconds with the strongest clips"
+    assert payload["reason_code"] == "all_media_capacity"
+    # The manifest-hash-fenced mapping is a server-internal matching detail,
+    # not client-facing content -- only the allowlisted keys forward.
+    assert "all_media_capacity" not in payload
+
+
+@pytest.mark.asyncio
 async def test_status_reconciliation_degrades_instead_of_dead_ending_a_status_question() -> None:
     """Regression guard: a status-only message ("is it ready?") must not
     roll back the user's own just-appended message when the render graph

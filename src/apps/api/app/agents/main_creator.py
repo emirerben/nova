@@ -32,7 +32,7 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-13-v22"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-16-v27"
 
 
 class MainCreatorInput(BaseModel):
@@ -101,9 +101,15 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             data = json.loads(raw_text)
             if not isinstance(data, dict):
                 raise ValueError("response is not an object")
-            action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(
-                _repair_action_envelope(data.get("action"))
-            )
+            raw_action = _repair_action_envelope(data.get("action"))
+            if isinstance(raw_action, dict) and raw_action.get("kind") == "propose_strategy":
+                raw_strategy = raw_action.get("strategy")
+                if not isinstance(raw_strategy, dict) or "target_duration_s" not in raw_strategy:
+                    raise ValueError("propose_strategy must explicitly choose target_duration_s")
+                rationale = raw_strategy.get("rationale")
+                if not isinstance(rationale, str) or not rationale.strip():
+                    raise ValueError("propose_strategy must explain its duration in rationale")
+            action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(raw_action)
             if isinstance(action, ProposeStrategy):
                 # Share the compiler's exact policy: guided planning never
                 # echoes opaque IDs, while native planning remains bounded to
@@ -233,6 +239,8 @@ def _explicit_media_scope_from_request(request: str) -> str | None:
     if re.search(
         r"\b(?:all|every|each)\s+(?:the\s+)?(?:images?|photos?|videos?|clips?|media|footage)\b"
         r"|\buse\s+(?:all|everything)\b"
+        r"|\b(?:use|include|keep)\s+(?:these|those)(?:\s+\d+)?\s+"
+        r"(?:images?|photos?|videos?|clips?|files?|pieces?\s+of\s+media)\b"
         r"|\b(?:all|every)\s+(?:uploaded|provided)\s+(?:media|files?|images?|photos?|videos?)\b",
         normalized,
     ):

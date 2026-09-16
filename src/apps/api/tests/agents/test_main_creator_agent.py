@@ -63,6 +63,7 @@ def _raw(*, audio_strategy: str, selected: list[str], montage_audio: dict | None
                     "montage_audio": montage_audio,
                     "render_program": "guided",
                     "selected_media_ids": selected,
+                    "target_duration_s": 24,
                     "rationale": "Build a concise visual arc.",
                 },
                 "summary": "A concise visual story.",
@@ -92,10 +93,8 @@ def test_main_creator_prompt_explains_guided_media_and_music_contracts() -> None
 
     assert "guided `all` or omitted scope, return `selected_media_ids: []`;" in prompt
     assert "only when the manifest catalog contains a usable music entry" in prompt
-    assert (
-        "uses native unless the explicit advertised `guided_voiceover_v1` contract applies"
-        in prompt
-    )
+    assert "Recorded voiceover uses native" in prompt
+    assert "explicit advertised `guided_voiceover_v1` contract applies" in prompt
     assert "voiceover, and audio-led formats force native" not in prompt
 
 
@@ -156,6 +155,7 @@ def test_main_creator_recognizes_mixed_media_timing_request() -> None:
     [
         ("Create an edit of the best moments.", None),
         ("Use all uploaded media.", "all"),
+        ("Use these 17 clips, keep their original sound, and prepare a fresh edit.", "all"),
         ("Don't use all media; use only the selected clips.", "selected"),
     ],
 )
@@ -174,6 +174,7 @@ def test_main_creator_normalizes_media_scope_against_actual_request(
                     "media_scope": "all",
                     "render_program": "native",
                     "selected_media_ids": [agent_input.capability_manifest.media[0].media_id],
+                    "target_duration_s": 24,
                     "rationale": "Use the strongest moments.",
                 },
                 "summary": "A focused edit.",
@@ -462,3 +463,12 @@ def test_schema_retry_names_failed_field_without_echoing_private_value() -> None
     assert "private-invalid-style" not in clarification
     agent.parse(_raw(audio_strategy="licensed_music", selected=[]), _input())
     assert "caption_style" not in agent.schema_clarification()
+
+
+def test_prompt_defines_all_media_as_representative_coverage() -> None:
+    prompt = MainCreatorAgent(None).render_prompt(_input())  # type: ignore[arg-type]
+
+    assert "`all` requires\n  coverage, not playing every raw file in full" in prompt
+    assert "Do not\n  ask merely because total raw footage is longer than the output" in prompt
+    assert 'A request such as "use these clips" or "use these 17 clips"' in prompt
+    assert "do not ask the creator to choose\n  a length or pacing" in prompt
