@@ -133,7 +133,9 @@ def test_source_window_shifts_start_to_preserve_full_duration_when_it_fits():
     bindings[0].original.duration_s = 4.85  # moment.source_end_s == 5, overrun == 0.15s
     recipe = compile_phone_guided_plan(plan, bindings)
     clip = recipe.tracks[0].clips[0]
-    assert clip.source_start == pytest.approx(1.85)
+    # A 0.05s export safety margin comes off the available window first
+    # (4.85 - 0.05 = 4.8), so the full 3s duration still fits by shifting.
+    assert clip.source_start == pytest.approx(1.8)
     assert clip.source_duration == pytest.approx(3)
 
 
@@ -143,7 +145,22 @@ def test_source_window_truncates_only_when_shifting_cannot_fit_it():
     recipe = compile_phone_guided_plan(plan, bindings)
     clip = recipe.tracks[0].clips[0]
     assert clip.source_start == 0
-    assert clip.source_duration == pytest.approx(2.5)
+    # 2.5 - the 0.05s safety margin = 2.45 available to fit.
+    assert clip.source_duration == pytest.approx(2.45)
+
+
+def test_source_window_never_fits_exactly_to_the_device_boundary():
+    # Reading a track to its precise reported duration is a classic
+    # AVFoundation edge case -- the on-device export failed even after the
+    # refit landed exactly on binding.original.duration_s (job 22d1ce8a: the
+    # server compiled successfully but the local export then failed with no
+    # output file). The refit must always leave a small safety margin.
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 4.999  # triggers the refit, close to the boundary
+    recipe = compile_phone_guided_plan(plan, bindings)
+    clip = recipe.tracks[0].clips[0]
+    end = clip.source_start + clip.source_duration
+    assert bindings[0].original.duration_s - end == pytest.approx(0.05)
 
 
 def test_source_window_rejects_when_essentially_nothing_is_available():

@@ -39,6 +39,14 @@ class UnsupportedPhonePlan(ValueError):
 # than a couple of milliseconds.
 _TIMING_ROUNDING_TOLERANCE_S = 0.005
 
+# When a moment's source window has to be refit into what the device's own
+# original file actually measures (see the refit block below), never fit
+# exactly to that boundary — reading a track to its precise reported duration
+# is a classic AVFoundation edge case (the true last frame can land a few ms
+# past the nominal duration, or reading up to the exact boundary lands
+# mid-frame and the on-device export fails outright).
+_EXPORT_SAFETY_MARGIN_S = 0.05
+
 
 def compile_phone_guided_plan(
     plan: GuidedStoryExecutionPlan, bindings: tuple[PhoneSourceBinding, ...]
@@ -152,7 +160,12 @@ def compile_phone_guided_plan(
             # duration by shifting the start rather than truncating it (a
             # truncated moment would desync from the text/audio timed against
             # its original duration).
-            available = binding.original.duration_s
+            # Never fit exactly to the device-measured boundary: reading a
+            # track to its precise reported duration is a classic AVFoundation
+            # edge case (the true last frame can land a few ms past the
+            # nominal duration, or reading up to the exact boundary lands
+            # mid-frame and the export fails). Leave a small safety margin.
+            available = max(0.0, binding.original.duration_s - _EXPORT_SAFETY_MARGIN_S)
             fitted_duration = min(source_duration, available)
             if fitted_duration < 0.1:
                 raise UnsupportedPhonePlan(
