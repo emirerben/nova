@@ -1020,23 +1020,25 @@ def deterministic_guided_beats(
         if index > beat_count * 2 and remaining > 0.001:
             raise ValueError("guided story fallback cannot allocate target duration")
 
-    copy = [
-        ("Opening", "A few moments, together."),
-        ("Details", "Details worth noticing."),
-        ("Closing", "One last look."),
-        ("Another view", "A different angle on the moment."),
-        ("Final frame", "A final frame to remember."),
-        ("Next chapter", "The story moves into another moment."),
-        ("More detail", "Another detail adds to the sequence."),
-        ("Later moment", "A later moment keeps the story moving."),
-        ("Before the close", "One more view sets up the ending."),
-        ("Last moment", "The final moment brings the story together."),
+    # Chapter names for the editor only. Recovery never invents on-screen copy:
+    # generic captions burned over a failed plan were the job ac795019 symptom.
+    topics = [
+        "Opening",
+        "Details",
+        "Closing",
+        "Another view",
+        "Final frame",
+        "Next chapter",
+        "More detail",
+        "Later moment",
+        "Before the close",
+        "Last moment",
     ]
     return [
         StoryBeat(
             beat_id=f"fallback-beat-{beat_index + 1}",
-            topic=copy[beat_index][0],
-            thought=copy[beat_index][1],
+            topic=topics[beat_index],
+            thought="",
             thought_source="ai_draft",
             media_ids=[ref.media_id for ref in group],
             layout="fullscreen",
@@ -1153,6 +1155,7 @@ def plan_direction_snapshot(
                 opening_title_duration_s=source.opening_title_duration_s,
                 shot_labels=source.shot_labels,
                 closing_title=source.closing_title,
+                on_screen_text_requested=source.on_screen_text_requested,
                 media=media,
             ),
             ctx=RunContext(job_id=job_id) if job_id else None,

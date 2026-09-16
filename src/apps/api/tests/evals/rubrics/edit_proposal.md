@@ -29,3 +29,10 @@ correctly yields beat durations 3.5, 1.5, 1.5, 1.5, 1.5, 3.5: each label is stil
 labeled inputs only: score Creator direction and Editability on label wording, order, per-shot
 timing, and how well each shot matches its label; score Safe draft thoughts only on non-label
 thoughts; and score Story coherence on the creator's labeled sequence rather than self-chosen topics.
+
+**No on-screen text (only when the input sets `on_screen_text_requested` to false).** If the input
+does not set it to false, ignore this entire section. When it is false, the creator did not ask for
+words on the video: the correct plan leaves `thought` empty on every beat that is not a creator
+label, has no `montage_text_bindings`, and uses `title` only to name the plan. Do not penalize empty
+thoughts or a missing visible intro. Score Safe draft thoughts as fully safe when nothing is drafted,
+and score Editability and Story coherence on the chapter topics, media choices, and durations.

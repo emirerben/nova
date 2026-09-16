@@ -144,6 +144,7 @@ from app.pipeline.agents.copy_writer import (
     YOUTUBE_TITLE_MAX,
 )
 from app.pipeline.intro_cluster import ROLE_CLOSER, ROLE_HERO, VALID_ROLES
+from app.schemas.edit_proposal import ai_on_screen_text_allowed
 from app.schemas.voiceover_script import target_word_count as voiceover_target_words
 
 # ── template_recipe ──────────────────────────────────────────────────────────
@@ -2512,11 +2513,27 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         used_kinds = {media.kind for media in input.media if media.media_id in used}
         if len(input_kinds) > 1 and used_kinds != input_kinds:
             failures.append("story does not use both photos and videos")
+        ai_text_allowed = ai_on_screen_text_allowed(input.on_screen_text_requested, input.direction)
         if input.direction in {"guided_story", "text_explainer"}:
             if len(output.story_beats) < min(3, len(input.media)):
                 failures.append("guided story has fewer than three beats")
-            if any(not beat.thought.strip() for beat in output.story_beats):
+            if (
+                ai_text_allowed
+                and not input.shot_labels
+                and any(not beat.thought.strip() for beat in output.story_beats)
+            ):
                 failures.append("guided story has an empty thought")
+        if not ai_text_allowed:
+            # On-screen text is opt-in: only confirmed creator labels may carry copy.
+            creator_labels = set(input.shot_labels or [])
+            if (
+                any(
+                    beat.thought.strip() and beat.thought not in creator_labels
+                    for beat in output.story_beats
+                )
+                or output.montage_text_bindings
+            ):
+                failures.append("plan carries on-screen text the creator did not ask for")
         for index, beat in enumerate(output.story_beats):
             if len(beat.thought.split()) > 18:
                 failures.append(f"beat {index}: thought exceeds 18 words")

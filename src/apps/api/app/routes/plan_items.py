@@ -2694,6 +2694,7 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
         opening_title_duration_s=current.opening_title_duration_s,
         shot_labels=current.shot_labels,
         closing_title=current.closing_title,
+        on_screen_text_requested=current.on_screen_text_requested,
         font_family=current.font_family,
         text_color=current.text_color,
         image_layout=current.image_layout,
@@ -3418,6 +3419,7 @@ async def edit_proposal_conversation_turn(
             mixed_media_timing=review_mixed_media_timing,
             montage_cadence=review_snapshot.montage_cadence,
             video_reuse_policy=review_snapshot.video_reuse_policy,
+            on_screen_text_requested=review_snapshot.on_screen_text_requested,
             output_orientation=current.brief.output_orientation if current else None,
         )
         if review_snapshot
@@ -3597,6 +3599,7 @@ async def edit_proposal_conversation_turn(
             opening_title_duration_s=revised_snapshot.opening_title_duration_s,
             shot_labels=revised_snapshot.shot_labels,
             closing_title=revised_snapshot.closing_title,
+            on_screen_text_requested=revised_snapshot.on_screen_text_requested,
             font_family=revised_snapshot.font_family,
             text_color=revised_snapshot.text_color,
             image_layout=revised_snapshot.image_layout,
@@ -3851,6 +3854,7 @@ async def confirm_item_edit_direction(
         montage_audio=(
             current.brief.montage_audio if hypothesis.direction == "fast_montage" else None
         ),
+        on_screen_text_requested=current.brief.on_screen_text_requested,
         output_orientation=current.brief.output_orientation,
     )
     ensure_clip_media_ids(item)

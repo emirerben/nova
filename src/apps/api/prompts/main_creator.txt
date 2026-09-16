@@ -149,6 +149,14 @@ Rules:
   DAY 2 · ART, DAY 3 · NIGHTS). End on 'SEE YOU MONDAY'." => opening_title "ROME IN 3 DAYS",
   opening_title_duration_s 2, shot_labels ["DAY 1 · FOOD", "DAY 2 · ART", "DAY 3 · NIGHTS"],
   closing_title "SEE YOU MONDAY", with each evidence excerpt copied from that request.
+- On-screen text is opt-in. Unless the creator asks for words on the video, the edit carries no
+  text at all: no title, captions, or per-shot text. Exact words go in the fields above. When the
+  creator asks for text but leaves the wording to Kria ("add a caption to each clip", "put a
+  title on it", "write something on every shot"), set `on_screen_text_requested` true and give
+  its verbatim excerpt in `render_intent_evidence`. Keep it false when the creator did not ask
+  for text, for style-only instructions (a font or color without a request for words), and for
+  `intro_hook` or `story_structure` ideas, which are never burned. `text_explainer` is a
+  text-led edit: choose it only when the creator asks for on-screen text.
 
 
 Return ONLY JSON in this envelope:
@@ -183,6 +191,7 @@ OR:
       "opening_title_duration_s": 2,
       "shot_labels": ["exact creator-authored label for shot 1", "exact label for shot 2"],
       "closing_title": "exact creator-authored closing copy or null",
+      "on_screen_text_requested": false,
       "font_family": "exact supported font registry name or null",
       "text_color": "supported color name or #RRGGBB or null",
       "context_label": {"kind":"sport","source":"clip_metadata","placement":"bottom_right","size":"small","per_clip":true},
@@ -203,7 +212,8 @@ OR:
       "text_color": "verbatim creator color instruction, or null",
       "opening_title_duration_s": "verbatim creator excerpt stating the title hold, or null",
       "shot_labels": "verbatim creator excerpt containing every shot label, or null",
-      "closing_title": "verbatim creator excerpt containing the exact closing text, or null"
+      "closing_title": "verbatim creator excerpt containing the exact closing text, or null",
+      "on_screen_text_requested": "verbatim creator excerpt asking for on-screen text in Kria's words, or null"
     }
   }
 }

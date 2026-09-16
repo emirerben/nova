@@ -599,6 +599,7 @@ def _apply_explicit_render_intent(
             "opening_title_duration_s",
             "shot_labels",
             "closing_title",
+            "on_screen_text_requested",
         ):
             quote = " ".join(str(getattr(render_intent_evidence, field, None) or "").split())
             if not quote or not any(quote in source for source in creator_sources):
@@ -625,6 +626,9 @@ def _apply_explicit_render_intent(
         "opening_title_duration_s": None,
         "shot_labels": None,
         "closing_title": None,
+        # On-screen text is opt-in: without a grounded creator request, no
+        # generated title, captions, or labels are burned.
+        "on_screen_text_requested": False,
         # A model-authored label is only retained when the typed companion
         # flag records the same intent.  This keeps an unrelated request from
         # inheriting a stale context label while allowing multilingual or
@@ -2236,6 +2240,7 @@ async def _run_planning_turn(
                             "opening_title_duration_s": strategy.opening_title_duration_s,
                             "shot_labels": strategy.shot_labels,
                             "closing_title": strategy.closing_title,
+                            "on_screen_text_requested": strategy.on_screen_text_requested,
                             "font_family": strategy.font_family,
                             "text_color": strategy.text_color,
                         }
@@ -2656,6 +2661,7 @@ def _seed_guided_specialist_brief(
         "opening_title_duration_s": plan.strategy.opening_title_duration_s,
         "shot_labels": plan.strategy.shot_labels,
         "closing_title": plan.strategy.closing_title,
+        "on_screen_text_requested": plan.strategy.on_screen_text_requested,
         "font_family": plan.strategy.font_family,
         "text_color": plan.strategy.text_color,
         "image_layout": plan.strategy.image_layout,

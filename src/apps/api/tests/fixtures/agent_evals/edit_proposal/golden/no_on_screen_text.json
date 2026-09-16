@@ -1,0 +1,69 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.10.0",
+  "input": {
+    "idea": "Corfu architecture",
+    "theme": "Walking through town",
+    "direction": "guided_story",
+    "goal": "Show how the streets, buildings, and small details relate",
+    "pace": "balanced",
+    "target_duration_s": 24,
+    "media": [
+      {
+        "media_id": "a1",
+        "lane": "clip",
+        "kind": "video",
+        "subject": "walking into old town"
+      },
+      {
+        "media_id": "a2",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "stone arch"
+      },
+      {
+        "media_id": "a3",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "colorful shutters"
+      },
+      {
+        "media_id": "a4",
+        "lane": "asset",
+        "kind": "video",
+        "subject": "narrow street pan"
+      },
+      {
+        "media_id": "a5",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "balcony details"
+      },
+      {
+        "media_id": "a6",
+        "lane": "asset",
+        "kind": "video",
+        "subject": "open square"
+      },
+      {
+        "media_id": "a7",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "weathered doorway"
+      }
+    ],
+    "creator_request": "Walk through Corfu town: show how the streets, buildings, and small details relate.",
+    "on_screen_text_requested": false
+  },
+  "raw_text": "{\"title\": \"How Corfu town unfolds\", \"duration_s\": 24, \"story_beats\": [{\"topic\": \"Streets\", \"thought\": \"\", \"media_ids\": [\"a1\", \"a4\", \"a6\"], \"layout\": \"fullscreen\", \"duration_s\": 8}, {\"topic\": \"Buildings\", \"thought\": \"\", \"media_ids\": [\"a2\", \"a3\"], \"layout\": \"fullscreen\", \"duration_s\": 6}, {\"topic\": \"Details\", \"thought\": \"\", \"media_ids\": [\"a5\", \"a7\"], \"layout\": \"supporting_card\", \"duration_s\": 6}], \"montage_text_bindings\": []}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "no_on_screen_text",
+    "expected_topics": [
+      "streets",
+      "buildings",
+      "details"
+    ],
+    "note": "The creator asked for no on-screen text: every thought stays empty, no montage copy."
+  }
+}

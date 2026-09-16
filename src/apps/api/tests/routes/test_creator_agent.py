@@ -2192,6 +2192,8 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
             "video_hold": "longer",
             "boundary_style": "cut",
         },
+        # A confirmed Main Creator brief records the explicit text opt-in.
+        "on_screen_text_requested": False,
         "output_orientation": "portrait",
     }
 

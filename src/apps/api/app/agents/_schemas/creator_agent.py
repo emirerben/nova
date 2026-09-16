@@ -324,6 +324,16 @@ class CreativeStrategy(_CreatorModel):
         exclude_if=lambda value: value is None,
         description="Confirmed exact closing/end-card copy; never an LLM-generated suggestion.",
     )
+    on_screen_text_requested: bool = Field(
+        default=False,
+        # False is the default, so omitting it keeps unchanged strategies byte-identical.
+        exclude_if=lambda value: value is False,
+        description=(
+            "The creator asked for on-screen text (a title, captions, per-shot text) without "
+            "supplying the exact words. Without it only confirmed creator copy is burned: no "
+            "generated title, captions, or labels."
+        ),
+    )
     font_family: str | None = Field(
         default=None,
         validation_alias=AliasChoices("font_family", "intro_font_family"),
@@ -484,6 +494,9 @@ class CreatorRenderIntentEvidence(_CreatorModel):
         default=None, max_length=2400, exclude_if=lambda value: value is None
     )
     closing_title: str | None = Field(
+        default=None, max_length=1200, exclude_if=lambda value: value is None
+    )
+    on_screen_text_requested: str | None = Field(
         default=None, max_length=1200, exclude_if=lambda value: value is None
     )
 

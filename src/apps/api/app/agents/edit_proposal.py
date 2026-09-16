@@ -31,6 +31,7 @@ from app.schemas.edit_proposal import (
     MontageTextBinding,
     ProposalDuration,
     VideoReusePolicy,
+    ai_on_screen_text_allowed,
     canonical_narration_duration_s,
     clean_creator_shot_labels,
     closing_title_hold_s,
@@ -286,6 +287,34 @@ def _creator_text_note(input: EditProposalAgentInput) -> str:  # noqa: A002
     return note.strip()
 
 
+def _on_screen_text_note(input: EditProposalAgentInput) -> str:  # noqa: A002
+    """Server-authored instruction when the creator did not ask for on-screen text."""
+
+    if ai_on_screen_text_allowed(input.on_screen_text_requested, input.direction):
+        return ""
+    # Shares the creator-text line in the template, so prompts for every other
+    # input stay byte-identical; start on a fresh line when present.
+    note = "\nON-SCREEN TEXT: the creator did not ask for text on the video, so write no copy. "
+    if input.direction == "fast_montage":
+        note += "Return fast_cuts as usual. "
+    else:
+        # Live evals showed the model swapping an empty-caption story for a
+        # fast-cut montage; only the words change, never the edit's structure.
+        note += (
+            "Keep the CREATOR DIRECTION and its structure: return story_beats exactly as you "
+            "otherwise would (topic, media_ids, layout, duration_s), never fast_cuts instead, and "
+            + (
+                'keep each labeled beat\'s creator label while every other `thought` is "". '
+                if input.shot_labels
+                else 'set every `thought` to "". '
+            )
+        )
+    return note + (
+        "Leave `montage_text_bindings` empty. `title` only names the plan and is never shown. "
+        "This overrides the visible-intro and thought-moment rules below."
+    )
+
+
 def _apply_creator_shot_labels(
     output: EditProposalAgentOutput,
     input: EditProposalAgentInput,  # noqa: A002
@@ -362,6 +391,8 @@ class EditProposalAgentInput(BaseModel):
     )
     shot_labels: list[str] | None = Field(default=None, max_length=MAX_CREATOR_SHOT_LABELS)
     closing_title: str | None = Field(default=None, max_length=CREATOR_TITLE_MAX_CHARS)
+    # Opt-in AI on-screen text (ai_on_screen_text_allowed); None = legacy brief.
+    on_screen_text_requested: bool | None = None
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
     @model_validator(mode="before")
@@ -1162,7 +1193,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.9.0",
+        prompt_version="1.10.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1379,6 +1410,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             review_note=review_note,
             narration_note=narration_note,
             creator_text_note=_creator_text_note(input),
+            on_screen_text_note=_on_screen_text_note(input),
             footage_note=footage_note,
             media_json=json.dumps([row.model_dump() for row in prompt_media], ensure_ascii=False),
             source_floor_note=source_floor_note,
@@ -1396,11 +1428,16 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         if not isinstance(payload, dict):
             raise SchemaError("edit_proposal: invalid output — expected an object")
         creator_labels = input.shot_labels if input.direction != "fast_montage" else None
+        ai_text_allowed = ai_on_screen_text_allowed(input.on_screen_text_requested, input.direction)
         if creator_labels:
             # Story beats are the only lane that can carry per-shot copy. The
             # renderer ignores fast-cut fields for beat plans, so a model that
             # also sketches them must not fail the labeled plan (job ac795019).
             payload = {**payload, "fast_cuts": None, "montage_text_bindings": []}
+        if not ai_text_allowed:
+            # The creator did not ask for on-screen text: advisory montage copy
+            # is dropped here rather than failing an otherwise valid plan.
+            payload = {**payload, "montage_text_bindings": []}
         payload = _resolve_model_media_references(payload, input)
         repaired_cut_ids: set[str] = set()
         if input.direction == "fast_montage":
@@ -1597,7 +1634,12 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                     raise SchemaError(
                         f"edit_proposal: guided story needs at least {minimum_beats} beats"
                     )
-                if any(not beat.thought.strip() for beat in output.story_beats):
+                if not ai_text_allowed:
+                    # The creator did not ask for on-screen text, so no drafted
+                    # thought may become pixels; clear rather than fail the plan.
+                    for beat in output.story_beats:
+                        beat.thought = ""
+                elif any(not beat.thought.strip() for beat in output.story_beats):
                     raise SchemaError("edit_proposal: guided story thoughts cannot be empty")
         if input.direction != "fast_montage" and not creator_labels:
             minimum_topics = min(3, len(input.media))

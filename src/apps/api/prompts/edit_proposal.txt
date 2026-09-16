@@ -17,7 +17,7 @@ $fast_timing_note
 $mixed_timing_note
 $montage_note
 $narration_note
-$creator_text_note
+$creator_text_note$on_screen_text_note
 $review_note
 FOOTAGE CONSTRAINT: $footage_note
 
