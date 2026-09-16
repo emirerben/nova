@@ -96,6 +96,29 @@ def test_shared_timing_and_original_metadata_preserved():
     assert compile_phone_guided_plan(plan, bindings).audio.original_volume == 0.4
 
 
+def test_tolerates_millisecond_rounding_noise_between_stored_timing_fields():
+    # `story_timeline` moments persist source/output timestamps independently
+    # rounded to milliseconds. `source_end_s - source_start_s` and the stored
+    # `duration_s` are two separately-rounded quantities that can legitimately
+    # differ by ~1ms of compounding rounding noise -- confirmed live (job
+    # a994fddd: source_duration=10.288 vs moment_duration_s=10.287, a 1ms gap
+    # that a microsecond-scale tolerance rejected outright even though the
+    # plan was perfectly valid.
+    plan, bindings = fixture()
+    # source_end(5) - source_start(2) == 3 exactly
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"duration_s": 3.001})
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert recipe.tracks[0].clips[0].source_duration == pytest.approx(3)
+
+
+def test_rejects_a_timing_mismatch_larger_than_rounding_noise():
+    plan, bindings = fixture()
+    # 100ms off -- a real timing-program mismatch, not rounding noise
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"duration_s": 3.1})
+    with pytest.raises(ValueError, match="exact source window"):
+        compile_phone_guided_plan(plan, bindings)
+
+
 def test_source_window_shifts_start_to_preserve_full_duration_when_it_fits():
     # The proxy is measured by server-side ffprobe; the original by the
     # client's on-device AVFoundation. Planning saturates a clip's

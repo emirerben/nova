@@ -28,6 +28,18 @@ class UnsupportedPhonePlan(ValueError):
     """A device recipe cannot yet represent the full approved plan."""
 
 
+# `story_timeline` moments persist source/output timestamps independently
+# rounded to milliseconds (see guided_story.py's `round(x, 3)` calls). Two
+# separately-rounded millisecond values compared against a third (e.g.
+# `source_end_s - source_start_s` vs. the stored `duration_s`) can legitimately
+# differ by up to ~2ms of compounding rounding noise — confirmed live via a
+# 1ms mismatch (job a994fddd) that a microsecond-scale tolerance rejected
+# outright. None of these checks are about float-precision noise; they exist
+# to catch a genuinely different timing program, which differs by much more
+# than a couple of milliseconds.
+_TIMING_ROUNDING_TOLERANCE_S = 0.005
+
+
 def compile_phone_guided_plan(
     plan: GuidedStoryExecutionPlan, bindings: tuple[PhoneSourceBinding, ...]
 ) -> EditRecipeV2:
@@ -106,10 +118,16 @@ def compile_phone_guided_plan(
             if not math.isclose(expected_start, round(expected_start, 3), abs_tol=1e-9):
                 raise UnsupportedPhonePlan("phone transition offset must match cloud milliseconds")
         if (
-            not math.isclose(moment.output_start_s, expected_start, abs_tol=1e-6)
-            or not math.isclose(source_duration, moment.duration_s, abs_tol=1e-6)
+            not math.isclose(
+                moment.output_start_s, expected_start, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
+            )
             or not math.isclose(
-                moment.output_end_s - moment.output_start_s, moment.duration_s, abs_tol=1e-6
+                source_duration, moment.duration_s, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
+            )
+            or not math.isclose(
+                moment.output_end_s - moment.output_start_s,
+                moment.duration_s,
+                abs_tol=_TIMING_ROUNDING_TOLERANCE_S,
             )
         ):
             raise UnsupportedPhonePlan("phone moment timing must preserve its exact source window")
@@ -166,7 +184,7 @@ def compile_phone_guided_plan(
             )
         )
         cursor = moment.output_end_s
-    if not math.isclose(cursor, plan.resolved_duration_s, abs_tol=1e-6):
+    if not math.isclose(cursor, plan.resolved_duration_s, abs_tol=_TIMING_ROUNDING_TOLERANCE_S):
         raise ValueError("phone timeline duration differs from approved plan")
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone moments must have unique identities")
