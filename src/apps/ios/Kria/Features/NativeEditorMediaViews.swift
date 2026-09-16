@@ -469,7 +469,11 @@ struct NativeVideoPreview: View {
         liveTextScale = 1
         liveTextRotation = 0
         liveTextTranslation = .zero
-        liveTextSampleCount = 0
+        // liveTextSampleCount is a UI-test diagnostic: "did the immediate text
+        // layer render during a manipulation," read from the accessibility
+        // value right after gesture end. Resetting it here raced XCUITest's
+        // synchronous read and always lost. It's otherwise unused, so it stays
+        // monotonic like it was before settleDirectManipulation() existed.
         if session.isDirectManipulating { session.endDirectManipulation() }
     }
 
