@@ -1549,8 +1549,17 @@ struct NativeEditorTemporaryVideo {
                 }
             }
         }
-        activatePreviewAudio()
         player.play()
+        // AVAudioSession.setCategory/setActive block the calling thread for tens
+        // of ms while they round-trip to mediaserverd. Deferring just that call
+        // one run-loop turn lets SwiftUI flush the isPlaying=true icon swap
+        // immediately instead of stalling behind audio-session setup on every
+        // play tap; player.play() itself is cheap and stays synchronous so a
+        // pause landing before this fires still wins.
+        Task { @MainActor [weak self, weak player] in
+            guard let self, self.player === player, self.isPlaying else { return }
+            self.activatePreviewAudio()
+        }
     }
 
     func pausePlayback() {
