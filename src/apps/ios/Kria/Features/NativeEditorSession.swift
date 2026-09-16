@@ -2417,7 +2417,20 @@ struct NativeEditorTemporaryVideo {
         guard canEditSection(.captionMeta) else { return }
         transactDocument(section: .captionMeta) { $0.captionMeta[key] = value ?? .null }
     }
-    var canEditCaptionAppearance: Bool { canEditCaptions && canEdit("caption_editor_style") }
+    var canEditCaptionAppearance: Bool {
+        guard canEditCaptions, canEdit("caption_editor_style") else { return false }
+        // The on-device render compiler's caption-styling pass
+        // (NativeEditorRenderCompiler) is cue-native only — it never applies
+        // caption_meta to caption_cue-tagged text elements (KRI-110's
+        // TODOS.md follow-up). A phone-rendered guided_story job would burn
+        // the caption text but silently ignore any style change made here.
+        // Text listing/editing stays open (the compiler burns any text
+        // element regardless of caption tag); only appearance locks.
+        if rendersOnDevice, document.captionCues.isEmpty, document.textElements.contains(where: \.isCaption) {
+            return false
+        }
+        return true
+    }
 
     func setCaptionAppearance(key: String, value: JSONValue) {
         guard canEditCaptionAppearance else { return }
@@ -2464,6 +2477,17 @@ struct NativeEditorTemporaryVideo {
 
     func updateCaptionCue(id: String, text: String? = nil, startS: Double? = nil, endS: Double? = nil) {
         guard canEditSection(.captions) else { return }
+        if let index = document.textElements.firstIndex(where: { $0.id == id && $0.isCaption }) {
+            // Guided-story captions (KRI-110) are pinned to the approved
+            // narration: timing and identity are server-owned (see
+            // guided_story.py's narration merge), so only display text is
+            // editor-owned here — mirrors the web's timing lock on narration
+            // captions (KRI-18). They persist through `text_elements`, not
+            // `caption_cues` — the guided commit path hard-rejects the latter.
+            guard let text else { return }
+            transactDocument(section: .text) { $0.textElements[index].text = text }
+            return
+        }
         guard let index = document.captionCues.firstIndex(where: { $0.id == id }) else { return }
         transactDocument(section: .captions) { doc in
             var cue = doc.captionCues[index]
@@ -3502,7 +3526,18 @@ struct NativeEditorTemporaryVideo {
         canEditTimeline = capabilities?["timeline"] == .bool(true)
         canEditText = capabilities?["text_elements"] == .bool(true)
         let archetype = variant["resolved_archetype"]?.stringValue
-        canEditCaptions = ["subtitled", "narrated"].contains(archetype) && variant["base_video_path"]?.stringValue != nil
+        let cueNativeCaptions = ["subtitled", "narrated"].contains(archetype)
+            && variant["base_video_path"]?.stringValue != nil
+        // Guided-story captions are caption_cue-tagged TextElements (KRI-110)
+        // rather than caption_cues rows. The archetype allowlist above can
+        // never see them, so fall back to the capability the guided revision
+        // actually advertises for them (`captions`, mirroring canEditSection's
+        // capability-first lookup), or `text_elements` when that key is
+        // absent — a caption-tagged element still needs the text-edit
+        // permission to be mutable at all.
+        let textLaneCaptions = document.textElements.contains(where: \.isCaption)
+            && (capabilities?["captions"] == .bool(true) || canEditText)
+        canEditCaptions = cueNativeCaptions || textLaneCaptions
         canEditMix = capabilities?["mix"] == .bool(true) && draft.music != nil
     }
 

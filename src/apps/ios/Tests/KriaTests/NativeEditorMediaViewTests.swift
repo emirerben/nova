@@ -15,6 +15,22 @@ final class NativeEditorMediaViewTests: XCTestCase {
         XCTAssertFalse(overlay.isCaption)
     }
 
+    // KRI-110: guided-story captions persist as `caption_cue`-tagged
+    // TextElements, never as `caption_cues` rows. `captionUnits` is the union
+    // accessor the Captions panel reads instead of the narrow `captionCues`.
+    func testCaptionUnitsProjectsCaptionTaggedTextElementsWhenCaptionCuesEmpty() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.projectedCaptions)
+        XCTAssertTrue(session.document.captionCues.isEmpty)
+        XCTAssertEqual(session.document.captionUnits.map(\.id), ["00000000-0000-4000-8000-000000000301"])
+        XCTAssertEqual(session.document.captionUnits.first?.text, "Spoken words")
+    }
+
+    func testCaptionUnitsPrefersNativeCueCuesOverTextElementProjection() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.boundary)
+        XCTAssertFalse(session.document.captionCues.isEmpty)
+        XCTAssertEqual(session.document.captionUnits.map(\.id), session.document.captionCues.map(\.id))
+    }
+
     func testVoiceoverAndGuidedNarrationUseRenderedVoiceTrack() {
         for variant: [String: JSONValue] in [
             ["resolved_archetype": .string("narrated")],

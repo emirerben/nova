@@ -2110,3 +2110,100 @@ direction).
 **Effort:** M (CC: ~45min)
 **Priority:** P3
 **Depends on:** `app/tasks/poster_repair.py` shipped (this train).
+
+## Guided-story captions — adjacent surfaces (from KRI-110 investigation, 2026-09-16)
+
+KRI-110 fixed the iOS Captions tab's blind spot for guided-story captions
+(persisted as `caption_cue`-tagged `TextElement`s, not `caption_cues` rows).
+The same root cause has three other surfaces; each is real but out of scope
+for a single-client bugfix. Root-cause narrative and code map:
+`~/.claude/plans/kri-110-fluffy-sky.md`.
+
+### Web editor has the identical Captions-tab blind spot
+**What:** `captionToolState` (`src/apps/web/src/app/plan/items/[id]/_editor/editor-capabilities.ts:27-51`)
+requires `resolved_archetype ∈ {narrated, subtitled}`, so `captionsControl` stays
+`undefined` (`EditorShell.tsx:6730`) and the Captions rail button greys out for
+every guided-story video on the web. `captionCueRows` (`EditorShell.tsx:3416`)
+also filters with the narrow `isCaptionBar` instead of the union predicate.
+**Why:** Guided-story is the dominant archetype for new videos (chat-first
+creation is canonical), so this is not a corner case — it is the common case,
+on the surface most creators actually use to edit.
+**How:** Structurally identical fix to the iOS one. The union predicate
+already exists — `isCaptionUnitBar` (`editor-bars.ts:280`) — unlike iOS, which
+had to add one. Swap it into `captionCueRows`'s filter, widen
+`captionToolState` to also accept a `guided_story` variant carrying
+`caption_cue`-tagged text elements, and route the drawer's edit callback to
+`text_elements` for those bars (mirrors the iOS `updateCaptionCue` split).
+**Effort:** M (CC: ~1h — same shape as the iOS fix, plus web test fixtures)
+**Priority:** P1
+**Depends on:** —
+
+### AI copilot cannot see or edit guided-story captions
+**What:** `kria_editor_ops.py`'s caption snapshot (~line 198) is built from
+`variant["caption_cues"]` only, so `cues_editable` is always `false` and the
+copilot has no caption context for a guided-story video.
+**Why:** Nova (the chat copilot) is blind to the captions on the majority of
+videos it's asked to edit — it can't answer "what does the caption at 0:04
+say" or apply a caption text change through chat.
+**How:** Extend the snapshot builder to fall back to
+`text_elements`-projected captions (same union used by the two fixes above)
+when `caption_cues` is empty, and route any resulting caption mutation
+through `text_elements` instead of the caption-cue commit path.
+**Effort:** S (CC: ~30min)
+**Priority:** P2
+**Depends on:** the web editor fix above (shares the union helper).
+
+### `subtitled` and `talking_head` can lose caption identity entirely
+**What:** Unrelated to the tab-routing bug above, but adjacent: `subtitled`
+falls back to `montage` whenever `subtitled_archetype_enabled` is off, and
+`talking_head` (`_render_talking_head_variant`, `generative_build.py:16491`)
+never produces `caption_cues` at all. Both burn transcript speech as styled
+typography (`sequence_scene`-sourced text elements) with no `caption_cue`
+marker of any kind — not even the union fix above can recover them, since
+there is no caption identity left to find.
+**Why:** This is a product/flag decision (is transcript-as-typography an
+acceptable substitute for editable captions on these archetypes?), not a
+classification bug — flagging so it isn't mistaken for scope creep on the
+above fixes.
+**How:** Decide first: either accept the current behavior as intentional and
+document it, or extend `_render_subtitled_variant`'s and
+`_render_talking_head_variant`'s caption assembly to these paths (real
+pipeline work, not a lane-classification fix).
+**Effort:** L (CC: unscoped — pipeline change once the product call is made)
+**Priority:** P3
+**Depends on:** a product decision on caption parity for these archetypes.
+
+### On-device render compiler ignores caption_meta for text-lane captions
+**What:** `NativeEditorRenderCompiler.swift`'s caption-styling block (~line
+339: `if !document.captionCues.isEmpty ...`) is cue-native only. For a
+phone-rendered guided_story job (`render_destination == "device"`, gated by
+`settings.phone_rendering_enabled` + the per-user `phone_rendering_for`
+allowlist — KRI-29's device-rendering pilot), captions persist as
+`caption_cue`-tagged text elements, so this block never runs: the caption
+still burns (via the generic text-element path just above), but with none of
+`caption_meta`'s font/color/size/stroke/shadow/position overrides. **Already
+mitigated in KRI-110:** `canEditCaptionAppearance` (`NativeEditorSession.swift`)
+now locks the Style tab specifically for this combination (`rendersOnDevice`
++ text-lane captions), so the control no longer silently no-ops — listing and
+text editing stay open, only appearance is locked pending this fix.
+**Why:** Once fixed, phone-rendered guided_story captions get the same Style
+tab as every other caption archetype instead of a permanently locked one.
+Cloud-rendered guided_story (the overwhelming majority today) is unaffected:
+the backend's `_apply_guided_caption_meta` (`guided_story.py`) patches the
+same TextElement fields the generic renderer already honors, so styling
+already works correctly there.
+**How:** Extend the compiler's caption-styling block to also collect
+`document.textElements.filter(\.isCaption)`, excluding them from the earlier
+generic text loop so they aren't burned twice, and apply the same
+`captionStyle`/appearance construction to both sources. Word-level timing
+reads a different field per representation (`raw["words"]` for a
+`caption_cues` row vs. the `TextElement.word_timings` wire key) — normalize
+before reuse. Then remove the `canEditCaptionAppearance` lock added above.
+Needs new `NativeEditorRenderCompilerTests` coverage pinning a phone-rendered
+guided_story fixture's caption burn.
+**Effort:** M (CC: ~1–1.5h — compiler logic + word-timing field
+normalization + tests)
+**Priority:** P3 (downgraded from P2 now that the silent-no-op risk is
+mitigated — this is a feature gap, not a live bug)
+**Depends on:** KRI-29 device-rendering pilot (still allowlist-gated as of
+this writing).

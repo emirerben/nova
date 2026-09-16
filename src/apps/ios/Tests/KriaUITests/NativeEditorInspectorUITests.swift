@@ -490,6 +490,22 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(captions.buttons[captionID].label, "Spoken words")
     }
 
+    // KRI-110: tapping a caption-tagged text bar (guided_story's persisted
+    // shape) must open the Captions panel, not the Text inspector — the
+    // routing gap that made these captions unreachable as captions.
+    func testProjectedCaptionTapOpensCaptionsPanelNotTextInspector() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-projected-captions"]
+        app.launch()
+        let captionID = "native-editor-timeline-text-00000000-0000-4000-8000-000000000301"
+        let captionBar = app.descendants(matching: .any)["native-editor-lane-captions"].firstMatch.buttons[captionID]
+        XCTAssertTrue(captionBar.waitForExistence(timeout: 8))
+        captionBar.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-captions-panel"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
+        XCTAssertTrue(app.staticTexts["Spoken words"].exists)
+    }
+
     func testMovingSelectedTextDoesNotOpenStylePanel() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text"]

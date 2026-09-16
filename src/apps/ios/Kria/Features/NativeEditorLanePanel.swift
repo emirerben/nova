@@ -108,19 +108,19 @@ struct NativeCaptionPanel: View {
 
     private var transcript: some View {
         VStack(spacing: 8) {
-            if session.document.captionCues.isEmpty {
+            if session.document.captionUnits.isEmpty {
                 Text("There are no captions in this edit.")
                     .frame(maxWidth: .infinity, minHeight: 80)
                     .foregroundStyle(KriaColor.mutedInk)
             }
-            ForEach(Array(session.document.captionCues.enumerated()), id: \.element.id) { index, cue in
+            ForEach(Array(session.document.captionUnits.enumerated()), id: \.element.id) { index, cue in
                 HStack(spacing: 12) {
                     Text(String(index + 1)).font(KriaFont.body(12))
                         .foregroundStyle(KriaColor.mutedInk).frame(width: 22)
                     VStack(alignment: .leading, spacing: 5) {
                         if editingCueID == cue.id {
                             TextField("Caption", text: Binding(get: {
-                                session.document.captionCues.first { $0.id == cue.id }?.text ?? ""
+                                session.document.captionUnits.first { $0.id == cue.id }?.text ?? ""
                             }, set: { session.updateCaptionCue(id: cue.id, text: $0) }), axis: .vertical)
                             .focused($editingCueID, equals: cue.id)
                             .accessibilityIdentifier("native-editor-caption-content-" + cue.id)
