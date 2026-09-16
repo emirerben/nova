@@ -7855,6 +7855,16 @@ export default function EditorShell({
               : selection?.kind === "motion"
                 ? "Edit block"
               : "Edit";
+  const showSongReferenceNotice = referenceOnlyMusic && !!variant.song_reference;
+  // Reserve extra room in the mobile stage-height budget so the notice
+  // (title + artist + timing + copy button, up to ~4 lines) never collides
+  // with the transport/toolbar row rendered below it.
+  const songNoticeOffsetPx = showSongReferenceNotice ? 168 : 0;
+  const songReferenceNotice = showSongReferenceNotice ? (
+    <div className="shrink-0 px-3 py-2">
+      <SongReferenceNotice reference={variant.song_reference} />
+    </div>
+  ) : null;
 
   return (
     <div
@@ -8039,13 +8049,11 @@ export default function EditorShell({
         />
       )}
 
-      {referenceOnlyMusic && variant.song_reference && (
-        <div className="px-3 py-2"><SongReferenceNotice reference={variant.song_reference} /></div>
-      )}
-
       {/* ── Middle row: rail · drawer · canvas · inspector · edge rail ── */}
       {layoutMode === "light" ? (
-        <div className="relative min-h-0">
+        <div className="flex min-h-0 flex-col">
+          {songReferenceNotice}
+        <div className="relative min-h-0 flex-1">
           <EditorCanvas
             variant={variant}
             sourceAudioMix={sourceAudioMix}
@@ -8117,11 +8125,11 @@ export default function EditorShell({
             stageHeightCss={
               POCKET_UI
                 ? pocketSheetOpen && pocket.detent === "half"
-                  ? "46dvh - 128px"
+                  ? `46dvh - ${128 + songNoticeOffsetPx}px`
                   : pocketStripSelection?.type === "clip"
-                    ? "100dvh - 398px"
-                    : "100dvh - 350px"
-                : "100dvh - 152px"
+                    ? `100dvh - ${398 + songNoticeOffsetPx}px`
+                    : `100dvh - ${350 + songNoticeOffsetPx}px`
+                : `100dvh - ${152 + songNoticeOffsetPx}px`
             }
             canvas={activeCanvas}
           />
@@ -8173,10 +8181,13 @@ export default function EditorShell({
             </Button>
           )}
         </div>
+        </div>
       ) : (
+        <div className="flex min-h-0 flex-col">
+          {songReferenceNotice}
         <div
           className={[
-            "relative grid min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden",
+            "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden",
             layoutMode === "full"
               ? "grid-cols-[auto_auto_1fr_auto]"
               : "grid-cols-[auto_1fr_auto]",
@@ -8499,6 +8510,7 @@ export default function EditorShell({
         />
         )}
       </div>
+        </div>
       )}
 
       {/* ── Timeline region (260px): TransportBar + scale-driven editor
