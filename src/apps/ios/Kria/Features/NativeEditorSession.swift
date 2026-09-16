@@ -254,7 +254,17 @@ struct NativeEditorTemporaryVideo {
     var canDisplayCurrentPlayer: Bool {
         guard player != nil else { return false }
         switch sourcePreviewState {
-        case .idle, .ready:
+        case .idle:
+            // Before the first load resolves, the only player available is
+            // whatever `initialPlaybackURL` seeded — trustworthy when a
+            // caller just fetched it for this exact screen (e.g. ResultsView
+            // refreshing its own playback link), not when it merely fell
+            // back to a project summary's possibly long-stale `outputURL`
+            // (the shared chat-editor session's construction path). An
+            // untrusted seed shows the loading surface instead of a video
+            // that might already be wrong.
+            return seedIsTrusted
+        case .ready:
             return true
         case .preparing:
             return player === finishedRenderPlayer
@@ -344,6 +354,10 @@ struct NativeEditorTemporaryVideo {
     private var clipIDsBySlot: [String: UUID] = [:]
     private var compatibilityClipMetadata: [UUID: (sourceClipIndex: Int?, slotID: String?)] = [:]
     private var compatibilitySnapshot: [String: JSONValue] = [:]
+    /// Whether the player `installPlayer(url:)` seeded from `initialPlaybackURL`
+    /// at construction can be trusted before `load()` confirms it. See
+    /// `canDisplayCurrentPlayer`'s `.idle` case.
+    private let seedIsTrusted: Bool
     private var activeTrim: ActiveTrim?
     private var transactionBaseline: EditorDocument?
     private var draftProjectionCache: EditorDraft?
@@ -395,6 +409,25 @@ struct NativeEditorTemporaryVideo {
             && !hasUnsavedChanges && !isSaving && pendingPreviewGeneration == nil
     }
 
+    /// Why export is unavailable, in the user's own words — the same
+    /// conditions ``canDownloadCurrentVideo`` checks, explained. `nil` exactly
+    /// when export is available.
+    var exportBlockReason: String? {
+        guard !canDownloadCurrentVideo else { return nil }
+        if isSaving { return "Saving your changes…" }
+        if hasUnsavedChanges { return "Save your changes to export the current video." }
+        if pendingPreviewGeneration != nil { return "Kria is updating the preview. Try again in a moment." }
+        switch sourcePreviewState {
+        case .idle, .preparing:
+            return "Preparing the preview…"
+        case .failed, .ready:
+            // The source preview is ready or has fallen back to the rendered
+            // video, but the player hasn't caught up yet (a brief window
+            // during a rebuild) or the session has no job to export from.
+            return "This video isn’t ready to export yet."
+        }
+    }
+
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
         switch sourcePreviewState {
         case .ready:
@@ -419,6 +452,15 @@ struct NativeEditorTemporaryVideo {
         throw NativeEditorVideoDownloadError.unavailable
     }
 
+    /// Exports the exact composition on screen. On device this competes with
+    /// the live player for a hardware decode session (iOS caps concurrent
+    /// VideoToolbox sessions per app; the Simulator does not, which is why
+    /// this path passes there and fails on a phone). Releasing the player's
+    /// session first is the single highest-value fix; a lone retry after that
+    /// catches the remaining transient contention without masking a real
+    /// failure — unsupported source, storage, cancellation — which still
+    /// throws through to the caller rather than falling back to the last
+    /// cloud render. The user must always get what the preview shows.
     func exportDisplayedSourcePreview() async throws -> NativeEditorTemporaryVideo {
         guard sourcePreviewState == .ready,
               let sourcePreview,
@@ -426,13 +468,27 @@ struct NativeEditorTemporaryVideo {
             throw NativeEditorVideoDownloadError.unavailable
         }
         let snapshot = sourcePreview.exportSnapshot()
+        let wasPlaying = isPlaying
+        pausePlayback()
+        defer { if wasPlaying { togglePlayback() } }
+        do {
+            return try await performLocalExport(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs)
+        } catch {
+            #if DEBUG
+            NativePreviewDiagnostics.failure("editor-export-first-attempt", error: error)
+            #endif
+            return try await performLocalExport(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs)
+        }
+    }
+
+    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL]) async throws -> NativeEditorTemporaryVideo {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "kria-editor-download-\(UUID().uuidString)", directoryHint: .isDirectory)
         let output = directory.appending(path: "current-preview.mp4")
         do {
             let checkpoint = try await AVFoundationLocalExporter(
                 stateStore: FileExportStateStore(directory: directory.appending(path: "state", directoryHint: .isDirectory))
-            ).export(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs, outputURL: output)
+            ).export(recipe: recipe, assetURLs: assetURLs, outputURL: output)
             guard checkpoint.status == .completed, checkpoint.outputURL == output else {
                 throw NativeEditorVideoDownloadError.unavailable
             }
@@ -465,7 +521,8 @@ struct NativeEditorTemporaryVideo {
     init(
         draft: EditorDraft = EditorDraft(projectID: UUID(), clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0),
         operations: any EditorOperations = LocalEditorOperations(),
-        initialPlaybackURL: URL? = nil
+        initialPlaybackURL: URL? = nil,
+        trustsInitialPlaybackURL: Bool = true
     ) {
         var initialDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
         initialDocument.revision.number = draft.revision
@@ -475,6 +532,7 @@ struct NativeEditorTemporaryVideo {
         self.document = initialDocument
         self.cleanDocument = initialDocument
         self.operations = operations
+        self.seedIsTrusted = trustsInitialPlaybackURL
         rememberClipIDs(from: draft, in: initialDocument)
         rememberCompatibilityMetadata(from: draft)
         duration = timelineProjection.totalDuration
@@ -503,7 +561,14 @@ struct NativeEditorTemporaryVideo {
         self.init(
             draft: EditorDraft(projectID: project.id, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0),
             operations: operations,
-            initialPlaybackURL: initialPlaybackURL ?? project.outputURL
+            initialPlaybackURL: initialPlaybackURL ?? project.outputURL,
+            // An explicit URL just came from a caller that fetched it for
+            // this exact screen (e.g. ResultsView's own playback refresh).
+            // Falling back to project.outputURL instead means trusting
+            // whatever a cached ProjectSummary happened to hold — the shared
+            // chat-editor session's path, and the source of KRI-91's stale
+            // "old video, then the correct one ~10s later" report.
+            trustsInitialPlaybackURL: initialPlaybackURL != nil
         )
         // A production editor starts fail-closed until the authoritative
         // variant advertises its renderer capabilities. The draft initializer
@@ -870,6 +935,21 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// A shared session (`ChatWorkspaceView`'s editor tab) can be reused
+    /// across multiple editor opens within one chat visit. `loadState ==
+    /// .loaded` alone doesn't mean the displayed video is still current — the
+    /// workspace's own polling can observe a newer server revision (e.g. a
+    /// chat-driven edit finished rendering) while the editor was closed.
+    /// Without this, that second open would show the stale video
+    /// indefinitely rather than swapping once, ~10s later, like a first open.
+    private var loadedServerRevision: Int?
+
+    func needsReload(for project: ProjectSummary) -> Bool {
+        guard loadState == .loaded else { return true }
+        guard let loadedServerRevision else { return false }
+        return loadedServerRevision != project.serverRevision
+    }
+
     func load(project: ProjectSummary, api: any KriaAPIClient) async {
         loadState = .loading
         var resolvedProject = project
@@ -878,6 +958,7 @@ struct NativeEditorTemporaryVideo {
            let refreshed = try? await api.project(threadID: project.id) {
             resolvedProject = refreshed.summary
         }
+        loadedServerRevision = resolvedProject.serverRevision
         conversationRuntimeVersion = resolvedProject.runtimeVersion
         if let jobID = resolvedProject.activeJobID,
            let itemID = resolvedProject.activePlanItemID,

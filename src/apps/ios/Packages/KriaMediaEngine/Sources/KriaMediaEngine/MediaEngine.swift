@@ -215,9 +215,29 @@ public struct AVFoundationThumbnailSampler: ThumbnailSampling { public init() {}
 public struct AVFoundationWaveformExtractor: WaveformExtracting { public init() {}; public func extract(asset: URL, bucketCount: Int) async throws -> Waveform { throw MediaEngineError.avFoundationUnavailable } }
 #endif
 
-public enum MediaEngineError: Error, Equatable, Sendable { case avFoundationUnavailable, exportUnavailable, exportFailed, thumbnailWriteFailed, waveformFailed, insufficientStorage, unsupportedCapability, missingAsset(String), cancelled }
+public enum MediaEngineError: Error, Equatable, Sendable, LocalizedError {
+    case avFoundationUnavailable, exportUnavailable, exportFailed, thumbnailWriteFailed, waveformFailed, insufficientStorage, unsupportedCapability, missingAsset(String), cancelled
 
-public struct NativePreviewFeatureError: Error, Sendable {
+    public var errorDescription: String? {
+        switch self {
+        case .avFoundationUnavailable: "Video editing isn’t available on this device."
+        case .exportUnavailable: "This video can’t be exported right now."
+        case .exportFailed: "The export didn’t finish. Try again."
+        case .thumbnailWriteFailed: "Couldn’t generate a preview thumbnail."
+        case .waveformFailed: "Couldn’t read this clip’s audio."
+        case .insufficientStorage: "Your iPhone is low on storage. Free up space and try again."
+        case .unsupportedCapability: "This clip uses a format this iPhone can’t process."
+        case .missingAsset: "One of the clips in this video is missing."
+        case .cancelled: "Export was cancelled."
+        }
+    }
+}
+
+public struct NativePreviewFeatureError: Error, Sendable, LocalizedError {
     public let feature: String
     public init(_ feature: String) { self.feature = feature }
+
+    public var errorDescription: String? {
+        "This video uses a preview feature (\(feature)) that isn’t supported yet."
+    }
 }

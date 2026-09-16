@@ -186,7 +186,18 @@ public struct EditRecipe: Codable, Equatable, Sendable {
 
 }
 
-public enum RecipeError: Error, Equatable, Sendable { case unsupportedSchema(Int), invalidFrameRate(Double), invalidTimeline, missingAssetReference }
+public enum RecipeError: Error, Equatable, Sendable, LocalizedError {
+    case unsupportedSchema(Int), invalidFrameRate(Double), invalidTimeline, missingAssetReference
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedSchema: "This edit was made with a newer version of Kria. Update the app to open it."
+        case .invalidFrameRate: "This video has an unsupported frame rate."
+        case .invalidTimeline: "This edit’s timeline couldn’t be read."
+        case .missingAssetReference: "One of the clips in this edit is missing."
+        }
+    }
+}
 
 /// Canonical wire coding for API payloads. Keeping this explicit avoids relying on a caller's encoder
 /// settings and leaves the ordinary Codable conformance useful for local persistence.

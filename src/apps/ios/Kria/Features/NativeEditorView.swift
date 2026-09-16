@@ -9,6 +9,7 @@ struct NativeEditorView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var session: NativeEditorSession
+    @StateObject private var exporter = NativeEditorExporter()
     @State private var selectedTool: NativeEditorTool?
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
@@ -21,8 +22,6 @@ struct NativeEditorView: View {
     @State private var timelineExpansion: CGFloat = 0
     @State private var timelineDragOrigin: CGFloat?
     @State private var timelineResizeFeedback = 0
-    @State private var isDownloading = false
-    @State private var downloadNotice: EditorDownloadNotice?
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
@@ -153,8 +152,8 @@ struct NativeEditorView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
             .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
-            .alert(item: $downloadNotice) { notice in
-                Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
+            .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
+                if let file = exporter.sharedFile { ShareSheetView(url: file) }
             }
             .interactiveDismissDisabled(session.hasUnsavedChanges)
             .confirmationDialog(
@@ -169,7 +168,10 @@ struct NativeEditorView: View {
                 Text("Unsaved editor changes are stored only on this device until you save.")
             }
             .task { await loadEditor() }
-            .onDisappear { session.pausePlayback() }
+            .onDisappear {
+                session.pausePlayback()
+                exporter.removeSharedFile()
+            }
         }
     }
 
@@ -190,12 +192,13 @@ struct NativeEditorView: View {
         let previewHeight = max(80, defaultPreviewHeight - timelineExpansion * resizeRange - (showsContext ? 52 : 0))
         VStack(spacing: 0) {
             NativeEditorProjectHeader(
-                title: project.workspaceTitle, session: session,
+                title: project.workspaceTitle, session: session, exporter: exporter,
                 onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
-                isDownloading: isDownloading,
-                onDownload: { Task { await downloadCurrentVideo() } }
+                onSaveToPhotos: { Task { await exporter.saveToPhotos(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
+                onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } }
             )
             NativeEditorSaveBanner(session: session)
+            NativeEditorExportBanner(exporter: exporter)
             if let presentation = session.editorSongReferencePresentation {
                 NativeSongReferenceCard(presentation: presentation)
                     .padding(.horizontal, 16)
@@ -321,33 +324,6 @@ struct NativeEditorView: View {
         return model.deviceRenders.presentations[key]?.localFile
     }
 
-    private func downloadCurrentVideo() async {
-        guard !isDownloading, session.canDownloadCurrentVideo else { return }
-        isDownloading = true
-        defer { isDownloading = false }
-        do {
-            let localFile: URL
-            let cleanupURL: URL?
-            switch try session.videoDownloadRoute(deviceLocalFile: deviceLocalFile) {
-            case .sourcePreview:
-                let exported = try await session.exportDisplayedSourcePreview()
-                localFile = exported.fileURL
-                cleanupURL = exported.cleanupURL
-            case let .localFile(file):
-                localFile = file
-                cleanupURL = nil
-            case let .server(target):
-                localFile = try await NativeEditorVideoDownloader().download(api: model.api, target: target)
-                cleanupURL = localFile
-            }
-            defer { if let cleanupURL { try? FileManager.default.removeItem(at: cleanupURL) } }
-            try await PhotoLibrarySaver().saveVideo(at: localFile)
-            downloadNotice = EditorDownloadNotice(title: "Saved to Photos", message: "Your current video is ready in Photos.")
-        } catch {
-            downloadNotice = EditorDownloadNotice(title: "Couldn’t save video", message: error.localizedDescription)
-        }
-    }
-
     private func loadEditor() async {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
@@ -364,7 +340,7 @@ struct NativeEditorView: View {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
         session.useDeviceRendering(model.deviceRenders)
-        guard session.loadState != .loaded else { return }
+        guard session.needsReload(for: project) else { return }
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)
         } else {
@@ -392,12 +368,6 @@ struct NativeEditorView: View {
             onBack()
         }
     }
-}
-
-private struct EditorDownloadNotice: Identifiable {
-    let id = UUID()
-    let title: String
-    let message: String
 }
 
 private struct NativeEditorLoadSurface: View {

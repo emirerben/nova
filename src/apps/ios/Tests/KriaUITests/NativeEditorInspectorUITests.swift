@@ -402,7 +402,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         }
 
         XCTAssertTrue(app.buttons["native-editor-save"].exists)
-        XCTAssertTrue(app.buttons["native-editor-download"].exists)
+        XCTAssertTrue(app.buttons["native-editor-export"].exists)
     }
 
     func testFinishedRenderFallbackRemainsPlayableAndDisablesCanvasManipulation() {

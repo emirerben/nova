@@ -122,6 +122,19 @@ struct NativeEditorSaveBanner: View {
     }
 
     private func banner(title: String, detail: String, systemImage: String, tint: Color) -> some View {
+        NativeEditorBannerRow(title: title, detail: detail, systemImage: systemImage, tint: tint, identifier: "native-editor-save-state")
+    }
+}
+
+/// Status row shared by the editor's save and export feedback.
+struct NativeEditorBannerRow: View {
+    let title: String
+    let detail: String
+    let systemImage: String
+    let tint: Color
+    let identifier: String
+
+    var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: systemImage)
                 .foregroundStyle(tint)
@@ -136,7 +149,7 @@ struct NativeEditorSaveBanner: View {
         .padding(.vertical, 9)
         .background(KriaColor.softZinc)
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("native-editor-save-state")
+        .accessibilityIdentifier(identifier)
     }
 }
 

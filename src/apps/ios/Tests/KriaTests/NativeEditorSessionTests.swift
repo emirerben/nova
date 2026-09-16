@@ -402,6 +402,54 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(asset.url, freshURL)
     }
 
+    /// KRI-91: opening a project (the shared chat-editor session's path) with
+    /// no explicit playback URL falls back to `project.outputURL` — a
+    /// possibly long-stale cached summary, not something anyone just
+    /// fetched for this screen. That seed must not display until `load()`
+    /// confirms it, unlike the explicit-URL case above.
+    func testUncachedProjectOutputURLDoesNotDisplayBeforeHydration() throws {
+        let cachedURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let project = ProjectSummary(
+            id: UUID(), title: "Reopened project", status: .ready, updatedAt: .now,
+            posterURL: nil, outputURL: cachedURL
+        )
+
+        let session = NativeEditorSession(project: project)
+
+        XCTAssertEqual(session.loadState, .idle)
+        XCTAssertNotNil(session.player, "The cached URL still seeds the player so playback can start the instant it's confirmed")
+        XCTAssertFalse(session.canDisplayCurrentPlayer, "An unconfirmed cached seed must not display — it may already be stale")
+    }
+
+    func testNeedsReloadIsTrueBeforeAnyLoadAndFalseAfterMatchingRevision() async {
+        let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 0,
+            snapshotHash: "", etag: "", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        let project = ProjectSummary(
+            id: UUID(), title: "Revision check", status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial", serverRevision: 4,
+            activeJobID: jobID, activePlanItemID: "item"
+        )
+        let session = NativeEditorSession(project: project)
+        XCTAssertTrue(session.needsReload(for: project), "A never-loaded session always needs its first load")
+
+        await session.load(project: project, api: fake)
+        XCTAssertFalse(session.needsReload(for: project), "The same revision the session just loaded does not need a reload")
+
+        let newerProject = ProjectSummary(
+            id: project.id, title: project.title, status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial", serverRevision: 5,
+            activeJobID: jobID, activePlanItemID: "item"
+        )
+        XCTAssertTrue(
+            session.needsReload(for: newerProject),
+            "A shared session left open across a server-side change must reload rather than keep showing the stale video indefinitely"
+        )
+    }
+
     func testFixtureSourceFailureDoesNotPlayStaleEditablePreview() async throws {
         let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)

@@ -2,18 +2,6 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.76.32.0] - 2026-09-16
-
-### Added
-- Added native editor footage, visual, text, caption, audio, and timeline controls with live preview updates.
-
-### Changed
-- Downloads now export the media currently shown in the editor and normalize unsupported source formats for reliable playback.
-- Improved editor navigation, project restoration, gesture handling, and test fixtures across the iOS creation flow.
-
-### Fixed
-- Fixed stale render fallback, chat scrollbar behavior, and editor preview/export mismatches.
-
 ## [0.76.31.0] - 2026-09-15
 
 ### Changed
