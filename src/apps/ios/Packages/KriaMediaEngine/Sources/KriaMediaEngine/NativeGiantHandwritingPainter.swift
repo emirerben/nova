@@ -93,7 +93,8 @@ final class NativeGiantHandwritingPainter: @unchecked Sendable {
         opacity: Double, maxBitmapBytes: Int, imageContext: CIContext) throws -> CIImage {
         try RenderProfiler.measure("giant.handwriting.frame") { () throws -> CIImage in
         lock.lock(); defer { lock.unlock() }
-        guard bounds.width * bounds.height * 4 <= Double(maxBitmapBytes),
+        let bitmapBytes: Double = Double(bounds.width) * Double(bounds.height) * 4
+        guard bitmapBytes <= Double(maxBitmapBytes),
               let context = CGContext(data: nil, width: Int(bounds.width), height: Int(bounds.height),
                 bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
