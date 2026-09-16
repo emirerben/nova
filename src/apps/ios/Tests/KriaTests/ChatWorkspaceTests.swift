@@ -104,6 +104,22 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertNil(message)
     }
 
+    func testSuccessfulUnchangedPollClearsStaleRecoveryMessage() {
+        var message: String? = "Kria lost the live connection. Your conversation is safe."
+
+        clearChatRefreshRecoveryMessage(&message)
+
+        XCTAssertNil(message)
+    }
+
+    func testSuccessfulUnchangedPollPreservesNonRecoveryMessage() {
+        var message: String? = "Your message wasn’t sent. The request timed out."
+
+        clearChatRefreshRecoveryMessage(&message)
+
+        XCTAssertEqual(message, "Your message wasn’t sent. The request timed out.")
+    }
+
     func testClipSelectionCapacityHonorsServerLimitAcrossRepeatedSelections() {
         let initial = ClipSelectionCapacity(maximum: 1, existing: 0, reserved: 0)
         XCTAssertEqual(initial.acceptedCount(requested: 4), 1)

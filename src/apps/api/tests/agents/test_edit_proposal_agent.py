@@ -1258,21 +1258,24 @@ def test_rejects_repeated_chapter_topics() -> None:
         agent.parse(json.dumps(payload), _input())
 
 
-def test_rejects_more_than_five_chapters() -> None:
+def test_rejects_more_than_ten_chapters() -> None:
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
     payload["story_beats"] = [
         {
             "topic": f"Chapter {index}",
             "thought": "A visible detail connects this part of the story.",
-            "media_ids": [f"media-{index}", f"media-{(index + 1) % 7}"],
+            "media_ids": [
+                f"media-{index % 7}",
+                f"media-{(index + 1) % 7}",
+            ],
             "layout": "fullscreen",
             "duration_s": 4,
         }
-        for index in range(6)
+        for index in range(11)
     ]
 
-    with pytest.raises(SchemaError, match="at most 5 items"):
+    with pytest.raises(SchemaError, match="at most 10 items"):
         agent.parse(json.dumps(payload), _input())
 
 
@@ -1374,3 +1377,33 @@ def test_narrated_long_window_is_not_split_or_interleaved():
     assert not repaired and duration == 7
     with pytest.raises(SchemaError, match="non-narrated"):
         _compile_fast_cuts(raw)
+
+
+def test_fast_montage_prompt_pins_hook_role_and_per_source_duration() -> None:
+    agent_input = _fractional_fast_input()
+    prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert 'FIRST item in `fast_cuts` MUST have `role: "hook"`' in prompt
+    assert "Check every cut against its own media row" in prompt
+
+
+def test_once_policy_prompt_requires_exact_trim_when_raw_footage_is_longer() -> None:
+    agent_input = EditProposalAgentInput(
+        idea="Summer in Madrid",
+        direction="fast_montage",
+        creator_request="Create a slow edit",
+        pace="relaxed",
+        target_duration_s=12,
+        video_reuse_policy="once",
+        media=[
+            EditProposalMedia(media_id="a", lane="clip", kind="video", duration_s=3.733),
+            EditProposalMedia(media_id="b", lane="clip", kind="video", duration_s=4.9),
+            EditProposalMedia(media_id="c", lane="clip", kind="video", duration_s=4.068),
+        ],
+    )
+
+    prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert "EXACT ONCE-POLICY FIT" in prompt
+    assert "12.701s in total" in prompt
+    assert "fast_cuts sum to exactly 12.000s" in prompt

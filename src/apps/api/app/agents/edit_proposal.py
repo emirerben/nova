@@ -17,6 +17,7 @@ from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     MAX_EDIT_PROPOSAL_MEDIA,
+    MAX_PROPOSAL_DURATION_S,
     FastMontageCut,
     MediaScope,
     MixedMediaTimingProfile,
@@ -603,7 +604,7 @@ class DraftStoryBeat(BaseModel):
 class EditProposalAgentOutput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     duration_s: ProposalDuration
-    story_beats: list[DraftStoryBeat] = Field(default_factory=list, max_length=5)
+    story_beats: list[DraftStoryBeat] = Field(default_factory=list, max_length=10)
     # New fast-montage proposals use exact source windows. Legacy fast snapshots
     # omit this field and continue through the old story-beat compiler.
     fast_cuts: list[FastMontageCut] | None = Field(default=None, max_length=80)
@@ -622,7 +623,7 @@ class _RawFastMontageCut(BaseModel):
     # Numeric still holds may be as short as 0.1s. Video minimums are enforced
     # later with the source-aware mixed-media profile; this provider boundary
     # only needs to admit the typed value for normalization.
-    output_duration_s: float = Field(ge=0.1, le=60.0)
+    output_duration_s: float = Field(ge=0.1, le=MAX_PROPOSAL_DURATION_S)
     role: Literal["hook", "build", "payoff"]
     transition: Literal["none"] = "none"
     beat_align: bool = False
@@ -1032,7 +1033,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.8.2",
+        prompt_version="1.8.5",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1175,6 +1176,20 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 )
             )
         )
+        if input.direction == "fast_montage" and input.video_reuse_policy == "once":
+            once_video_total_s = sum(
+                float(media.duration_s or 0.0) for media in prompt_media if media.kind == "video"
+            )
+            effective_target_s = _effective_target_duration_s(input)
+            if once_video_total_s > effective_target_s + _FAST_DURATION_EPSILON_S:
+                montage_note += (
+                    " EXACT ONCE-POLICY FIT: the listed videos contain "
+                    f"{once_video_total_s:.3f}s in total, which is longer than the exact "
+                    f"{effective_target_s:.3f}s timeline. Trim one or more source windows so "
+                    f"fast_cuts sum to exactly {effective_target_s:.3f}s and return duration_s "
+                    f"as {input.target_duration_s}; never return the raw footage total as the "
+                    "edit duration."
+                )
         review_note = ""
         if input.review_feedback.strip():
             review_note = (

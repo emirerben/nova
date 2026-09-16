@@ -43,7 +43,7 @@
       "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
   },
-  "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"fast_montage\",\"edit_format\":\"montage\",\"archetype\":\"montage\",\"audio_strategy\":\"licensed_music\",\"story_structure\":[\"Arrival hook\",\"Rapid city-detail photos\",\"Sunset payoff\"],\"caption_style\":\"clean\",\"intro_hook\":\"One day in Lisbon\",\"pacing\":\"fast\",\"render_program\":\"native\",\"selected_media_ids\":[\"clip-1\",\"clip-2\"],\"optional_treatments\":[],\"rationale\":\"Use quick photo cuts around longer usable video moments.\"},\"summary\":\"Quick photos and longer video moments in a hard-cut Lisbon story.\"}}",
+  "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"fast_montage\",\"edit_format\":\"montage\",\"archetype\":\"montage\",\"audio_strategy\":\"licensed_music\",\"story_structure\":[\"Arrival hook\",\"Rapid city-detail photos\",\"Sunset payoff\"],\"caption_style\":\"clean\",\"intro_hook\":\"One day in Lisbon\",\"pacing\":\"fast\",\"target_duration_s\":24,\"render_program\":\"native\",\"selected_media_ids\":[\"clip-1\",\"clip-2\"],\"optional_treatments\":[],\"rationale\":\"Use quick photo cuts around longer usable video moments.\"},\"summary\":\"Quick photos and longer video moments in a hard-cut Lisbon story.\"}}",
   "output": {},
   "meta": {
     "source": "hand-authored-v1-safety",

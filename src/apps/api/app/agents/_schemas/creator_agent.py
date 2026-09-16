@@ -44,7 +44,7 @@ CREATOR_REQUEST_MAX_CHARS = 12_000
 MAX_CREATOR_COMMANDS = 4
 MAX_CREATOR_MEDIA_REFS = 50
 MAX_CREATOR_CATALOG_REFS = 50
-MAX_CREATOR_OUTPUT_DURATION_S = 60.0
+MAX_CREATOR_OUTPUT_DURATION_S = 120.0
 MAX_CREATOR_REVIEW_EVIDENCE = 12
 MAX_CREATOR_REVISION_EVIDENCE_IDS = 8
 MAX_CREATOR_WORKSPACE_MEDIA_IDS = 50
@@ -106,7 +106,7 @@ class CreatorMediaRef(_CreatorModel):
     media_id: str = Field(min_length=1, max_length=160)
     kind: Literal["video", "image", "audio"]
     # This is source duration, not the final-output limit.  Phone footage can
-    # legitimately be longer than the sub-60-second rendered deliverable.
+    # legitimately be longer than the two-minute rendered deliverable.
     duration_s: float | None = Field(default=None, gt=0.0)
     label: str | None = Field(default=None, max_length=160)
 
@@ -532,7 +532,7 @@ class SetMediaOverlayCommand(CreatorTargetPin):
 class SetLicensedSfxCommand(CreatorTargetPin):
     command: Literal["set_licensed_sfx"]
     sound_effect_id: str = Field(min_length=1, max_length=160)
-    at_s: float = Field(ge=0.0, le=60.0)
+    at_s: float = Field(ge=0.0, le=MAX_CREATOR_OUTPUT_DURATION_S)
 
     @field_validator("sound_effect_id")
     @classmethod

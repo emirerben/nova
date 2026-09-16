@@ -780,7 +780,7 @@ private struct CreationWorkspaceView: View {
             apply(thread, requestSequence: requestSequence)
             reconcilePendingMessages()
             let changed = threadRevision != previousRevision || events.map(\.id) != previousEventIDs
-            if changed { errorMessage = nil }
+            clearChatRefreshRecoveryMessage(&errorMessage)
             return changed
         }
         let delta = try await model.api.threadDelta(threadID: project.id, afterSequence: afterSequence)
@@ -810,7 +810,7 @@ private struct CreationWorkspaceView: View {
         if !fresh.isEmpty || currentProject.status == .rendering {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
         }
-        if !fresh.isEmpty { errorMessage = nil }
+        clearChatRefreshRecoveryMessage(&errorMessage)
         if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
         return !fresh.isEmpty
     }
@@ -1065,6 +1065,22 @@ func acceptedMutationRefreshError(
         return nil
     } catch {
         return "\(failurePrefix) \(error.localizedDescription)"
+    }
+}
+
+/// A completed full or delta response is authoritative even when it contains
+/// no new events, so it clears a stale transport-recovery banner.
+func clearChatRefreshRecoveryMessage(_ message: inout String?) {
+    guard let current = message else { return }
+    let recoveryPrefixes = [
+        "Kria lost the live connection.",
+        "Kria couldn’t refresh this conversation.",
+        "Your message was sent, but the conversation couldn’t refresh.",
+        "Saved, but the conversation couldn’t refresh.",
+        "Kria recorded that decision, but the conversation couldn’t refresh."
+    ]
+    if recoveryPrefixes.contains(where: current.hasPrefix) {
+        message = nil
     }
 }
 

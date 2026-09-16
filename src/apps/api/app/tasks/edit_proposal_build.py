@@ -30,6 +30,7 @@ from app.models import (
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     MAIN_CREATOR_FAIL_CLOSED,
+    MAX_PROPOSAL_DURATION_S,
     EditProposal,
     EditProposalSnapshot,
     FastMontageCut,
@@ -515,8 +516,11 @@ def adapt_target_duration_s(
     """
 
     if allow_source_reuse:
-        return max(MIN_GUIDED_DURATION_S, min(brief_duration_s, 60))
-    return max(MIN_GUIDED_DURATION_S, min(brief_duration_s, feasible_s, 60))
+        return max(MIN_GUIDED_DURATION_S, min(brief_duration_s, MAX_PROPOSAL_DURATION_S))
+    return max(
+        MIN_GUIDED_DURATION_S,
+        min(brief_duration_s, feasible_s, MAX_PROPOSAL_DURATION_S),
+    )
 
 
 def cadence_target_duration_s(brief, media: list[MediaRef]) -> int | float | None:  # noqa: ANN001
@@ -1466,7 +1470,7 @@ def _run_draft_attempt(
                     db.commit()
             return
         target_duration_s = (
-            max(MIN_GUIDED_DURATION_S, min(60, narration.duration_s))
+            max(MIN_GUIDED_DURATION_S, min(MAX_PROPOSAL_DURATION_S, narration.duration_s))
             if narration is not None
             else cadence_target_s
             or adapt_target_duration_s(
@@ -1770,7 +1774,19 @@ def _run_draft_attempt(
         else:
             fallback_cuts = None
             fallback_beats = (
-                deterministic_guided_beats(media, target_duration_s) if output is None else None
+                deterministic_guided_beats(
+                    media,
+                    target_duration_s,
+                    required_media_ids=(
+                        [ref.media_id for ref in media]
+                        if brief.media_scope == "all"
+                        else brief.selected_media_ids
+                        if brief.media_scope == "selected"
+                        else None
+                    ),
+                )
+                if output is None
+                else None
             )
         snapshot = EditProposalSnapshot(
             direction=brief.direction,
