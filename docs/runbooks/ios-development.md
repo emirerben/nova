@@ -132,6 +132,8 @@ Native footage controls persist `playback_rate` and normalized `source_crop` in 
 
 Media direct manipulation freezes the surrounding composed layers while the gesture updates the selected image. Rebuilding the source preview waits until the gesture ends; captions must remain present in the surrounding layers.
 
+Download follows the video currently shown in the editor. A ready source preview is exported locally from the current edit recipe; a matching device-local file is used directly, and a server-rendered result is downloaded only when the source preview is unavailable and the render receipt still matches the current project generation. While a source preview is preparing, the last finished render may remain visible, but canvas editing and download stay disabled until the displayed video is known to be current.
+
 For repeatable visual review, a Debug build accepts `-ui-testing-brand` with
 `KRIA_BRAND_STATE` set to `format`, `footage`, `direction`, `rendering`, `ready`,
 `editor`, `projects`, `gallery`, `signin`, `account`, `consent`, or `recovery`.
