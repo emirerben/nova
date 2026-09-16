@@ -318,6 +318,26 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(player.rate, 0, "Late handoff completion must never restart a paused player")
     }
 
+    /// KRI-95: the real editor's scrub path now records seek latency the same
+    /// way MediaDiagnosticView's debug harness always did, so KRI-97's
+    /// physical-device seek-p95 measurement has real numbers to read.
+    func testScrubRecordsSeekLatencyIntoPreviewInstrumentation() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: url)
+        XCTAssertTrue(session.previewInstrumentation.snapshot().isEmpty)
+        session.seek(to: 0.5)
+        for _ in 0..<100 {
+            if session.scrubPreviewFrame != nil { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertNotNil(session.scrubPreviewFrame)
+        let events = session.previewInstrumentation.snapshot()
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events.first?.name, .seekLatency)
+        XCTAssertGreaterThanOrEqual(events.first?.value ?? -1, 0)
+    }
+
     func testBufferingDuringPlayHandoffCannotLeaveScrubImageOverMovingVideo() async throws {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
         let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))

@@ -212,6 +212,26 @@ device performance and full preview/export visual parity remain release gates.
    with no crashes or critical thermal state. Enable only verified groups;
    KRI-29 remains incomplete until every agreed group passes.
 
+## Preview instrumentation and parity (KRI-95)
+
+`NativeEditorSession.previewInstrumentation` (a `KriaMediaEngine.MetricsCollector`)
+now records real scrub-to-visible-frame latency (`.seekLatency` events) from the
+actual editor's `requestScrubFrame` path — not just the DEBUG-only
+`MediaDiagnosticView` harness. This is the number gate 7's seek-p95 measurement
+above needs; nothing previously produced it outside that debug screen. Live FPS
+during continuous playback is not instrumented yet — the shared
+`RecipeVideoCompositor` deliberately can't tell a live-preview frame request from
+an export one (see its doc comment), so measuring preview-only FPS needs a
+display-layer hook (`CADisplayLink`/`AVPlayerItemVideoOutput`), not a compositor-side
+counter; that remains open.
+
+Preview↔export frame parity is *not* a gap needing a new test: `Composition.swift`,
+`RecipeVideoCompositor.swift`, and `RecipeWriter.swift` already share one compositor
+for both paths, and roughly a dozen `KriaMediaEngineTests` files already assert
+"...InPreviewAndExport" parity per feature (`SourceAudioOverlapParityTests`,
+`GiantTitleCompositionTests`, `DiscreteRevealTests`, etc.) — that pattern is the
+right place to extend for any *new* effect, not a single new parameterized test.
+
 ## Verification commands
 
 ```sh
