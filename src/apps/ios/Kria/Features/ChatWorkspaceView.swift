@@ -235,6 +235,7 @@ private struct CreationWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
+    @FocusState private var composerFocused: Bool
     @State private var prompt = ""
     @State private var events: [ThreadEvent] = []
     @State private var initialConversationLoaded = false
@@ -326,6 +327,7 @@ private struct CreationWorkspaceView: View {
                 openEditor: { showsResult = true },
                 openAccount: openAccount
             )
+            .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -370,6 +372,7 @@ private struct CreationWorkspaceView: View {
                     initialConversationRevealed = true
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation history")
                 .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
@@ -386,6 +389,7 @@ private struct CreationWorkspaceView: View {
                 text: $prompt,
                 isSending: isSending || isActing,
                 canAttach: selectedFormat != nil && currentProject.status != .rendering && currentProject.status != .ready,
+                isFocused: $composerFocused,
                 attach: { if selectedFormat != nil { showsAttachments = true } },
                 send: { Task { await send() } }
             )
@@ -434,6 +438,7 @@ private struct CreationWorkspaceView: View {
     private var editorConversation: some View {
         VStack(spacing: 0) {
             Text("Kria").font(KriaFont.body(17).weight(.semibold)).padding(.top, 20)
+                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 20) {
@@ -449,12 +454,14 @@ private struct CreationWorkspaceView: View {
                 }
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
                 .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
                 .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
             }
             ChatComposer(
                 text: $prompt, isSending: isSending || isActing,
-                canAttach: false, attach: {}, send: { Task { await send() } }
+                canAttach: false, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
             )
         }
         .background(KriaColor.paper)

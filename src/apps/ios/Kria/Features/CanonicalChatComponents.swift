@@ -784,6 +784,7 @@ struct ChatComposer: View {
     @Binding var text: String
     let isSending: Bool
     let canAttach: Bool
+    var isFocused: FocusState<Bool>.Binding
     let attach: () -> Void
     let send: () -> Void
 
@@ -799,7 +800,15 @@ struct ChatComposer: View {
             TextField("Tell Kria what you want…", text: $text, axis: .vertical)
                 .font(KriaFont.body(15)).lineLimit(1...4)
                 .frame(minHeight: 44).accessibilityLabel("Message Kria")
-                .submitLabel(.send).onSubmit { if canSend { send() } }
+                .focused(isFocused)
+                .submitLabel(.send)
+                .onSubmit {
+                    if canSend {
+                        send()
+                    } else {
+                        isFocused.wrappedValue = false
+                    }
+                }
             Button(action: send) {
                 Image(systemName: isSending ? "ellipsis" : "arrow.up")
                     .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
