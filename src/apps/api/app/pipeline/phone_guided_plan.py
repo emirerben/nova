@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 
+from app.kria.media_sources import PROXY_ORIGINAL_DURATION_TOLERANCE_S
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -105,15 +106,28 @@ def compile_phone_guided_plan(
             expected_start -= duration
             if not math.isclose(expected_start, round(expected_start, 3), abs_tol=1e-9):
                 raise UnsupportedPhonePlan("phone transition offset must match cloud milliseconds")
+        # `moment.source_end_s` is planned against the analysis proxy's
+        # server-measured (ffprobe) duration; `binding.original.duration_s` is
+        # the client's on-device (AVFoundation) measurement of the same file.
+        # These are independent measurements of conceptually the same
+        # quantity and are allowed to diverge by up to
+        # `PROXY_ORIGINAL_DURATION_TOLERANCE_S` (see media_sources.py) — a
+        # plan that saturates a clip's proxy-measured capacity can therefore
+        # slightly overrun the client-measured original. Reject only a real
+        # mismatch, and clamp harmless measurement drift down to what the
+        # device file can actually supply.
+        source_overrun = round(moment.source_end_s - binding.original.duration_s, 6)
         if (
             not math.isclose(moment.output_start_s, expected_start, abs_tol=1e-6)
             or not math.isclose(source_duration, moment.duration_s, abs_tol=1e-6)
             or not math.isclose(
                 moment.output_end_s - moment.output_start_s, moment.duration_s, abs_tol=1e-6
             )
-            or moment.source_end_s > binding.original.duration_s
+            or source_overrun > PROXY_ORIGINAL_DURATION_TOLERANCE_S
         ):
             raise UnsupportedPhonePlan("phone moment timing must preserve its exact source window")
+        if source_overrun > 0:
+            source_duration = round(source_duration - source_overrun, 6)
         original = binding.original
         asset = binding.render_asset()
         manifest[asset.id] = asset

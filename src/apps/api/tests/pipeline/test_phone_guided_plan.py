@@ -96,6 +96,26 @@ def test_shared_timing_and_original_metadata_preserved():
     assert compile_phone_guided_plan(plan, bindings).audio.original_volume == 0.4
 
 
+def test_source_window_tolerates_proxy_original_duration_drift():
+    # The proxy is measured by server-side ffprobe; the original by the
+    # client's on-device AVFoundation. `binding.original.duration_s` (client)
+    # can legitimately be slightly less than `moment.source_end_s` (planned
+    # against the proxy's measurement) without the plan being broken.
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 4.95  # moment.source_end_s == 5, overrun == 0.05s
+    recipe = compile_phone_guided_plan(plan, bindings)
+    clip = recipe.tracks[0].clips[0]
+    assert clip.source_start == 2
+    assert clip.source_duration == pytest.approx(2.95)
+
+
+def test_source_window_rejects_overrun_beyond_tolerance():
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 4.85  # overrun == 0.15s, beyond the 0.1s tolerance
+    with pytest.raises(ValueError, match="exact source window"):
+        compile_phone_guided_plan(plan, bindings)
+
+
 def transition_fixture(kind="crossfade", duration=0.3):
     plan, bindings = fixture()
     first = plan.story_timeline[0]
