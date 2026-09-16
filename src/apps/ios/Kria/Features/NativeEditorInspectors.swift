@@ -245,6 +245,8 @@ private struct NativeSelectedClipInspector: View {
                 }
             }
             .disabled(!session.canEditTimeline)
+            NativeFootagePanel(session: session, selection: selection)
+                .disabled(!session.canEdit(.timeline))
             Section("Look and transition") {
                 Picker("Look", selection: $look) {
                     ForEach(NativeEditorWireContract.lookPresets, id: \.self) { value in

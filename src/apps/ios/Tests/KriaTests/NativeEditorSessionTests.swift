@@ -4,6 +4,25 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+    func testFootageEditsPersistAndUndoWithoutChangingTimelineWindows() throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let original = session.document
+        let clip = try XCTUnwrap(session.timelineClips.first)
+        let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
+        let windows = session.timelineClips.map { [$0.start, $0.end] }
+        session.setFootagePlaybackRate(selection, rate: 0.5)
+        session.setFootageCrop(selection, crop: .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
+        let restored = EditorDocument(snapshot: session.document.encodeSnapshot())
+        XCTAssertEqual(restored.clips.first?.raw["playback_rate"], .number(0.5))
+        XCTAssertEqual(restored.clips.first?.raw["source_crop"]?.objectValue?["y"], .number(0.2))
+        XCTAssertEqual(session.timelineClips.map { [$0.start, $0.end] }, windows)
+        session.undo()
+        XCTAssertNil(session.footageCrop(for: selection))
+        XCTAssertEqual(session.footagePlaybackRate(for: selection), 0.5)
+        session.undo()
+        XCTAssertEqual(session.document, original)
+    }
+
     func testRenderedRebaseRefreshesGenerationSourcesButLocalEditsDoNot() async {
         let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
@@ -21,8 +40,16 @@ final class NativeEditorSessionTests: XCTestCase {
 
         let refresh = expectation(description: "Resolve sources for rendered generation")
         fake.sourcePoolExpectation = refresh
+        let sourcePlayer = try! XCTUnwrap(session.player)
         XCTAssertTrue(session.rebaseCleanDraft(from: Self.variant(duration: 2, generation: "g2")))
         XCTAssertEqual(session.sourcePreviewState, .preparing, "Old preview must not remain ready")
+        let finishedURL = try! XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        session.installFinishedRenderPlayer(url: finishedURL)
+        XCTAssertTrue(session.canDisplayCurrentPlayer, "The completed render stays visible while editable sources rebuild")
+        XCTAssertFalse(session.player === sourcePlayer, "Authoritative playback replaces the stale source composition")
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.pausePlayback()
         await fulfillment(of: [refresh], timeout: 3)
         XCTAssertEqual(fake.sourcePoolCallCount, 2)
         XCTAssertEqual(session.document.revision.baseGeneration, "g2")
@@ -295,6 +322,193 @@ final class NativeEditorSessionTests: XCTestCase {
         }
         XCTAssertEqual(player.targets.count, 1, "Ordinary resume must not restart decoding with an exact seek")
         session.pausePlayback()
+    }
+
+    func testFixtureSourceFailureRetainsAndPlaysInitialFinishedRender() async throws {
+        let renderURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: renderURL)
+        let initialPlayer = try XCTUnwrap(session.player)
+
+        await session.prepareFixtureSourcePreview(
+            url: URL(fileURLWithPath: "/tmp/kria-invalid-source-fixture.mp4"),
+            forceFailure: true
+        )
+
+        guard case .failed = session.sourcePreviewState else { return XCTFail("Fixture source failure must remain visible") }
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertTrue(session.player === initialPlayer, "The initial finished-render player remains available")
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.pausePlayback()
+    }
+
+    func testDownloadUsesVisibleSourcePreviewInsteadOfOlderDeviceFile() async throws {
+        let olderDeviceFile = URL(fileURLWithPath: "/tmp/kria-older-device-render.mp4")
+        let session = NativeEditorSession(
+            draft: NativeEditorUITestFixtures.sourceText,
+            initialPlaybackURL: olderDeviceFile
+        )
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+
+        XCTAssertTrue(session.hasSourcePreview)
+        XCTAssertEqual(try session.videoDownloadRoute(deviceLocalFile: olderDeviceFile), .sourcePreview)
+    }
+
+    func testDownloadRejectsStaleFinishedRenderWhileCurrentPreviewPrepares() async throws {
+        let olderRender = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(
+            draft: NativeEditorUITestFixtures.sourceText,
+            initialPlaybackURL: olderRender
+        )
+
+        let preparation = Task {
+            await session.prepareFixtureSourcePreview(url: olderRender, delayedLoad: true)
+        }
+        await Task.yield()
+
+        XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: olderRender))
+        await preparation.value
+    }
+
+    func testDisplayedSourcePreviewExportsAPlayableVideo() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+
+        let exported = try await session.exportDisplayedSourcePreview()
+        defer { try? FileManager.default.removeItem(at: exported.cleanupURL) }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: exported.fileURL.path))
+        let duration = try await AVURLAsset(url: exported.fileURL).load(.duration).seconds
+        XCTAssertEqual(duration, session.duration, accuracy: 0.05)
+    }
+
+    func testProjectSessionUsesFreshPlaybackHandoffBeforeHydration() throws {
+        let staleURL = URL(fileURLWithPath: "/tmp/kria-stale-project-render.mp4")
+        let freshURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let project = ProjectSummary(
+            id: UUID(), title: "Gallery edit", status: .ready, updatedAt: .now,
+            posterURL: nil, outputURL: staleURL
+        )
+
+        let session = NativeEditorSession(project: project, initialPlaybackURL: freshURL)
+
+        XCTAssertEqual(session.loadState, .idle)
+        XCTAssertTrue(session.canDisplayCurrentPlayer, "The result screen's player is available before editor hydration")
+        let asset = try XCTUnwrap(session.player?.currentItem?.asset as? AVURLAsset)
+        XCTAssertEqual(asset.url, freshURL)
+    }
+
+    /// KRI-91: opening a project (the shared chat-editor session's path) with
+    /// no explicit playback URL falls back to `project.outputURL` — a
+    /// possibly long-stale cached summary, not something anyone just
+    /// fetched for this screen. That seed must not display until `load()`
+    /// confirms it, unlike the explicit-URL case above.
+    func testUncachedProjectOutputURLDoesNotDisplayBeforeHydration() throws {
+        let cachedURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let project = ProjectSummary(
+            id: UUID(), title: "Reopened project", status: .ready, updatedAt: .now,
+            posterURL: nil, outputURL: cachedURL
+        )
+
+        let session = NativeEditorSession(project: project)
+
+        XCTAssertEqual(session.loadState, .idle)
+        XCTAssertNotNil(session.player, "The cached URL still seeds the player so playback can start the instant it's confirmed")
+        XCTAssertFalse(session.canDisplayCurrentPlayer, "An unconfirmed cached seed must not display — it may already be stale")
+    }
+
+    func testNeedsReloadIsTrueBeforeAnyLoadAndFalseAfterMatchingRevision() async {
+        let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 0,
+            snapshotHash: "", etag: "", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        let project = ProjectSummary(
+            id: UUID(), title: "Revision check", status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial", serverRevision: 4,
+            activeJobID: jobID, activePlanItemID: "item"
+        )
+        let session = NativeEditorSession(project: project)
+        XCTAssertTrue(session.needsReload(for: project), "A never-loaded session always needs its first load")
+
+        await session.load(project: project, api: fake)
+        XCTAssertFalse(session.needsReload(for: project), "The same revision the session just loaded does not need a reload")
+
+        let newerProject = ProjectSummary(
+            id: project.id, title: project.title, status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial", serverRevision: 5,
+            activeJobID: jobID, activePlanItemID: "item"
+        )
+        XCTAssertTrue(
+            session.needsReload(for: newerProject),
+            "A shared session left open across a server-side change must reload rather than keep showing the stale video indefinitely"
+        )
+    }
+
+    /// The editor installs the last finished cloud render immediately on
+    /// open so something is on screen right away, then swaps to a local,
+    /// editable composition built straight from the current document. If
+    /// the server's render hasn't caught up with the last save yet
+    /// (render_status != "ready"), that finished render must not display
+    /// during the swap window — otherwise a fresh title/text edit flashes
+    /// its pre-edit styling for the few seconds the swap takes.
+    func testUncaughtUpRenderStaysHiddenWhilePreviewPreparesUntilConfirmedCurrent() async throws {
+        let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 0,
+            snapshotHash: "", etag: "", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        // A save queued a re-render that hasn't finished yet: the render
+        // this response's output_url points to predates the document the
+        // rest of this same response describes.
+        fake.authoritativeVariant?["render_status"] = .string("rendering")
+        fake.suspendNextSourcePool = true
+        let project = ProjectSummary(
+            id: UUID(), title: "Rendering", status: .rendering, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial",
+            activeJobID: jobID, activePlanItemID: "item"
+        )
+        let session = NativeEditorSession(project: project)
+
+        let loadTask = Task { await session.load(project: project, api: fake) }
+        for _ in 0..<100 where !fake.sourcePoolIsSuspended {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(fake.sourcePoolIsSuspended, "the source-pool gate did not suspend in time")
+
+        XCTAssertEqual(session.sourcePreviewState, .preparing)
+        XCTAssertNotNil(session.player, "the not-yet-current render is still installed as a fallback")
+        XCTAssertFalse(
+            session.canDisplayCurrentPlayer,
+            "A render that predates the current document must not display while the current-document preview is still preparing"
+        )
+
+        fake.resumeSourcePool()
+        await loadTask.value
+    }
+
+    func testFixtureSourceFailureDoesNotPlayStaleEditablePreview() async throws {
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertTrue(session.hasSourcePreview)
+
+        await session.prepareFixtureSourcePreview(
+            url: URL(fileURLWithPath: "/tmp/kria-invalid-source-fixture.mp4"),
+            forceFailure: true
+        )
+
+        guard case .failed = session.sourcePreviewState else { return XCTFail("Fixture source failure must remain visible") }
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertFalse(session.canDisplayCurrentPlayer)
+        session.togglePlayback()
+        XCTAssertFalse(session.isPlaying, "A stale editable preview cannot play after source preparation fails")
     }
 
     func testPauseDuringScrubHandoffRetainsTargetWithoutRestartingPlayback() async throws {
@@ -996,7 +1210,7 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.saveState, .loadFailed("Kria couldn’t complete that request. Check your connection and try again."))
     }
 
-    func testHydratedProjectDoesNotSubstituteFinishedOutputForMissingSources() async throws {
+    func testHydratedProjectRetainsFinishedOutputWhenSourcePreviewFails() async throws {
         let threadID = UUID()
         let jobID = UUID()
         let fallbackURL = URL(fileURLWithPath: "/tmp/kria-refreshed-fallback.mp4")
@@ -1035,8 +1249,13 @@ final class NativeEditorSessionTests: XCTestCase {
 
         await session.load(project: project, api: fake)
 
-        XCTAssertNil(session.player)
+        let player = try XCTUnwrap(session.player)
         guard case .failed = session.sourcePreviewState else { return XCTFail("Missing sources must remain explicit") }
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying, "A finished render remains playable while source preview is unavailable")
+        XCTAssertTrue(session.player === player, "The failed source preview must not discard the finished render")
+        session.pausePlayback()
         XCTAssertEqual(fake.lastVariantID, "original_text")
     }
 
@@ -1546,6 +1765,10 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     private var commitContinuation: CheckedContinuation<Void, Never>?
     private var commitResumeRequested = false
     private var suspendNextCommit: Bool
+    var suspendNextSourcePool = false
+    private(set) var sourcePoolIsSuspended = false
+    private var sourcePoolContinuation: CheckedContinuation<Void, Never>?
+    private var sourcePoolResumeRequested = false
     var phoneDestination = false
     var deviceFetchCount = 0
     var commitCount = 0
@@ -1603,7 +1826,28 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         sourcePoolCallCount += 1
         sourcePoolExpectation?.fulfill()
         sourcePoolExpectation = nil
+        if suspendNextSourcePool {
+            suspendNextSourcePool = false
+            sourcePoolIsSuspended = true
+            await withCheckedContinuation { continuation in
+                if sourcePoolResumeRequested {
+                    sourcePoolResumeRequested = false
+                    continuation.resume()
+                } else {
+                    sourcePoolContinuation = continuation
+                }
+            }
+            sourcePoolIsSuspended = false
+        }
         throw APIError.unsupported
+    }
+    func resumeSourcePool() {
+        if let sourcePoolContinuation {
+            sourcePoolContinuation.resume()
+            self.sourcePoolContinuation = nil
+        } else {
+            sourcePoolResumeRequested = true
+        }
     }
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]] {
         editorVariantsCallCount += 1

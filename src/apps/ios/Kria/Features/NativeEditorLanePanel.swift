@@ -8,6 +8,7 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
     let onDone: () -> Void
     var heading: String? = nil
     var onAdd: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -21,6 +22,13 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
                     }
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("native-editor-add-another-visual")
+                }
+                if let onDelete {
+                    Button(role: .destructive, action: onDelete) {
+                        Image(systemName: "trash").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Remove visual")
+                    .accessibilityIdentifier("native-editor-remove-visual")
                 }
                 Button("Done", action: onDone).frame(minWidth: 64, minHeight: 44)
                     .accessibilityIdentifier("native-editor-\(title.lowercased())-done")

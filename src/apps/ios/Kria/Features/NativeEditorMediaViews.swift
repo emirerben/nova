@@ -93,6 +93,12 @@ struct NativeVideoPreview: View {
     @State private var liveTextRotation: Double = 0
     @State private var liveTextTranslation = CGPoint.zero
     @State private var liveTextSampleCount = 0
+    @State private var liveMediaFrame: NativeEditorSession.MediaInteractionFrame?
+    @State private var liveMediaScale: CGFloat = 1
+    @State private var liveMediaRotation: Double = 0
+    @State private var liveMediaTranslation = CGPoint.zero
+    @GestureState private var directMoveGestureActive = false
+    @GestureState private var directResizeGestureActive = false
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
@@ -326,11 +332,12 @@ struct NativeVideoPreview: View {
 
     private func directMoveGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .local)
+            .updating($directMoveGestureActive) { _, active, _ in active = true }
             .onChanged { (value: DragGesture.Value) in
                 handleDirectMoveChanged(value, in: size)
             }
             .onEnded { (_: DragGesture.Value) in
-                finishDirectMove()
+                if !directResizeGestureActive { settleDirectManipulation() }
             }
     }
 
@@ -379,6 +386,9 @@ struct NativeVideoPreview: View {
             if hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y) <= 22 {
                 directMoveObjectID = selected.id
                 visualTransformBaseline = selected
+                if let prepared = session.mediaInteractionFrame,
+                   prepared.selection == selected.item.selection,
+                   abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
                 transformCenter = CGPoint(x: bounds.midX, y: bounds.midY)
                 transformStartVector = CGVector(dx: value.startLocation.x - bounds.midX, dy: value.startLocation.y - bounds.midY)
                 session.beginDirectManipulation()
@@ -388,8 +398,11 @@ struct NativeVideoPreview: View {
             let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
             let radius = hypot(start.dx, start.dy)
             guard radius > 1 else { return }
-            scaleHandler(for: baseline)?(baseline.scale * hypot(next.dx, next.dy) / radius)
+            let scale = baseline.scale * hypot(next.dx, next.dy) / radius
+            scaleHandler(for: baseline)?(scale)
             let rotation = baseline.rotation + (atan2(next.dy, next.dx) - atan2(start.dy, start.dx)) * 180 / .pi
+            liveMediaScale = scale / max(0.001, baseline.scale)
+            liveMediaRotation = rotation - baseline.rotation
             session.setVisualEditorStyle(baseline.item.selection, key: "rotation_deg", value: .number(max(-360, min(360, rotation))))
             return
         }
@@ -408,6 +421,9 @@ struct NativeVideoPreview: View {
             directMoveObjectID = object.id
             directMoveBaseline = position
             session.select(object.item, seekToStart: false)
+            if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
+               prepared.selection == object.item.selection,
+               abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
             session.beginDirectManipulation()
         }
         guard let objectID = directMoveObjectID,
@@ -426,23 +442,40 @@ struct NativeVideoPreview: View {
             updateTextAlignment(in: size)
         } else {
             onMove(position)
+            liveMediaTranslation = CGPoint(x: position.x - baseline.x, y: position.y - baseline.y)
         }
     }
 
-    private func finishDirectMove() {
-        guard directMoveObjectID != nil else { return }
+    private func settleDirectManipulation() {
+        let hasActiveManipulation = directMoveObjectID != nil || directResizeObjectID != nil || session.isDirectManipulating
+        guard hasActiveManipulation else { return }
         commitLiveText()
         directMoveObjectID = nil
         directMoveBaseline = nil
+        directResizeObjectID = nil
+        directResizeBaseline = nil
+        directResizeTextBaseline = nil
         transformBaseline = nil
         visualTransformBaseline = nil
         transformCenter = nil
         transformStartVector = nil
-        if directResizeObjectID == nil { session.endDirectManipulation() }
+        liveMediaFrame = nil
+        liveMediaScale = 1
+        liveMediaRotation = 0
+        liveMediaTranslation = .zero
+        liveTextBaseline = nil
+        liveTextBounds = nil
+        liveTextFrame = nil
+        liveTextScale = 1
+        liveTextRotation = 0
+        liveTextTranslation = .zero
+        liveTextSampleCount = 0
+        if session.isDirectManipulating { session.endDirectManipulation() }
     }
 
     private func directResizeGesture(in size: CGSize) -> some Gesture {
         MagnificationGesture()
+            .updating($directResizeGestureActive) { _, active, _ in active = true }
             .onChanged { value in
                 if directResizeObjectID == nil {
                     guard let selection = session.selection,
@@ -459,6 +492,9 @@ struct NativeVideoPreview: View {
                     if object.item.kind == .text {
                         directResizeTextBaseline = session.document.textElements.first { $0.id == object.item.id }
                     }
+                    if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
+                       prepared.selection == object.item.selection,
+                       abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
                     session.beginDirectManipulation()
                 }
                 guard let objectID = directResizeObjectID,
@@ -470,15 +506,11 @@ struct NativeVideoPreview: View {
                     updateTextAlignment(in: size)
                 } else {
                     onResize(baseline * value)
+                    liveMediaScale = value
                 }
             }
             .onEnded { _ in
-                guard directResizeObjectID != nil else { return }
-                commitLiveText()
-                directResizeObjectID = nil
-                directResizeBaseline = nil
-                directResizeTextBaseline = nil
-                if directMoveObjectID == nil { session.endDirectManipulation() }
+                if !directMoveGestureActive { settleDirectManipulation() }
             }
     }
 
@@ -530,19 +562,7 @@ struct NativeVideoPreview: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.black
-            if session.sourcePreviewState == .preparing {
-                ProgressView("Preparing preview")
-                    .tint(.white).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if case .failed(let message) = session.sourcePreviewState {
-                VStack(spacing: 12) {
-                    Text("Preview unavailable").font(KriaFont.body(14).weight(.semibold))
-                    Text(message).font(KriaFont.body(12)).multilineTextAlignment(.center)
-                        .padding(.horizontal, 16)
-                    Button("Retry") { Task { await session.prepareSourcePreview() } }
-                }
-                .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let player = session.player {
+            if session.canDisplayCurrentPlayer, let player = session.player {
                 ZStack {
                     VideoPlayer(player: player)
                         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
@@ -557,6 +577,18 @@ struct NativeVideoPreview: View {
                             .accessibilityHidden(true)
                     }
                 }
+            } else if session.sourcePreviewState == .preparing {
+                ProgressView("Preparing preview")
+                    .tint(.white).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if case .failed(let message) = session.sourcePreviewState {
+                VStack(spacing: 12) {
+                    Text("Preview unavailable").font(KriaFont.body(14).weight(.semibold))
+                    Text(message).font(KriaFont.body(12)).multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                    Button("Retry") { Task { await session.prepareSourcePreview() } }
+                }
+                .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 BundledPosterImage(name: "montage")
                     .scaledToFill()
@@ -580,6 +612,44 @@ struct NativeVideoPreview: View {
                 .padding(24)
             }
 
+            if case .failed(let message) = session.sourcePreviewState, session.isShowingRenderedFallback {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Showing finished render")
+                        .font(KriaFont.body(12).weight(.semibold))
+                    Text(message)
+                        .font(KriaFont.body(11))
+                        .lineLimit(2)
+                    Button("Retry") { Task { await session.prepareSourcePreview() } }
+                        .accessibilityIdentifier("native-editor-retry-source-preview")
+                        .font(KriaFont.body(11).weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(10)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("native-editor-preview-fallback")
+            }
+
+            if let frozen = liveMediaFrame {
+                GeometryReader { proxy in
+                    let anchor = UnitPoint(x: frozen.rect.midX, y: frozen.rect.midY)
+                    ZStack(alignment: .topLeading) {
+                        Image(uiImage: frozen.below).resizable().frame(width: proxy.size.width, height: proxy.size.height)
+                        Image(uiImage: frozen.media).resizable()
+                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .scaleEffect(liveMediaScale, anchor: anchor)
+                            .rotationEffect(.degrees(liveMediaRotation), anchor: anchor)
+                            .offset(x: liveMediaTranslation.x * proxy.size.width,
+                                    y: liveMediaTranslation.y * proxy.size.height)
+                        Image(uiImage: frozen.above).resizable().frame(width: proxy.size.width, height: proxy.size.height)
+                    }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
             if let frozen = liveTextFrame, let baseline = liveTextBaseline {
                 GeometryReader { proxy in
                     let anchor = nativeTextPosition(baseline)
@@ -637,6 +707,13 @@ struct NativeVideoPreview: View {
         .clipped()
         .accessibilityValue(uiTestingPreviewValue)
         .onAppear(perform: refreshObjects)
+        .onChange(of: directMoveGestureActive) { _, active in
+            if !active && !directResizeGestureActive { settleDirectManipulation() }
+        }
+        .onChange(of: directResizeGestureActive) { _, active in
+            if !active && !directMoveGestureActive { settleDirectManipulation() }
+        }
+        .onDisappear(perform: settleDirectManipulation)
         .onChange(of: session.document) { _, _ in refreshObjects() }
         .onChange(of: session.scrubPreviewFrame) { _, _ in
             if !session.isDirectManipulating {
