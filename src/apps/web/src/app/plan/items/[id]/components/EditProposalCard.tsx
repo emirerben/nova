@@ -98,7 +98,7 @@ const PACE_LABELS: Record<EditProposalPace, string> = {
   fast: "Fast",
 };
 
-const DURATION_OPTIONS = [15, 20, 24, 30, 45, 60];
+const DURATION_OPTIONS = [15, 20, 24, 30, 45, 60, 90, 120];
 
 // Starter chips shown before Kria has said anything at all.
 const BRIEFING_STARTER_SUGGESTIONS = [

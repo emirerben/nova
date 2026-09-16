@@ -166,6 +166,7 @@ struct ProjectDrawerRow: View {
 
 struct ChatMessageRow: View {
     let message: ChatTranscriptMessage
+    var onSelectOption: ((String) -> Void)? = nil
 
     var body: some View {
         if message.role == .user {
@@ -200,6 +201,13 @@ struct ChatMessageRow: View {
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)
                     .lineSpacing(4)
+                if !message.options.isEmpty, let onSelectOption {
+                    QuestionOptionsRow(
+                        options: message.options,
+                        recommendedOption: message.recommendedOption,
+                        select: onSelectOption
+                    )
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityLabel("Kria: \(message.content)")
@@ -665,6 +673,60 @@ private struct PromptChip: View {
     }
 }
 
+/// Tappable, exact-string reply choices for a clarifying question (e.g. the
+/// all-media capacity preflight). Unlike `PromptChip`, option text is a full
+/// sentence, so each choice wraps onto its own row instead of a fixed-width
+/// capsule.
+struct QuestionOptionsRow: View {
+    let options: [String]
+    let recommendedOption: String?
+    let select: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(options, id: \.self) { option in
+                QuestionOptionButton(
+                    text: option,
+                    isRecommended: option == recommendedOption,
+                    action: { select(option) }
+                )
+            }
+        }
+        .padding(.top, 2)
+    }
+}
+
+private struct QuestionOptionButton: View {
+    let text: String
+    let isRecommended: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 4) {
+                if isRecommended {
+                    Text("RECOMMENDED")
+                        .font(KriaFont.body(10).weight(.semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(KriaColor.success)
+                }
+                Text(text)
+                    .font(KriaFont.body(13).weight(.medium))
+                    .foregroundStyle(KriaColor.ink)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(minHeight: 44)
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(KriaColor.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isRecommended ? "\(text) (recommended)" : text)
+    }
+}
+
 struct FailedStage: View {
     let retry: () -> Void
 
@@ -722,6 +784,7 @@ struct ChatComposer: View {
     @Binding var text: String
     let isSending: Bool
     let canAttach: Bool
+    var isFocused: FocusState<Bool>.Binding
     let attach: () -> Void
     let send: () -> Void
 
@@ -737,7 +800,15 @@ struct ChatComposer: View {
             TextField("Tell Kria what you want…", text: $text, axis: .vertical)
                 .font(KriaFont.body(15)).lineLimit(1...4)
                 .frame(minHeight: 44).accessibilityLabel("Message Kria")
-                .submitLabel(.send).onSubmit { if canSend { send() } }
+                .focused(isFocused)
+                .submitLabel(.send)
+                .onSubmit {
+                    if canSend {
+                        send()
+                    } else {
+                        isFocused.wrappedValue = false
+                    }
+                }
             Button(action: send) {
                 Image(systemName: isSending ? "ellipsis" : "arrow.up")
                     .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)

@@ -78,6 +78,7 @@ from app.routes.generative_jobs import (
     visual_block_variant_duration,
 )
 from app.schemas.edit_proposal import (
+    MAX_PROPOSAL_DURATION_S,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
     recognize_cadence_reuse_policy,
@@ -117,7 +118,7 @@ from app.services.creator_sessions import (
     rollout_eligible,
     serialize_session,
 )
-from app.services.edit_direction_planner import round_robin_capacity_s
+from app.services.edit_direction_planner import assess_all_media_capacity, round_robin_capacity_s
 from app.services.job_phases import mark_reattempt
 from app.services.job_status import (
     PLAN_ITEM_JOB_FAILED,
@@ -543,6 +544,35 @@ async def _resolve_explicit_sfx_outside_manifest(
     return manifest.model_copy(update={"catalog": [*manifest.catalog, trusted_ref]})
 
 
+_SECONDS_UNIT = r"(?:s|sec|secs|seconds?|saniye|segundos?|secondes?|sekunden?|secondi|secondo)\b"
+_SECONDS_WORDS = {
+    "half a": 0.5,
+    "one": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "four": 4.0,
+    "five": 5.0,
+    "six": 6.0,
+    "seven": 7.0,
+    "eight": 8.0,
+    "nine": 9.0,
+    "ten": 10.0,
+}
+
+
+def _excerpt_states_seconds(excerpt: str, seconds: float) -> bool:
+    """Whether a verbatim creator excerpt states ``seconds`` as a duration."""
+
+    text = " ".join(excerpt.casefold().split())
+    for match in re.finditer(rf"(?<![\w.])(\d+(?:[.,]\d+)?)\s*-?\s*{_SECONDS_UNIT}", text):
+        if abs(float(match.group(1).replace(",", ".")) - float(seconds)) < 1e-6:
+            return True
+    return any(
+        abs(number - float(seconds)) < 1e-6 and re.search(rf"\b{word}\s*-?\s*{_SECONDS_UNIT}", text)
+        for word, number in _SECONDS_WORDS.items()
+    )
+
+
 def _apply_explicit_render_intent(
     strategy: CreativeStrategy,
     creator_request: str,
@@ -562,15 +592,28 @@ def _apply_explicit_render_intent(
     semantic_updates: dict[str, object] = {}
     creator_sources = (request, " ".join(str(latest_user_message or "").split()))
     if render_intent_evidence is not None:
-        for field in ("opening_title", "font_family", "text_color"):
-            quote = " ".join(str(getattr(render_intent_evidence, field) or "").split())
+        for field in (
+            "opening_title",
+            "font_family",
+            "text_color",
+            "opening_title_duration_s",
+            "shot_labels",
+            "closing_title",
+        ):
+            quote = " ".join(str(getattr(render_intent_evidence, field, None) or "").split())
             if not quote or not any(quote in source for source in creator_sources):
                 continue
             value = getattr(strategy, field)
             # Typography and color are semantic choices from a validated
             # schema. Literal on-screen words must also occur in the excerpt.
-            if field == "opening_title" and value is not None:
+            if field in {"opening_title", "closing_title"} and value is not None:
                 if " ".join(value.split()) not in quote:
+                    continue
+            if field == "shot_labels" and value is not None:
+                if not all(" ".join(label.split()) in quote for label in value):
+                    continue
+            if field == "opening_title_duration_s" and value is not None:
+                if not _excerpt_states_seconds(quote, value):
                     continue
             semantic_updates[field] = value
     # Ungrounded model values cannot become pixels. Only creator excerpts or
@@ -579,6 +622,9 @@ def _apply_explicit_render_intent(
         "opening_title": None,
         "font_family": None,
         "text_color": None,
+        "opening_title_duration_s": None,
+        "shot_labels": None,
+        "closing_title": None,
         # A model-authored label is only retained when the typed companion
         # flag records the same intent.  This keeps an unrelated request from
         # inheriting a stale context label while allowing multilingual or
@@ -954,6 +1000,172 @@ def _latest_cadence_question(events: list[CreatorAgentEvent]) -> dict[str, Any] 
     return context if isinstance(context, dict) else None
 
 
+def _latest_all_media_capacity_question(events: list[CreatorAgentEvent]) -> dict[str, Any] | None:
+    """Return the active, hash-fenced all-media choice when one is pending."""
+
+    ordered = sorted(events, key=lambda value: value.sequence)
+    if ordered and ordered[-1].role == "user":
+        ordered = ordered[:-1]
+    if not ordered or ordered[-1].event_type != "assistant_question":
+        return None
+    payload = ordered[-1].payload if isinstance(ordered[-1].payload, dict) else {}
+    if payload.get("reason_code") != "all_media_capacity":
+        return None
+    context = payload.get("all_media_capacity")
+    return context if isinstance(context, dict) else None
+
+
+def _all_media_capacity_choice(
+    context: dict[str, Any], message: str, manifest: Any
+) -> CreativeStrategy | None:
+    """Resolve only an exact displayed option against its manifest fence."""
+
+    if context.get("manifest_hash") != manifest.manifest_hash:
+        return None
+    normalized = " ".join(message.casefold().split())
+    for mapping in context.get("option_mappings") or []:
+        if not isinstance(mapping, dict):
+            continue
+        option = " ".join(str(mapping.get("option") or "").casefold().split())
+        strategy = mapping.get("strategy")
+        if option and normalized == option and isinstance(strategy, dict):
+            try:
+                return CreativeStrategy.model_validate(strategy)
+            except ValueError:
+                return None
+    return None
+
+
+def _strongest_guided_subset_ids(
+    manifest: Any, target_duration_s: int | float, *, min_moment_s: float
+) -> list[str]:
+    """Pick a stable renderable subset for the capacity recommendation."""
+
+    limit = min(40, max(1, math.floor(float(target_duration_s) / min_moment_s)))
+
+    def energy(ref: Any) -> float:
+        values = [
+            float(moment.get("energy", 0))
+            for moment in (getattr(ref, "analysis", {}) or {}).get("best_moments", [])
+            if isinstance(moment, dict) and isinstance(moment.get("energy", 0), (int, float))
+        ]
+        return max(values, default=0.0)
+
+    eligible = [
+        ref
+        for ref in manifest.media
+        if ref.kind == "image" or (ref.duration_s is not None and ref.duration_s >= min_moment_s)
+    ]
+    return [
+        ref.media_id
+        for _index, ref in sorted(enumerate(eligible), key=lambda row: (-energy(row[1]), row[0]))[
+            :limit
+        ]
+    ]
+
+
+def _all_media_capacity_question(
+    manifest: Any,
+    strategy: CreativeStrategy,
+    *,
+    requested_duration_is_explicit: bool = True,
+) -> dict[str, Any] | None:
+    """Create the deterministic choice required before an infeasible all-media plan."""
+
+    if strategy.media_scope != "all":
+        return None
+    min_moment_s = 1.8 if strategy.direction == "text_explainer" else 1.4
+    capacity = assess_all_media_capacity(
+        manifest.media,
+        strategy.target_duration_s,
+        story_min_moment_s=min_moment_s,
+        mixed_media_timing=strategy.mixed_media_timing,
+    )
+    current_strategy_feasible = (
+        capacity.current_fast_target_feasible
+        if strategy.direction == "fast_montage"
+        else capacity.guided_feasible
+    )
+    if current_strategy_feasible:
+        return None
+    # The creator agent chose this duration from the footage. Capacity math may
+    # decide whether that editorial choice is renderable, but it must never
+    # replace it with a clip-count-derived duration.
+    subset_target_s = strategy.target_duration_s
+    subset_ids = _strongest_guided_subset_ids(manifest, subset_target_s, min_moment_s=min_moment_s)
+    if not subset_ids:
+        return None
+    recommended = (
+        f"Keep {strategy.target_duration_s:g} seconds with the strongest clips"
+        if requested_duration_is_explicit
+        else f"Use the strongest {len(subset_ids)} clips in a {subset_target_s:g}-second edit"
+    )
+    base_strategy = strategy.model_dump(mode="json")
+    mappings: list[dict[str, Any]] = [
+        {
+            "option": recommended,
+            "strategy": {
+                **base_strategy,
+                "direction": strategy.direction,
+                "media_scope": "selected",
+                "selected_media_ids": subset_ids,
+                "target_duration_s": subset_target_s,
+            },
+        }
+    ]
+    if capacity.current_fast_target_feasible:
+        include_all = (
+            f"Keep {strategy.target_duration_s:g} seconds and include everything with faster pacing"
+        )
+        mappings.append(
+            {
+                "option": include_all,
+                "strategy": {
+                    **base_strategy,
+                    "direction": "fast_montage",
+                    "media_scope": "all",
+                    "selected_media_ids": [ref.media_id for ref in manifest.media],
+                    "target_duration_s": strategy.target_duration_s,
+                },
+            }
+        )
+    return {
+        "message": (
+            (
+                f"This edit cannot show all {len(manifest.media)} clips in "
+                f"{strategy.target_duration_s:g} seconds. I recommend keeping the duration "
+                "and using the strongest clips."
+                if requested_duration_is_explicit
+                else (
+                    f"Based on the footage, I proposed {strategy.target_duration_s:g} seconds, "
+                    f"but all {len(manifest.media)} clips cannot fit at that storytelling pace. "
+                    "I recommend preserving the pace and using the strongest clips."
+                )
+            )
+            + (
+                " Or I can preserve that duration and include everything with faster pacing."
+                if len(mappings) > 1
+                else (
+                    " Including every clip would exceed the safe two-minute limit or include "
+                    "an unusable clip, so I will remove weaker clips."
+                )
+            )
+        ),
+        "reason_code": "all_media_capacity",
+        "options": [mapping["option"] for mapping in mappings],
+        "recommended_option": recommended,
+        "all_media_capacity": {
+            "manifest_hash": manifest.manifest_hash,
+            "requested_duration_s": (
+                strategy.target_duration_s if requested_duration_is_explicit else None
+            ),
+            "guided_max_media": 40,
+            "required_fast_duration_s": capacity.required_fast_duration_s,
+            "option_mappings": mappings,
+        },
+    }
+
+
 def _latest_planned_cadence(
     events: list[CreatorAgentEvent],
 ) -> tuple[MontageCadenceConstraint | None, int | float | None]:
@@ -1091,9 +1303,13 @@ async def _record_cadence_duration_unavailable(
 def _balanced_duration_s(*, limit_s: float, cycle_s: float) -> int | float:
     """Find the longest target made of complete cadence cycles."""
 
-    cycles = math.floor((min(limit_s, 60) + 0.001) / cycle_s)
+    cycles = math.floor((min(limit_s, MAX_PROPOSAL_DURATION_S) + 0.001) / cycle_s)
     duration_s = round(cycles * cycle_s, 6)
-    return (int(duration_s) if duration_s % 1 == 0 else duration_s) if 3 <= duration_s <= 60 else 0
+    return (
+        (int(duration_s) if duration_s % 1 == 0 else duration_s)
+        if 3 <= duration_s <= MAX_PROPOSAL_DURATION_S
+        else 0
+    )
 
 
 def _next_balanced_duration_s(*, minimum_s: float, limit_s: float, cycle_s: float) -> int | float:
@@ -1103,7 +1319,7 @@ def _next_balanced_duration_s(*, minimum_s: float, limit_s: float, cycle_s: floa
     duration_s = round(cycles * cycle_s, 6)
     return (
         (int(duration_s) if duration_s % 1 == 0 else duration_s)
-        if 3 <= duration_s <= min(limit_s, 60) + 0.001
+        if 3 <= duration_s <= min(limit_s, MAX_PROPOSAL_DURATION_S) + 0.001
         else 0
     )
 
@@ -1198,7 +1414,7 @@ def _resolved_cadence_for_turn(
             if recognize_cadence_reuse_policy(user_message) == "allow_repeat":
                 return cadence.model_copy(update={"reuse_policy": "allow_repeat"}), requested_s
             target_match = re.search(
-                r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", normalized
+                r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", normalized
             )
             if target_match:
                 return cadence, float(target_match.group(1))
@@ -1243,7 +1459,13 @@ def _pinned_narration_target_duration_s(manifest: Any) -> float | None:
     if not getattr(manifest, "has_voiceover", False) or narration is None:
         return None
     duration_s = float(narration.duration_s)
-    max_duration_s = int(getattr(getattr(manifest, "limits", None), "max_output_duration_s", 60))
+    max_duration_s = int(
+        getattr(
+            getattr(manifest, "limits", None),
+            "max_output_duration_s",
+            MAX_PROPOSAL_DURATION_S,
+        )
+    )
     return max(3, min(max_duration_s, duration_s))
 
 
@@ -1282,7 +1504,13 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
     requested_duration_s = recognize_total_duration_s(user_message)
     if requested_duration_s is None:
         requested_duration_s = _pinned_narration_target_duration_s(manifest)
-    max_duration_s = int(getattr(getattr(manifest, "limits", None), "max_output_duration_s", 60))
+    max_duration_s = int(
+        getattr(
+            getattr(manifest, "limits", None),
+            "max_output_duration_s",
+            MAX_PROPOSAL_DURATION_S,
+        )
+    )
     target_duration_s = max(3, min(max_duration_s, requested_duration_s or 24))
 
     return CreativeStrategy(
@@ -1459,6 +1687,12 @@ async def _run_planning_turn(
         if cadence_cancelled
         else latest_cut_s or recognize_round_robin_cadence(creator_request)
     )
+    pending_all_media_capacity = _latest_all_media_capacity_question(session.events)
+    all_media_capacity_choice = (
+        _all_media_capacity_choice(pending_all_media_capacity, user_message, manifest)
+        if pending_all_media_capacity is not None
+        else None
+    )
     videos = [media for media in manifest.media if media.kind == "video"]
     usable_videos = [media for media in videos if media.duration_s is not None]
     pending_cadence_question = _latest_cadence_question(session.events)
@@ -1534,68 +1768,78 @@ async def _run_planning_turn(
             },
         )
         return await _response(db, locked)
-    # Reserve the session's existing eight-call allowance under the row lock
-    # before contacting Pro. The previous post-call increment allowed the
-    # ninth request to reach Gemini and only failed the session afterwards.
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
         raise HTTPException(status_code=409, detail="Creator session changed while planning")
-    if locked.agent_call_count >= locked.agent_call_budget:
-        locked.status = "failed"
-        locked.last_error = {"code": "agent_budget_exhausted"}
-        await append_event(
-            db,
-            locked,
-            event_type="assistant_error",
-            payload={"message": "This edit needs a fresh creator session."},
-        )
-        return await _response(db, locked)
-    locked.agent_call_count += 1
-    await db.commit()
-
-    agent_input = MainCreatorInput(
-        user_message=user_message,
-        creator_request=creator_request,
-        creator_context=creator_summary,
-        creator_direction=direction_prompt,
-        item_context=item_summary,
-        media_context=media_context,
-        conversation=_conversation(session.events),
-        capability_manifest=manifest,
-    )
     action: AskUser | ProposeStrategy | ReviewDecision
-    try:
-        output = await asyncio.to_thread(
-            MainCreatorAgent(default_client()).run,
-            agent_input,
-            ctx=RunContext(
-                creator_agent_session_id=str(session.id),
-                creator_id=str(user.id),
-                request_id=str(expected_revision),
-                usage_purpose=usage_purpose,
-                test_run_id=test_run_id,
-                estimated_max_cost_usd=estimated_max_cost_usd,
-                reservation_approved=reservation_approved,
-                release_canary_id=release_canary_id,
-            ),
-        )
-        action = output.action
-    except AiBudgetExceededError:
-        locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
-        if locked.revision == expected_revision and locked.status in {"planning", "revising"}:
-            locked.agent_call_count = max(0, locked.agent_call_count - 1)
-            locked.status = "briefing"
-            await db.commit()
-        raise
-    except TerminalError as exc:
-        log.warning(
-            "main_creator.planning_fallback", session_id=str(session.id), error=str(exc)[:300]
-        )
+    if all_media_capacity_choice is not None:
+        # The displayed, hash-fenced mapping is authoritative. Applying it is
+        # deterministic and must not spend another model call or fail against
+        # the model-call budget.
         action = ProposeStrategy(
             kind="propose_strategy",
-            strategy=_fallback_strategy(manifest, user_message=creator_request),
-            summary=MAIN_CREATOR_FALLBACK_SUMMARY,
+            strategy=all_media_capacity_choice,
+            summary="Applied your all-media capacity choice.",
         )
+    else:
+        # Reserve the session's existing eight-call allowance under the row
+        # lock before contacting Pro. The previous post-call increment allowed
+        # the ninth request to reach Gemini and only failed afterwards.
+        if locked.agent_call_count >= locked.agent_call_budget:
+            locked.status = "failed"
+            locked.last_error = {"code": "agent_budget_exhausted"}
+            await append_event(
+                db,
+                locked,
+                event_type="assistant_error",
+                payload={"message": "This edit needs a fresh creator session."},
+            )
+            return await _response(db, locked)
+        locked.agent_call_count += 1
+        await db.commit()
+
+        agent_input = MainCreatorInput(
+            user_message=user_message,
+            creator_request=creator_request,
+            creator_context=creator_summary,
+            creator_direction=direction_prompt,
+            item_context=item_summary,
+            media_context=media_context,
+            conversation=_conversation(session.events),
+            capability_manifest=manifest,
+        )
+        try:
+            output = await asyncio.to_thread(
+                MainCreatorAgent(default_client()).run,
+                agent_input,
+                ctx=RunContext(
+                    creator_agent_session_id=str(session.id),
+                    creator_id=str(user.id),
+                    request_id=str(expected_revision),
+                    usage_purpose=usage_purpose,
+                    test_run_id=test_run_id,
+                    estimated_max_cost_usd=estimated_max_cost_usd,
+                    reservation_approved=reservation_approved,
+                    release_canary_id=release_canary_id,
+                ),
+            )
+            action = output.action
+        except AiBudgetExceededError:
+            locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+            if locked.revision == expected_revision and locked.status in {"planning", "revising"}:
+                locked.agent_call_count = max(0, locked.agent_call_count - 1)
+                locked.status = "briefing"
+                await db.commit()
+            raise
+        except TerminalError as exc:
+            log.warning(
+                "main_creator.planning_fallback", session_id=str(session.id), error=str(exc)[:300]
+            )
+            action = ProposeStrategy(
+                kind="propose_strategy",
+                strategy=_fallback_strategy(manifest, user_message=creator_request),
+                summary=MAIN_CREATOR_FALLBACK_SUMMARY,
+            )
 
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
@@ -1721,7 +1965,11 @@ async def _run_planning_turn(
                     # cycles (for example 3s requested with a 2s A/B cycle).
                     # Recommend the next renderable cycle instead of offering
                     # reuse, which cannot make an incomplete cycle valid.
-                    expansion_limit_s = 60 if cadence.reuse_policy == "allow_repeat" else capacity_s
+                    expansion_limit_s = (
+                        MAX_PROPOSAL_DURATION_S
+                        if cadence.reuse_policy == "allow_repeat"
+                        else capacity_s
+                    )
                     balanced_s = _next_balanced_duration_s(
                         minimum_s=requested_s,
                         limit_s=expansion_limit_s,
@@ -1817,6 +2065,47 @@ async def _run_planning_turn(
                         edit_format=strategy.edit_format,
                     ) from exc
                 raise CreatorStrategyError(str(exc), edit_format=strategy.edit_format) from exc
+            if all_media_capacity_choice is not None:
+                strategy = normalize_creator_strategy_media(
+                    planning_manifest,
+                    all_media_capacity_choice,
+                    repair_model_output=True,
+                )
+            requested_duration_is_explicit = (
+                recognize_total_duration_s(creator_request) is not None
+                or _pinned_narration_target_duration_s(planning_manifest) is not None
+            )
+            if not requested_duration_is_explicit and all_media_capacity_choice is None:
+                # With no creator-authored duration, surface the planner's
+                # content-aware rationale instead of presenting a schema
+                # default or arithmetic floor as user intent.
+                summary = strategy.rationale or summary
+            capacity_question = _all_media_capacity_question(
+                planning_manifest,
+                strategy,
+                requested_duration_is_explicit=requested_duration_is_explicit,
+            )
+            if capacity_question is not None:
+                if locked.question_count < locked.question_budget:
+                    locked.status = "briefing"
+                    locked.question_count += 1
+                    await append_event(
+                        db,
+                        locked,
+                        event_type="assistant_question",
+                        payload=capacity_question,
+                    )
+                    return await _response(db, locked)
+                # The session cannot ask another question.  Apply the same
+                # recommended mapping the UI shows, rather than emitting an
+                # unrenderable all-media proposal.
+                strategy = normalize_creator_strategy_media(
+                    planning_manifest,
+                    CreativeStrategy.model_validate(
+                        capacity_question["all_media_capacity"]["option_mappings"][0]["strategy"]
+                    ),
+                    repair_model_output=True,
+                )
             locked.active_plan = compile_active_plan(
                 locked,
                 manifest=planning_manifest,
@@ -1944,6 +2233,9 @@ async def _run_planning_turn(
                             "video_reuse_policy": reuse_policy,
                             "montage_cadence": cadence,
                             "opening_title": strategy.opening_title,
+                            "opening_title_duration_s": strategy.opening_title_duration_s,
+                            "shot_labels": strategy.shot_labels,
+                            "closing_title": strategy.closing_title,
                             "font_family": strategy.font_family,
                             "text_color": strategy.text_color,
                         }
@@ -2361,6 +2653,9 @@ def _seed_guided_specialist_brief(
         "duration_s": plan.strategy.target_duration_s,
         "creator_request": creator_request,
         "opening_title": plan.strategy.opening_title,
+        "opening_title_duration_s": plan.strategy.opening_title_duration_s,
+        "shot_labels": plan.strategy.shot_labels,
+        "closing_title": plan.strategy.closing_title,
         "font_family": plan.strategy.font_family,
         "text_color": plan.strategy.text_color,
         "image_layout": plan.strategy.image_layout,

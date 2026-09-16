@@ -331,7 +331,7 @@ def test_landscape_canvas_threads_to_assembly_and_validator(monkeypatch, tmp_pat
     assert assembled_canvases == [LANDSCAPE]
     assert assembled_fits == ["fill"]
     assert validations == [(1920, 1080)]
-    assert duration_ranges == [(0.1, gb.settings.output_max_duration_s)]
+    assert duration_ranges == [(0.1, gb.MAX_PROPOSAL_DURATION_S)]
 
 
 def test_portrait_canvas_preserves_landscape_fit_preference(monkeypatch, tmp_path) -> None:

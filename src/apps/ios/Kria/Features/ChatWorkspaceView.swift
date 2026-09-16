@@ -235,6 +235,7 @@ private struct CreationWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
+    @FocusState private var composerFocused: Bool
     @State private var prompt = ""
     @State private var events: [ThreadEvent] = []
     @State private var initialConversationLoaded = false
@@ -326,12 +327,13 @@ private struct CreationWorkspaceView: View {
                 openEditor: { showsResult = true },
                 openAccount: openAccount
             )
+            .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
 
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 20) {
                         ForEach(Array(transcript.enumerated()), id: \.element.id) { index, message in
-                            ChatMessageRow(message: message).id(message.id)
+                            ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } }).id(message.id)
                                 .modifier(ConversationEntrance(visible: initialConversationRevealed, order: index))
                         }
 
@@ -370,6 +372,7 @@ private struct CreationWorkspaceView: View {
                     initialConversationRevealed = true
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Conversation history")
                 .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
@@ -386,6 +389,7 @@ private struct CreationWorkspaceView: View {
                 text: $prompt,
                 isSending: isSending || isActing,
                 canAttach: selectedFormat != nil && currentProject.status != .rendering && currentProject.status != .ready,
+                isFocused: $composerFocused,
                 attach: { if selectedFormat != nil { showsAttachments = true } },
                 send: { Task { await send() } }
             )
@@ -434,10 +438,11 @@ private struct CreationWorkspaceView: View {
     private var editorConversation: some View {
         VStack(spacing: 0) {
             Text("Kria").font(KriaFont.body(17).weight(.semibold)).padding(.top, 20)
+                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 20) {
-                        ForEach(transcript) { message in ChatMessageRow(message: message).id(message.id) }
+                        ForEach(transcript) { message in ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } }).id(message.id) }
                         if approval != nil { stageContent }
                         if isThinking || isSending { ThinkingRow() }
                         if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
@@ -449,12 +454,14 @@ private struct CreationWorkspaceView: View {
                 }
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
                 .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
                 .onChange(of: events.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: pendingMessages.count) { _, _ in scrollToEnd(proxy) }
             }
             ChatComposer(
                 text: $prompt, isSending: isSending || isActing,
-                canAttach: false, attach: {}, send: { Task { await send() } }
+                canAttach: false, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
             )
         }
         .background(KriaColor.paper)
@@ -780,7 +787,7 @@ private struct CreationWorkspaceView: View {
             apply(thread, requestSequence: requestSequence)
             reconcilePendingMessages()
             let changed = threadRevision != previousRevision || events.map(\.id) != previousEventIDs
-            if changed { errorMessage = nil }
+            clearChatRefreshRecoveryMessage(&errorMessage)
             return changed
         }
         let delta = try await model.api.threadDelta(threadID: project.id, afterSequence: afterSequence)
@@ -806,11 +813,16 @@ private struct CreationWorkspaceView: View {
         }) {
             isThinking = false
         }
+        // The delta fetch and merge above already succeeded, so the banner is
+        // stale regardless of what happens next — clear it here rather than
+        // after `synchronizeApproval()`, whose own failure would otherwise
+        // re-arm "Connection interrupted" underneath messages that just
+        // landed successfully.
+        clearChatRefreshRecoveryMessage(&errorMessage)
         try await synchronizeApproval()
         if !fresh.isEmpty || currentProject.status == .rendering {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
         }
-        if !fresh.isEmpty { errorMessage = nil }
         if !fresh.isEmpty, !isThinking { await editorSession.synchronizePromptRevision() }
         return !fresh.isEmpty
     }
@@ -936,10 +948,18 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     let role: ChatMessageRole
     let content: String
     var isPending = false
+    /// A clarifying question's exact, tappable reply choices. Sending one back
+    /// verbatim is required — the backend matches it by casefolded,
+    /// whitespace-collapsed equality against the fenced mapping it sent with
+    /// the question, so a hand-typed paraphrase never resolves it.
+    var options: [String] = []
+    var recommendedOption: String? = nil
 
     static func syntheticUser(_ content: String) -> Self {
         Self(id: "synthetic-\(content)", role: .user, content: content)
     }
+
+    static let clarifyingQuestionEventTypes: Set<String> = ["assistant_question", "agent_assistant_question"]
 
     static func from(event: ThreadEvent) -> Self? {
         let conversationalAssistantEvents: Set<String> = [
@@ -961,7 +981,14 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         }
         let rawContent = event.content ?? event.payload?["message"]?.stringValue
         guard let content = rawContent?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty else { return nil }
-        return Self(id: event.id, role: role, content: content)
+        var options: [String] = []
+        var recommendedOption: String?
+        if role == .assistant && clarifyingQuestionEventTypes.contains(event.eventType) {
+            options = (event.payload?["options"]?.arrayValue ?? []).compactMap { $0.stringValue }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            recommendedOption = event.payload?["recommended_option"]?.stringValue
+        }
+        return Self(id: event.id, role: role, content: content, options: options, recommendedOption: recommendedOption)
     }
 }
 
@@ -1065,6 +1092,23 @@ func acceptedMutationRefreshError(
         return nil
     } catch {
         return "\(failurePrefix) \(error.localizedDescription)"
+    }
+}
+
+/// A completed full or delta response is authoritative even when it contains
+/// no new events, so it clears a stale transport-recovery banner.
+func clearChatRefreshRecoveryMessage(_ message: inout String?) {
+    guard let current = message else { return }
+    let recoveryPrefixes = [
+        "Kria lost the live connection.",
+        "Kria couldn’t refresh this conversation.",
+        "Your message was sent, but the conversation couldn’t refresh.",
+        "Saved, but the conversation couldn’t refresh.",
+        "Kria recorded that decision, but the conversation couldn’t refresh.",
+        "Kria couldn’t confirm that message."
+    ]
+    if recoveryPrefixes.contains(where: current.hasPrefix) {
+        message = nil
     }
 }
 

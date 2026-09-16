@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import math
+import re
+import unicodedata
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
@@ -19,6 +22,8 @@ from app.agents.edit_proposal import (
 )
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
+    GUIDED_TITLE_HOLD_S,
+    MAX_PROPOSAL_DURATION_S,
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
@@ -28,6 +33,7 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     VideoReusePolicy,
     canonical_narration_duration_s,
+    closing_title_hold_s,
     media_context_group,
     mixed_media_hold_bounds,
     resolve_video_reuse_policy,
@@ -35,6 +41,105 @@ from app.schemas.edit_proposal import (
 )
 
 log = structlog.get_logger()
+
+# These are the specialist output limits, not a product preference.  Keep the
+# all-media preflight aligned with DraftStoryBeat.media_ids (max_length=4) and
+# EditProposalAgentOutput.story_beats (max_length=10).
+GUIDED_STORY_MAX_BEATS = 10
+GUIDED_STORY_MAX_MEDIA_PER_BEAT = 4
+GUIDED_STORY_MAX_MEDIA = GUIDED_STORY_MAX_BEATS * GUIDED_STORY_MAX_MEDIA_PER_BEAT
+FAST_MONTAGE_NORMAL_MIN_CUT_FRAMES = int(round(0.8 * 30))
+
+
+@dataclass(frozen=True)
+class AllMediaCapacity:
+    """Deterministic preflight result for an explicit all-media request."""
+
+    guided_feasible: bool
+    fast_montage_feasible: bool
+    current_fast_target_feasible: bool
+    required_fast_duration_s: int | None
+    reason: str | None = None
+
+
+def assess_all_media_capacity(
+    media: Sequence[CadenceCapacityMedia],
+    target_duration_s: int | float,
+    *,
+    story_min_moment_s: float = GUIDED_STORY_MIN_MOMENT_S,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
+) -> AllMediaCapacity:
+    """Assess all-source coverage using the same source floors as the renderer.
+
+    Guided output is structurally limited to ten beats of four sources and
+    each source needs the guided-story minimum moment.  The fast alternative
+    uses the ordinary 0.8s montage floor in 30fps frames (a genuinely short
+    source may use the schema's 0.4s absolute floor), then rounds the display
+    duration *up* to a whole second.  This makes 33 normal clips require 27s.
+    """
+
+    refs = list(media)
+    if not refs:
+        return AllMediaCapacity(False, False, False, None, "no_media")
+    guided_feasible = (
+        len(refs) <= GUIDED_STORY_MAX_MEDIA
+        and float(target_duration_s) + 0.001 >= len(refs) * story_min_moment_s
+        and all(
+            ref.kind == "image"
+            or (ref.duration_s is not None and float(ref.duration_s) >= story_min_moment_s)
+            for ref in refs
+        )
+    )
+    minimum_frames = 0
+    maximum_frames = 0
+    quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
+    absolute_minimum_frames = int(round((0.1 if quick_mixed_timing else 0.4) * 30))
+    for ref in refs:
+        if quick_mixed_timing:
+            bounds = mixed_media_hold_bounds(ref.kind, mixed_media_timing)
+            minimum = int(math.ceil(bounds.minimum_s * 30 - 1e-6))
+            maximum = int(math.floor(bounds.maximum_s * 30 + 1e-6))
+        elif ref.kind == "image":
+            minimum = FAST_MONTAGE_NORMAL_MIN_CUT_FRAMES
+            maximum = int(round(1.2 * 30))
+        else:
+            minimum = FAST_MONTAGE_NORMAL_MIN_CUT_FRAMES
+            maximum = 0
+        if ref.kind == "video":
+            if ref.duration_s is None:
+                return AllMediaCapacity(guided_feasible, False, False, None, "missing_duration")
+            source_frames = math.floor(float(ref.duration_s) * 30 + 1e-6)
+            if source_frames < absolute_minimum_frames:
+                return AllMediaCapacity(guided_feasible, False, False, None, "unusable_source")
+            minimum = min(minimum, source_frames)
+            maximum = min(maximum or source_frames, source_frames)
+        if maximum < minimum:
+            return AllMediaCapacity(guided_feasible, False, False, None, "unusable_source")
+        minimum_frames += minimum
+        maximum_frames += maximum
+    required_duration_s = math.ceil(minimum_frames / 30)
+    maximum_duration_s = maximum_frames / 30
+    fast_feasible = (
+        3 <= required_duration_s <= MAX_PROPOSAL_DURATION_S
+        and required_duration_s <= maximum_duration_s + 1e-6
+    )
+    target_frames = int(round(float(target_duration_s) * 30))
+    current_fast_target_feasible = (
+        fast_feasible
+        and 3 <= float(target_duration_s) <= MAX_PROPOSAL_DURATION_S
+        and minimum_frames <= target_frames <= maximum_frames
+    )
+    return AllMediaCapacity(
+        guided_feasible,
+        fast_feasible,
+        current_fast_target_feasible,
+        required_duration_s if fast_feasible else None,
+        None if fast_feasible else "duration_over_limit",
+    )
+
+
+class CreatorTextInfeasibleError(ValueError):
+    """The creator's exact shot labels cannot be placed on the available media."""
 
 
 class CadenceCapacityMedia(Protocol):
@@ -207,7 +312,7 @@ def clamp_fast_montage_target_duration_s(
     exceed the unique footage duration. Saved snapshots are not rewritten.
     """
 
-    requested = max(3, min(60, duration_s))
+    requested = max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
     if video_reuse_policy == "allow_repeat":
         return requested
     if video_reuse_policy == "once":
@@ -687,17 +792,14 @@ def deterministic_fast_cuts(
     return cuts
 
 
-def deterministic_guided_beats(media: list[MediaRef], duration_s: int | float) -> list[StoryBeat]:
-    """Build conservative, metadata-free story structure from renderable owned media."""
+def _guided_fallback_order(media: list[MediaRef]) -> list[MediaRef]:
+    """Renderable media, longest videos first, interleaved with photos."""
 
     eligible = [
         ref
         for ref in media
         if ref.kind == "image" or float(ref.duration_s or 0.0) >= GUIDED_STORY_MIN_MOMENT_S
     ]
-    if not eligible:
-        raise ValueError("guided story fallback found no usable media")
-
     images = [ref for ref in eligible if ref.kind == "image"]
     videos = sorted(
         (ref for ref in eligible if ref.kind == "video"),
@@ -709,14 +811,198 @@ def deterministic_guided_beats(media: list[MediaRef], duration_s: int | float) -
             ordered.append(videos.pop(0))
         if images:
             ordered.append(images.pop(0))
+    return ordered
 
-    target_s = max(3, min(60, duration_s))
-    source_count = max(
-        1,
-        min(7, len(ordered), math.floor(target_s / GUIDED_STORY_MIN_MOMENT_S)),
+
+# Connectives and day/shot vocabulary that say nothing about what a shot shows.
+_LABEL_MATCH_STOPWORDS = frozenset(
+    {
+        "and", "the", "for", "from", "into", "with", "day", "days", "week", "part",
+        "shot", "clip", "video", "photo", "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+    }
+)  # fmt: skip
+# Extra seconds a video must hold beyond its beat so crossfade overlap and
+# frame rounding never push the compiler past the real source.
+_LABEL_VIDEO_CAPACITY_MARGIN_S = 0.25
+
+
+def _label_match_tokens(text: str) -> set[str]:
+    decomposed = unicodedata.normalize("NFKD", text.casefold())
+    plain = "".join(char for char in decomposed if not unicodedata.combining(char))
+    tokens: set[str] = set()
+    for token in re.findall(r"\w+", plain):
+        if len(token) < 3 or token.isdigit() or token in _LABEL_MATCH_STOPWORDS:
+            continue
+        tokens.add(token[:-1] if len(token) > 3 and token.endswith("s") else token)
+    return tokens
+
+
+def _media_match_tokens(ref: MediaRef) -> set[str]:
+    analysis = ref.analysis if isinstance(ref.analysis, dict) else {}
+    return _label_match_tokens(
+        " ".join(
+            str(value or "")
+            for value in (
+                ref.user_context,
+                analysis.get("subject"),
+                analysis.get("description"),
+                analysis.get("on_screen_text"),
+            )
+        )
     )
-    selected = ordered[:source_count]
-    beat_count = min(5, source_count)
+
+
+def deterministic_labeled_beats(
+    media: list[MediaRef],
+    duration_s: int | float,
+    *,
+    shot_labels: Sequence[str],
+    opening_title: str | None = None,
+    opening_title_duration_s: float | None = None,
+    closing_title: str | None = None,
+) -> list[StoryBeat]:
+    """Place the creator's exact shot labels on renderable media.
+
+    Recovery for a failed planner must never substitute generic copy for
+    confirmed creator words. Each label gets its own shot (the best subject
+    match, else the next source in fallback order); a separate unlabeled hold
+    beat carries the opening/closing title only when a spare source exists.
+    Raises CreatorTextInfeasibleError when the labels cannot fit the media.
+    """
+
+    labels = list(shot_labels)
+    if not labels:
+        raise CreatorTextInfeasibleError("no creator shot labels to place")
+    ordered = _guided_fallback_order(media)
+    if not ordered:
+        raise CreatorTextInfeasibleError("guided story fallback found no usable media")
+    target_s = float(max(3, min(MAX_PROPOSAL_DURATION_S, duration_s)))
+    title_hold_s = float(opening_title_duration_s or GUIDED_TITLE_HOLD_S) if opening_title else 0.0
+    closing_hold_s = closing_title_hold_s(target_s) if closing_title else 0.0
+    shot_s = (target_s - title_hold_s - closing_hold_s) / len(labels)
+    if shot_s < GUIDED_STORY_MIN_MOMENT_S - 1e-6:
+        raise CreatorTextInfeasibleError(
+            f"{len(labels)} shot labels need at least {GUIDED_STORY_MIN_MOMENT_S:g}s each"
+        )
+    # Assign shots as if the title holds play over the first/last labeled shot
+    # (the worst case for clip length); spare sources can take them over below.
+    label_seconds = [shot_s] * len(labels)
+    label_seconds[0] += title_hold_s
+    label_seconds[-1] += closing_hold_s
+
+    def capacity_s(ref: MediaRef) -> float:
+        return math.inf if ref.kind == "image" else float(ref.duration_s or 0.0)
+
+    order_index = {ref.media_id: index for index, ref in enumerate(ordered)}
+    media_tokens = {ref.media_id: _media_match_tokens(ref) for ref in ordered}
+    used: set[str] = set()
+    assigned: list[MediaRef] = []
+    for label, seconds in zip(labels, label_seconds, strict=True):
+        needed_s = seconds + _LABEL_VIDEO_CAPACITY_MARGIN_S
+        label_tokens = _label_match_tokens(label)
+        candidates = [
+            ref for ref in ordered if ref.media_id not in used and capacity_s(ref) >= needed_s
+        ]
+        if not candidates:
+            # A photo can hold any length and may carry more than one label;
+            # a video may appear only once.
+            candidates = [ref for ref in ordered if ref.kind == "image"]
+        if not candidates:
+            raise CreatorTextInfeasibleError(
+                f"{len(labels)} shot labels need {len(labels)} usable clips or a photo"
+            )
+        choice = max(
+            candidates,
+            key=lambda ref: (
+                len(label_tokens & media_tokens[ref.media_id]),
+                -order_index[ref.media_id],
+            ),
+        )
+        used.add(choice.media_id)
+        assigned.append(choice)
+
+    spares = [ref for ref in ordered if ref.media_id not in used]
+    intro_ref = None
+    if opening_title and title_hold_s >= GUIDED_STORY_MIN_MOMENT_S:
+        intro_ref = next(
+            (
+                ref
+                for ref in spares
+                if capacity_s(ref) >= title_hold_s + _LABEL_VIDEO_CAPACITY_MARGIN_S
+            ),
+            None,
+        )
+    outro_ref = None
+    if closing_title and closing_hold_s >= GUIDED_STORY_MIN_MOMENT_S:
+        outro_ref = next(
+            (
+                ref
+                for ref in spares
+                if (intro_ref is None or ref.media_id != intro_ref.media_id)
+                and capacity_s(ref) >= closing_hold_s + _LABEL_VIDEO_CAPACITY_MARGIN_S
+            ),
+            None,
+        )
+    if intro_ref is not None:
+        label_seconds[0] -= title_hold_s
+    if outro_ref is not None:
+        label_seconds[-1] -= closing_hold_s
+
+    raw: list[tuple[str, str, MediaRef, float, bool]] = []
+    if intro_ref is not None:
+        raw.append(("Opening", "", intro_ref, title_hold_s, False))
+    for label, ref, seconds in zip(labels, assigned, label_seconds, strict=True):
+        raw.append((label[:80], label, ref, seconds, True))
+    if outro_ref is not None:
+        raw.append(("Closing", "", outro_ref, closing_hold_s, False))
+    # StoryBeat.duration_s is a 1-12 weight the compiler scales to the target;
+    # keep the ratios while respecting the schema bounds.
+    scale = min(1.0, 12.0 / max(item[3] for item in raw))
+    return [
+        StoryBeat(
+            beat_id=f"creator-label-beat-{index + 1}",
+            topic=topic,
+            thought=thought,
+            thought_source="user" if labeled else "ai_draft",
+            media_ids=[ref.media_id],
+            layout="fullscreen",
+            duration_s=max(1.0, round(seconds * scale, 3)),
+        )
+        for index, (topic, thought, ref, seconds, labeled) in enumerate(raw)
+    ]
+
+
+def deterministic_guided_beats(
+    media: list[MediaRef],
+    duration_s: int | float,
+    *,
+    required_media_ids: Sequence[str] | None = None,
+) -> list[StoryBeat]:
+    """Build conservative, metadata-free story structure from renderable owned media."""
+
+    ordered = _guided_fallback_order(media)
+    required_ids = set(required_media_ids or ())
+    if required_ids - {ref.media_id for ref in media}:
+        raise ValueError("guided story fallback is missing required media")
+    if required_ids - {ref.media_id for ref in ordered}:
+        raise ValueError("guided story fallback cannot use every required source safely")
+    if not ordered:
+        raise ValueError("guided story fallback found no usable media")
+
+    target_s = max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
+    if required_ids:
+        selected = [ref for ref in ordered if ref.media_id in required_ids]
+    else:
+        source_count = max(
+            1,
+            min(7, len(ordered), math.floor(target_s / GUIDED_STORY_MIN_MOMENT_S)),
+        )
+        selected = ordered[:source_count]
+    if len(selected) > GUIDED_STORY_MAX_MEDIA:
+        raise ValueError("guided story fallback exceeds specialist media capacity")
+    if target_s + 0.001 < len(selected) * GUIDED_STORY_MIN_MOMENT_S:
+        raise ValueError("guided story fallback cannot fit every required source")
+    beat_count = min(GUIDED_STORY_MAX_BEATS, len(selected))
     groups: list[list[MediaRef]] = [[] for _ in range(beat_count)]
     for index, ref in enumerate(selected):
         groups[index % beat_count].append(ref)
@@ -740,6 +1026,11 @@ def deterministic_guided_beats(media: list[MediaRef], duration_s: int | float) -
         ("Closing", "One last look."),
         ("Another view", "A different angle on the moment."),
         ("Final frame", "A final frame to remember."),
+        ("Next chapter", "The story moves into another moment."),
+        ("More detail", "Another detail adds to the sequence."),
+        ("Later moment", "A later moment keeps the story moving."),
+        ("Before the close", "One more view sets up the ending."),
+        ("Last moment", "The final moment brings the story together."),
     ]
     return [
         StoryBeat(
@@ -813,6 +1104,10 @@ def plan_direction_snapshot(
         )
         for ref in source.media
     ]
+    if source.shot_labels and direction == "fast_montage":
+        # Fast cuts have no per-shot text lane. Refuse rather than approve a
+        # replacement that silently drops the creator's confirmed labels.
+        raise CreatorTextInfeasibleError("creator shot labels need a story-beat direction")
     video_reuse_policy = resolve_video_reuse_policy(
         creator_request,
         source.video_reuse_policy,
@@ -822,13 +1117,13 @@ def plan_direction_snapshot(
         montage_cadence = None
     narrated = source.narration is not None
     planning_duration_s = (
-        max(3, min(60, duration_s))
+        max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
         if narrated and direction == "fast_montage"
         else clamp_fast_montage_target_duration_s(
             media, duration_s, mixed_media_timing, video_reuse_policy
         )
         if direction == "fast_montage"
-        else max(3, min(60, duration_s))
+        else max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
     )
     output = None
     used_fallback = False
@@ -854,6 +1149,10 @@ def plan_direction_snapshot(
                 mixed_media_timing=mixed_media_timing,
                 montage_audio=montage_audio,
                 montage_cadence=montage_cadence,
+                opening_title=source.opening_title,
+                opening_title_duration_s=source.opening_title_duration_s,
+                shot_labels=source.shot_labels,
+                closing_title=source.closing_title,
                 media=media,
             ),
             ctx=RunContext(job_id=job_id) if job_id else None,
@@ -899,15 +1198,35 @@ def plan_direction_snapshot(
         if not cuts:
             raise ValueError("fast montage planner returned no source-aware cuts")
         beats = _compatibility_beats(cuts)
+    elif output is None and source.shot_labels:
+        beats = deterministic_labeled_beats(
+            source.media,
+            duration_s,
+            shot_labels=source.shot_labels,
+            opening_title=source.opening_title,
+            opening_title_duration_s=source.opening_title_duration_s,
+            closing_title=source.closing_title,
+        )
     elif output is None:
-        beats = deterministic_guided_beats(source.media, duration_s)
+        beats = deterministic_guided_beats(
+            source.media,
+            duration_s,
+            required_media_ids=(
+                [ref.media_id for ref in source.media]
+                if source.media_scope == "all"
+                else source.selected_media_ids
+                if source.media_scope == "selected"
+                else None
+            ),
+        )
     else:
+        creator_labels = set(source.shot_labels or [])
         beats = [
             StoryBeat(
                 beat_id=f"beat-{index + 1}",
                 topic=beat.topic,
                 thought=beat.thought,
-                thought_source="ai_draft",
+                thought_source="user" if beat.thought in creator_labels else "ai_draft",
                 media_ids=beat.media_ids,
                 layout=beat.layout,
                 duration_s=beat.duration_s,
@@ -922,7 +1241,9 @@ def plan_direction_snapshot(
             "duration_s": planning_duration_s
             if output is None or direction == "fast_montage"
             else output.duration_s,
-            "title": output.title if output is not None else source.title,
+            # A confirmed creator title is immutable across direction changes;
+            # the renderer burns ``title``, so never let generated copy replace it.
+            "title": source.opening_title or (output.title if output is not None else source.title),
             "story_beats": beats,
             "fast_cuts": cuts,
             "mixed_media_timing": mixed_media_timing,

@@ -24,6 +24,7 @@ from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.services.editor_limits import (
     EDITOR_MAX_TIMELINE_SLOTS,
     MOTION_FPS,
@@ -1103,7 +1104,7 @@ def _format_snapshot(snapshot: dict) -> str:
         if focus:
             lines.append(focus)
     if total_s is not None:
-        lines.append(f"total_duration_s: {total_s:.2f} (cap 60.00)")
+        lines.append(f"total_duration_s: {total_s:.2f} (cap {MAX_PROPOSAL_DURATION_S:.2f})")
 
     source_summary = snapshot.get("source_pool_summary")
     if isinstance(source_summary, dict):
@@ -2410,7 +2411,7 @@ def _sanitize_pending_actions(
                 action["integrity"] = integrity
         if name == "set_media_duration" and "duration_s" in raw:
             duration = _as_float(raw.get("duration_s"))
-            if duration is None or not 0.1 <= duration <= 60.0:
+            if duration is None or not 0.1 <= duration <= MAX_PROPOSAL_DURATION_S:
                 continue
             action["duration_s"] = round(duration, 6)
         sanitized.append(action)
@@ -2652,7 +2653,7 @@ def _clean_bulk_operation(
         payload.pop("preset_id", None)
     if name == "set_media_duration":
         duration = _as_float(payload.get("duration_s"))
-        if duration is None or not 0.1 <= duration <= 60.0:
+        if duration is None or not 0.1 <= duration <= MAX_PROPOSAL_DURATION_S:
             state.invalid_value()
             return None
         payload["duration_s"] = round(duration, 6)
