@@ -66,6 +66,20 @@ final class MediaEngineTests: XCTestCase {
         XCTAssertEqual(recipe.tracks.first?.clips.first?.sourceAssetID, "media-1")
     }
 
+    /// Vocabulary named for KRI-93+ lanes (see docs/reviews/kri-29/capability-matrix.md's
+    /// "local-later" table) must never be granted by default, and an otherwise-empty
+    /// recipe must never derive them — naming a capability is not the same as supporting it.
+    func testUnderivableCapabilitiesAreNeverGrantedByDefault() {
+        let notYetDerivable: Set<MediaCapability> = [
+            .captions, .customEffects, .mediaCards, .carouselEffects, .motionPresets,
+            .narrationAudio, .soundEffects, .audioDucking, .slidePosts, .semanticCamera, .musicBed,
+        ]
+        XCTAssertTrue(DefaultRendererCapabilities().capabilities.isDisjoint(with: notYetDerivable))
+        let recipe = EditRecipe(tracks: [TimelineTrack(id: "v", kind: .video,
+            clips: [TimelineClip(id: "c", sourceAssetID: "a", sourceStart: 0, sourceDuration: 1, timelineStart: 0, rate: 1)])])
+        XCTAssertTrue(recipe.effectiveCapabilities.isDisjoint(with: notYetDerivable))
+    }
+
     func testCapabilityNegotiationFallsBackSafely() {
         let recipe = EditRecipe(requiredCapabilities: [.hdr, .local1080Export])
         let decision = CapabilityNegotiator(provider: DefaultRendererCapabilities(capabilities: [.basicComposition])).decide(for: recipe)

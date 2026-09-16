@@ -1,3 +1,5 @@
+import typing
+
 import pytest
 
 from app.agents._schemas.text_element import TextElement
@@ -228,20 +230,27 @@ def test_cannot_silently_drop_treatments_or_rebind_sources(field, value):
 
 
 @pytest.mark.parametrize(
-    "lane",
+    "lane,expected_capability",
     [
-        "editor_sound_effects",
-        "editor_media_overlays",
-        "editor_visual_blocks",
-        "editor_motion_scenes",
-        "editor_custom_effects",
+        ("editor_sound_effects", "soundEffects"),
+        ("editor_media_overlays", "mediaCards"),
+        ("editor_visual_blocks", "visualBlocks"),
+        ("editor_motion_scenes", "motionScenes"),
+        ("editor_custom_effects", "customEffects"),
     ],
 )
-def test_editor_lanes_cannot_disappear(lane):
+def test_editor_lanes_cannot_disappear(lane, expected_capability):
+    from app.kria.recipes import MediaCapability
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+
     plan, bindings = fixture()
     setattr(plan, lane, [{"id": "required"}])
-    with pytest.raises(ValueError, match=lane):
+    with pytest.raises(UnsupportedPhonePlan, match=lane) as excinfo:
         compile_phone_guided_plan(plan, bindings)
+    # The reject stays a hard fail-closed regardless of this attribute — it
+    # is informational for future error surfacing, not a gate by itself.
+    assert excinfo.value.capability == expected_capability
+    assert expected_capability in typing.get_args(MediaCapability)
 
 
 def test_dissolve_seed_follows_cloud_combined_lane_indices():

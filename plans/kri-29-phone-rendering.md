@@ -18,7 +18,10 @@ not pixel-identical encoding. Do not introduce new generated-media features.
 - [x] Shared basic preview/export compositor and explicit H.264/AAC writer.
 - [x] Durable revision/attempt-fenced device coordinator and upload retries.
 - [x] Owner/current-revision upload reservation and verified completion APIs.
-- [ ] Complete portable, negotiated rendering contract for every style/effect.
+- [ ] Complete portable, negotiated rendering contract for every style/effect
+      (KRI-92 named the full capability vocabulary — see
+      [capability-matrix.md](../docs/reviews/kri-29/capability-matrix.md) —
+      but most lanes still have no recipe-schema fields; still open).
 - [ ] Shared analysis/planning split that stops before cloud effect generation.
 - [ ] Visual-pool/narration local sources and licensed asset downloads.
 - [ ] Chat creation and editor-save coordinator integration and local playback.

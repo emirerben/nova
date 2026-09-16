@@ -16,6 +16,13 @@ transition and golden-hour cases across three runs. Giant-title handwriting took
 106 seconds for a six-second export even with optimization and remains a
 performance concern. Functional pilot success does not enable a capability.
 
+The [capability matrix](capability-matrix.md) classifies every `MediaCapability` (KRI-92): which
+ones a native primitive already derives from recipe content (local-v1, still gated by
+`phone_render_verified_features` and, for several, an additional device-parity block), which are
+named vocabulary for lanes the V2 recipe schema has no fields for yet (local-later — KRI-93+ add
+the fields), and which are architecturally cloud-only (cloud-fallback). Naming a lane does not
+port it; the source catalogs below are still the tracked work.
+
 ## Text
 
 All shared editor effect names now have native implementations and compiler paths:
