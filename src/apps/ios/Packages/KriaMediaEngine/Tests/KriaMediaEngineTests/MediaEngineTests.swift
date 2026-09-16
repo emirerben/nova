@@ -120,6 +120,14 @@ final class MediaEngineTests: XCTestCase {
             "This video uses a preview feature (layer-composition) that isn’t supported yet."
         )
 
+        // The asset/track identifier must actually reach the user-visible
+        // message — this is the difference between an actionable error and
+        // a report of "something is missing" with no lead to follow.
+        XCTAssertEqual(
+            MediaEngineError.missingAsset("track-7").errorDescription,
+            "One of the clips in this video is missing (track-7)."
+        )
+
         for error in [
             RecipeError.unsupportedSchema(9), .invalidFrameRate(0), .invalidTimeline, .missingAssetReference,
         ] {

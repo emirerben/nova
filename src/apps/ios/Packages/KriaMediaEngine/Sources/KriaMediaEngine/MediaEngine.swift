@@ -227,7 +227,7 @@ public enum MediaEngineError: Error, Equatable, Sendable, LocalizedError {
         case .waveformFailed: "Couldn’t read this clip’s audio."
         case .insufficientStorage: "Your iPhone is low on storage. Free up space and try again."
         case .unsupportedCapability: "This clip uses a format this iPhone can’t process."
-        case .missingAsset: "One of the clips in this video is missing."
+        case .missingAsset(let id): "One of the clips in this video is missing (\(id))."
         case .cancelled: "Export was cancelled."
         }
     }

@@ -126,7 +126,18 @@ struct PreviewAudioBinding: Sendable {
                         let fps = Double(try await source.load(.nominalFrameRate))
                         let frameDuration = min(clip.sourceDuration, 1 / max(1, fps.isFinite && fps > 0 ? fps : 30))
                         let tail = CMTimeRange(start: time(clip.sourceStart + clip.sourceDuration - frameDuration), duration: time(frameDuration))
-                        let tailStart = time(clip.timelineStart + movingDuration)
+                        // Anchor the held tail to where the moving segment's
+                        // scaled content actually ends, not to time(timelineStart
+                        // + movingDuration) recomputed from Doubles. scaleTimeRange
+                        // does not always land on the exact idealized duration —
+                        // AVFoundation can round the retimed range to the source
+                        // media's own sample boundaries. That recomputation used
+                        // to leave a silent sub-frame gap between the moving
+                        // segment and the frozen tail with nothing on the track,
+                        // which the renderer then requested a frame from,
+                        // surfacing as "one of the clips in this video is
+                        // missing" only for clips using a held last frame.
+                        let tailStart = track.timeRange.end
                         try track.insertTimeRange(tail, of: source, at: tailStart)
                         track.scaleTimeRange(CMTimeRange(start: tailStart, duration: tail.duration), toDuration: time(hold))
                     }
