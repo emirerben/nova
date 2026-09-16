@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.35.0] - 2026-09-16
+
+### Changed
+- fix(creator): burn creator-authored shot labels, title hold and end card verbatim (KRI-98) (#1048) <!-- release-pr: 1048 -->
+
 ## [0.76.34.0] - 2026-09-16
 
 ### Changed
