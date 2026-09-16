@@ -537,6 +537,7 @@ enum JSONValue: Codable, Equatable, Sendable {
         }
     }
     var stringValue: String? { if case .string(let value) = self { value } else { nil } }
+    var arrayValue: [JSONValue]? { if case .array(let value) = self { value } else { nil } }
 }
 
 enum UploadPurpose: String, Codable, Sendable { case analysisProxy = "analysis_proxy", cloudRenderSource = "cloud_render_source" }

@@ -16,11 +16,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.pipeline.look_presets import normalize_look_adjustments, normalize_look_preset
-from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA
+from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA, MAX_PROPOSAL_DURATION_S
 from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS, MOTION_FPS
 
 MAX_GUIDED_EDITOR_SEGMENTS = EDITOR_MAX_TIMELINE_SLOTS
-MAX_GUIDED_EDITOR_DURATION_S = 60.0
+MAX_GUIDED_EDITOR_DURATION_S = float(MAX_PROPOSAL_DURATION_S)
 # Guided narration uses word-level caption elements in the same editable lane
 # as titles and participant labels. The ordinary 50 authored-element cap cannot
 # represent those already-rendered stories. Include the planner's 2,000-word
@@ -241,7 +241,9 @@ class GuidedEditorRevision(BaseModel):
             for segment in self.segments
         )
         if total > MAX_GUIDED_EDITOR_DURATION_S + 1e-6:
-            raise ValueError("guided editor output exceeds 60 seconds")
+            raise ValueError(
+                f"guided editor output exceeds {MAX_GUIDED_EDITOR_DURATION_S:g} seconds"
+            )
         if self.state_hash and self.state_hash != guided_editor_state_hash(
             self, include_hash=False
         ):
@@ -437,7 +439,10 @@ def normalize_guided_editor_revision(
         cursor = max(segment["output_end_s"] - frame(overlap), segment["output_start_s"])
     total = max(float(row["output_end_s"]) for row in normalized["segments"])
     if total > MAX_GUIDED_EDITOR_DURATION_S + 1e-6:
-        raise ValueError("guided editor output exceeds 60 seconds after frame quantization")
+        raise ValueError(
+            f"guided editor output exceeds {MAX_GUIDED_EDITOR_DURATION_S:g} seconds "
+            "after frame quantization"
+        )
     audio = normalized["audio"]
     audio["start_s"] = frame(audio.get("start_s") or 0.0)
     if audio.get("mode") == "track":

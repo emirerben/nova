@@ -107,6 +107,7 @@ from app.pipeline.text_overlay import (
     _validate_overlay,
 )
 from app.pipeline.text_wrap import balanced_word_wrap_indices
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 
 
 def _sha256_file(path: str) -> str:
@@ -292,10 +293,11 @@ LONG_RUNNING_TEXT_FRAME_CEILING = int(FPS * 30)
 # The sequence COMPOSITE stream (see _render_sequence_composite) spans the
 # union window of every generative_sequence overlay — for a full editorial
 # edit that is the whole output video, so the per-overlay 30s ceiling would
-# truncate it. 120s = 2x the platform's sub-60s output target. Disk stays
-# bounded regardless: held/blank frames are hard links, so unique-PNG count —
-# not this ceiling — drives scratch usage.
-SEQUENCE_COMPOSITE_FRAME_CEILING = int(FPS * 120)
+# truncate it. This is 2x the platform's output-duration target (kept in sync
+# with MAX_PROPOSAL_DURATION_S below) so a full-length edit never runs the PNG
+# sequence out early. Disk stays bounded regardless: held/blank frames are
+# hard links, so unique-PNG count — not this ceiling — drives scratch usage.
+SEQUENCE_COMPOSITE_FRAME_CEILING = int(FPS * MAX_PROPOSAL_DURATION_S * 2)
 
 # behind_subject overlays get their own, larger ceiling. Generative intro
 # overlays can be hold-to-EOF (effect="static", end_s spanning nearly the
@@ -307,13 +309,13 @@ SEQUENCE_COMPOSITE_FRAME_CEILING = int(FPS * 120)
 # below). Without a dedicated ceiling these fall back to
 # LONG_RUNNING_TEXT_FRAME_CEILING (30s) and the text silently vanishes for
 # the remainder of the video once the PNG sequence runs out (eof_action=pass
-# on the ffmpeg overlay input). 120s == SEQUENCE_COMPOSITE_FRAME_CEILING,
-# deliberately: it covers Nova's sub-60s output target with 2x margin. Frame
+# on the ffmpeg overlay input). Matches SEQUENCE_COMPOSITE_FRAME_CEILING,
+# deliberately: it covers Nova's output-duration target with 2x margin. Frame
 # economy stays fine at this length — behind frames are mostly-transparent
 # text-on-alpha PNGs (small), and PNG encode parallelizes over
 # _ENCODE_WORKERS — so do NOT re-enable hold-linking for behind_subject to
 # "save" frames here.
-BEHIND_SUBJECT_FRAME_CEILING = int(FPS * 120)
+BEHIND_SUBJECT_FRAME_CEILING = int(FPS * MAX_PROPOSAL_DURATION_S * 2)
 
 # Encoder thread pool: Pillow PNG encode releases the GIL during compression,
 # so threading actually helps. 4 workers matches the production Celery worker

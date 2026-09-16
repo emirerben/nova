@@ -28,10 +28,11 @@ from pydantic import (
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
+MAX_PROPOSAL_DURATION_S = 120
 ProposalDuration = Annotated[
     int | float,
-    Field(ge=3, le=60),
-    WithJsonSchema({"type": "number", "minimum": 3, "maximum": 60}),
+    Field(ge=3, le=MAX_PROPOSAL_DURATION_S),
+    WithJsonSchema({"type": "number", "minimum": 3, "maximum": MAX_PROPOSAL_DURATION_S}),
 ]
 
 ProposalStatus = Literal[
@@ -204,18 +205,18 @@ def recognize_total_duration_s(text: str) -> int | float | None:
 
     normalized = " ".join(str(text or "").casefold().split())
     patterns = (
-        r"\b(?:for|lasting)\s+(\d{1,2}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
-        r"\b(?:total|length)\s+(?:of\s+)?(\d{1,2}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
-        r"\bmake\s+it\s+(\d{1,2}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
-        r"\bmake\s+(?:a\s+)?(\d{1,2}(?:\.\d+)?)[-\s]*(?:second|sec|s)\s+(?:edit|video)\b",
-        r"\b(?:want|need|prefer)\s+(?:a\s+)?(\d{1,2}(?:\.\d+)?)[-\s]*(?:second|sec|s)\s+"
+        r"\b(?:for|lasting)\s+(\d{1,3}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+        r"\b(?:total|length)\s+(?:of\s+)?(\d{1,3}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+        r"\bmake\s+it\s+(\d{1,3}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+        r"\bmake\s+(?:a\s+)?(\d{1,3}(?:\.\d+)?)[-\s]*(?:second|sec|s)\s+(?:edit|video)\b",
+        r"\b(?:want|need|prefer)\s+(?:a\s+)?(\d{1,3}(?:\.\d+)?)[-\s]*(?:second|sec|s)\s+"
         r"(?:edit|video)\b",
     )
     for pattern in patterns:
         match = re.search(pattern, normalized)
         if match is not None:
             value = float(match.group(1)) if "." in match.group(1) else int(match.group(1))
-            return value if 3 <= value <= 60 else None
+            return value if 3 <= value <= MAX_PROPOSAL_DURATION_S else None
     return None
 
 
@@ -662,7 +663,7 @@ class FastMontageCut(BaseModel):
     media_id: str = Field(min_length=1, max_length=100)
     source_start_s: float = Field(ge=0)
     source_end_s: float = Field(gt=0)
-    output_duration_s: float = Field(ge=0.1, le=60.0)
+    output_duration_s: float = Field(ge=0.1, le=MAX_PROPOSAL_DURATION_S)
     role: Literal["hook", "build", "payoff"]
     transition: Literal["none"] = "none"
     beat_align: bool = False

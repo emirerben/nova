@@ -1,3 +1,4 @@
+import { COPILOT_MAX_DURATION_S } from "./snapshot";
 import type { TextAppearanceInventory } from "./text-appearance";
 import fontRegistryJson from "@/data/font-registry.json";
 import type { CarouselMoment, EditorTransition } from "@/lib/generative-api";
@@ -1197,8 +1198,8 @@ export function validateCopilotOp(
       if (!selector || selector.scope !== "timeline") {
         return reject("invalid_value", "set_media_duration requires an image, video, or clip timeline selector", opName);
       }
-      if (!finiteNumber(raw.duration_s) || raw.duration_s < 0.1 || raw.duration_s > 60) {
-        return reject("invalid_value", "duration_s must be between 0.1 and 60 seconds", opName);
+      if (!finiteNumber(raw.duration_s) || raw.duration_s < 0.1 || raw.duration_s > COPILOT_MAX_DURATION_S) {
+        return reject("invalid_value", `duration_s must be between 0.1 and ${COPILOT_MAX_DURATION_S} seconds`, opName);
       }
       return { ok: true, op: { op: opName, selector, duration_s: raw.duration_s, ...(normalizeBulkIntegrity(raw.integrity) ? { integrity: normalizeBulkIntegrity(raw.integrity) } : {}) } };
     }

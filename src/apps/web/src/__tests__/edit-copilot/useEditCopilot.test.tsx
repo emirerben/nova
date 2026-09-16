@@ -34,8 +34,8 @@ function snapshot(label: string): CopilotSnapshot {
     slots: [],
     has_narrated_captions: false,
     total_duration_s: 0,
-    max_duration_s: 60,
-    remaining_duration_s: 60,
+    max_duration_s: 120,
+    remaining_duration_s: 120,
     allowed_op_families: ["text", "clip"],
     // Test-only marker; snapshots are JSON and the route accepts arbitrary keys.
     marker: label,

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.34.0] - 2026-09-16
+
+### Changed
+- fix(ios-chat): dismiss keyboard on tap outside the message composer (#1045) <!-- release-pr: 1045 -->
+
+## [0.76.33.0] - 2026-09-16
+
+### Changed
+- fix(editor): stop song-reference card from pushing tools off-screen (KRI-90) (#1044) <!-- release-pr: 1044 -->
+
+## [0.76.32.0] - 2026-09-16
+
+### Changed
+- fix: keep montage proposals within renderable capacity (#1042) <!-- release-pr: 1042 -->
+
 ## [0.76.31.0] - 2026-09-15
 
 ### Changed

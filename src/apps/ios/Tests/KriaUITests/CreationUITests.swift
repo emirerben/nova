@@ -178,6 +178,33 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Reconnect"].firstMatch.exists)
     }
 
+    func testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+
+        app.staticTexts["What kind of video are we making?"].tap()
+        let keyboardGone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [keyboardGone], timeout: 5), .completed)
+
+        // A tap that dismisses the keyboard must not eat the first tap on a
+        // transcript control — the format card should still select immediately.
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let card = app.buttons["format-montage"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        XCTAssertTrue(app.buttons["choose-videos"].waitForExistence(timeout: 5))
+    }
+
     private func createFreshChat(in app: XCUIApplication) {
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
         app.buttons["Open projects"].tap()

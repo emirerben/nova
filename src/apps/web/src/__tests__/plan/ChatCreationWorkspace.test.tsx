@@ -674,6 +674,60 @@ describe("ChatCreationWorkspace", () => {
     expect(transcript.scrollTop).toBe(1000);
   });
 
+  it("renders a clarifying question's options as tappable choices and sends the exact string", async () => {
+    // Regression guard for KRI-87: the all-media-capacity preflight (and any
+    // other deterministic clarifying question) is unanswerable unless the
+    // client renders its options and sends the tapped one back verbatim --
+    // the backend matches replies by exact casefolded string equality.
+    const questionThread = {
+      ...baseThread,
+      revision: 1,
+      events: [
+        ...baseThread.events,
+        {
+          id: "capacity-question", sequence: 1, revision: 1, role: "assistant" as const,
+          event_type: "agent_assistant_question",
+          content: "This edit cannot show all 34 clips in 30 seconds.",
+          payload: {
+            message: "This edit cannot show all 34 clips in 30 seconds.",
+            reason_code: "all_media_capacity",
+            options: [
+              "Keep 30 seconds with the strongest clips",
+              "Keep 30 seconds and include everything with faster pacing",
+            ],
+            recommended_option: "Keep 30 seconds with the strongest clips",
+          },
+          created_at: "2026-01-01T00:00:01Z",
+        },
+      ],
+    };
+    jest.mocked(refreshCreationThread).mockResolvedValue(questionThread);
+    jest.mocked(sendCreationMessage).mockResolvedValueOnce(questionThread);
+    render(<ChatCreationWorkspace />);
+    await screen.findByText("Pick a format");
+    const composer = screen.getByRole("textbox", { name: "Message Kria" });
+    fireEvent.change(composer, { target: { value: "Use every clip I uploaded" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    const recommended = await screen.findByRole("button", {
+      name: "Keep 30 seconds with the strongest clips (recommended)",
+    });
+    const alternate = await screen.findByRole("button", {
+      name: "Keep 30 seconds and include everything with faster pacing",
+    });
+    expect(screen.getByText("Recommended")).toBeInTheDocument();
+
+    jest.mocked(sendCreationMessage).mockResolvedValueOnce(baseThread);
+    fireEvent.click(alternate);
+
+    await waitFor(() =>
+      expect(sendCreationMessage).toHaveBeenLastCalledWith(
+        questionThread,
+        "Keep 30 seconds and include everything with faster pacing",
+      ),
+    );
+  });
+
   it("creates only one empty project when Strict Mode replays the boot effect", async () => {
     jest.mocked(listCreationThreads).mockResolvedValue([]);
     render(<StrictMode><ChatCreationWorkspace /></StrictMode>);

@@ -121,6 +121,268 @@ def test_creator_request_contract_promotes_explicit_scope_and_required_intent(mo
     assert strategy.render_program == "guided"
 
 
+def test_all_media_capacity_preserves_content_aware_target_for_exact_all_choice() -> None:
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(33)
+        ],
+        guided_capability_enabled=True,
+    )
+    original = CreativeStrategy(
+        direction="guided_story",
+        media_scope="all",
+        selected_media_ids=[ref.media_id for ref in manifest.media],
+        target_duration_s=40,
+        audio_strategy="licensed_music",
+        opening_title="Keep this title",
+        font_family="Inter",
+        text_color="#FFD24A",
+        montage_audio=MontageAudioPlan(source_media_ids=["clip-0"]),
+    )
+
+    question = creator_routes._all_media_capacity_question(manifest, original)
+
+    assert question is not None
+    assert question["reason_code"] == "all_media_capacity"
+    all_option = question["options"][1]
+    selected = creator_routes._all_media_capacity_choice(
+        question["all_media_capacity"], all_option, manifest
+    )
+    assert selected is not None
+    assert selected.direction == "fast_montage"
+    assert selected.media_scope == "all"
+    assert selected.target_duration_s == 40
+    assert selected.audio_strategy == "licensed_music"
+    assert selected.opening_title == "Keep this title"
+    assert selected.font_family == "Inter"
+    assert selected.montage_audio == MontageAudioPlan(source_media_ids=["clip-0"])
+    assert creator_routes._all_media_capacity_question(manifest, selected) is None
+
+
+def test_all_media_capacity_subset_choice_overrides_earlier_all_scope() -> None:
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(33)
+        ],
+        guided_capability_enabled=True,
+    )
+    question = creator_routes._all_media_capacity_question(
+        manifest,
+        CreativeStrategy(
+            direction="guided_story",
+            media_scope="all",
+            target_duration_s=24,
+            audio_strategy="licensed_music",
+        ),
+    )
+
+    assert question is not None
+    selected = creator_routes._all_media_capacity_choice(
+        question["all_media_capacity"], question["options"][0], manifest
+    )
+    assert selected is not None
+    # The persisted exact mapping, applied after request-intent recognition,
+    # is authoritative even though the original creator text said "use all".
+    assert selected.media_scope == "selected"
+    assert len(selected.selected_media_ids) == 17
+
+
+def test_all_media_capacity_never_replaces_agent_duration_with_arithmetic_floor() -> None:
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(33)
+        ],
+        guided_capability_enabled=True,
+    )
+    question = creator_routes._all_media_capacity_question(
+        manifest,
+        CreativeStrategy(
+            direction="guided_story",
+            media_scope="all",
+            target_duration_s=31,
+            audio_strategy="licensed_music",
+            rationale="The action sequences need longer holds before the payoff.",
+        ),
+        requested_duration_is_explicit=False,
+    )
+
+    assert question is not None
+    assert "I proposed 31 seconds" in question["message"]
+    assert "27" not in " ".join(question["options"])
+    assert {
+        mapping["strategy"]["target_duration_s"]
+        for mapping in question["all_media_capacity"]["option_mappings"]
+    } == {31}
+
+
+@pytest.mark.asyncio
+async def test_route_uses_content_aware_duration_and_rationale_when_user_omits_it(
+    monkeypatch,
+) -> None:
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(33)
+        ],
+        guided_capability_enabled=True,
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    response = SimpleNamespace(status="awaiting_confirmation")
+    append_event = AsyncMock()
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                action=ProposeStrategy(
+                    kind="propose_strategy",
+                    strategy=CreativeStrategy(
+                        direction="guided_story",
+                        media_scope="all",
+                        target_duration_s=56,
+                        rationale=(
+                            "The action sequences need longer holds while the reaction clips "
+                            "can stay quick, so 56 seconds preserves their meaning."
+                        ),
+                    ),
+                    summary="A holiday montage.",
+                )
+            )
+        ),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Make a montage from my holiday clips",
+    )
+
+    assert result is response
+    assert session.status == "awaiting_confirmation"
+    assert session.active_plan["target_duration_s"] == 56
+    assert "action sequences need longer holds" in session.active_plan["summary"]
+    assert append_event.await_args.kwargs["event_type"] == "assistant_strategy"
+
+
+@pytest.mark.asyncio
+async def test_exact_all_media_capacity_choice_bypasses_model_and_call_budget(monkeypatch) -> None:
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(33)
+        ],
+        guided_capability_enabled=True,
+    )
+    question = creator_routes._all_media_capacity_question(
+        manifest,
+        CreativeStrategy(
+            direction="guided_story",
+            media_scope="all",
+            target_duration_s=40,
+            audio_strategy="licensed_music",
+        ),
+    )
+    assert question is not None
+    option = question["options"][1]
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[
+            SimpleNamespace(
+                sequence=1,
+                role="assistant",
+                event_type="assistant_question",
+                payload=question,
+            )
+        ],
+        agent_call_count=2,
+        agent_call_budget=2,
+        question_count=1,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=manifest.manifest_hash,
+    )
+    response = SimpleNamespace(status="awaiting_confirmation")
+    to_thread = AsyncMock()
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", to_thread)
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message=option,
+    )
+
+    assert result is response
+    to_thread.assert_not_awaited()
+    assert session.agent_call_count == 2
+    assert session.status == "awaiting_confirmation"
+    strategy = session.active_plan["edit_plan"]["strategy"]
+    assert strategy["direction"] == "fast_montage"
+    assert strategy["media_scope"] == "all"
+    assert strategy["target_duration_s"] == 40
+
+
 def test_explicit_typed_intent_survives_varied_wording_and_negative_scope(monkeypatch) -> None:
     monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", True, raising=False)
     manifest = resolve_creator_manifest(
