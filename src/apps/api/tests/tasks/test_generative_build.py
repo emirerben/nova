@@ -3380,7 +3380,7 @@ def test_selected_music_window_drives_recipe_lyrics_preview_and_mix(monkeypatch,
 
 def test_voiceover_variant_mixes_voice_and_caps_to_voice_length(monkeypatch, tmp_path):
     """voiceover_only: mixes the user's voice (NOT the template-audio path), persists
-    the mix slider value, and caps the edit to min(footage, voice, 60)."""
+    the mix slider value, and caps the edit to min(footage, voice, 120)."""
     import app.storage as storage
     import app.tasks.template_orchestrate as to
 
@@ -3427,7 +3427,7 @@ def test_voiceover_variant_mixes_voice_and_caps_to_voice_length(monkeypatch, tmp
     assert mix_calls == []  # voiceover must NOT use the song/template-audio mixer
     assert len(vo_calls) == 1
     assert vo_calls[0]["mix"] == 1.0
-    assert vo_calls[0]["target_duration_s"] == 5.0  # min(12, 5, 60)
+    assert vo_calls[0]["target_duration_s"] == 5.0  # min(12, 5, 120)
     assert vo_calls[0]["music_gcs_path"] is None  # voiceover_only → footage bed, no music
 
 
@@ -3487,7 +3487,7 @@ def test_voiceover_target_extended_by_spliced_carousel_moment(monkeypatch, tmp_p
     )
     assert res["ok"] is True
     assert len(vo_calls) == 1
-    # min(12, 5, 60) = 5.0 pre-splice, + 3.0s spliced moment = 8.0.
+    # min(12, 5, 120) = 5.0 pre-splice, + 3.0s spliced moment = 8.0.
     assert vo_calls[0]["target_duration_s"] == pytest.approx(8.0)
 
 

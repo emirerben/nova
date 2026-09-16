@@ -1369,7 +1369,7 @@ def _resolved_cadence_for_turn(
             if recognize_cadence_reuse_policy(user_message) == "allow_repeat":
                 return cadence.model_copy(update={"reuse_policy": "allow_repeat"}), requested_s
             target_match = re.search(
-                r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", normalized
+                r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", normalized
             )
             if target_match:
                 return cadence, float(target_match.group(1))

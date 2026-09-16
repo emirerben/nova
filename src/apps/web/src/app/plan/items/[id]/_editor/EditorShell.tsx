@@ -156,7 +156,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
-import { nextAddedKey, type DraftSlot } from "@/app/generative/timeline-math";
+import { MAX_TOTAL_SECONDS, nextAddedKey, type DraftSlot } from "@/app/generative/timeline-math";
 import { timelineReducer } from "@/app/generative/timeline-reducer";
 import {
   barsToCaptionCues,
@@ -3819,7 +3819,7 @@ export default function EditorShell({
       let added: DraftSlot | undefined;
       if (guidedStoryV2) {
         const source = clip.clips.find((candidate) => candidate.clip_index === clipIndex);
-        const roomS = Math.max(0, 60 - slotLayout.totalDurationS);
+        const roomS = Math.max(0, MAX_TOTAL_SECONDS - slotLayout.totalDurationS);
         if (roomS < 0.1) {
           notify("This cut has no room for another clip. Shorten or remove a clip first.");
           return;

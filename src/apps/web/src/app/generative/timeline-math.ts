@@ -23,7 +23,9 @@ import { lookAdjustmentsEqual } from "@/lib/look-presets";
 // ── No-grid (original_text) constraints ──────────────────────────────────────
 export const SECONDS_STEP = 0.5;
 export const SECONDS_FLOOR = 0.1;
-export const MAX_TOTAL_SECONDS = 60;
+// Mirrors the server's MAX_PROPOSAL_DURATION_S (schemas/edit_proposal.py) /
+// TIMELINE_MAX_TOTAL_S (routes/generative_jobs.py).
+export const MAX_TOTAL_SECONDS = 120;
 
 /** Client-side draft slot. `key` is a stable client identity that survives
  * reorder/undo (server slot_id, or a generated key for added slots). */
