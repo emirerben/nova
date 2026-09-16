@@ -22,6 +22,7 @@ import app.tasks.edit_proposal_build as proposal_build
 from app.agents._runtime import SchemaError, TerminalError
 from app.agents._schemas.creator_agent import CreativeStrategy, CreatorRenderIntentEvidence
 from app.agents.edit_proposal import (
+    MAX_GUIDED_DRAFT_BEATS,
     EditProposalAgent,
     EditProposalAgentInput,
     EditProposalMedia,
@@ -35,6 +36,7 @@ from app.schemas.edit_proposal import (
     canonical_media_digest,
     parse_edit_proposal,
 )
+from app.services.edit_direction_planner import GUIDED_STORY_MAX_BEATS
 from tests.tasks.test_edit_proposal_build import (
     _Db,
     _prepare_terminal_agent_attempt,
@@ -633,3 +635,10 @@ def test_barcelona_request_survives_main_creator_to_rendered_text(monkeypatch) -
     texts = [row["text"] for row in _compile(snapshot)["text_elements"]]
     assert texts == [OPENING_TITLE, *LABELS, CLOSING_TITLE]
     assert not GENERIC_FALLBACK_COPY & set(texts)
+
+
+def test_label_contract_fits_specialist_beat_limit() -> None:
+    # One beat per label plus both title-hold beats must stay inside the guided
+    # specialist's output limit; otherwise label drafts fail parsing and quietly
+    # fall back to the deterministic path.
+    assert MAX_GUIDED_DRAFT_BEATS <= GUIDED_STORY_MAX_BEATS

@@ -97,8 +97,9 @@ CREATOR_SELECTED_ORIENTATION_REASON = "The creator selected this output format."
 # Main Creator boundary verifies these against the creator's own words, so the
 # planner and renderer must place them verbatim instead of treating them as
 # AI-draft copy (Barcelona trailer, job ac795019: labels were replaced by
-# generic fallback captions).
-MAX_CREATOR_SHOT_LABELS = 12
+# generic fallback captions). Capped so one beat per label plus both title-hold
+# beats fits the guided specialist's 10-beat output limit.
+MAX_CREATOR_SHOT_LABELS = 8
 CREATOR_SHOT_LABEL_MAX_CHARS = 120
 CREATOR_TITLE_MAX_CHARS = 280
 MIN_OPENING_TITLE_DURATION_S = 0.5

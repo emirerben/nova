@@ -723,7 +723,8 @@ class DraftStoryBeat(BaseModel):
 
 LEGACY_GUIDED_DRAFT_BEATS = 5
 # One beat per creator shot label plus an optional unlabeled hold beat for
-# each server-burned opening/closing title.
+# each server-burned opening/closing title. Must not exceed the specialist's
+# 10-beat output limit (GUIDED_STORY_MAX_BEATS in edit_direction_planner).
 MAX_GUIDED_DRAFT_BEATS = MAX_CREATOR_SHOT_LABELS + 2
 
 
