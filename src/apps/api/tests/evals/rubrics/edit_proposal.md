@@ -14,7 +14,9 @@ with no score below 3.
 5. **Editability** — title, beats, text, media choices, layouts, and durations form a concrete plan
    a creator could review and correct before rendering.
 
-**Creator text contract.** When the input carries `shot_labels` (optionally with `opening_title`,
+**Creator text contract (only when the input carries `shot_labels`).** If the input has no
+`shot_labels`, ignore this entire section and score every dimension exactly as defined above; its
+absence is not a flaw. When the input does carry `shot_labels` (optionally with `opening_title`,
 `opening_title_duration_s`, and `closing_title`), those are exact creator-authored words the server
 burns verbatim: the opening title over the first `opening_title_duration_s` seconds (3.2s when
 unstated) and the closing title over the final ~2 seconds. They are never beats or
@@ -23,7 +25,7 @@ equal to the label; the first and last labeled beat may be longer because they a
 holds, or an unlabeled beat (empty `thought`) may carry a hold when a spare source exists. For
 example, a 2s opening title, six 1.5s labeled shots, and a 2s closing title over six sources
 correctly yields beat durations 3.5, 1.5, 1.5, 1.5, 1.5, 3.5: each label is still visible for
-1.5s because the title and closing title cover the extra 2s of the first and last beat. Score
-Creator direction and Editability on label wording, order, per-shot timing, and how well each shot
-matches its label. Score Safe draft thoughts only on non-label thoughts, and Story coherence on the
-creator's labeled sequence rather than self-chosen topics.
+1.5s because the title and closing title cover the extra 2s of the first and last beat. For these
+labeled inputs only: score Creator direction and Editability on label wording, order, per-shot
+timing, and how well each shot matches its label; score Safe draft thoughts only on non-label
+thoughts; and score Story coherence on the creator's labeled sequence rather than self-chosen topics.
