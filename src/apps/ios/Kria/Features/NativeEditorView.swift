@@ -22,6 +22,7 @@ struct NativeEditorView: View {
     @State private var timelineExpansion: CGFloat = 0
     @State private var timelineDragOrigin: CGFloat?
     @State private var timelineResizeFeedback = 0
+    @State private var topChromeHeight: CGFloat = 0
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
@@ -180,11 +181,15 @@ struct NativeEditorView: View {
             ? viewport.size.height + viewport.safeAreaInsets.top + viewport.safeAreaInsets.bottom
             : viewport.size.height
         let portraitHeight = min(338, max(150, referenceHeight * 0.40))
-        let preferredPreviewHeight = session.previewAspectRatio > 1 ? min(124, portraitHeight) : portraitHeight
+        // Banners and the posting-song bar share this fixed-height column.
+        // Their measured height comes out of the preview so the timeline and
+        // tool rail stay on screen.
+        let portraitBudget = max(80, portraitHeight - topChromeHeight)
+        let preferredPreviewHeight = session.previewAspectRatio > 1 ? min(124, portraitBudget) : portraitBudget
         // Reserve room for the header, divider and usable text controls above
         // the keyboard rather than allowing their minimum heights to overflow.
         let defaultPreviewHeight = keyboardVisible
-            ? min(preferredPreviewHeight, max(80, viewport.size.height - 320))
+            ? min(preferredPreviewHeight, max(80, viewport.size.height - 320 - topChromeHeight))
             : preferredPreviewHeight
         let resizeRange = max(0, defaultPreviewHeight - 80)
         let showsTimeline = session.pendingText == nil && textInspectorID == nil && lanePanel == nil
@@ -197,19 +202,25 @@ struct NativeEditorView: View {
                 onSaveToPhotos: { Task { await exporter.saveToPhotos(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
                 onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } }
             )
-            NativeEditorSaveBanner(session: session)
-            NativeEditorExportBanner(exporter: exporter)
-            if let presentation = session.editorSongReferencePresentation {
-                NativeSongReferenceCard(presentation: presentation)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 4)
+            VStack(spacing: 0) {
+                NativeEditorSaveBanner(session: session)
+                NativeEditorExportBanner(exporter: exporter)
+                if let presentation = session.editorSongReferencePresentation {
+                    NativeSongReferenceCard(presentation: presentation)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 4)
+                }
+                if session.deviceRenderKey != nil {
+                    Button("Rendering on iPhone") { showsDeviceRender = true }
+                        .font(KriaFont.body(12).weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityIdentifier("native-editor-device-render")
+                }
             }
-            if session.deviceRenderKey != nil {
-                Button("Rendering on iPhone") { showsDeviceRender = true }
-                    .font(KriaFont.body(12).weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .accessibilityIdentifier("native-editor-device-render")
-            }
+            // Measure at the ideal height; a compressed measurement would feed
+            // back into the preview budget.
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topChromeHeight = $0 }
 
             NativeVideoPreview(session: session)
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)

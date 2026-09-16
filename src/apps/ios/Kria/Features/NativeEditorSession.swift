@@ -567,6 +567,9 @@ struct NativeEditorTemporaryVideo {
             itemID = "fixture-visual-item"
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-reference") {
+            previewVariant = NativeEditorUITestFixtures.songReferenceVariant
+        }
         #endif
     }
 
