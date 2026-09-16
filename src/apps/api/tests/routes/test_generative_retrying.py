@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from fastapi import Response
 
 from app.config import settings
 from app.routes.generative_jobs import _compute_retrying
@@ -114,7 +115,9 @@ async def _status_response_for(monkeypatch: pytest.MonkeyPatch, *, beacon_age_s:
 
     monkeypatch.setattr(gj, "_load_generative_job", _load)
     monkeypatch.setattr(pb, "get_baselines", lambda mode: None)
-    return await gj.get_generative_job_status(str(job.id), current_user=object(), db=object())
+    return await gj.get_generative_job_status(
+        str(job.id), current_user=object(), http_response=Response(), db=object()
+    )
 
 
 async def test_status_route_reports_retrying_for_stale_beacon(
