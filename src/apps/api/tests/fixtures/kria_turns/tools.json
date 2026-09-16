@@ -1060,7 +1060,7 @@
                     "items": {
                       "type": "string"
                     },
-                    "maxItems": 12,
+                    "maxItems": 8,
                     "type": "array"
                   },
                   {
