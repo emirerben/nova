@@ -450,6 +450,49 @@ final class NativeEditorSessionTests: XCTestCase {
         )
     }
 
+    /// The editor installs the last finished cloud render immediately on
+    /// open so something is on screen right away, then swaps to a local,
+    /// editable composition built straight from the current document. If
+    /// the server's render hasn't caught up with the last save yet
+    /// (render_status != "ready"), that finished render must not display
+    /// during the swap window — otherwise a fresh title/text edit flashes
+    /// its pre-edit styling for the few seconds the swap takes.
+    func testUncaughtUpRenderStaysHiddenWhilePreviewPreparesUntilConfirmedCurrent() async throws {
+        let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 0,
+            snapshotHash: "", etag: "", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        // A save queued a re-render that hasn't finished yet: the render
+        // this response's output_url points to predates the document the
+        // rest of this same response describes.
+        fake.authoritativeVariant?["render_status"] = .string("rendering")
+        fake.suspendNextSourcePool = true
+        let project = ProjectSummary(
+            id: UUID(), title: "Rendering", status: .rendering, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial",
+            activeJobID: jobID, activePlanItemID: "item"
+        )
+        let session = NativeEditorSession(project: project)
+
+        let loadTask = Task { await session.load(project: project, api: fake) }
+        for _ in 0..<100 where !fake.sourcePoolIsSuspended {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(fake.sourcePoolIsSuspended, "the source-pool gate did not suspend in time")
+
+        XCTAssertEqual(session.sourcePreviewState, .preparing)
+        XCTAssertNotNil(session.player, "the not-yet-current render is still installed as a fallback")
+        XCTAssertFalse(
+            session.canDisplayCurrentPlayer,
+            "A render that predates the current document must not display while the current-document preview is still preparing"
+        )
+
+        fake.resumeSourcePool()
+        await loadTask.value
+    }
+
     func testFixtureSourceFailureDoesNotPlayStaleEditablePreview() async throws {
         let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
@@ -1722,6 +1765,10 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     private var commitContinuation: CheckedContinuation<Void, Never>?
     private var commitResumeRequested = false
     private var suspendNextCommit: Bool
+    var suspendNextSourcePool = false
+    private(set) var sourcePoolIsSuspended = false
+    private var sourcePoolContinuation: CheckedContinuation<Void, Never>?
+    private var sourcePoolResumeRequested = false
     var phoneDestination = false
     var deviceFetchCount = 0
     var commitCount = 0
@@ -1779,7 +1826,28 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         sourcePoolCallCount += 1
         sourcePoolExpectation?.fulfill()
         sourcePoolExpectation = nil
+        if suspendNextSourcePool {
+            suspendNextSourcePool = false
+            sourcePoolIsSuspended = true
+            await withCheckedContinuation { continuation in
+                if sourcePoolResumeRequested {
+                    sourcePoolResumeRequested = false
+                    continuation.resume()
+                } else {
+                    sourcePoolContinuation = continuation
+                }
+            }
+            sourcePoolIsSuspended = false
+        }
         throw APIError.unsupported
+    }
+    func resumeSourcePool() {
+        if let sourcePoolContinuation {
+            sourcePoolContinuation.resume()
+            self.sourcePoolContinuation = nil
+        } else {
+            sourcePoolResumeRequested = true
+        }
     }
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]] {
         editorVariantsCallCount += 1

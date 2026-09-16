@@ -219,6 +219,11 @@ struct NativeEditorTemporaryVideo {
     private var finishedRenderURL: URL?
     private var finishedRenderDuration: TimeInterval?
     private var finishedRenderPlayer: AVPlayer?
+    /// Whether `finishedRenderPlayer`'s render is known to reflect the
+    /// document currently loaded (server `render_status == "ready"` at
+    /// install time), not a render that predates a save still catching up.
+    /// See `installPlayer(url:preferredDuration:isCurrent:)`.
+    private var finishedRenderIsCurrent = true
     private var sourcePreview: LivePreviewComposition?
     private var sourceCompiler: NativeEditorRenderCompiler?
     private var sourceResolver: NativeEditorSourceResolver?
@@ -267,8 +272,20 @@ struct NativeEditorTemporaryVideo {
         case .ready:
             return true
         case .preparing:
-            return player === finishedRenderPlayer
+            // While the local, editable source preview is still building
+            // from the current document, only show the finished render if
+            // it's known to already reflect that document (render_status
+            // was "ready" at load time). A render still catching up to the
+            // last save would otherwise flash pre-edit title/text styling
+            // for the few seconds this preparation takes — the loading
+            // surface is the honest state until the source preview, built
+            // straight from the current document, is ready.
+            return player === finishedRenderPlayer && finishedRenderIsCurrent
         case .failed:
+            // Once source-preview construction has genuinely failed (not
+            // merely still preparing), a stale finished render is still
+            // strictly better than nothing — the user can at least see and
+            // download *a* video while a retry is pending.
             return isShowingRenderedFallback
         }
     }
@@ -824,7 +841,11 @@ struct NativeEditorTemporaryVideo {
             setAuthoritativeDuration(Self.number(authoritativeVariant?["duration_s"]))
             refreshDuration()
             if let output = authoritativeVariant?["output_url"]?.stringValue, let url = URL(string: output) {
-                installPlayer(url: url, preferredDuration: authoritativeDuration)
+                // See installPlayer's isCurrent doc comment: render_status
+                // other than "ready" means this output_url predates the
+                // document just loaded above.
+                installPlayer(url: url, preferredDuration: authoritativeDuration,
+                    isCurrent: authoritativeVariant?["render_status"]?.stringValue == "ready")
             } else if allowPlaybackFallback, let jobID, let url = try? await api.playbackURL(jobID: jobID) {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
@@ -1077,7 +1098,12 @@ struct NativeEditorTemporaryVideo {
             setAuthoritativeDuration(Self.number(variant["duration_s"]))
             refreshDuration()
             if let output = variant["output_url"]?.stringValue, let url = URL(string: output) {
-                installPlayer(url: url, preferredDuration: authoritativeDuration)
+                // render_status other than "ready" means this output_url is
+                // a render that predates the document just loaded above (a
+                // save queued a re-render still in flight) — see
+                // installPlayer's isCurrent doc comment.
+                installPlayer(url: url, preferredDuration: authoritativeDuration,
+                    isCurrent: variant["render_status"]?.stringValue == "ready")
             } else if let url = try? await api.playbackURL(jobID: editorJobID) {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
@@ -3213,13 +3239,26 @@ struct NativeEditorTemporaryVideo {
     private func reflowSlots(_ clips: inout [EditorTimelineSlot], from index: Int) {
         _ = clips; _ = index
     }
-    private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil) {
+    private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil, isCurrent: Bool = true) {
         // A completed cloud render remains a useful, non-editable fallback
         // when composing a source preview fails. Always retain the latest
         // authoritative URL, even if an editable source player currently owns
         // the canvas; failures can then restore the correct finished render.
         finishedRenderURL = url
         finishedRenderDuration = preferredDuration
+        // `isCurrent` is false when the caller already knows this render
+        // predates the document it just loaded (server render_status not
+        // "ready" — a save queued a re-render that hasn't finished yet).
+        // canDisplayCurrentPlayer's `.preparing` case must not show that
+        // stale render during the ordinary editor-open window just because
+        // it's the only player installed so far — the freshly-edited title/
+        // text would flash the old style for the few seconds it takes the
+        // local source preview (built straight from the current document)
+        // to take over. Untrusted here only gates *display* during that
+        // window; restoreFinishedRenderFallback() still uses it if source
+        // preview construction genuinely fails, same as before — stale is
+        // still better than nothing once every other option is exhausted.
+        finishedRenderIsCurrent = isCurrent
         let previewFailed: Bool
         if case .failed = sourcePreviewState { previewFailed = true } else { previewFailed = false }
         guard sourcePreviewState == .idle || previewFailed || player == nil else { return }
@@ -3233,6 +3272,7 @@ struct NativeEditorTemporaryVideo {
     func installFinishedRenderPlayer(url: URL, preferredDuration: TimeInterval? = nil) {
         finishedRenderURL = url
         finishedRenderDuration = preferredDuration
+        finishedRenderIsCurrent = true
         installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
         finishedRenderPlayer = player
     }
