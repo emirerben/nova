@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.32.0] - 2026-09-16
+
+### Changed
+- Keep montage proposals within renderable duration and source-capacity limits, with deterministic all-media choices when footage cannot fit.
+- Improve creator planning validation, media-scope detection, exact cadence allocation, and model-call budget handling.
+- Expand montage strategy coverage with stronger agent, API, service, and iOS regression tests.
+
 ## [0.76.31.0] - 2026-09-15
 
 ### Changed
