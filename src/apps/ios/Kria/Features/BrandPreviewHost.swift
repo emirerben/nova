@@ -4,6 +4,7 @@ import SwiftUI
 /// Deterministic component states for screenshot review; never enters release navigation.
 struct BrandPreviewHost: View {
     @EnvironmentObject private var model: AppModel
+    @FocusState private var composerFocused: Bool
     @State private var text = ""
     private var state: String { ProcessInfo.processInfo.environment["KRIA_BRAND_STATE"] ?? "format" }
     private var project: ProjectSummary { PreviewFixtures.projects[0] }
@@ -38,7 +39,7 @@ struct BrandPreviewHost: View {
                             }
                         }.padding(20).frame(maxWidth: 620, alignment: .leading).frame(maxWidth: .infinity)
                     }
-                    ChatComposer(text: $text, isSending: false, canAttach: state != "format", attach: {}, send: {})
+                    ChatComposer(text: $text, isSending: false, canAttach: state != "format", isFocused: $composerFocused, attach: {}, send: {})
                 }
             }
         }
