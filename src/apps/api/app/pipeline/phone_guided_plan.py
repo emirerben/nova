@@ -111,23 +111,37 @@ def compile_phone_guided_plan(
             or not math.isclose(
                 moment.output_end_s - moment.output_start_s, moment.duration_s, abs_tol=1e-6
             )
-            or moment.source_start_s >= binding.original.duration_s
         ):
             raise UnsupportedPhonePlan("phone moment timing must preserve its exact source window")
-        if moment.source_end_s > binding.original.duration_s:
-            # `moment.source_end_s` is planned against the analysis proxy's
-            # server-measured (ffprobe) duration; `binding.original.duration_s`
-            # is the client's on-device (AVFoundation) measurement of the same
-            # file — independent measurements of conceptually the same
-            # quantity, and planning intentionally saturates a clip's
-            # proxy-measured capacity when the target duration demands it. A
-            # short clip carrying a large fraction of a beat routinely makes
-            # these two measurements disagree by more than a token epsilon
-            # (observed: an 11.2s-proxy clip whose on-device original measured
-            # meaningfully shorter, job aeb62e3c/0e84c6f8). That disagreement
-            # is expected, not a broken plan — give the device exactly what
-            # its own file actually has rather than failing the whole render.
-            source_duration = round(binding.original.duration_s - moment.source_start_s, 6)
+        source_start = moment.source_start_s
+        if (
+            moment.source_end_s > binding.original.duration_s
+            or source_start >= binding.original.duration_s
+        ):
+            # `moment.source_start_s`/`source_end_s` are planned against the
+            # analysis proxy's server-measured (ffprobe) duration;
+            # `binding.original.duration_s` is the client's on-device
+            # (AVFoundation) measurement of the same file — independent
+            # measurements of conceptually the same quantity, and planning
+            # intentionally saturates a clip's proxy-measured capacity (and
+            # centers shorter windows within it) when the target duration
+            # demands it. A short clip carrying a fraction of a beat, or a
+            # multi-clip beat's centered window, routinely lands outside what
+            # the on-device file actually measures (observed live: jobs
+            # aeb62e3c/0e84c6f8/031c8ff0). That disagreement is expected, not
+            # a broken plan — refit the window into what the device's own
+            # file actually has, preferring to keep the full requested
+            # duration by shifting the start rather than truncating it (a
+            # truncated moment would desync from the text/audio timed against
+            # its original duration).
+            available = binding.original.duration_s
+            fitted_duration = min(source_duration, available)
+            if fitted_duration < 0.1:
+                raise UnsupportedPhonePlan(
+                    "phone moment timing must preserve its exact source window"
+                )
+            source_start = min(source_start, max(0.0, available - fitted_duration))
+            source_duration = round(fitted_duration, 6)
         original = binding.original
         asset = binding.render_asset()
         manifest[asset.id] = asset
@@ -143,7 +157,7 @@ def compile_phone_guided_plan(
             TimelineClip(
                 id=moment.moment_id,
                 source_asset_id=asset.id,
-                source_start=moment.source_start_s,
+                source_start=source_start,
                 source_duration=source_duration,
                 timeline_start=moment.output_start_s,
                 rate=1,

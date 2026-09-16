@@ -96,25 +96,36 @@ def test_shared_timing_and_original_metadata_preserved():
     assert compile_phone_guided_plan(plan, bindings).audio.original_volume == 0.4
 
 
-def test_source_window_clamps_proxy_original_duration_drift():
+def test_source_window_shifts_start_to_preserve_full_duration_when_it_fits():
     # The proxy is measured by server-side ffprobe; the original by the
     # client's on-device AVFoundation. Planning saturates a clip's
-    # proxy-measured capacity when the target duration demands it, so these
-    # two independent measurements of the same file routinely disagree by
-    # more than a token epsilon for a clip carrying a large fraction of a
-    # beat (observed live: job aeb62e3c/0e84c6f8). Give the device exactly
-    # what its own file has rather than failing the whole render.
+    # proxy-measured capacity (and centers shorter windows within it) when
+    # the target duration demands it, so these two independent measurements
+    # of the same file routinely disagree for a clip carrying a fraction of
+    # a beat (observed live: jobs aeb62e3c/0e84c6f8/031c8ff0). When the full
+    # requested duration still fits somewhere in the device's real file,
+    # shift the start rather than truncating — a truncated moment would
+    # desync from the text/audio timed against its original duration.
     plan, bindings = fixture()
     bindings[0].original.duration_s = 4.85  # moment.source_end_s == 5, overrun == 0.15s
     recipe = compile_phone_guided_plan(plan, bindings)
     clip = recipe.tracks[0].clips[0]
-    assert clip.source_start == 2
-    assert clip.source_duration == pytest.approx(2.85)
+    assert clip.source_start == pytest.approx(1.85)
+    assert clip.source_duration == pytest.approx(3)
 
 
-def test_source_window_rejects_a_source_start_past_the_original_entirely():
+def test_source_window_truncates_only_when_shifting_cannot_fit_it():
     plan, bindings = fixture()
-    bindings[0].original.duration_s = 1.5  # moment.source_start_s == 2: no content at all
+    bindings[0].original.duration_s = 2.5  # shorter than the requested 3s duration itself
+    recipe = compile_phone_guided_plan(plan, bindings)
+    clip = recipe.tracks[0].clips[0]
+    assert clip.source_start == 0
+    assert clip.source_duration == pytest.approx(2.5)
+
+
+def test_source_window_rejects_when_essentially_nothing_is_available():
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 0.05  # below the 0.1s viable-content floor
     with pytest.raises(ValueError, match="exact source window"):
         compile_phone_guided_plan(plan, bindings)
 
