@@ -15,9 +15,14 @@ from pydantic import BaseModel, Field, model_validator
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
+    CREATOR_TITLE_MAX_CHARS,
     GUIDED_STORY_MIN_MOMENT_S,
+    GUIDED_TITLE_HOLD_S,
+    MAX_CREATOR_SHOT_LABELS,
     MAX_EDIT_PROPOSAL_MEDIA,
+    MAX_OPENING_TITLE_DURATION_S,
     MAX_PROPOSAL_DURATION_S,
+    MIN_OPENING_TITLE_DURATION_S,
     FastMontageCut,
     MediaScope,
     MixedMediaTimingProfile,
@@ -27,6 +32,9 @@ from app.schemas.edit_proposal import (
     ProposalDuration,
     VideoReusePolicy,
     canonical_narration_duration_s,
+    clean_creator_shot_labels,
+    closing_title_hold_s,
+    creator_copy_match_key,
     media_context_group,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -217,6 +225,103 @@ def ai_draft_thought_has_unsupported_claim(text: str) -> bool:
     )
 
 
+def creator_title_hold_s(input: EditProposalAgentInput) -> float:  # noqa: A002
+    """Seconds the server-burned opening title covers at the start of the story."""
+
+    if not input.opening_title:
+        return 0.0
+    return float(input.opening_title_duration_s or GUIDED_TITLE_HOLD_S)
+
+
+def _creator_text_note(input: EditProposalAgentInput) -> str:  # noqa: A002
+    """Server-authored instructions for exact creator copy (labels are JSON data)."""
+
+    if input.direction == "fast_montage" or not (input.shot_labels or input.closing_title):
+        return ""
+    target_s = float(input.target_duration_s)
+    note = "CREATOR TEXT CONTRACT (exact creator-authored on-screen copy, burned verbatim): "
+    if input.shot_labels:
+        note += (
+            f"shot labels in on-screen order: {json.dumps(input.shot_labels, ensure_ascii=False)}. "
+            f"Return exactly {len(input.shot_labels)} labeled story beats, one per label, in this "
+            "order, and set each labeled beat's `thought` to its label copied character for "
+            "character (no rewording, translation, or extra words). A labeled beat is one shot: "
+            "give it the single AVAILABLE MEDIA alias whose subject best matches its label, and "
+            "use extra aliases in a beat only when the source floor requires it. Keep `topic` a "
+            "short 1-3 word subject. Give each labeled beat the per-shot duration the creator "
+            "requested when they stated one. "
+        )
+        if input.video_reuse_policy == "once":
+            note += (
+                "Each video alias may appear in only one beat, so give every labeled beat a "
+                "different alias; only a photo may carry a second label, and only when labels "
+                "outnumber sources. "
+            )
+    if input.opening_title and input.shot_labels:
+        note += (
+            "The server burns the opening title "
+            f"{json.dumps(input.opening_title, ensure_ascii=False)} over the first "
+            f"{creator_title_hold_s(input):g}s; never repeat it in a beat. Add that hold to the "
+            "first labeled beat's duration, or, only when an extra distinct source remains, open "
+            'with one unlabeled beat (thought "") lasting that hold. '
+        )
+    if input.closing_title:
+        note += (
+            "The server burns the closing title "
+            f"{json.dumps(input.closing_title, ensure_ascii=False)} over the final "
+            f"{closing_title_hold_s(target_s):g}s; never repeat it in a beat. "
+        )
+        if input.shot_labels:
+            note += (
+                "Add that hold to the last labeled beat's duration, or, only when an extra "
+                'distinct source remains, end with one unlabeled beat (thought "") lasting that '
+                "hold. "
+            )
+    if input.shot_labels:
+        note += (
+            "No other beat may be unlabeled. This contract overrides the 3-5 beat count, chapter "
+            "grouping, distinct-topic, AI-draft thought, and 18-word rules below. Leave fast_cuts "
+            "null and montage_text_bindings empty."
+        )
+    return note.strip()
+
+
+def _apply_creator_shot_labels(
+    output: EditProposalAgentOutput,
+    input: EditProposalAgentInput,  # noqa: A002
+) -> set[int]:
+    """Bind the creator's exact labels to the model's labeled beats, in order.
+
+    The model only decides which shot carries which label; the stored text is
+    always the confirmed creator label. Returns the indexes of labeled beats.
+    """
+
+    labels = list(input.shot_labels or [])
+    beats = output.story_beats
+    labeled = [index for index, beat in enumerate(beats) if beat.thought.strip()]
+    hold_indexes = set()
+    if input.opening_title:
+        hold_indexes.add(0)
+    if input.closing_title:
+        hold_indexes.add(len(beats) - 1)
+    if any(
+        index not in hold_indexes for index, beat in enumerate(beats) if not beat.thought.strip()
+    ):
+        raise SchemaError(
+            "edit_proposal: only an opening or closing title hold beat may omit its shot label"
+        )
+    if len(labeled) != len(labels):
+        raise SchemaError(
+            f"edit_proposal: expected {len(labels)} labeled beats for the creator's shot labels, "
+            f"got {len(labeled)}"
+        )
+    for index, label in zip(labeled, labels, strict=True):
+        if creator_copy_match_key(beats[index].thought) != creator_copy_match_key(label):
+            raise SchemaError("edit_proposal: creator shot labels were reworded or reordered")
+        beats[index].thought = label
+    return set(labeled)
+
+
 class EditProposalMedia(BaseModel):
     media_id: str
     lane: Literal["clip", "asset"]
@@ -249,6 +354,14 @@ class EditProposalAgentInput(BaseModel):
     montage_cadence: MontageCadenceConstraint | None = None
     video_reuse_policy: VideoReusePolicy = "once"
     review_feedback: str = Field(default="", max_length=5000)
+    # Confirmed exact creator copy (ProposalBrief). The server burns these
+    # verbatim; shot labels become the labeled beats' thoughts.
+    opening_title: str | None = Field(default=None, max_length=CREATOR_TITLE_MAX_CHARS)
+    opening_title_duration_s: float | None = Field(
+        default=None, ge=MIN_OPENING_TITLE_DURATION_S, le=MAX_OPENING_TITLE_DURATION_S
+    )
+    shot_labels: list[str] | None = Field(default=None, max_length=MAX_CREATOR_SHOT_LABELS)
+    closing_title: str | None = Field(default=None, max_length=CREATOR_TITLE_MAX_CHARS)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
     @model_validator(mode="before")
@@ -266,6 +379,13 @@ class EditProposalAgentInput(BaseModel):
                     "allow_repeat" if cadence.reuse_policy == "allow_repeat" else "distinct_windows"
                 ),
             }
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_shot_labels(cls, value: object) -> object:
+        if isinstance(value, dict) and "shot_labels" in value:
+            return {**value, "shot_labels": clean_creator_shot_labels(value["shot_labels"])}
         return value
 
     @model_validator(mode="after")
@@ -601,10 +721,18 @@ class DraftStoryBeat(BaseModel):
     duration_s: float = Field(ge=1.0, le=12.0)
 
 
+LEGACY_GUIDED_DRAFT_BEATS = 5
+# One beat per creator shot label plus an optional unlabeled hold beat for
+# each server-burned opening/closing title.
+MAX_GUIDED_DRAFT_BEATS = MAX_CREATOR_SHOT_LABELS + 2
+
+
 class EditProposalAgentOutput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     duration_s: ProposalDuration
-    story_beats: list[DraftStoryBeat] = Field(default_factory=list, max_length=10)
+    story_beats: list[DraftStoryBeat] = Field(
+        default_factory=list, max_length=MAX_GUIDED_DRAFT_BEATS
+    )
     # New fast-montage proposals use exact source windows. Legacy fast snapshots
     # omit this field and continue through the old story-beat compiler.
     fast_cuts: list[FastMontageCut] | None = Field(default=None, max_length=80)
@@ -1033,7 +1161,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.8.5",
+        prompt_version="1.9.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1249,6 +1377,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             montage_note=montage_note,
             review_note=review_note,
             narration_note=narration_note,
+            creator_text_note=_creator_text_note(input),
             footage_note=footage_note,
             media_json=json.dumps([row.model_dump() for row in prompt_media], ensure_ascii=False),
             source_floor_note=source_floor_note,
@@ -1265,6 +1394,12 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
         if not isinstance(payload, dict):
             raise SchemaError("edit_proposal: invalid output — expected an object")
+        creator_labels = input.shot_labels if input.direction != "fast_montage" else None
+        if creator_labels:
+            # Story beats are the only lane that can carry per-shot copy. The
+            # renderer ignores fast-cut fields for beat plans, so a model that
+            # also sketches them must not fail the labeled plan (job ac795019).
+            payload = {**payload, "fast_cuts": None, "montage_text_bindings": []}
         payload = _resolve_model_media_references(payload, input)
         repaired_cut_ids: set[str] = set()
         if input.direction == "fast_montage":
@@ -1277,6 +1412,11 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             output = EditProposalAgentOutput.model_validate(payload)
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
+        if not creator_labels and len(output.story_beats) > LEGACY_GUIDED_DRAFT_BEATS:
+            raise SchemaError(
+                "edit_proposal: invalid output — story_beats: List should have at most "
+                f"{LEGACY_GUIDED_DRAFT_BEATS} items after validation"
+            )
         if input.montage_audio is not None:
             returned_audio = output.montage_audio
             if returned_audio is None:
@@ -1444,24 +1584,32 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         used_kinds = {media.kind for media in input.media if media.media_id in variety_ids}
         if len(available_kinds) > 1 and used_kinds != available_kinds:
             raise SchemaError("edit_proposal: story must use both photos and videos")
+        creator_beat_indexes: set[int] = set()
         if input.direction in {"guided_story", "text_explainer"}:
             if not output.story_beats:
                 raise SchemaError("edit_proposal: guided story needs story beats")
-            minimum_beats = min(3, len(input.media))
-            if len(output.story_beats) < minimum_beats:
-                raise SchemaError(
-                    f"edit_proposal: guided story needs at least {minimum_beats} beats"
-                )
-            if any(not beat.thought.strip() for beat in output.story_beats):
-                raise SchemaError("edit_proposal: guided story thoughts cannot be empty")
-        if input.direction != "fast_montage":
+            if creator_labels:
+                creator_beat_indexes = _apply_creator_shot_labels(output, input)
+            else:
+                minimum_beats = min(3, len(input.media))
+                if len(output.story_beats) < minimum_beats:
+                    raise SchemaError(
+                        f"edit_proposal: guided story needs at least {minimum_beats} beats"
+                    )
+                if any(not beat.thought.strip() for beat in output.story_beats):
+                    raise SchemaError("edit_proposal: guided story thoughts cannot be empty")
+        if input.direction != "fast_montage" and not creator_labels:
             minimum_topics = min(3, len(input.media))
             distinct_topics = {beat.topic.strip().casefold() for beat in output.story_beats}
             if len(distinct_topics) < minimum_topics:
                 raise SchemaError(
                     f"edit_proposal: story needs at least {minimum_topics} distinct topics"
                 )
-        for beat in output.story_beats:
+        for beat_index, beat in enumerate(output.story_beats):
+            if beat_index in creator_beat_indexes or (creator_labels and not beat.thought.strip()):
+                # Confirmed creator copy is not an AI draft: it is never
+                # neutralized, length-capped, or screened for invented claims.
+                continue
             has_creator_context = any(
                 media_by_id[media_id].user_context.strip() for media_id in beat.media_ids
             )

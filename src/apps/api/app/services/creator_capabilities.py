@@ -450,6 +450,33 @@ def compile_strategy_to_plan(
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )
+    if strategy.shot_labels or strategy.closing_title:
+        # Exact per-shot labels and closing copy are burned by the guided
+        # story-beat renderer only. Fail visibly anywhere they cannot render
+        # instead of approving an edit that silently drops the creator's words.
+        exact_copy_field = "shot_labels" if strategy.shot_labels else "closing_title"
+        if strategy.edit_format == "subtitled" or strategy.render_program != "guided":
+            raise CreatorStrategyError(
+                f"{exact_copy_field} is not supported by the {strategy.edit_format} renderer",
+                code="unsupported_treatment",
+                edit_format=strategy.edit_format,
+            )
+        if strategy.shot_labels and (
+            strategy.mixed_media_timing is not None or strategy.montage_cadence is not None
+        ):
+            raise CreatorStrategyError(
+                "shot_labels cannot be combined with exact photo/video cut timing",
+                code="unsupported_treatment",
+                edit_format=strategy.edit_format,
+            )
+        if strategy.shot_labels and strategy.direction == "fast_montage":
+            # Fast-cut plans carry no per-shot text lane; a label per shot is
+            # a story-beat structure.
+            strategy = strategy.model_copy(update={"direction": "guided_story"})
+    elif strategy.opening_title_duration_s is not None and strategy.render_program != "guided":
+        # The native intro owns its own timing; a hold preference it cannot
+        # honor must not turn an otherwise renderable title into a failure.
+        strategy = strategy.model_copy(update={"opening_title_duration_s": None})
     strategy_format = coerce_edit_format(strategy.edit_format)
     effective_program = strategy.render_program
     selected_media_ids = list(strategy.selected_media_ids)

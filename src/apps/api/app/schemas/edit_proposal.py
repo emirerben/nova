@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
@@ -90,6 +91,73 @@ ConversationPhase = Literal["briefing", "review"]
 ConversationSuggestion = Annotated[str, Field(min_length=1, max_length=100)]
 EDIT_CONVERSATION_MAX_TURNS = 20
 CREATOR_SELECTED_ORIENTATION_REASON = "The creator selected this output format."
+
+# Exact creator-authored on-screen copy beyond the opening title: ordered
+# per-shot labels, a closing title, and the requested opening-title hold. The
+# Main Creator boundary verifies these against the creator's own words, so the
+# planner and renderer must place them verbatim instead of treating them as
+# AI-draft copy (Barcelona trailer, job ac795019: labels were replaced by
+# generic fallback captions).
+MAX_CREATOR_SHOT_LABELS = 12
+CREATOR_SHOT_LABEL_MAX_CHARS = 120
+CREATOR_TITLE_MAX_CHARS = 280
+MIN_OPENING_TITLE_DURATION_S = 0.5
+MAX_OPENING_TITLE_DURATION_S = 10.0
+CLOSING_TITLE_HOLD_S = 2.0
+CLOSING_TITLE_MAX_SHARE = 0.4
+# Renderer title holds when the creator did not state one.
+GUIDED_TITLE_HOLD_S = 3.2
+FAST_MONTAGE_TITLE_HOLD_S = 2.2
+
+
+def clean_creator_copy(value: object, *, field_name: str, max_chars: int) -> str:
+    """Trim one exact creator-authored text value without rewriting its words."""
+
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{field_name} must not be empty")
+    if len(cleaned) > max_chars:
+        raise ValueError(f"{field_name} must be at most {max_chars} characters")
+    if any(ord(char) < 32 for char in cleaned):
+        raise ValueError(f"{field_name} must not contain control characters")
+    return cleaned
+
+
+def clean_creator_shot_labels(value: object) -> list[str] | None:
+    """Validate ordered per-shot labels; an empty list means no labels."""
+
+    if value is None:
+        return None
+    if not isinstance(value, list | tuple):
+        raise ValueError("shot_labels must be a list")
+    labels = [
+        clean_creator_copy(label, field_name="shot_labels", max_chars=CREATOR_SHOT_LABEL_MAX_CHARS)
+        for label in value
+    ]
+    if len(labels) > MAX_CREATOR_SHOT_LABELS:
+        raise ValueError(f"shot_labels must contain at most {MAX_CREATOR_SHOT_LABELS} labels")
+    return labels or None
+
+
+def creator_copy_match_key(text: str) -> str:
+    """Accent-, case-, spacing-, and punctuation-insensitive comparison key.
+
+    Only used to decide which beat carries which label; the stored text is
+    always the exact creator label, never the model's echo of it.
+    """
+
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(
+        char for char in decomposed.casefold() if char.isalnum() and not unicodedata.combining(char)
+    )
+
+
+def closing_title_hold_s(total_s: float) -> float:
+    """Seconds the closing title holds at the end of a timeline of ``total_s``."""
+
+    return round(min(CLOSING_TITLE_HOLD_S, max(0.0, float(total_s)) * CLOSING_TITLE_MAX_SHARE), 3)
 
 
 class MontageTextBinding(BaseModel):
@@ -709,6 +777,24 @@ class EditProposalSnapshot(BaseModel):
         max_length=280,
         exclude_if=lambda value: value is None,
     )
+    # Exact creator copy beyond the title (see MAX_CREATOR_SHOT_LABELS). None is
+    # omitted so snapshots without these requests keep their approval hashes.
+    opening_title_duration_s: float | None = Field(
+        default=None,
+        ge=MIN_OPENING_TITLE_DURATION_S,
+        le=MAX_OPENING_TITLE_DURATION_S,
+        exclude_if=lambda value: value is None,
+    )
+    shot_labels: list[str] | None = Field(
+        default=None,
+        max_length=MAX_CREATOR_SHOT_LABELS,
+        exclude_if=lambda value: value is None,
+    )
+    closing_title: str | None = Field(
+        default=None,
+        max_length=CREATOR_TITLE_MAX_CHARS,
+        exclude_if=lambda value: value is None,
+    )
     font_family: str | None = Field(
         default=None,
         max_length=160,
@@ -753,6 +839,20 @@ class EditProposalSnapshot(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+
+    @field_validator("shot_labels", mode="before")
+    @classmethod
+    def _validate_shot_labels(cls, value: object) -> list[str] | None:
+        return clean_creator_shot_labels(value)
+
+    @field_validator("closing_title", mode="before")
+    @classmethod
+    def _validate_closing_title(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return clean_creator_copy(
+            value, field_name="closing_title", max_chars=CREATOR_TITLE_MAX_CHARS
+        )
 
     @field_validator("font_family")
     @classmethod
@@ -1115,8 +1215,39 @@ class ProposalBrief(BaseModel):
     # Confirmed Main Creator fields copied into the immutable snapshot by the
     # async proposal worker.
     opening_title: str | None = Field(default=None, max_length=280)
+    opening_title_duration_s: float | None = Field(
+        default=None,
+        ge=MIN_OPENING_TITLE_DURATION_S,
+        le=MAX_OPENING_TITLE_DURATION_S,
+        exclude_if=lambda value: value is None,
+    )
+    shot_labels: list[str] | None = Field(
+        default=None,
+        max_length=MAX_CREATOR_SHOT_LABELS,
+        exclude_if=lambda value: value is None,
+    )
+    closing_title: str | None = Field(
+        default=None,
+        max_length=CREATOR_TITLE_MAX_CHARS,
+        exclude_if=lambda value: value is None,
+    )
     font_family: str | None = Field(default=None, max_length=160)
     text_color: str | None = Field(default=None, max_length=16)
+
+    @field_validator("shot_labels", mode="before")
+    @classmethod
+    def _validate_shot_labels(cls, value: object) -> list[str] | None:
+        return clean_creator_shot_labels(value)
+
+    @field_validator("closing_title", mode="before")
+    @classmethod
+    def _validate_closing_title(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return clean_creator_copy(
+            value, field_name="closing_title", max_chars=CREATOR_TITLE_MAX_CHARS
+        )
+
     image_layout: BeatLayout | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
