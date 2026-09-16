@@ -78,7 +78,8 @@ enum NativeSkiaShadowPainter {
             let maskBounds = pathBounds.applying(placement)
                 .insetBy(dx: -0.5, dy: -0.5).integral.intersection(sourceClip)
             if maskBounds.isNull || maskBounds.isEmpty { return nil }
-            guard maskBounds.width * maskBounds.height * 4 <= Double(maxBitmapBytes),
+            let maskBitmapBytes: Double = Double(maskBounds.width) * Double(maskBounds.height) * 4
+            guard maskBitmapBytes <= Double(maxBitmapBytes),
                   let mask = RenderProfiler.measure("shadow.mask.alloc", { () -> CGContext? in
                       CGContext(data: nil, width: Int(maskBounds.width), height: Int(maskBounds.height),
                           bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
