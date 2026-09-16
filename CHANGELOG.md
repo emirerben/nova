@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.34.0] - 2026-09-16
+
+### Changed
+- fix(ios-chat): dismiss keyboard on tap outside the message composer (#1045) <!-- release-pr: 1045 -->
+
 ## [0.76.33.0] - 2026-09-16
 
 ### Changed
