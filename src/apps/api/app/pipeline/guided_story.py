@@ -34,6 +34,7 @@ from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
     NarrationTrack,
+    ai_on_screen_text_allowed,
     canonical_media_digest,
     canonical_narration_duration_s,
     closing_title_hold_s,
@@ -205,6 +206,12 @@ class GuidedStoryExecutionPlan(BaseModel):
         exclude_if=lambda value: value is None,
     )
     montage_text_bindings: list[dict[str, Any]] = Field(default_factory=list)
+    # The approved snapshot's opt-in for AI on-screen text. False means the
+    # creator asked for no text, so an empty text lane is the correct plan.
+    on_screen_text_requested: bool | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     montage_audio: dict[str, Any] | None = None
     typography: GuidedStoryTypography
     music: GuidedStoryMusic | None = None
@@ -267,7 +274,11 @@ class GuidedStoryExecutionPlan(BaseModel):
                 > 0.001
             ):
                 raise ValueError("song reference must cover the resolved video duration")
-        if self.editor_revision_number is None and not self.text_elements:
+        if (
+            self.editor_revision_number is None
+            and self.on_screen_text_requested is not False
+            and not self.text_elements
+        ):
             raise ValueError("approved guided stories require at least one text element")
         if len(self.selected_media_ids) != len(set(self.selected_media_ids)):
             raise ValueError("selected media IDs must be unique")
@@ -1212,9 +1223,19 @@ def _text_elements(
         or snapshot.closing_title
         or snapshot.opening_title_duration_s is not None
     )
+    # On-screen text is opt-in: creator copy (their title, labels, closing
+    # title, thoughts they wrote) always renders; the generated title, draft
+    # thoughts, and montage copy render only when the creator asked for text.
+    ai_text_allowed = ai_on_screen_text_allowed(
+        snapshot.on_screen_text_requested, snapshot.direction
+    )
+
+    def renders_thought(beat) -> bool:
+        return bool(beat.thought.strip()) and (ai_text_allowed or beat.thought_source == "user")
+
     # A labeled edit shows only confirmed creator copy: no generated title
     # unless the creator supplied one.
-    show_title = bool(snapshot.opening_title) or not snapshot.shot_labels
+    show_title = bool(snapshot.opening_title) or (ai_text_allowed and not snapshot.shot_labels)
     closing_start = (
         round(max(0.0, total_s - closing_title_hold_s(total_s)), 3)
         if snapshot.closing_title
@@ -1269,6 +1290,7 @@ def _text_elements(
         and snapshot.fast_cuts
         and not snapshot.opening_title
         and snapshot.narration is None
+        and ai_text_allowed
     ):
         text_by_source = {entry.media_id: entry.text for entry in snapshot.montage_text_bindings}
         elements: list[dict] = []
@@ -1313,6 +1335,11 @@ def _text_elements(
     # back into an information card edit. Legacy fast snapshots have no
     # ``fast_cuts`` and retain the old text projection below.
     if snapshot.direction == "fast_montage" and snapshot.fast_cuts:
+        if not (snapshot.opening_title or ai_text_allowed):
+            return [
+                *closing_elements(fast=True, effect="static"),
+                *_narration_caption_elements(snapshot),
+            ]
         return [
             TextElement(
                 id="guided-title",
@@ -1359,9 +1386,11 @@ def _text_elements(
                 max_width_frac=0.86,
             ).model_dump(mode="json", exclude_none=True)
         ]
+        if not (snapshot.opening_title or ai_text_allowed):
+            elements = []
         for beat, window in zip(snapshot.story_beats, beat_windows, strict=True):
             thought = beat.thought.strip()
-            if not thought:
+            if not renders_thought(beat):
                 continue
             elements.append(
                 TextElement(
@@ -1415,7 +1444,7 @@ def _text_elements(
     )
     for beat, window in zip(snapshot.story_beats, beat_windows, strict=True):
         thought = beat.thought.strip()
-        if not thought:
+        if not renders_thought(beat):
             continue
         start_s, end_s = clear_window(
             float(window["start_s"]), float(window["end_s"]), after_title=True
@@ -1650,6 +1679,7 @@ def _compile_execution_plan_version(
                 compiler_version=compiler_version,
                 proposal_version=proposal_version,
                 media_digest=media_digest,
+                on_screen_text_requested=snapshot.on_screen_text_requested,
                 direction=snapshot.direction,
                 goal=snapshot.goal,
                 pace=snapshot.pace,
@@ -1811,6 +1841,7 @@ def _compile_execution_plan_version(
             compiler_version=compiler_version,
             proposal_version=proposal_version,
             media_digest=media_digest,
+            on_screen_text_requested=snapshot.on_screen_text_requested,
             direction=snapshot.direction,
             goal=snapshot.goal,
             pace=snapshot.pace,

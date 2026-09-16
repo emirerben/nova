@@ -89,3 +89,25 @@ def test_main_creator_eval(
         # Every exact copy field must survive the verbatim-evidence boundary.
         for field, value in exact_copy.items():
             assert getattr(grounded, field) == value, field
+
+    text_intent = fixture.meta.get("on_screen_text_requested")
+    if text_intent is not None:
+        from app.agents._schemas.creator_agent import (
+            CreativeStrategy,
+            CreatorRenderIntentEvidence,
+        )
+        from app.routes.creator_agent import _apply_explicit_render_intent
+
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        raw_evidence = action.get("render_intent_evidence")
+        grounded = _apply_explicit_render_intent(
+            CreativeStrategy.model_validate(action["strategy"]),
+            fixture.input["creator_request"],
+            render_intent_evidence=(
+                CreatorRenderIntentEvidence.model_validate(raw_evidence) if raw_evidence else None
+            ),
+        )
+        # On-screen text is opt-in: granted only by a verbatim creator request.
+        assert grounded.on_screen_text_requested is text_intent

@@ -52,6 +52,16 @@ def test_edit_proposal_eval(
         # confirmed labels, in order, live or replay (prod job ac795019).
         labeled = [beat["thought"] for beat in result.output["story_beats"] if beat["thought"]]
         assert labeled == shot_labels
+    if fixture.input.get("on_screen_text_requested") is False:
+        # On-screen text is opt-in: when the creator asked for none, the plan
+        # carries no AI-authored thoughts or montage copy, live or replay.
+        drafted = [
+            beat["thought"]
+            for beat in result.output["story_beats"]
+            if beat["thought"] and beat["thought"] not in (shot_labels or [])
+        ]
+        assert drafted == []
+        assert not result.output.get("montage_text_bindings")
     if eval_mode == "replay":
         # Golden cassettes pin the intended chapter vocabulary. Live outputs are
         # allowed natural synonyms; optional replay judging scores semantic coverage.

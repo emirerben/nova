@@ -161,6 +161,18 @@ def closing_title_hold_s(total_s: float) -> float:
     return round(min(CLOSING_TITLE_HOLD_S, max(0.0, float(total_s)) * CLOSING_TITLE_MAX_SHARE), 3)
 
 
+def ai_on_screen_text_allowed(on_screen_text_requested: bool | None, direction: str) -> bool:
+    """Whether AI-authored on-screen copy (generated title, thoughts, montage text) may render.
+
+    On-screen text is opt-in: when the creator did not ask for text (``False``),
+    only confirmed creator copy renders. ``None`` marks proposals from before
+    this contract and keeps their legacy projection. A text explainer is a
+    text-led format, so its copy is part of the requested edit.
+    """
+
+    return on_screen_text_requested is not False or direction == "text_explainer"
+
+
 class MontageTextBinding(BaseModel):
     """Text the montage should bind to every cut using one source."""
 
@@ -796,6 +808,12 @@ class EditProposalSnapshot(BaseModel):
         max_length=CREATOR_TITLE_MAX_CHARS,
         exclude_if=lambda value: value is None,
     )
+    # Opt-in AI on-screen text (see ai_on_screen_text_allowed). None marks a
+    # snapshot from before this contract and is omitted to keep approval hashes.
+    on_screen_text_requested: bool | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     font_family: str | None = Field(
         default=None,
         max_length=160,
@@ -1230,6 +1248,12 @@ class ProposalBrief(BaseModel):
     closing_title: str | None = Field(
         default=None,
         max_length=CREATOR_TITLE_MAX_CHARS,
+        exclude_if=lambda value: value is None,
+    )
+    # Main Creator's grounded opt-in for AI-authored on-screen text; None for
+    # briefs that did not come from a Main Creator strategy.
+    on_screen_text_requested: bool | None = Field(
+        default=None,
         exclude_if=lambda value: value is None,
     )
     font_family: str | None = Field(default=None, max_length=160)

@@ -1,0 +1,164 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-16-v28",
+  "input": {
+    "user_message": "13-second Barcelona trailer from these clips. Cut on the beat, warm grade.",
+    "creator_context": "",
+    "item_context": "Barca 1 chat; montage; no recorded voiceover.",
+    "media_context": [
+      {
+        "media_id": "square",
+        "kind": "video",
+        "duration_s": 10.05424
+      },
+      {
+        "media_id": "sagrada-aerial",
+        "kind": "video",
+        "duration_s": 14.326712
+      },
+      {
+        "media_id": "sagrada-interior",
+        "kind": "video",
+        "duration_s": 16.695147
+      },
+      {
+        "media_id": "castell",
+        "kind": "video",
+        "duration_s": 12.863855
+      },
+      {
+        "media_id": "rambla",
+        "kind": "video",
+        "duration_s": 17.995465
+      },
+      {
+        "media_id": "gaudi-portrait",
+        "kind": "image"
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-barcelona",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "square",
+          "kind": "video",
+          "duration_s": 10.05424
+        },
+        {
+          "media_id": "sagrada-aerial",
+          "kind": "video",
+          "duration_s": 14.326712
+        },
+        {
+          "media_id": "sagrada-interior",
+          "kind": "video",
+          "duration_s": 16.695147
+        },
+        {
+          "media_id": "castell",
+          "kind": "video",
+          "duration_s": 12.863855
+        },
+        {
+          "media_id": "rambla",
+          "kind": "video",
+          "duration_s": 17.995465
+        },
+        {
+          "media_id": "gaudi-portrait",
+          "kind": "image"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm travel beat"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "transitions": {
+          "available": true
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 60.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "creator_request": "13-second Barcelona trailer from these clips. Cut on the beat, warm grade."
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"guided_story\", \"edit_format\": \"montage\", \"archetype\": \"montage\", \"audio_strategy\": \"licensed_music\", \"story_structure\": [\"Hook: the Sagrada Família aerial\", \"Beat-cut tour: basilica interior, the Rambla, and the square\", \"Payoff: the human tower at full height\"], \"caption_style\": \"none\", \"intro_hook\": null, \"on_screen_text_requested\": false, \"pacing\": \"fast\", \"target_duration_s\": 13, \"render_program\": \"guided\", \"selected_media_ids\": [], \"optional_treatments\": [], \"mixed_media_timing\": null, \"rationale\": \"A 13-second trailer cut on the beat: open on the Sagrada aerial for scale, move through the interior, the Rambla, and the square, and land on the human tower as the payoff. No on-screen text, since you did not ask for any.\"}, \"summary\": \"A fast 13-second Barcelona trailer cut on the beat, from the Sagrada aerial to the human tower, with no text on screen.\"}}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "guided_story",
+        "edit_format": "montage",
+        "archetype": "montage",
+        "audio_strategy": "licensed_music",
+        "execution_contract": null,
+        "media_scope": null,
+        "participant_labels": "none",
+        "score_labels": false,
+        "sport_labels": false,
+        "story_structure": [
+          "Hook: the Sagrada Família aerial",
+          "Beat-cut tour: basilica interior, the Rambla, and the square",
+          "Payoff: the human tower at full height"
+        ],
+        "caption_style": "none",
+        "intro_hook": null,
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null,
+        "context_label": null,
+        "image_layout": null,
+        "pacing": "fast",
+        "target_duration_s": 13,
+        "render_program": "guided",
+        "selected_media_ids": [],
+        "optional_treatments": [],
+        "licensed_sfx": null,
+        "mixed_media_timing": null,
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "rationale": "A 13-second trailer cut on the beat: open on the Sagrada aerial for scale, move through the interior, the Rambla, and the square, and land on the human tower as the payoff. No on-screen text, since you did not ask for any."
+      },
+      "summary": "A fast 13-second Barcelona trailer cut on the beat, from the Sagrada aerial to the human tower, with no text on screen."
+    }
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "no_text_by_default",
+    "on_screen_text_requested": false,
+    "note": "On-screen text is opt-in: only an explicit creator request may grant AI-written text."
+  }
+}

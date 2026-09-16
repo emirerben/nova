@@ -964,6 +964,12 @@
                 ],
                 "default": null
               },
+              "on_screen_text_requested": {
+                "default": false,
+                "description": "The creator asked for on-screen text (a title, captions, per-shot text) without supplying the exact words. Without it only confirmed creator copy is burned: no generated title, captions, or labels.",
+                "title": "On Screen Text Requested",
+                "type": "boolean"
+              },
               "opening_title": {
                 "anyOf": [
                   {

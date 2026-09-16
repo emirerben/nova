@@ -1645,6 +1645,7 @@ def _run_draft_attempt(
                     opening_title_duration_s=brief.opening_title_duration_s,
                     shot_labels=brief.shot_labels,
                     closing_title=brief.closing_title,
+                    on_screen_text_requested=brief.on_screen_text_requested,
                     media=agent_media,
                 ),
                 ctx=RunContext(
@@ -1707,6 +1708,7 @@ def _run_draft_attempt(
                             opening_title_duration_s=brief.opening_title_duration_s,
                             shot_labels=brief.shot_labels,
                             closing_title=brief.closing_title,
+                            on_screen_text_requested=brief.on_screen_text_requested,
                             media=agent_media,
                         ),
                         ctx=RunContext(
@@ -1844,6 +1846,7 @@ def _run_draft_attempt(
             opening_title_duration_s=brief.opening_title_duration_s,
             shot_labels=brief.shot_labels,
             closing_title=brief.closing_title,
+            on_screen_text_requested=brief.on_screen_text_requested,
             font_family=brief.font_family,
             text_color=brief.text_color,
             image_layout=brief.image_layout,
