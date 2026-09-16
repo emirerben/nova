@@ -7856,10 +7856,12 @@ export default function EditorShell({
                 ? "Edit block"
               : "Edit";
   const showSongReferenceNotice = referenceOnlyMusic && !!variant.song_reference;
-  // Reserve extra room in the mobile stage-height budget so the notice
-  // (title + artist + timing + copy button, up to ~4 lines) never collides
-  // with the transport/toolbar row rendered below it.
-  const songNoticeOffsetPx = showSongReferenceNotice ? 168 : 0;
+  // Reserve room in the mobile stage-height budget for the notice's
+  // collapsed (default) height -- it expands on tap, but the canvas isn't
+  // re-measured live, so this only budgets for the closed state. The
+  // toolbar row itself is unaffected either way (see the flex-col wrapper
+  // below): it can only ever shrink the canvas, never the toolbar.
+  const songNoticeOffsetPx = showSongReferenceNotice ? 64 : 0;
   const songReferenceNotice = showSongReferenceNotice ? (
     <div className="shrink-0 px-3 py-2">
       <SongReferenceNotice reference={variant.song_reference} />
@@ -8051,7 +8053,7 @@ export default function EditorShell({
 
       {/* ── Middle row: rail · drawer · canvas · inspector · edge rail ── */}
       {layoutMode === "light" ? (
-        <div className="flex min-h-0 flex-col">
+        <div className="flex min-h-0 flex-col overflow-hidden">
           {songReferenceNotice}
         <div className="relative min-h-0 flex-1">
           <EditorCanvas
@@ -8183,7 +8185,7 @@ export default function EditorShell({
         </div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-col">
+        <div className="flex min-h-0 flex-col overflow-hidden">
           {songReferenceNotice}
         <div
           className={[
