@@ -91,6 +91,14 @@ def test_shared_timing_and_original_metadata_preserved():
     assert recipe.assets[0].natural_size.width == 1920
     assert recipe.audio.original_volume == 0
     assert "analysis-proxy" not in recipe.model_dump_json()
+    # KRI-94: PhoneSourceBinding.require_proxy already guarantees a reserved
+    # analysis proxy for every phone-bound asset reaching this compiler; it
+    # should say so rather than sit at its always-false default. Font assets
+    # (not phone-bound originals) correctly stay False — none are in this
+    # fixture, but scope the assertion to the bound source id regardless.
+    assert next(
+        a for a in recipe.assets if a.id == bindings[0].render_asset().id
+    ).is_proxy_available
     plan.montage_audio = {"preserve_source_audio": True}
     plan.editor_audio_level = 0.4
     assert compile_phone_guided_plan(plan, bindings).audio.original_volume == 0.4

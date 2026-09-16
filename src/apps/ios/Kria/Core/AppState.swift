@@ -194,6 +194,7 @@ enum ProjectCollectionState: Equatable, Sendable {
     }
     func openWorkspace(preferredProjectID: UUID? = nil) async {
         selectWorkspaceProject(preferredProjectID: preferredProjectID)
+        uploads.recoverInterruptedPreparations()
         async let uploadRecovery: Void = uploads.restorePendingTasks()
         await loadProjects()
         selectWorkspaceProject(preferredProjectID: preferredProjectID)

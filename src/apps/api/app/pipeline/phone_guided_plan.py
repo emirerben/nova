@@ -124,6 +124,13 @@ def compile_phone_guided_plan(
             duration=original.duration_s,
             natural_size=MediaSize(width=original.width, height=original.height),
             orientation_degrees=original.orientation_degrees,
+            # `PhoneSourceBinding.require_proxy` already guarantees a reserved
+            # analysis proxy exists for every binding reaching this compiler —
+            # accurately reflect that on the asset rather than leaving the
+            # field at its always-false default. No client consumes this yet
+            # (proxy-based local preview is KRI-95's job); this only makes the
+            # recipe describe reality.
+            is_proxy_available=True,
         )
         clips.append(
             TimelineClip(

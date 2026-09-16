@@ -9,6 +9,48 @@ import XCTest
         XCTAssertNoThrow(try BackgroundUploadCoordinator.validateProjectUploadPurpose(.cloudRenderSource))
     }
 
+    /// KRI-94: `enqueue` stages a durable copy + a `PreparingUpload` entry (kept
+    /// out of `records` — see its doc comment) before `prepare()`'s potentially
+    /// slow import/transcode. Simulates a crash in that exact window by writing
+    /// the entry a fresh coordinator would have left behind, without ever
+    /// running `enqueue` itself, then verifies the next-launch recovery path.
+    func testInterruptedPreparationIsDiscoverableAndCleanedUpOnNextLaunch() throws {
+        let key = "kria.test.preparing.\(UUID().uuidString)"
+        let staged = FileManager.default.temporaryDirectory.appending(path: "staged-\(UUID().uuidString).mp4")
+        try Data([1, 2, 3]).write(to: staged)
+        let entry = PreparingUpload(id: UUID(), projectID: UUID(), localFilePath: staged.path, filename: "clip.mp4", source: .files, purpose: .cloudRenderSource, role: .clip, itemID: nil)
+        UserDefaults.standard.set(try JSONEncoder().encode([entry]), forKey: "\(key).preparing")
+        defer {
+            UserDefaults.standard.removeObject(forKey: "\(key).preparing")
+            try? FileManager.default.removeItem(at: staged)
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration)
+
+        coordinator.recoverInterruptedPreparations()
+
+        XCTAssertEqual(coordinator.lastError, "An upload was interrupted before it could start. Choose the file again.")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path), "the orphaned staged copy must be cleaned up")
+        let remaining = UserDefaults.standard.data(forKey: "\(key).preparing")
+            .flatMap { try? JSONDecoder().decode([PreparingUpload].self, from: $0) } ?? []
+        XCTAssertTrue(remaining.isEmpty)
+        XCTAssertTrue(coordinator.records.isEmpty, "a staging entry must never surface through the published records array")
+
+        // A second call (e.g. two cold launches without an intervening successful
+        // enqueue) must be a harmless no-op, not a duplicate error or crash.
+        coordinator.recoverInterruptedPreparations()
+    }
+
+    func testNoInterruptedPreparationIsANoOp() {
+        let key = "kria.test.preparing.\(UUID().uuidString)"
+        let configuration = URLSessionConfiguration.ephemeral
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration)
+        coordinator.recoverInterruptedPreparations()
+        XCTAssertNil(coordinator.lastError)
+    }
+
     func testConcurrentRetryReservesOnlyOneReplacement() async throws {
         let fixture = try makeCoordinator()
         defer { fixture.cleanup() }

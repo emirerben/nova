@@ -58,6 +58,26 @@ struct UploadRecoveryPolicy: Sendable {
     }
 }
 
+/// A durably-staged upload not yet past `prepare()` (import + proxy transcode for
+/// `.clip`) — the window before any reservation or `UploadRecoveryRecord` exists.
+/// Deliberately NOT part of `BackgroundUploadCoordinator.records`: that array is
+/// `@Published` and observed by retry/cancel/UI, and this placeholder describes
+/// work legitimately still in flight on the calling `Task`, not a completed or
+/// failed attempt those act on. Persisted under its own UserDefaults key so a
+/// crash/force-quit during `prepare()` is discoverable on next launch (see
+/// `BackgroundUploadCoordinator.recoverInterruptedPreparations()`) without ever
+/// risking a concurrent retry on work that's still legitimately running.
+struct PreparingUpload: Codable, Sendable, Equatable {
+    let id: UUID
+    let projectID: UUID
+    let localFilePath: String
+    let filename: String
+    let source: UploadSource
+    let purpose: UploadPurpose
+    let role: CreationMediaRole
+    let itemID: String?
+}
+
 @MainActor final class BackgroundUploadCoordinator: NSObject, ObservableObject, URLSessionTaskDelegate, @unchecked Sendable {
     static let sessionIdentifier = "com.kria.app.media-uploads"
     @Published private(set) var records: [UploadRecoveryRecord] = []
@@ -89,10 +109,36 @@ struct UploadRecoveryPolicy: Sendable {
         lastError = nil
         var recoveryCopy: URL?
         var accepted = false
-        defer { if !accepted, let recoveryCopy { try? FileManager.default.removeItem(at: recoveryCopy) } }
+        let recordID = UUID()
+        var staged = false
+        // On any exit before `accepted` becomes true, undo whatever this attempt
+        // staged. A genuine crash/force-quit bypasses this `defer` entirely — the
+        // whole point: it leaves the staging entry behind for
+        // `recoverInterruptedPreparations()` to find on next launch, matching how
+        // a crash after `startTask()` already leaves its (later) record behind.
+        defer {
+            if !accepted {
+                if let recoveryCopy { try? FileManager.default.removeItem(at: recoveryCopy) }
+                if staged { Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true) }
+            }
+        }
         do {
             try UploadCoordinator().validate(source: source, purpose: purpose, consentGiven: consentGiven)
-            let prepared = role == .clip ? try await prepare(fileURL: fileURL, projectID: projectID, purpose: purpose) : (fileURL, nil, nil)
+            // `fileURL` (from PhotosPicker/fileImporter) is transient and may not
+            // survive an app relaunch; `prepare()` below (import + proxy transcode
+            // for `.clip`) can run for many seconds on a large clip. Stage a durable
+            // copy and record it (outside `records` — see `PreparingUpload`) BEFORE
+            // that slow step, so a crash mid-transcode is discoverable on next
+            // launch instead of silently vanishing with no trace at all.
+            var stagedURL: URL?
+            if role == .clip {
+                let copy = try Self.copyIntoRecoveryDirectory(fileURL)
+                stagedURL = copy
+                Self.persistPreparingUpload(PreparingUpload(id: recordID, projectID: projectID, localFilePath: copy.path,
+                    filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID), key: defaultsKey)
+                staged = true
+            }
+            let prepared = role == .clip ? try await prepare(fileURL: stagedURL ?? fileURL, projectID: projectID, purpose: purpose) : (fileURL, nil, nil)
             try Self.validateProjectUploadPurpose(purpose, contract: prepared.2)
             let preparedURL = prepared.0
             let localURL = try Self.copyIntoRecoveryDirectory(preparedURL)
@@ -105,7 +151,6 @@ struct UploadRecoveryPolicy: Sendable {
                 guard limit.contentTypes.contains(contentType) else { throw CreationUploadError.unsupportedType }
                 if let maximum = limit.byteLimit(contentType: contentType), Int64(size) > maximum { throw CreationUploadError.tooLarge }
             }
-            let recordID = UUID()
             let clientUploadID = "ios-\(recordID.uuidString)"
             let (reservation, visualReservationID) = try await reserve(
                 projectID: projectID, itemID: itemID, role: role, clientUploadID: clientUploadID,
@@ -114,6 +159,10 @@ struct UploadRecoveryPolicy: Sendable {
             if let original = prepared.1 {
                 try SourceAssetStore(project: Self.projectDirectory(projectID)).bind(mediaID: reservation.mediaID, original: original)
             }
+            // The staging entry (if any) is superseded by the real task record
+            // `startTask` persists below under the same `recordID` — clear it and
+            // its now-redundant staged copy first so nothing double-tracks this attempt.
+            if staged { Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true); staged = false }
             try startTask(
                 recordID: recordID,
                 localURL: localURL,
@@ -145,6 +194,22 @@ struct UploadRecoveryPolicy: Sendable {
             try? await api.cancelUpload(reservationID: reservationID)
         }
         remove(recordID, deleteLocalFile: true)
+    }
+
+    /// Surfaces any `PreparingUpload` still on disk: `enqueue` normally clears its
+    /// entry before returning (success or graceful failure), so anything left is
+    /// exactly the crash/force-quit case its staging comment describes. Never
+    /// attempts to resume `prepare()`/reservation itself — this coordinator has no
+    /// safe way to redo an in-flight transcode — it only makes the interruption
+    /// discoverable instead of silent. Call once at launch, before `restorePendingTasks()`.
+    func recoverInterruptedPreparations() {
+        let leftover = Self.restorePreparingUploads(key: defaultsKey)
+        guard !leftover.isEmpty else { return }
+        for entry in leftover {
+            try? FileManager.default.removeItem(atPath: entry.localFilePath)
+        }
+        Self.persistPreparingUploads([], key: defaultsKey)
+        lastError = "An upload was interrupted before it could start. Choose the file again."
     }
 
     func restorePendingTasks() async {
@@ -423,6 +488,32 @@ struct UploadRecoveryPolicy: Sendable {
     private static func restoreRecords(key: String) -> [UploadRecoveryRecord] {
         guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
         return (try? JSONDecoder().decode([UploadRecoveryRecord].self, from: data)) ?? []
+    }
+
+    private static func preparingUploadsKey(_ key: String) -> String { "\(key).preparing" }
+
+    private static func restorePreparingUploads(key: String) -> [PreparingUpload] {
+        guard let data = UserDefaults.standard.data(forKey: preparingUploadsKey(key)) else { return [] }
+        return (try? JSONDecoder().decode([PreparingUpload].self, from: data)) ?? []
+    }
+
+    private static func persistPreparingUploads(_ uploads: [PreparingUpload], key: String) {
+        guard let data = try? JSONEncoder().encode(uploads) else { return }
+        UserDefaults.standard.set(data, forKey: preparingUploadsKey(key))
+    }
+
+    private static func persistPreparingUpload(_ upload: PreparingUpload, key: String) {
+        var uploads = restorePreparingUploads(key: key)
+        uploads.append(upload)
+        persistPreparingUploads(uploads, key: key)
+    }
+
+    private static func clearPreparingUpload(id: UUID, key: String, deleteLocalFile: Bool) {
+        var uploads = restorePreparingUploads(key: key)
+        guard let index = uploads.firstIndex(where: { $0.id == id }) else { return }
+        let entry = uploads.remove(at: index)
+        persistPreparingUploads(uploads, key: key)
+        if deleteLocalFile { try? FileManager.default.removeItem(atPath: entry.localFilePath) }
     }
 
     private static func copyIntoRecoveryDirectory(_ source: URL) throws -> URL {
