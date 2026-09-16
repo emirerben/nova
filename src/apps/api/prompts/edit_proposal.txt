@@ -17,6 +17,7 @@ $fast_timing_note
 $mixed_timing_note
 $montage_note
 $narration_note
+$creator_text_note
 $review_note
 FOOTAGE CONSTRAINT: $footage_note
 
@@ -47,6 +48,7 @@ Editorial rules:
   profile's minimum per-kind holds.
 - With at least 3 sources, return 3-5 story beats for an ordinary guided_story/text_explainer.
   Longer all-media edits may use up to 10 beats so every meaningful source has enough room. A
+  CREATOR TEXT CONTRACT above overrides both limits and sets the beat count. A
   fast_montage may leave story_beats empty; its actual edit is fast_cuts.
   A beat is a chapter that groups related media, not one beat per file.
 - Give each beat a distinct topic. Group coherent subjects such as food, architecture/town,
@@ -61,7 +63,8 @@ Editorial rules:
   and end on a payoff when there is more than one cut.
 - For every fast_montage, the FIRST item in `fast_cuts` MUST have `role: "hook"`; do not label the
   opening cut `build` even when its visual action develops the story.
-- `thought` is an AI DRAFT for the creator to edit. It may describe a visible quality or suggest
+- A CREATOR TEXT CONTRACT label is exact creator copy, not a draft: copy it unchanged.
+- Otherwise `thought` is an AI DRAFT for the creator to edit. It may describe a visible quality or suggest
   a reflective tone, but MUST NOT invent where they went, what they ate, how it tasted, who they
   were with, what they felt, or any other factual personal experience not stated in user_context.
 - Without user_context, write neutral observations only. Do not imply creator actions with words

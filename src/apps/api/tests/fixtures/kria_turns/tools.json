@@ -793,6 +793,20 @@
                 "title": "Caption Style",
                 "type": "string"
               },
+              "closing_title": {
+                "anyOf": [
+                  {
+                    "maxLength": 280,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Confirmed exact closing/end-card copy; never an LLM-generated suggestion.",
+                "title": "Closing Title"
+              },
               "context_label": {
                 "anyOf": [
                   {
@@ -964,6 +978,21 @@
                 "description": "Confirmed exact opening title copy; never an LLM-generated suggestion.",
                 "title": "Opening Title"
               },
+              "opening_title_duration_s": {
+                "anyOf": [
+                  {
+                    "maximum": 10.0,
+                    "minimum": 0.5,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Confirmed seconds the opening title holds, from the creator's words.",
+                "title": "Opening Title Duration S"
+              },
               "optional_treatments": {
                 "items": {
                   "enum": [
@@ -1024,6 +1053,23 @@
                 "maxItems": 50,
                 "title": "Selected Media Ids",
                 "type": "array"
+              },
+              "shot_labels": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Confirmed exact per-shot label copy in on-screen order; each label is burned verbatim on its own shot and never rewritten by a specialist.",
+                "title": "Shot Labels"
               },
               "sport_labels": {
                 "default": false,
