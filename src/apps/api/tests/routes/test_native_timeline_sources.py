@@ -43,7 +43,10 @@ def test_analysis_proxy_returns_only_verified_local_original_binding(monkeypatch
     source = routes._native_timeline_source(job, path, "clip-0")
     assert source == {
         "media_id": "analysis-proxy-123",
-        "original": original,
+        # KRI-93 added `kind` to OriginalMediaDescriptor.model_dump()'s output;
+        # `original` (the raw row input above) predates that field and defaults
+        # it to "video" on validation, so the response carries it explicitly.
+        "original": {**original, "kind": "video"},
         "local_required": True,
     }
     assert "source_url" not in source
