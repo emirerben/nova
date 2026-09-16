@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.33.0] - 2026-09-16
+
+### Changed
+- fix(editor): stop song-reference card from pushing tools off-screen (KRI-90) (#1044) <!-- release-pr: 1044 -->
+
 ## [0.76.32.0] - 2026-09-16
 
 ### Changed
