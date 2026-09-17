@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.51.0] - 2026-09-17
+
+### Changed
+- fix(chat): show the server's reason when confirming a direction is rejected (#1063) <!-- release-pr: 1063 -->
+
 ## [0.76.50.0] - 2026-09-17
 
 ### Changed
