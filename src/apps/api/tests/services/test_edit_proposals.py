@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from app.schemas.edit_proposal import (
+    EDIT_CONVERSATION_TURN_MAX_CHARS,
     EditConversationTurn,
     EditProposalSnapshot,
     FastMontageCut,
@@ -411,6 +412,26 @@ def test_conversation_persists_typed_brief_without_starting_analysis() -> None:
     assert saved.brief_ready is True
     assert [turn.role for turn in saved.conversation] == ["user", "agent"]
     assert proposal_generate_error(item) == "proposal_draft"
+
+
+def test_conversation_bounds_turns_longer_than_the_transcript_limit() -> None:
+    item = _item()
+    request = "Chapter · 5 seconds · on-screen line. " * 40
+    saved = save_edit_conversation_turn(
+        item,
+        expected_version=0,
+        brief=ProposalBrief(direction="guided_story", creator_request=request),
+        user_message=request,
+        agent_reply="A countdown story. " * 120,
+        suggestions=[],
+        ready_to_plan=True,
+    )
+
+    user_turn, agent_turn = saved.conversation
+    assert len(request) > EDIT_CONVERSATION_TURN_MAX_CHARS
+    assert user_turn.content == request.strip()[:EDIT_CONVERSATION_TURN_MAX_CHARS]
+    assert len(agent_turn.content) == EDIT_CONVERSATION_TURN_MAX_CHARS
+    assert saved.brief.creator_request == request
 
 
 def test_conversation_attempt_is_single_flight_and_releasable() -> None:
