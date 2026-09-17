@@ -33,7 +33,7 @@ platform :ios do
         notify_external_testers: true,
         app_version: marketing_version,
         build_number: build_number,
-        demo_account_required: false,
+        demo_account_required: true,
         changelog: "Kria build #{build_number} from #{ENV.fetch("GITHUB_SHA")}",
         beta_app_description: ENV.fetch("KRIA_BETA_APP_DESCRIPTION"),
         beta_app_feedback_email: ENV.fetch("KRIA_BETA_FEEDBACK_EMAIL"),
@@ -43,6 +43,8 @@ platform :ios do
           contact_last_name: ENV.fetch("KRIA_BETA_REVIEW_CONTACT_LAST_NAME"),
           contact_phone: ENV.fetch("KRIA_BETA_REVIEW_CONTACT_PHONE"),
           notes: ENV.fetch("KRIA_BETA_REVIEW_NOTES"),
+          demo_account_name: ENV.fetch("KRIA_BETA_REVIEW_DEMO_USER"),
+          demo_account_password: ENV.fetch("KRIA_BETA_REVIEW_DEMO_PASSWORD"),
         },
       )
     end

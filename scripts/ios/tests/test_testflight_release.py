@@ -130,6 +130,17 @@ class FastlaneTests(unittest.TestCase):
             r'build_number\s*=\s*ENV\.fetch\("KRIA_BUILD_NUMBER"\)(?!\.to_i)',
             "upload_to_testflight requires the build number to stay a String",
         )
+        # Apple's Beta App Review (Guideline 2.1(a)) requires a demo account
+        # when the app is sign-in-gated; KRI-111 fixed the 2026-09-16/17 rejection.
+        self.assertRegex(text, r"demo_account_required:\s*true")
+        self.assertRegex(
+            text,
+            r'demo_account_name:\s*ENV\.fetch\("KRIA_BETA_REVIEW_DEMO_USER"\)',
+        )
+        self.assertRegex(
+            text,
+            r'demo_account_password:\s*ENV\.fetch\("KRIA_BETA_REVIEW_DEMO_PASSWORD"\)',
+        )
         # The IPA is archived with App Store distribution before this upload
         # lane; keep the assertion coupled to the same release script.
         self.assertRegex(ARCHIVE.read_text(), r"(?i)app[-_ ]store")
@@ -179,6 +190,46 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("gem install bundler:2.7.2 --no-document", self.text)
         self.assertRegex(self.text, r"bundle _2\.7\.2_ install --gemfile fastlane/Gemfile")
         self.assertRegex(self.text, r"bundle _2\.7\.2_ exec fastlane ios testflight")
+
+    def test_preflight_and_upload_receive_the_beta_review_demo_credentials(self):
+        # Fastlane's beta_app_review_info reads these two secrets (KRI-111);
+        # both must be validated before the archive step and passed to the
+        # upload step that actually calls `fastlane ios testflight`.
+        preflight = re.search(
+            r"- name: Validate release configuration\n(?P<body>.*?)(?=\n\s*- name:)",
+            self.text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(preflight, "missing release-configuration preflight")
+        assert preflight is not None
+        for name in ("KRIA_BETA_REVIEW_DEMO_USER", "KRIA_BETA_REVIEW_DEMO_PASSWORD"):
+            with self.subTest(name=name):
+                self.assertRegex(
+                    preflight.group("body"),
+                    rf"{name}:\s*\$\{{\{{\s*secrets\.{name}\s*\}}\}}",
+                )
+        required_match = re.search(
+            r"required=\((?P<body>.*?)\)", self.text, re.DOTALL
+        )
+        self.assertIsNotNone(required_match, "missing required=(...) secret list")
+        assert required_match is not None
+        for name in ("KRIA_BETA_REVIEW_DEMO_USER", "KRIA_BETA_REVIEW_DEMO_PASSWORD"):
+            with self.subTest(name=name):
+                self.assertIn(name, required_match.group("body"))
+
+        upload = re.search(
+            r"- name: Upload and distribute to external TestFlight\n(?P<body>.*?)(?=\n\s*- name:|\Z)",
+            self.text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(upload, "missing TestFlight upload step")
+        assert upload is not None
+        for name in ("KRIA_BETA_REVIEW_DEMO_USER", "KRIA_BETA_REVIEW_DEMO_PASSWORD"):
+            with self.subTest(name=name):
+                self.assertRegex(
+                    upload.group("body"),
+                    rf"{name}:\s*\$\{{\{{\s*secrets\.{name}\s*\}}\}}",
+                )
 
 
 if __name__ == "__main__":

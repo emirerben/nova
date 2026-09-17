@@ -59,14 +59,84 @@ for validation and remaining review checks.
 
 Create the protected `testflight-production` environment. Store the signed
 distribution certificate, matching App Store profile, its import passphrase,
-keychain passphrase, and App Store Connect upload authority as environment
-secrets. Keep the Apple team ID, provisioning-profile name, Google iOS client
-configuration, TestFlight group name, beta-review contact, feedback address,
-description, and reviewer notes as environment variables.
+keychain passphrase, App Store Connect upload authority, and the two beta-review
+demo-account secrets (`KRIA_BETA_REVIEW_DEMO_USER`, `KRIA_BETA_REVIEW_DEMO_PASSWORD`
+— see "Apple Beta App Review demo account" below) as environment secrets. Keep
+the Apple team ID, provisioning-profile name, Google iOS client configuration,
+TestFlight group name, beta-review contact, feedback address, description, and
+reviewer notes as environment variables.
 
-The beta-review notes should state that the reviewer can use Sign in with Apple
-or Google, then create a project with their own footage. Do not place test user
-credentials in the app or repository.
+## Apple Beta App Review demo account
+
+Apple rejected build 0.1.0 (46) on 2026-09-16/17 under Guideline 2.1(a): a
+sign-in-gated app must give reviewers a working demo account rather than relying
+on Sign in with Apple/Google. KRI-111 fixed this by adding a flag-gated reviewer
+login and wiring it into the release.
+
+**API (Fly secrets, `nova-video`):**
+- `REVIEWER_LOGIN_ENABLED` — default `false`; gates `POST
+  /auth/mobile/reviewer-login` (404 when off), rate-limited 5/min per IP.
+- `REVIEWER_LOGIN_EMAIL` — the demo account's email.
+- `REVIEWER_LOGIN_PASSWORD_HASH` — scrypt hash, generated with:
+  ```sh
+  cd src/apps/api && python -m app.cli.reviewer_login hash
+  ```
+  (reads the password interactively, or via `--stdin`).
+
+**GitHub environment secrets (`testflight-production`):**
+- `KRIA_BETA_REVIEW_DEMO_USER`, `KRIA_BETA_REVIEW_DEMO_PASSWORD` — set with:
+  ```sh
+  gh secret set KRIA_BETA_REVIEW_DEMO_USER --env testflight-production
+  gh secret set KRIA_BETA_REVIEW_DEMO_PASSWORD --env testflight-production
+  ```
+
+`demo_account_required` is now `true` in the Fastfile's `upload_to_testflight`
+call, so every upload writes `demo_account_name`/`demo_account_password` (from
+those two secrets) into App Store Connect's Beta App Review Information — Apple
+shows them to the reviewer automatically; they are never bundled into the app or
+committed to the repo.
+
+Seed the reviewer account with finished videos before submitting (clones a
+source user's finished videos onto it):
+
+```sh
+python scripts/admin.py --prod POST admin/reviewer-account/seed \
+  --json '{"source_user_email":"<email>","limit":6}'
+```
+
+Verify the login end-to-end:
+
+```sh
+# 200 with correct credentials
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  https://nova-video.fly.dev/auth/mobile/reviewer-login \
+  -H 'content-type: application/json' \
+  -d '{"email":"<REVIEWER_LOGIN_EMAIL>","password":"<the real password>"}'
+# 401 with a wrong password; 404 when REVIEWER_LOGIN_ENABLED=false
+```
+
+**Rotation:** pick a new password → hash it with the CLI above → `fly secrets
+set REVIEWER_LOGIN_PASSWORD_HASH=... --app nova-video` → `gh secret set
+KRIA_BETA_REVIEW_DEMO_PASSWORD --env testflight-production` → the next
+TestFlight upload carries the new credentials to App Store Connect.
+
+**Caveat:** if a reviewer deletes the demo account from within the app, the next
+`reviewer-login` recreates an empty user with no videos — re-run the seed
+command above before the next review pass.
+
+**Rollback:** `fly secrets set REVIEWER_LOGIN_ENABLED=false --app nova-video` +
+`fly machine restart <id>`. Credentials live only in Fly secrets and the GitHub
+environment — never in the repo or app bundle.
+
+Recommended `KRIA_BETA_REVIEW_NOTES` (GitHub environment variable):
+
+> Sign in with email using the demo credentials below (tap "Sign in with email"
+> under the Google button). Accept the AI data-sharing screen. The Gallery
+> already contains finished videos: open one to play, edit in the native
+> editor, and Save to Photos. To exercise creation, start a new project and add
+> any short clip from Photos or Files; Kria uploads it and shows the generated
+> edit when processing completes (2–5 min). Sign in with Apple and Google also
+> work with your own accounts. No purchase is required.
 
 ## Release behavior
 
