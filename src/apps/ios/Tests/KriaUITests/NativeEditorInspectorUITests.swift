@@ -405,6 +405,51 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.buttons["native-editor-export"].exists)
     }
 
+    func testSongReferenceBarKeepsTimelineAndToolsOnScreen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-song-reference"]
+        app.launch()
+
+        // Reference-only music adds the posting-song bar above the preview.
+        // Collapsed or expanded, its height must come out of the preview, not
+        // push the timeline and tool rail past the bottom edge.
+        let card = app.descendants(matching: .any)["native-song-reference"].firstMatch
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let timeline = app.descendants(matching: .any)["native-editor-mini-strip"].firstMatch
+        let toolRail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 8))
+        XCTAssertTrue(preview.exists)
+        XCTAssertTrue(timeline.exists)
+        XCTAssertTrue(toolRail.exists)
+
+        func assertTimelineAndToolsOnScreen(_ state: String) {
+            XCTAssertLessThanOrEqual(card.frame.maxY, preview.frame.minY + 1, "\(state): the song bar sits above the preview")
+            XCTAssertGreaterThanOrEqual(timeline.frame.height, 120, "\(state): the timeline must not be squeezed")
+            XCTAssertLessThanOrEqual(timeline.frame.maxY, toolRail.frame.minY + 1)
+            XCTAssertLessThanOrEqual(toolRail.frame.maxY, app.frame.maxY + 1, "\(state): the tool rail must stay on screen")
+            for tool in ["text", "captions", "visuals", "sounds"] {
+                XCTAssertTrue(app.buttons["native-editor-tool-\(tool)"].isHittable, "\(state): \(tool) must stay tappable")
+            }
+        }
+
+        assertTimelineAndToolsOnScreen("Collapsed")
+        XCTAssertGreaterThanOrEqual(preview.frame.height, app.frame.height * 0.25, "The song bar must not shrink the preview to a thumbnail")
+        XCTAssertLessThanOrEqual(card.frame.height, 56, "The song card starts as a thin bar")
+        let toggle = app.buttons["native-song-reference-toggle"]
+        XCTAssertTrue(toggle.isHittable)
+        XCTAssertTrue(toggle.label.hasPrefix("Add the song when posting"), toggle.label)
+        let copy = app.buttons["native-song-reference-copy"]
+        XCTAssertFalse(copy.exists, "Song details stay hidden until the bar is tapped")
+
+        toggle.tap()
+        XCTAssertTrue(copy.waitForExistence(timeout: 2))
+        XCTAssertTrue(copy.isHittable, "Song details can still be copied from the editor")
+        assertTimelineAndToolsOnScreen("Expanded")
+
+        toggle.tap()
+        XCTAssertTrue(copy.waitForNonExistence(timeout: 2))
+    }
+
     func testFinishedRenderFallbackRemainsPlayableAndDisablesCanvasManipulation() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-failure"]

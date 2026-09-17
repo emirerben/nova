@@ -17,6 +17,7 @@ final class NativeSongReferenceTests: XCTestCase {
         XCTAssertEqual(reference?.artist, "Lumen")
         XCTAssertEqual(reference?.timeRange, "01:00.000 – 01:01.234")
         XCTAssertEqual(reference?.copyText, "Night Drive by Lumen, 01:00.000 – 01:01.234")
+        XCTAssertEqual(reference?.songLine, "Night Drive — Lumen")
     }
 
     func testRejectsIncompleteAndInvalidReferenceTimings() {
@@ -34,6 +35,7 @@ final class NativeSongReferenceTests: XCTestCase {
         let reference = try XCTUnwrap(NativeSongReference(variant: ["song_reference": .object([
             "track_id": .string("track"), "title": .string("Song"), "start_s": .number(10), "end_s": .number(20)
         ])]))
+        XCTAssertEqual(reference.songLine, "Song")
 
         XCTAssertEqual(NativeEditorSongReferencePresentation.make(reference: reference, baselineDuration: 10, currentDuration: 7, durationChanged: true),
             .reference(reference.withEndS(17)))

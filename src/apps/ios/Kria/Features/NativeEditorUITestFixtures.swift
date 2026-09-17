@@ -45,6 +45,16 @@ enum NativeEditorUITestFixtures {
         }
     }
 
+    /// Reference-only music, so the editor shows the posting-song bar above
+    /// the preview (`-ui-testing-editor-song-reference`).
+    static let songReferenceVariant: [String: JSONValue] = [
+        "music_playback_mode": .string("reference_only"),
+        "song_reference": .object([
+            "track_id": .string("fixture-song"), "title": .string("Waka Waka (This Time for Africa)"),
+            "artist": .string("Shakira"), "start_s": .number(55.71), "end_s": .number(68.71)
+        ])
+    ]
+
     static let legacyVisuals: EditorDraft = {
         var value = captionVisuals
         var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
