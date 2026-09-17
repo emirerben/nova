@@ -149,6 +149,16 @@ proposal do not repair it.
   and sync retry. Supported editor saves issue a new device recipe revision.
   Account-pilot capabilities require explicit server configuration; general
   rollout still requires full device qualification.
+- KRI-94: `BackgroundUploadCoordinator.enqueue` durably stages the picked file
+  and records a `PreparingUpload` entry (kept out of `records` — never a retry/
+  cancel/UI target for work still legitimately running) *before* `prepare()`'s
+  import/proxy-transcode, not just after it succeeds. A crash in that window
+  used to vanish with no trace; `recoverInterruptedPreparations()` (called at
+  `openWorkspace`, before `restorePendingTasks()`) now surfaces it via
+  `lastError` instead — it does not attempt to resume the transcode itself.
+  `phone_guided_plan.py` also sets the previously-always-false
+  `MediaAsset.is_proxy_available` on phone-bound assets (nothing consumes it
+  yet; that's local timeline preview's job).
 - Project proxy uploads now carry immutable original fingerprint, duration,
   geometry, orientation, and audio provenance through reservation and recovery.
   Migration 0105 stores the binding before a signed PUT is issued. Registration

@@ -28,7 +28,12 @@ not pixel-identical encoding. Do not introduce new generated-media features.
       wired to `ProjectUploadDestination.resolve` or consumable by any recipe;
       visual-pool stills still need their own upload-route investigation).
 - [ ] Chat creation and editor-save coordinator integration and local playback.
-- [ ] Explicit cloud consent, relinking, retry, and interruption user flows.
+- [ ] Explicit cloud consent, relinking, retry, and interruption user flows
+      (KRI-94 closed one real gap: `enqueue` staged nothing durable until *after*
+      `prepare()`'s import/transcode, so a crash mid-transcode vanished with no
+      trace; recovery now surfaces it instead of resuming it silently. Also set
+      the previously-always-false `is_proxy_available` on phone-bound assets.
+      Still open: generalizing the analysis/planning split past guided_story).
 - [ ] Full native effect/typography/audio port and combination coverage matrix.
 - [ ] Poster/finalization, retention/account deletion, and publication audit.
 - [ ] Cloud-reference comparisons for layout, typography, timing, audio, layers.
