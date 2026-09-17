@@ -46,6 +46,11 @@ struct NativeVisualPanel: View {
     private var editorHeading: String { selected.map { "Edit " + label($0).lowercased() } ?? "Add visual" }
     private var addAction: (() -> Void)? { selected == nil ? nil : { openLibrary() } }
 
+    private var removeAction: (() -> Void)? {
+        guard let selected, canEditSelection else { return nil }
+        return { session.removeVisualSelection(selected); openLibrary() }
+    }
+
     private func openLibrary() {
         editingText = false
         session.endTransaction()
@@ -58,7 +63,8 @@ struct NativeVisualPanel: View {
     var body: some View {
         NativeEditorLanePanel(title: "Visuals", tabs: editorTabs, tab: $tab, onDone: {
             editingText = false; session.endTransaction(); onDone()
-        }, heading: editorHeading, onAdd: addAction) {
+        }, heading: editorHeading, onAdd: addAction,
+            onDelete: removeAction) {
             VStack(spacing: 12) {
                 if session.isAddingVisual { ProgressView("Opening visual…").frame(minHeight: 44) }
                 if mediaSelected && !session.canEdit("visual_editor_style") {
@@ -80,17 +86,7 @@ struct NativeVisualPanel: View {
                 }
             }
         }
-        .sheet(isPresented: $showsImporter, onDismiss: { Task { await session.refreshVisualLibrary() } }) {
-            NavigationStack {
-                ScrollView {
-                    FootagePickerView(projectID: projectID, uploads: uploads, maximumClipCount: session.visualLibraryLimit,
-                        attachedClipCount: session.visualLibrary.count, role: .visual, itemID: session.visualItemID)
-                        .padding(16)
-                }
-                .navigationTitle("Add photo or video")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showsImporter = false } } }
-            }.presentationDetents([.medium, .large])
-        }
+        .sheet(isPresented: $showsImporter, onDismiss: { Task { await session.refreshVisualLibrary() } }) { visualImporter }
         .onChange(of: uploads.records) { _, _ in Task { await session.refreshVisualLibrary() } }
         .task {
             await session.refreshVisualLibrary()
@@ -111,6 +107,29 @@ struct NativeVisualPanel: View {
         }
         .onChange(of: tab) { _, _ in editingText = false; session.endTransaction() }
         .onDisappear { session.endTransaction() }
+    }
+
+    private var visualImporter: some View {
+        NavigationStack {
+            ScrollView {
+                FootagePickerView(
+                    projectID: projectID,
+                    uploads: uploads,
+                    maximumClipCount: session.visualLibraryLimit,
+                    attachedClipCount: session.visualLibrary.count,
+                    role: .visual,
+                    itemID: session.visualItemID
+                )
+                .padding(16)
+            }
+            .navigationTitle("Add photo or video")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showsImporter = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private var browse: some View {
@@ -339,9 +358,10 @@ struct NativeVisualPanel: View {
                         Text("This saved composition keeps its original animation.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     }
                 }
+                if mediaSelected {
+                    NativeFootagePanel(session: session, selection: selected)
+                }
                 timing(selected)
-                Button("Remove visual", role: .destructive) { session.removeVisualSelection(selected); openLibrary() }
-                    .frame(minHeight: 44).accessibilityIdentifier("native-editor-remove-visual")
             }.disabled(!canEditSelection)
             if !canEditSelection {
                 Text("This visual is read-only in this edit.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)

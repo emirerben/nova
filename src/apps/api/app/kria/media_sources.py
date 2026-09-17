@@ -8,6 +8,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 PROXY_MEDIA_PREFIX = "analysis-proxy-"
 
+# The proxy is measured by server-side ffprobe; the original's duration is
+# measured by the client's AVFoundation on-device. Two independent
+# measurements of conceptually the same file are allowed to disagree by this
+# much — see `AnalysisProxyDescriptor.validate_timing` below. Anything
+# downstream that compares a proxy-derived quantity (e.g. a planned source
+# window) against `OriginalMediaDescriptor.duration_s` must tolerate the same
+# slack instead of asserting bit-exact agreement.
+PROXY_ORIGINAL_DURATION_TOLERANCE_S = 0.1
+
 
 class OriginalMediaDescriptor(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -36,12 +45,12 @@ class AnalysisProxyDescriptor(BaseModel):
 
     @model_validator(mode="after")
     def validate_timing(self) -> AnalysisProxyDescriptor:
-        if abs(self.duration_s - self.original.duration_s) > 0.1:
+        if abs(self.duration_s - self.original.duration_s) > PROXY_ORIGINAL_DURATION_TOLERANCE_S:
             raise ValueError("analysis proxy must preserve the complete original timeline")
         return self
 
     def verify_registered(self, duration_s: float, has_audio: bool) -> None:
-        if abs(duration_s - self.duration_s) > 0.1:
+        if abs(duration_s - self.duration_s) > PROXY_ORIGINAL_DURATION_TOLERANCE_S:
             raise ValueError("uploaded proxy duration differs from its descriptor")
         if has_audio != self.original.has_audio:
             raise ValueError("analysis proxy must preserve source audio for transcription")
