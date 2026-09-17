@@ -1,0 +1,104 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.9.0",
+  "input": {
+    "idea": "",
+    "theme": "",
+    "direction": "guided_story",
+    "goal": "A 30-second countdown of Barcelona's five legends in seven chapters, each with its exact chapter line, in a warm colour look.",
+    "creator_request": "Make it 30 seconds. Title: \"The 5 legends of Barcelona\". Story edit in 7 chapters, warm colour look. Use every uploaded file in chapter order. Show each chapter line word for word. Chapter 1 · Messi, Barça shirt · 3s · Messi is only #2. Chapter 2 · older bearded Cerdà, then blocks from above · 5s · #5 Ildefons Cerdà drew the city grid. Those cut corners? On purpose. Chapter 3 · young Picasso, Els Quatre Gats · 5s · #4 Pablo Picasso moved here at 13 and had his first solo show here. Chapter 4 · Olympic stadium · 5s · #3 Freddie Mercury & Montserrat Caballé: “Barcelona”, their Olympic song. Freddie died before the Games. Chapter 5 · second Messi, Camp Nou · 5s · #2 Lionel Messi. First deal: a paper napkin, at 13. 672 goals later… Chapter 6 · young bearded Gaudí, Casa Batlló, basilica towers · 5s · #1 Antoni Gaudí gave Barcelona its skyline, and he’s buried inside his unfinished church. Chapter 7 · wide basilica · 2s · Who’s missing?",
+    "pace": "balanced",
+    "target_duration_s": 30,
+    "media_scope": "all",
+    "video_reuse_policy": "once",
+    "opening_title": "The 5 legends of Barcelona",
+    "shot_labels": [
+      "Messi is only #2.",
+      "#5 Ildefons Cerdà drew the city grid. Those cut corners? On purpose.",
+      "#4 Pablo Picasso moved here at 13 and had his first solo show here.",
+      "#3 Freddie Mercury & Montserrat Caballé: “Barcelona”, their Olympic song. Freddie died before the Games.",
+      "#2 Lionel Messi. First deal: a paper napkin, at 13. 672 goals later…",
+      "#1 Antoni Gaudí gave Barcelona its skyline, and he’s buried inside his unfinished church.",
+      "Who’s missing?"
+    ],
+    "media": [
+      {
+        "media_id": "quatre-gats",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 8.846803,
+        "subject": "Els Quatre Gats café front"
+      },
+      {
+        "media_id": "casa-batllo",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 10.820499,
+        "subject": "Casa Batlló facade"
+      },
+      {
+        "media_id": "camp-nou",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 12.747755,
+        "subject": "Camp Nou stadium from outside"
+      },
+      {
+        "media_id": "basilica-wide",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 14.326712,
+        "subject": "the whole basilica, wide"
+      },
+      {
+        "media_id": "basilica-towers",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 16.648707,
+        "subject": "basilica towers close up"
+      },
+      {
+        "media_id": "messi-shirt",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "Lionel Messi in a Barça shirt"
+      },
+      {
+        "media_id": "olympic-stadium",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "Olympic stadium with a white tower"
+      },
+      {
+        "media_id": "young-picasso",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "young Pablo Picasso portrait"
+      },
+      {
+        "media_id": "older-bearded-man",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "older bearded man portrait"
+      },
+      {
+        "media_id": "city-blocks",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "city blocks from above"
+      },
+      {
+        "media_id": "young-bearded-man",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "young bearded man portrait"
+      }
+    ]
+  },
+  "raw_text": "{\"title\": \"The 5 legends of Barcelona\", \"duration_s\": 30, \"story_beats\": [{\"topic\": \"Messi\", \"thought\": \"Messi is only #2.\", \"media_ids\": [\"messi-shirt\"], \"layout\": \"fullscreen\", \"duration_s\": 6.2}, {\"topic\": \"Cerdà\", \"thought\": \"#5 Ildefons Cerdà drew the city grid. Those cut corners? On purpose.\", \"media_ids\": [\"older-bearded-man\", \"city-blocks\"], \"layout\": \"fullscreen\", \"duration_s\": 5.0}, {\"topic\": \"Picasso\", \"thought\": \"#4 Pablo Picasso moved here at 13 and had his first solo show here.\", \"media_ids\": [\"young-picasso\", \"quatre-gats\"], \"layout\": \"fullscreen\", \"duration_s\": 5.0}, {\"topic\": \"Olympic song\", \"thought\": \"#3 Freddie Mercury & Montserrat Caballé: “Barcelona”, their Olympic song. Freddie died before the Games.\", \"media_ids\": [\"olympic-stadium\"], \"layout\": \"fullscreen\", \"duration_s\": 5.0}, {\"topic\": \"Messi\", \"thought\": \"#2 Lionel Messi. First deal: a paper napkin, at 13. 672 goals later…\", \"media_ids\": [\"camp-nou\"], \"layout\": \"fullscreen\", \"duration_s\": 5.0}, {\"topic\": \"Gaudí\", \"thought\": \"#1 Antoni Gaudí gave Barcelona its skyline, and he’s buried inside his unfinished church.\", \"media_ids\": [\"young-bearded-man\", \"casa-batllo\", \"basilica-towers\"], \"layout\": \"fullscreen\", \"duration_s\": 5.0}, {\"topic\": \"Missing legend\", \"thought\": \"Who’s missing?\", \"media_ids\": [\"basilica-wide\"], \"layout\": \"fullscreen\", \"duration_s\": 2.0}]}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "barcelona_legends_more_sources_than_labels",
+    "note": "Prod plan item 5016d555 (2026-09-17): 7 exact chapter labels over 5 clips and 6 photos with media_scope=all. The live draft gives each chapter its requested seconds plus the 3.2s title hold (33.2s of beats) and declares 30s; parse must accept it, pin the total to the 30s target, and keep all 11 sources."
+  }
+}
