@@ -789,6 +789,79 @@ def test_planner_still_rejects_labeled_beats_far_from_the_target() -> None:
         EditProposalAgent(None).parse(json.dumps(draft), _legends_input())  # type: ignore[arg-type]
 
 
+# Production regression (KRI-115, plan item 5016d555, job e0aab96d): the live
+# draft put both spare clips (camp-nou + basilica-wide) in the Freddie
+# Mercury/Olympic chapter and left "#2 Lionel Messi" to repeat the photo
+# already shown in the opening chapter, instead of taking the untouched
+# Camp Nou clip. Every distinct source was technically present somewhere, so
+# the "requested coverage" check passed and the renderer happily burned a
+# chapter-skipping, photo-repeating video.
+LEGENDS_AVOIDABLE_REPEAT_GROUPS = [
+    ["photo-messi"],
+    ["photo-cerda", "clip-quatre-gats"],
+    ["photo-picasso", "clip-batllo"],
+    ["clip-camp-nou", "clip-basilica-wide"],
+    ["photo-messi"],
+    ["photo-gaudi", "clip-towers"],
+    ["photo-stadium"],
+]
+
+
+def test_planner_rejects_photo_reuse_while_an_unused_source_remains() -> None:
+    draft = _legends_draft(30)
+    for beat, media_ids in zip(draft["story_beats"], LEGENDS_AVOIDABLE_REPEAT_GROUPS, strict=True):
+        beat["media_ids"] = media_ids
+
+    with pytest.raises(SchemaError, match="photo repeated while an unused source"):
+        EditProposalAgent(None).parse(json.dumps(draft), _legends_input())  # type: ignore[arg-type]
+
+
+def test_planner_still_allows_photo_reuse_as_a_genuine_last_resort() -> None:
+    """A repeat is only illegitimate when a spare source was sitting idle.
+
+    With a single photo and two labels there is nothing else to show, so the
+    same repeat that ``test_planner_rejects_photo_reuse_while_an_unused_source_remains``
+    forbids must still be allowed here — matching
+    ``deterministic_labeled_beats``' own scarcity handling.
+    """
+
+    agent_input = EditProposalAgentInput(
+        direction="guided_story",
+        goal="Two-beat story",
+        pace="balanced",
+        target_duration_s=6,
+        video_reuse_policy="once",
+        shot_labels=["First beat.", "Second beat."],
+        media=[
+            EditProposalMedia(media_id="the-only-photo", lane="asset", kind="image", subject="hero")
+        ],
+    )
+    draft = {
+        "title": "Only one photo",
+        "duration_s": 6,
+        "story_beats": [
+            {
+                "topic": "Beat 1",
+                "thought": "First beat.",
+                "media_ids": ["the-only-photo"],
+                "layout": "fullscreen",
+                "duration_s": 3,
+            },
+            {
+                "topic": "Beat 2",
+                "thought": "Second beat.",
+                "media_ids": ["the-only-photo"],
+                "layout": "fullscreen",
+                "duration_s": 3,
+            },
+        ],
+    }
+
+    output = EditProposalAgent(None).parse(json.dumps(draft), agent_input)  # type: ignore[arg-type]
+
+    assert [beat.thought for beat in output.story_beats] == ["First beat.", "Second beat."]
+
+
 def test_labeled_fallback_covers_every_required_source() -> None:
     from app.pipeline.guided_story import validate_proposal_timing
     from app.services.edit_direction_planner import (
