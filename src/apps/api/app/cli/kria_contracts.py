@@ -43,6 +43,7 @@ from app.routes.auth import (
     MobileExchangeRequest,
     MobileLinkResponse,
     MobileRefreshRequest,
+    MobileReviewerLoginRequest,
     MobileRevokeResponse,
     MobileSessionOut,
     MobileUserOut,
@@ -116,6 +117,7 @@ MOBILE_API_MODELS = (
     DeviceRetryOut,
     MobileExchangeRequest,
     MobileRefreshRequest,
+    MobileReviewerLoginRequest,
     MobileSessionOut,
     MobileUserOut,
     EditRecipeV1,
@@ -181,6 +183,11 @@ def mobile_contract_json() -> str:
                         "request": "MobileRefreshRequest",
                         "response": "MobileRevokeResponse",
                     },
+                    "/auth/mobile/reviewer-login": {
+                        "method": "POST",
+                        "request": "MobileReviewerLoginRequest",
+                        "response": "MobileSessionOut",
+                    },
                     "/auth/mobile/me": {"method": "GET", "response": "MobileUserOut"},
                     "/auth/mobile/link": {
                         "method": "POST",
@@ -195,6 +202,7 @@ def mobile_contract_json() -> str:
                         "nonce": "string",
                     },
                     "MobileRefreshRequest": {"refresh_token": "string"},
+                    "MobileReviewerLoginRequest": {"email": "string", "password": "string"},
                     "MobileRevokeResponse": {"revoked": "boolean"},
                     "MobileLinkResponse": {
                         "linked": "boolean",
@@ -366,6 +374,13 @@ def mobile_openapi_json() -> str:
                     "operationId": "revokeMobileSession",
                     "requestBody": _json_request(MobileRefreshRequest),
                     "responses": _json_responses(MobileRevokeResponse),
+                }
+            },
+            "/auth/mobile/reviewer-login": {
+                "post": {
+                    "operationId": "reviewerLoginMobile",
+                    "requestBody": _json_request(MobileReviewerLoginRequest),
+                    "responses": _json_responses(MobileSessionOut),
                 }
             },
             "/auth/mobile/me": {

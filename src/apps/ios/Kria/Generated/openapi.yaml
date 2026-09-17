@@ -3812,6 +3812,25 @@
         "title": "MobileRefreshRequest",
         "type": "object"
       },
+      "MobileReviewerLoginRequest": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "MobileReviewerLoginRequest",
+        "type": "object"
+      },
       "MobileRevokeResponse": {
         "properties": {
           "revoked": {
@@ -7115,6 +7134,42 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/MobileRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileSessionOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        }
+      }
+    },
+    "/auth/mobile/reviewer-login": {
+      "post": {
+        "operationId": "reviewerLoginMobile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MobileReviewerLoginRequest"
               }
             }
           },

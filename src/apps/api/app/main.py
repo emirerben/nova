@@ -31,6 +31,7 @@ from app.routes import (
     admin_music,
     admin_plan_items,
     admin_review,
+    admin_reviewer,
     admin_sound_effects,
     auth,
     clips,
@@ -395,6 +396,7 @@ app.include_router(
     admin_build_tasks.router, prefix="/admin/build-tasks", tags=["admin-build-tasks"]
 )
 app.include_router(admin_review.router, prefix="/admin/review", tags=["admin-review"])
+app.include_router(admin_reviewer.router, prefix="/admin/reviewer-account", tags=["admin-reviewer"])
 app.include_router(
     admin_edit_feedback.router,
     prefix="/admin/edit-feedback",

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.limiter import limiter
+from app.limiter import get_real_ip, limiter
 from app.models import WaitlistSignup
 
 log = structlog.get_logger()
@@ -17,14 +17,6 @@ router = APIRouter()
 
 # Max length for UTM params to prevent abuse
 UTM_MAX_LENGTH = 256
-
-
-def get_real_ip(request: Request) -> str:
-    """Rate limit by real IP; X-Forwarded-For aware (works behind nginx/Caddy)."""
-    xff = request.headers.get("X-Forwarded-For")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host or "127.0.0.1"
 
 
 def _truncate_utm(value: str | None) -> str | None:
@@ -65,6 +57,7 @@ async def join_waitlist(
     # Fire-and-forget confirmation email
     try:
         from app.tasks.email import send_waitlist_confirmation  # noqa: PLC0415
+
         send_waitlist_confirmation.delay(normalized)
     except Exception as exc:
         log.warning("confirmation_email_dispatch_failed", email=normalized, error=str(exc))
@@ -81,9 +74,7 @@ async def list_waitlist(
         x_admin_secret, settings.waitlist_admin_secret
     ):
         raise HTTPException(status_code=403, detail="forbidden")
-    result = await db.execute(
-        select(WaitlistSignup).order_by(WaitlistSignup.created_at.desc())
-    )
+    result = await db.execute(select(WaitlistSignup).order_by(WaitlistSignup.created_at.desc()))
     signups = result.scalars().all()
     return [
         {

@@ -19,6 +19,11 @@
       "request": "MobileRefreshRequest",
       "response": "MobileSessionOut"
     },
+    "/auth/mobile/reviewer-login": {
+      "method": "POST",
+      "request": "MobileReviewerLoginRequest",
+      "response": "MobileSessionOut"
+    },
     "/auth/mobile/revoke": {
       "method": "POST",
       "request": "MobileRefreshRequest",
@@ -50,6 +55,10 @@
     },
     "MobileRefreshRequest": {
       "refresh_token": "string"
+    },
+    "MobileReviewerLoginRequest": {
+      "email": "string",
+      "password": "string"
     },
     "MobileRevokeResponse": {
       "revoked": "boolean"
