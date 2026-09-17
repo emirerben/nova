@@ -85,7 +85,13 @@ AUDIO_LED_EDIT_FORMATS: frozenset[str] = frozenset(
 # content_plan_build — this set governs everything else. Grown one phase at a
 # time as each archetype's phone compiler ships; kept positive on purpose so
 # an unknown/future format never accidentally qualifies.
-PHONE_RENDER_SUPPORTED_FORMATS: frozenset[str] = frozenset()
+#
+# KRI-114 P1-2/P1-4: montage/day_vlog/single_hero without a voiceover now
+# compile through `app.pipeline.phone_montage_plan.compile_phone_montage_plan`
+# (`app.tasks.generative_build._run_phone_montage_job`). A voiceover on any of
+# these formats still routes to the cloud renderer — the dispatch fork checks
+# `all_candidates["voiceover_gcs_path"]` before this allowlist even applies.
+PHONE_RENDER_SUPPORTED_FORMATS: frozenset[str] = frozenset({"montage", "day_vlog", "single_hero"})
 
 RenderProgram = Literal["guided", "native"]
 

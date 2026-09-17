@@ -171,16 +171,20 @@ def test_initial_orchestrator_still_enters_phone_planning(monkeypatch):
 
 
 def test_dispatcher_rejects_phone_snapshot_without_a_registered_renderer(monkeypatch):
-    # KRI-114 P0-5: the dispatcher fork is archetype-agnostic — a snapshot that
-    # is neither a guided-story plan nor (future) another recognized archetype
-    # must fail loudly instead of silently entering the guided renderer or a
-    # cloud fallback.
+    # KRI-114 P0-5/P1-2: the dispatcher fork is archetype-agnostic — a snapshot
+    # that is neither a guided-story plan nor a format with a registered phone
+    # compiler (PHONE_RENDER_SUPPORTED_FORMATS) must fail loudly instead of
+    # silently entering a renderer or a cloud fallback. "subtitled" has no
+    # phone compiler yet, so it stays a deliberate negative fixture here.
     from contextlib import nullcontext
 
     job, _, session, planner, cloud = setup(monkeypatch)
     del job.assembly_plan["guided_edit"]
+    job.all_candidates = {"edit_format": "subtitled"}
     phone_runner = Mock()
+    montage_runner = Mock()
     monkeypatch.setattr(gb, "_run_phone_guided_job", phone_runner)
+    monkeypatch.setattr(gb, "_run_phone_montage_job", montage_runner)
     monkeypatch.setattr("app.services.pipeline_trace.pipeline_trace_for", lambda _: nullcontext())
     monkeypatch.setattr(gb, "job_heartbeat", lambda _: nullcontext())
     monkeypatch.setattr(gb, "mark_finished", Mock())
@@ -194,7 +198,9 @@ def test_dispatcher_rejects_phone_snapshot_without_a_registered_renderer(monkeyp
     args, kwargs = fail_job.call_args
     assert "No phone renderer is registered" in args[1]
     assert kwargs.get("failure_reason") == "phone_plan_unsupported"
+    montage_runner.assert_not_called()
     phone_runner.assert_not_called()
+    montage_runner.assert_not_called()
     planner.assert_not_called()
 
 

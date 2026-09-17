@@ -53,7 +53,9 @@ from sqlalchemy.exc import OperationalError
 
 from app.agents._schemas.edit_format import (
     DAY_VLOG_RENDERER_VERSION,
+    GUIDED_EDIT_FORMATS,
     NARRATED_EDIT_FORMATS,
+    PHONE_RENDER_SUPPORTED_FORMATS,
     SINGLE_HERO_RENDERER_VERSION,
     SLIDES_RENDERER_VERSION,
     coerce_edit_format,
@@ -2161,14 +2163,21 @@ def _run_generative_job_impl(
             # before invoking it, then recheck the owner/generation at publication.
             db.commit()
             try:
-                # Archetype-agnostic dispatch: today the only phone compiler is the
-                # guided-story recipe. Phase 1 adds an `elif` here for the montage
-                # phone compiler (`_run_phone_montage_job`) as PHONE_RENDER_SUPPORTED_
-                # FORMATS grows — explicit branches on purpose, so an unrecognized
-                # snapshot shape fails loudly instead of silently entering the wrong
-                # (or a cloud) renderer.
+                # Archetype-agnostic dispatch: a guided-story snapshot always uses the
+                # guided-story recipe; otherwise the plan-declared edit_format decides
+                # which decisions-only compiler applies (KRI-114 P1-2 adds the montage/
+                # day_vlog/single_hero compiler as PHONE_RENDER_SUPPORTED_FORMATS grows).
+                # Explicit branches on purpose, so an unrecognized snapshot shape fails
+                # loudly instead of silently entering the wrong (or a cloud) renderer.
                 if isinstance(phone_snapshot.get("guided_edit"), dict):
                     _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
+                elif (
+                    coerce_edit_format(candidates.get("edit_format"))
+                    in PHONE_RENDER_SUPPORTED_FORMATS
+                ):
+                    _run_phone_montage_job(
+                        job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                    )
                 else:
                     raise ValueError("No phone renderer is registered for this edit")
             except OperationalError:
@@ -3730,6 +3739,349 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
                 "ok": False,
             }
         ]
+        job.assembly_plan = current
+        pin_device_request(job, request, base_generation=generation)
+        job.status = "awaiting_device"
+        job.error_detail = None
+        job.failure_reason = None
+        db.commit()
+
+
+def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
+    """Bridge the sync worker to the (async-shaped) render-library catalog
+    lookup for a montage-family phone job's matched music track.
+
+    `app.services.render_library.catalog_path` takes an `AsyncSession`; a
+    Celery worker has no running event loop, so this re-validates the exact
+    same publish/ready/path-prefix contract directly against a sync session
+    instead of calling it. `inspect_library_asset` (already sync) then pins
+    the exact generation + fingerprint that
+    `app.routes.device_render.download_device_asset` will independently
+    recompute when the device fetches the asset — they must agree exactly.
+
+    Returns None when the decision has no matched track (no music bed
+    needed). Raises `UnsupportedPhonePlan` when the track can no longer be
+    published/served — a phone job must never bake in a stale music receipt.
+    """
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import PhoneMusicBed  # noqa: PLC0415
+    from app.services.render_library import inspect_library_asset  # noqa: PLC0415
+
+    track_id = decision.music_track_id
+    if not track_id:
+        return None
+    with _sync_session() as db:
+        track = db.get(MusicTrack, track_id)
+        usable = bool(
+            track is not None
+            and track.published_at is not None
+            and track.archived_at is None
+            and track.analysis_status == "ready"
+            and track.audio_gcs_path
+        )
+        if not usable:
+            raise UnsupportedPhonePlan(
+                "matched music track is no longer available for phone rendering",
+                capability="musicBed",
+            )
+        path = str(track.audio_gcs_path)
+        duration_s = float(track.duration_s) if getattr(track, "duration_s", None) else None
+    # Even a corrupt catalog row cannot grant access to a differently-prefixed
+    # path — mirrors `render_library.catalog_path`'s exact check.
+    if (
+        not path.startswith(f"music/{track_id}/")
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+        or "\\" in path
+    ):
+        raise ValueError("invalid render catalog path")
+    asset = inspect_library_asset(
+        path, asset_id=f"music-{track_id}", catalog="music", catalog_id=track_id
+    )
+    return PhoneMusicBed(
+        catalog_id=track_id,
+        generation=asset.generation,
+        fingerprint=asset.fingerprint,
+        duration_s=duration_s,
+        start_s=float(decision.music_start_s or 0.0),
+        # `_mix_template_audio`'s song-variant path uses `audio_gain=1.0`
+        # (full replace, no ducking, no fade) -- mirror that exactly.
+        volume=1.0,
+    )
+
+
+def _run_phone_montage_job(
+    job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
+) -> None:
+    """Decisions-only montage-family phone compile. Never enters a media renderer.
+
+    Mirrors `_run_phone_guided_job`'s fences (immutable generation, bound
+    sources, single pinned device revision), but drives the SAME ingest/text/
+    music/archetype prework `_run_generative_job_impl` uses for the cloud
+    montage-family path (this function lives in the same module so it can
+    call those helpers directly), then hands the top-ranked decided spec to
+    `compile_phone_montage_plan`. Only montage/day_vlog/single_hero without a
+    voiceover reach here -- `content_plan_build.py`'s dispatch-time gate
+    already checked `PHONE_RENDER_SUPPORTED_FORMATS`, but a voiceover can
+    still be attached to any edit_format independently of that gate, so it is
+    rechecked here. `all_candidates` is passed by the caller (the same value
+    it already read under its own owning-job lock, before releasing it to
+    plan) rather than re-fetched here -- a second `Job` read would either
+    need its own lock (holding it for the whole ingest/agents/matcher
+    prework, same as the cloud path deliberately avoids) or an unlocked read
+    of a field a concurrent editor could be rewriting.
+
+    Deferred (see docs/runbooks/phone-rendering.md): every variant but the
+    top-ranked one (recorded under `assembly_plan["phone_deferred_variants"]`),
+    SFX/media-overlay lanes, masonry/collage presets, lyric overlays,
+    carousel-moment splices, letterboxed landscape fit, editorial sequence/
+    rhythm text, and audio ducking -- all fail closed via `UnsupportedPhonePlan`
+    inside the compiler.
+    """
+    from app.kria.device_render import make_device_request  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_montage_plan import compile_phone_montage_plan  # noqa: PLC0415
+    from app.services.device_render import (  # noqa: PLC0415
+        DEVICE_RENDER_FIELD,
+        pin_device_request,
+    )
+    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    generation = snapshot.get("creator_generation_id")
+    if not isinstance(generation, str) or not generation:
+        raise ValueError("Phone rendering requires an immutable approved generation")
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in snapshot[PHONE_SOURCES_FIELD]
+    )
+    if not bindings:
+        raise ValueError("Phone rendering requires original source bindings")
+    # Redelivery idempotency, checked BEFORE any prework: a redelivered
+    # message for a generation already pinned to a device record must not
+    # re-run ingest/agents/matcher just to discard the result. Content-plan
+    # phone jobs pin exactly one variant, so any existing record at this
+    # generation means this exact delivery already published its recipe.
+    if any(
+        isinstance(record, dict) and record.get("base_generation") == generation
+        for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
+    ):
+        return
+    if not settings.phone_rendering_enabled:
+        raise ValueError(
+            "Phone rendering is currently unavailable; originals remain on the device."
+        )
+
+    clip_paths_gcs: list[str] = list(all_candidates.get("clip_paths") or [])
+    if not clip_paths_gcs:
+        raise ValueError("Phone rendering requires clip paths")
+    if all_candidates.get("voiceover_gcs_path"):
+        raise ValueError("Phone rendering does not yet support voiceover edits")
+    edit_format = coerce_edit_format(all_candidates.get("edit_format"))
+    if edit_format not in GUIDED_EDIT_FORMATS:
+        raise ValueError(f"No phone renderer is registered for edit_format={edit_format!r}")
+    language: str = all_candidates.get("language") or "en"
+    persona: dict = all_candidates.get("persona") or {}
+    filming_guide_candidates: list[dict] = list(all_candidates.get("filming_guide") or [])
+    clip_notes_candidates: dict = dict(all_candidates.get("clip_notes") or {})
+    narrative_shot_count = int(all_candidates.get("narrative_shot_count") or 0)
+    landscape_fit: str = all_candidates.get("landscape_fit") or "fill"
+    variant_policy: str | None = all_candidates.get("variant_policy") or None
+    montage_preset = coerce_montage_preset(all_candidates.get("montage_preset"))
+    creator_request = str(all_candidates.get("creator_request") or "")[:1000]
+    user_style = _effective_render_user_style(all_candidates)
+    raw_creator_strategy = all_candidates.get("creator_strategy") or {}
+    creator_font_family = raw_creator_strategy.get("font_family")
+    creator_text_color = raw_creator_strategy.get("text_color")
+    raw_pacing = raw_creator_strategy.get("pacing")
+    creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
+    creator_video_reuse_policy = raw_creator_strategy.get("video_reuse_policy")
+
+    with pipeline_trace_for(job_id):
+        with tempfile.TemporaryDirectory(
+            prefix="nova_phone_montage_", ignore_cleanup_errors=True
+        ) as tmpdir:
+            ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
+            clip_metas = ingest["clip_metas"]
+            clip_id_to_gcs = ingest["clip_id_to_gcs"]
+            clip_id_to_local = ingest["clip_id_to_local"]
+            probe_map = ingest["probe_map"]
+            hero = ingest["hero"]
+            clip_durations_s = {
+                cid: float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
+                for cid, path in clip_id_to_local.items()
+                if probe_map.get(path) is not None
+            }
+            available_footage_s = _available_footage_s(probe_map)
+            narrative_order = _resolve_narrative_order(
+                narrative_shot_count,
+                clip_id_to_gcs,
+                job_id=job_id,
+                strict=edit_format == "day_vlog",
+            )
+            if narrative_order:
+                hero = next((m for m in clip_metas if m.clip_id == narrative_order[0]), hero)
+
+            agent_text, agent_form = _run_text_agents(
+                clip_metas,
+                hero,
+                job_id=job_id,
+                language=language,
+                persona=persona,
+                filming_guide=filming_guide_candidates,
+                clip_notes=clip_notes_candidates,
+                creator_direction=creator_request,
+            )
+            pinned_set_id = str(user_style.get("style_set_id") or "").strip()
+            if pinned_set_id and pinned_set_id != "default":
+                from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
+
+                style_set_id = (
+                    pinned_set_id
+                    if pinned_set_id in style_set_ids(applies_to="generative")
+                    else _select_generative_style_set(clip_metas, agent_text, job_id=job_id)
+                )
+            else:
+                style_set_id = _select_generative_style_set(clip_metas, agent_text, job_id=job_id)
+            best_track = _match_best_track(clip_metas, job_id=job_id)
+
+            user_style_knobs: dict = {}
+            if user_style:
+                try:
+                    from app.agents._schemas.user_style import (  # noqa: PLC0415
+                        coerce_user_style,
+                        user_style_knobs_dict,
+                    )
+
+                    user_style_knobs = user_style_knobs_dict(coerce_user_style(user_style))
+                except Exception:  # noqa: BLE001 — defensive; bad blob → no overrides
+                    pass
+
+            footage_type_bias: list[str] = list(
+                (user_style.get("footage_type_bias") or []) if user_style else []
+            )
+            archetype, _spine, _fallback_reason = _resolve_archetype(
+                edit_format,
+                clip_metas,
+                clip_id_to_local,
+                job_id=job_id,
+                voiceover_gcs_path=None,
+                filming_guide=filming_guide_candidates,
+                footage_type_bias=footage_type_bias,
+                clip_durations_s=clip_durations_s,
+                prefer_narrated_voiceover=False,
+                narrative_shot_count=narrative_shot_count,
+            )
+            if archetype not in GUIDED_EDIT_FORMATS:
+                raise UnsupportedPhonePlan(
+                    f"phone montage compiler cannot render archetype={archetype!r}"
+                )
+
+            specs = _specs_for_archetype(
+                archetype,
+                best_track,
+                voiceover_gcs_path=None,
+                voiceover_bed_level=None,
+                voiceover_caption_style=None,
+                variant_policy=variant_policy,
+            )
+            if not specs:
+                raise ValueError("No renderable variant for this edit")
+            spec, deferred_specs = specs[0], specs[1:]
+            if spec.get("text_mode") not in {"agent_text", "none"}:
+                raise UnsupportedPhonePlan(f"unsupported text_mode: {spec.get('text_mode')}")
+
+            decision = _decide_generative_variant(
+                job_id=job_id,
+                rank=1,
+                spec=spec,
+                clip_metas=clip_metas,
+                clip_id_to_local=clip_id_to_local,
+                clip_id_to_gcs=clip_id_to_gcs,
+                probe_map=probe_map,
+                available_footage_s=available_footage_s,
+                agent_text=agent_text,
+                agent_form=agent_form,
+                variant_dir=tmpdir,
+                style_set_id=style_set_id,
+                user_style_knobs=user_style_knobs,
+                narrative_order=narrative_order,
+                filming_guide=filming_guide_candidates if narrative_shot_count > 0 else None,
+                language=language,
+                font_family_override=creator_font_family,
+                text_color_override=creator_text_color,
+                creator_pacing=creator_pacing,
+                creator_video_reuse_policy=creator_video_reuse_policy,
+                landscape_fit=landscape_fit,
+                montage_preset=montage_preset,
+                strict_day_vlog=archetype == "day_vlog",
+                strict_single_hero=archetype == "single_hero",
+            )
+
+            gcs_to_media_id = {binding.proxy_path: binding.media_id for binding in bindings}
+            clip_id_to_media_id = {
+                cid: gcs_to_media_id[gcs]
+                for cid, gcs in clip_id_to_gcs.items()
+                if gcs in gcs_to_media_id
+            }
+            missing = {step.clip_id for step in decision.assembly_steps} - set(clip_id_to_media_id)
+            if missing:
+                raise UnsupportedPhonePlan("assembly step has no phone source binding")
+            decision = decision.model_copy(
+                update={"extras": {**decision.extras, "clip_id_to_media_id": clip_id_to_media_id}}
+            )
+
+            music = _resolve_phone_music_bed(decision)
+            recipe = compile_phone_montage_plan(decision, bindings, music=music)
+
+    validate_phone_pilot_recipe(recipe)
+    request = make_device_request(
+        job_id=uuid.UUID(job_id), variant_id=spec["variant_id"], revision=1, recipe=recipe
+    )
+
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
+            return
+        job = entry[0]
+        if not settings.phone_rendering_for(job.user_id):
+            raise ValueError("Phone rendering is unavailable for this account")
+        current = copy.deepcopy(job.assembly_plan or {})
+        if current.get("creator_generation_id") != generation or current.get(
+            PHONE_SOURCES_FIELD
+        ) != snapshot.get(PHONE_SOURCES_FIELD):
+            return
+        variant_id = spec["variant_id"]
+        prior_device = (current.get(DEVICE_RENDER_FIELD) or {}).get(variant_id)
+        if prior_device is not None and prior_device.get("base_generation") == generation:
+            return
+        variants = list(current.get("variants") or [])
+        existing_index = next(
+            (i for i, v in enumerate(variants) if v.get("variant_id") == variant_id), None
+        )
+        if existing_index is not None and variants[existing_index].get("render_status") == "ready":
+            raise ValueError("Cannot replace a ready phone variant with a new plan")
+        new_entry = {
+            **decision.base,
+            "variant_id": variant_id,
+            "rank": 1,
+            "render_generation_id": generation,
+            "render_status": "awaiting_device",
+            "render_destination": "device",
+            "render_finished_at": None,
+            "resolved_archetype": archetype,
+            "duration_s": decision.duration_s,
+            "text_elements": decision.text_elements,
+            "orientation": decision.orientation,
+            "music_track_id": decision.music_track_id,
+            "music_start_s": decision.music_start_s,
+            "ok": False,
+        }
+        if existing_index is not None:
+            variants[existing_index] = new_entry
+        else:
+            variants.append(new_entry)
+        current["variants"] = variants
+        current["phone_deferred_variants"] = [s["variant_id"] for s in deferred_specs]
         job.assembly_plan = current
         pin_device_request(job, request, base_generation=generation)
         job.status = "awaiting_device"
