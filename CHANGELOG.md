@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.52.0] - 2026-09-17
+
+### Changed
+- fix(creator): stop long chat requests from crashing "Create this video" (#1064) <!-- release-pr: 1064 -->
+
 ## [0.76.51.0] - 2026-09-17
 
 ### Changed
