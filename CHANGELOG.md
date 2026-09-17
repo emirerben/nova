@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.53.0] - 2026-09-17
+
+### Changed
+- fix(creator): stop chapter-label plans with more files than labels from failing to plan (#1068) <!-- release-pr: 1068 -->
+
 ## [0.76.52.0] - 2026-09-17
 
 ### Changed
