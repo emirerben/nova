@@ -9,12 +9,14 @@ from types import SimpleNamespace
 import pytest
 
 import app.pipeline.guided_story as guided_story
+import app.pipeline.render_geometry as render_geometry
 from app.agents._schemas.text_element import TextElement
-from app.pipeline.canvas import Canvas
+from app.pipeline.canvas import PORTRAIT, Canvas
 from app.pipeline.generative_overlays import build_overlays_from_text_elements
 from app.pipeline.guided_story import (
     GuidedStoryError,
     _allocate_beat_durations,
+    _apply_guided_text_face_placement,
     _compile_execution_plan_version,
     _download_selected,
     _enforce_strict_story_duration,
@@ -35,6 +37,8 @@ from app.pipeline.guided_story import (
     validate_ready_result,
     verify_guided_text_reburn,
 )
+from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
+from app.pipeline.text_overlay_skia import measure_text_overlay_box
 from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
@@ -3756,3 +3760,150 @@ def test_narrated_fast_montage_does_not_project_advisory_player_names():
     assert elements[0]["y_frac"] == 0.16
     assert elements[1]["y_frac"] > 0.7
     assert "Player Emir" not in [row["text"] for row in elements]
+
+
+# ── KRI-116: face-aware guided-story text placement ────────────────────────────
+
+
+def _guided_title_row(**overrides: object) -> dict:
+    payload = dict(
+        id="guided-title",
+        text="The 5 legends of Barcelona",
+        start_s=0.0,
+        end_s=3.2,
+        role="generative_intro",
+        position="custom",
+        x_frac=0.5,
+        y_frac=0.16,
+        font_family="Fraunces",
+        size_px=104,
+        color="#FFF8F0",
+        highlight_color="#D9FF70",
+        stroke_width=0,
+        shadow_enabled=True,
+        shadow_style="standard",
+        effect="fade-in",
+        alignment="center",
+        letter_spacing=-0.025,
+        line_spacing=1.0,
+        max_width_frac=0.8,
+    )
+    payload.update(overrides)
+    return TextElement(**payload).model_dump(mode="json", exclude_none=True)
+
+
+def test_apply_guided_text_face_placement_moves_title_off_a_top_face(monkeypatch) -> None:
+    """KRI-116 repro: a portrait shot with the face in the top third must not
+    keep the guided-title's default y_frac=0.16, and whichever box is chosen
+    must not intersect the (padded) face region — the Barcelona/Messi symptom."""
+
+    monkeypatch.setattr(guided_story, "probe_video", lambda path: SimpleNamespace(duration_s=10.0))
+    face_box = NormalizedBox(0.30, 0.02, 0.70, 0.32)  # face in the top third
+
+    def fake_sample_face_regions(video_path, anchor_times_s, **kwargs):
+        regions = [ProtectedRegion(0.0, 10.0, face_box, kind="face") for _ in anchor_times_s]
+        return regions, {
+            "attempted": len(anchor_times_s),
+            "decoded": len(anchor_times_s),
+            "timed_out": False,
+        }
+
+    monkeypatch.setattr(render_geometry, "sample_face_regions", fake_sample_face_regions)
+    events: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.record_pipeline_event",
+        lambda stage, event, data=None: events.append((stage, event, data or {})),
+    )
+
+    rows = [_guided_title_row()]
+    updated = _apply_guided_text_face_placement(
+        "unused.mp4", rows, job_id="job-116", canvas=PORTRAIT
+    )
+
+    title_row = next(row for row in updated if row["id"] == "guided-title")
+    assert title_row["y_frac"] != pytest.approx(0.16)
+
+    element = TextElement.model_validate(title_row)
+    overlay = build_overlays_from_text_elements(
+        [element], video_duration_s=10.0, independent_box_alignment=True
+    )[0]
+    measured = measure_text_overlay_box(overlay, render_canvas=PORTRAIT)
+    measured_box = NormalizedBox(
+        measured["left"], measured["top"], measured["right"], measured["bottom"]
+    )
+    assert measured_box.intersection_area(face_box) == pytest.approx(0.0)
+
+    chosen_events = [event for event in events if event[1] == "guided_text_placement_chosen"]
+    assert chosen_events
+    _, _, payload = chosen_events[0]
+    assert payload["element_id"] == "guided-title"
+    assert payload["status"] in {"moved", "best_effort"}
+
+
+def test_apply_guided_text_face_placement_leaves_a_well_framed_title_untouched(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(guided_story, "probe_video", lambda path: SimpleNamespace(duration_s=10.0))
+    low_face = NormalizedBox(0.30, 0.84, 0.70, 0.95)  # nowhere near the top-anchored title
+
+    def fake_sample_face_regions(video_path, anchor_times_s, **kwargs):
+        regions = [ProtectedRegion(0.0, 10.0, low_face, kind="face") for _ in anchor_times_s]
+        return regions, {
+            "attempted": len(anchor_times_s),
+            "decoded": len(anchor_times_s),
+            "timed_out": False,
+        }
+
+    monkeypatch.setattr(render_geometry, "sample_face_regions", fake_sample_face_regions)
+
+    # A short, single-line title so its measured box comfortably clears the top
+    # chrome margin at the y_frac=0.16 default — isolates "a distant face changes
+    # nothing" from the (separate, pre-existing) case of a tall multi-line title
+    # whose own box already brushes the chrome margin regardless of any face.
+    rows = [_guided_title_row(text="Barcelona")]
+    updated = _apply_guided_text_face_placement(
+        "unused.mp4", rows, job_id="job-116", canvas=PORTRAIT
+    )
+    assert updated[0]["y_frac"] == pytest.approx(0.16)
+
+
+def test_apply_guided_text_face_placement_ignores_ineligible_elements(monkeypatch) -> None:
+    """Narration captions and other non-title/thought/closing ids are left
+    alone — KRI-116's scope is the fixed-position confirmed-copy elements."""
+
+    calls: list[str] = []
+
+    def fake_sample_face_regions(video_path, anchor_times_s, **kwargs):
+        calls.append("called")
+        return [], {"attempted": 0, "decoded": 0, "timed_out": False}
+
+    monkeypatch.setattr(render_geometry, "sample_face_regions", fake_sample_face_regions)
+    monkeypatch.setattr(guided_story, "probe_video", lambda path: SimpleNamespace(duration_s=10.0))
+
+    rows = [
+        TextElement(
+            id="narration-caption-1",
+            text="hello",
+            start_s=0.0,
+            end_s=1.0,
+            role="generative_intro",
+            position="bottom",
+        ).model_dump(mode="json", exclude_none=True)
+    ]
+    updated = _apply_guided_text_face_placement(
+        "unused.mp4", rows, job_id="job-116", canvas=PORTRAIT
+    )
+    assert updated == rows
+    assert not calls  # never sampled — no eligible element to place
+
+
+def test_apply_guided_text_face_placement_fails_open_on_probe_error(monkeypatch) -> None:
+    def boom(path: str) -> None:
+        raise RuntimeError("ffprobe exploded")
+
+    monkeypatch.setattr(guided_story, "probe_video", boom)
+    rows = [_guided_title_row()]
+    updated = _apply_guided_text_face_placement(
+        "unused.mp4", rows, job_id="job-116", canvas=PORTRAIT
+    )
+    assert updated == rows

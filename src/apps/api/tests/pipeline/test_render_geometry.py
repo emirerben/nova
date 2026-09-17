@@ -19,6 +19,7 @@ from app.pipeline.render_geometry import (
     _split_breaks_pair,
     _valid_keep_together,
     choose_caption_y_frac,
+    choose_guided_text_y_frac,
     measure_caption,
 )
 
@@ -451,3 +452,86 @@ def test_safe_fallback_keeps_the_preset_when_it_would_break_chrome() -> None:
     assert receipt["status"] == "preset"
     assert receipt["reason"] == "sampler_timeout"
     assert receipt["safe_fallback_rejected"] == "chrome"
+
+
+# ── KRI-116: face-aware guided-story text placement ────────────────────────────
+#
+# choose_guided_text_y_frac mirrors choose_caption_y_frac's fail-open branches
+# and receipt shape, but boxes translate around their CENTER (guided-story text
+# renders with vertical_anchor="center", not captions' bottom anchor) and a
+# sampler failure fails open to the authored default rather than retreating to
+# a caption-shaped safe band — a guided title legitimately belongs near the top.
+
+_GUIDED_CANDIDATES = (0.16, 0.34, 0.5, 0.66, 0.8)
+
+
+def test_guided_text_well_framed_keeps_the_preset() -> None:
+    probe = NormalizedBox(0.1, 0.10, 0.9, 0.22)  # guided-title box, center y_frac=0.16
+    faces = [_face(NormalizedBox(0.35, 0.55, 0.65, 0.80))] * 5  # low in frame, clear of the title
+    chosen, receipt = choose_guided_text_y_frac(faces, _receipt(), probe, [], _GUIDED_CANDIDATES)
+    assert chosen == pytest.approx(0.16)
+    assert receipt["status"] == "well_framed"
+    assert receipt["coverage"] == pytest.approx(0.0)
+
+
+def test_guided_text_moves_the_title_off_a_top_band_face() -> None:
+    """The KRI-116 Barcelona/Messi repro: a portrait photo with the face in the
+    top third. The title's default position must not land on it, and whichever
+    candidate wins must not intersect the (already padded) face box."""
+    probe = NormalizedBox(0.1, 0.10, 0.9, 0.22)  # guided-title box at the y_frac=0.16 default
+    face_band = NormalizedBox(0.30, 0.03, 0.70, 0.32)  # face in the top third
+    chosen, receipt = choose_guided_text_y_frac(
+        [_face(face_band)] * 5, _receipt(), probe, [], _GUIDED_CANDIDATES
+    )
+    assert chosen != pytest.approx(0.16)
+    assert receipt["status"] == "moved"
+    assert receipt["coverage"] <= 0.05
+    half_height = probe.height / 2.0
+    translated = NormalizedBox(probe.left, chosen - half_height, probe.right, chosen + half_height)
+    assert translated.intersection_area(face_band) == pytest.approx(0.0)
+
+
+def test_guided_text_sampler_timeout_fails_open_to_the_authored_default() -> None:
+    probe = NormalizedBox(0.1, 0.10, 0.9, 0.22)
+    chosen, receipt = choose_guided_text_y_frac(
+        [], {"timed_out": True, "attempted": 6}, probe, [], _GUIDED_CANDIDATES
+    )
+    assert chosen == pytest.approx(0.16)
+    assert receipt["status"] == "preset"
+    assert receipt["reason"] == "sampler_timeout"
+
+
+def test_guided_text_worker_error_fails_open_to_the_authored_default() -> None:
+    probe = NormalizedBox(0.1, 0.10, 0.9, 0.22)
+    chosen, receipt = choose_guided_text_y_frac(
+        [_face(NormalizedBox(0.3, 0.05, 0.7, 0.30))] * 5,
+        {"timed_out": False, "worker_error": "rc_1:boom", "attempted": 6, "decoded": 6},
+        probe,
+        [],
+        _GUIDED_CANDIDATES,
+    )
+    assert chosen == pytest.approx(0.16)
+    assert receipt["status"] == "preset"
+    assert receipt["reason"] == "sampler_error"
+
+
+def test_guided_text_no_face_keeps_the_preset() -> None:
+    probe = NormalizedBox(0.1, 0.10, 0.9, 0.22)
+    chosen, receipt = choose_guided_text_y_frac(
+        [], _receipt(detected=0), probe, [], _GUIDED_CANDIDATES
+    )
+    assert chosen == pytest.approx(0.16)
+    assert receipt["status"] == "preset"
+    assert receipt["reason"] == "no_face"
+
+
+def test_guided_text_best_effort_never_prefers_a_chrome_unsafe_candidate() -> None:
+    probe = NormalizedBox(0.1, 0.0, 0.9, 0.12)  # 0.12 tall, centered near the very top
+    band = NormalizedBox(0.10, 0.0, 0.90, 1.0)  # swallows the whole frame
+    chosen, receipt = choose_guided_text_y_frac(
+        [_face(band)] * 5, _receipt(), probe, [], (0.06, 0.16, 0.5, 0.84, 0.94)
+    )
+    assert receipt["status"] == "best_effort"
+    picked = receipt["evaluated"][receipt["candidate_index"]]
+    assert picked["clears_chrome"] is True
+    assert chosen == pytest.approx(0.16)  # earliest chrome-safe candidate on a coverage tie
