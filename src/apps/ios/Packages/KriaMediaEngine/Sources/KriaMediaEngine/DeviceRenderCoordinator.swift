@@ -33,6 +33,44 @@ public struct DeviceRenderReceipt: Codable, Equatable, Sendable {
     public var error: String?
 }
 
+/// Server-side classification for why a device render could not finish, sent
+/// via `DeviceRenderFailureReporter` so the server stops waiting on a device
+/// that has already given up (rather than only learning about it, if ever,
+/// from an eventual client timeout). Raw values match the server's contract.
+public enum DeviceRenderFailureReasonCode: String, Sendable {
+    case exportFailed = "export_failed"
+    case insufficientStorage = "insufficient_storage"
+    case thermal
+    case unsupportedRecipe = "unsupported_recipe"
+    case cancelledByUser = "cancelled_by_user"
+    case unknown
+
+    /// Classifies a `CapabilityDecision` that routed away from local rendering.
+    public static func forRouteDecision(reason: String?) -> Self {
+        guard let reason, !reason.isEmpty else { return .unknown }
+        let lowered = reason.lowercased()
+        if lowered.contains("thermal") { return .thermal }
+        if lowered.contains("storage") { return .insufficientStorage }
+        return .unsupportedRecipe
+    }
+
+    /// Classifies an error thrown while resolving sources or exporting locally.
+    public static func forRenderFailure(_ error: Error) -> Self {
+        if error is CancellationError { return .cancelledByUser }
+        if case MediaEngineError.insufficientStorage = error { return .insufficientStorage }
+        if error is MediaEngineError || error is SourceAssetError { return .exportFailed }
+        return .unknown
+    }
+}
+
+/// Injected by the app so the coordinator can tell the server about a local
+/// failure without this package depending on app networking. Implementations
+/// must not throw: a failed report should be logged and swallowed, never
+/// crash or retry-loop the coordinator.
+public protocol DeviceRenderFailureReporter: Sendable {
+    func report(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async
+}
+
 public enum DevicePublication: Sendable { case published, superseded }
 public protocol DeviceRenderPublishing: Sendable {
     /// Must authorize and compare the exact current server revision, including after retries.
@@ -66,16 +104,27 @@ public actor DeviceRenderCoordinator {
     private let exporter: any LocalExporting
     private let sources: any DeviceSourceResolving
     private let publisher: any DeviceRenderPublishing
+    private let failureReporter: (any DeviceRenderFailureReporter)?
     private var receipt: DeviceRenderReceipt?
     private var running: Task<Void, Never>?
     private var receiptURL: URL { directory.appendingPathComponent("device-render.json") }
 
-    public init(directory: URL, exporter: any LocalExporting, sources: any DeviceSourceResolving, publisher: any DeviceRenderPublishing) throws {
+    public init(
+        directory: URL, exporter: any LocalExporting, sources: any DeviceSourceResolving,
+        publisher: any DeviceRenderPublishing, failureReporter: (any DeviceRenderFailureReporter)? = nil
+    ) throws {
         self.directory = directory; self.exporter = exporter; self.sources = sources; self.publisher = publisher
+        self.failureReporter = failureReporter
         let url = directory.appendingPathComponent("device-render.json")
         if FileManager.default.fileExists(atPath: url.path) {
             receipt = try JSONDecoder().decode(DeviceRenderReceipt.self, from: Data(contentsOf: url))
         }
+    }
+    /// Fire-and-forget: never awaited, so a slow or failing report cannot
+    /// block `start()`/`cancel()` or make the coordinator retry-loop.
+    private func reportFailure(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) {
+        guard let failureReporter else { return }
+        Task { await failureReporter.report(identity: identity, reasonCode: reasonCode, detail: detail) }
     }
     public func snapshot() -> DeviceRenderReceipt? { receipt }
     public func isBusy() -> Bool { running != nil }
@@ -92,7 +141,14 @@ public actor DeviceRenderCoordinator {
         let phase: DeviceRenderPhase = decision.route == .local ? .preparing : .needsAttention
         receipt = DeviceRenderReceipt(request: request, attemptID: attempt, phase: phase, error: decision.reason)
         try persist()
-        guard phase == .preparing else { return }
+        guard phase == .preparing else {
+            reportFailure(
+                identity: request.identity,
+                reasonCode: .forRouteDecision(reason: decision.reason),
+                detail: decision.reason ?? "Renderer routed this edit to cloud rendering."
+            )
+            return
+        }
         running = Task { await self.perform(attempt: attempt) }
     }
 
@@ -108,11 +164,27 @@ public actor DeviceRenderCoordinator {
         running = Task { await self.perform(attempt: saved.attemptID) }
     }
 
+    /// Housekeeping cancel: used when a request is superseded, a stale
+    /// receipt is dropped before a retry, or the workspace tears down. Never
+    /// reports to the server — the identity is often still perfectly valid
+    /// server-side (e.g. `stopAll()` on the workspace disappearing mid-render),
+    /// so reporting here would wrongly flip a healthy job to `needsAttention`.
     public func cancel() throws {
         running?.cancel(); running = nil
         guard receipt != nil else { return }
         receipt?.phase = .cancelled
         try persist()
+    }
+
+    /// Same effect as `cancel()`, but also tells the server the user
+    /// explicitly stopped this render, so it stops waiting on a device that
+    /// has given up. Call this ONLY from a user-facing cancel affordance
+    /// (e.g. a "Stop rendering" button) — never from housekeeping.
+    public func cancelByUser() throws {
+        let saved = receipt
+        try cancel()
+        guard let saved, ![.cancelled, .synced, .superseded, .needsAttention].contains(saved.phase) else { return }
+        reportFailure(identity: saved.request.identity, reasonCode: .cancelledByUser, detail: "Cancelled by user")
     }
 
     private func current(_ attempt: UUID) -> Bool {
@@ -168,7 +240,13 @@ public actor DeviceRenderCoordinator {
             if current(attempt) { try? update(attempt, phase: .cancelled) }
         } catch {
             if current(attempt) {
-                try? update(attempt, phase: receipt?.outputURL == nil ? .needsAttention : .localReady, error: String(describing: error))
+                let entersNeedsAttention = receipt?.outputURL == nil
+                let identity = receipt?.request.identity
+                let detail = String(describing: error)
+                try? update(attempt, phase: entersNeedsAttention ? .needsAttention : .localReady, error: detail)
+                if entersNeedsAttention, let identity {
+                    reportFailure(identity: identity, reasonCode: .forRenderFailure(error), detail: detail)
+                }
             }
         }
     }

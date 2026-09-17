@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.65.0] - 2026-09-17
+
+### Changed
+- fix(ios): honest error copy, action revision reset, device-render failure report + retry (KRI-114 P0-2) (#1072) <!-- release-pr: 1072 -->
+
 ## [0.76.64.0] - 2026-09-17
 
 ### Changed

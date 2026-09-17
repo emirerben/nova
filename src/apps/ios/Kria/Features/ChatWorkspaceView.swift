@@ -735,7 +735,19 @@ private struct CreationWorkspaceView: View {
                 )
                 if showsCreationConfirmation { confirmationConflict = conflict }
                 else { failure = ChatFailure(conflict.message) }
-            } catch { failure = ChatFailure("That change wasn’t saved.", error: error) }
+            } catch is CancellationError {
+                // The view went away mid-request; leave pendingAction alone so an
+                // in-flight duplicate can still be deduplicated if this task is
+                // somehow still observed.
+            } catch {
+                // Any other failure must clear pendingAction and refresh, or a
+                // retry replays this identity's now-stale `expected_revision`
+                // and loops on 409s forever.
+                pendingAction = nil
+                await refreshCapabilities()
+                await refreshNow()
+                failure = ChatFailure("That change wasn’t saved.", error: error)
+            }
         }
     }
 
@@ -757,6 +769,8 @@ private struct CreationWorkspaceView: View {
             // only after this authoritative response arrives; substituting a
             // temporary `.disabled` capability can terminalize a device job.
             await refreshDeviceRender()
+        } catch is CancellationError {
+            // The view went away mid-request; leave the last-known state as-is.
         } catch {
             capabilitiesAreAuthoritative = false
             capabilities = nil
@@ -822,6 +836,8 @@ private struct CreationWorkspaceView: View {
             if thread.runtimeVersion == 2 {
                 _ = try await refreshDelta()
             }
+        } catch is CancellationError {
+            // The view went away mid-request; leave the last-known state as-is.
         } catch {
             if !isUITesting {
                 failure = ChatFailure("Kria couldn’t refresh this conversation.", error: error)
