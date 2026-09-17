@@ -60,6 +60,97 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         XCTAssertTrue(published.isEmpty)
     }
 
+    /// KRI-114 P0-2: a capability decision that routes away from local
+    /// rendering (e.g. thermal throttling) must tell the server via the
+    /// injected reporter, classified from the decision's `reason`, before the
+    /// receipt ever enters `.needsAttention`.
+    func testCapabilityRouteToCloudReportsThermalReasonCode() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(), publisher = RecordingPublisher(), reporter = RecordingFailureReporter()
+        let coordinator = try DeviceRenderCoordinator(
+            directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher, failureReporter: reporter
+        )
+        let deviceRequest = request()
+        let identity = deviceRequest.identity
+        try await coordinator.start(deviceRequest, decision: CapabilityDecision(route: .cloud, reason: "Device thermal state is serious"))
+        await coordinator.waitUntilIdle()
+        await reporter.waitForReport()
+        let receipt = await coordinator.snapshot()
+        XCTAssertEqual(receipt?.phase, .needsAttention)
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.identity, identity)
+        XCTAssertEqual(calls.first?.reasonCode, .thermal)
+    }
+
+    /// KRI-114 P0-2: a source-resolution error during local export must report
+    /// `export_failed` (source/export errors), never the generic fallback.
+    func testSourceResolutionFailureReportsExportFailedReasonCode() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(), publisher = RecordingPublisher(), reporter = RecordingFailureReporter()
+        let coordinator = try DeviceRenderCoordinator(
+            directory: directory, exporter: exporter, sources: FailingSources(), publisher: publisher, failureReporter: reporter
+        )
+        let deviceRequest = request()
+        let identity = deviceRequest.identity
+        try await coordinator.start(deviceRequest, decision: CapabilityDecision(route: .local))
+        await coordinator.waitUntilIdle()
+        await reporter.waitForReport()
+        let receipt = await coordinator.snapshot()
+        XCTAssertEqual(receipt?.phase, .needsAttention)
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.identity, identity)
+        XCTAssertEqual(calls.first?.reasonCode, .exportFailed)
+    }
+
+    /// KRI-114 P0-2 review fix: plain `cancel()` is used by housekeeping (a
+    /// superseded request, dropping a stale receipt before retry, or the
+    /// workspace tearing down) where the identity is often still perfectly
+    /// valid server-side — it must never report, or leaving the screen
+    /// mid-render would wrongly flip a healthy job to `needsAttention`.
+    func testPlainCancelDuringRenderDoesNotReportToServer() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(holdFirst: true), publisher = RecordingPublisher(), reporter = RecordingFailureReporter()
+        let coordinator = try DeviceRenderCoordinator(
+            directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher, failureReporter: reporter
+        )
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        await exporter.waitStarted()
+        try await coordinator.cancel()
+        let receipt = await coordinator.snapshot()
+        XCTAssertEqual(receipt?.phase, .cancelled)
+        let calls = await reporter.calls
+        XCTAssertTrue(calls.isEmpty)
+        await exporter.release()
+    }
+
+    /// `cancelByUser()` is the only path that should report — it is wired
+    /// exclusively to a user-facing "Stop rendering" affordance.
+    func testCancelByUserDuringRenderReportsCancelledByUser() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(holdFirst: true), publisher = RecordingPublisher(), reporter = RecordingFailureReporter()
+        let coordinator = try DeviceRenderCoordinator(
+            directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher, failureReporter: reporter
+        )
+        let deviceRequest = request()
+        try await coordinator.start(deviceRequest, decision: CapabilityDecision(route: .local))
+        await exporter.waitStarted()
+        try await coordinator.cancelByUser()
+        await reporter.waitForReport()
+        let receipt = await coordinator.snapshot()
+        XCTAssertEqual(receipt?.phase, .cancelled)
+        let calls = await reporter.calls
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.identity, deviceRequest.identity)
+        XCTAssertEqual(calls.first?.reasonCode, .cancelledByUser)
+        await exporter.release()
+    }
+
     private func request(revision: Int = 1) -> DeviceRenderRequest {
         DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: revision, recipeDigest: "digest-\(revision)"), recipe: MediaEngineFixtures.recipe())
     }
@@ -67,6 +158,23 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
 
 private struct FixtureSources: DeviceSourceResolving {
     func resolve(for recipe: EditRecipe) async throws -> [String: URL] { [:] }
+}
+private struct FailingSources: DeviceSourceResolving {
+    func resolve(for recipe: EditRecipe) async throws -> [String: URL] { throw SourceAssetError.missingOriginal("clip-1") }
+}
+private actor RecordingFailureReporter: DeviceRenderFailureReporter {
+    private(set) var calls: [(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String)] = []
+    private var waiter: CheckedContinuation<Void, Never>?
+    func report(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async {
+        calls.append((identity, reasonCode, detail))
+        waiter?.resume(); waiter = nil
+    }
+    /// Deterministically waits for the coordinator's fire-and-forget report
+    /// Task to land, instead of a fixed sleep.
+    func waitForReport() async {
+        guard calls.isEmpty else { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
 }
 private actor RecordingExporter: LocalExporting {
     var count = 0

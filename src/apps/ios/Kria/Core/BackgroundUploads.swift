@@ -467,18 +467,15 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         }
     }
 
-    /// `APIError.requestFailed` is thrown by `Services.swift`'s `request(...)`
-    /// for EVERY non-2xx status it doesn't special-case (401/409/412) -- 5xx,
-    /// 429, and other 4xx all collapse into the same case with no status code
-    /// preserved, so it cannot be split into "retryable" vs "not" from here.
-    /// Given that ambiguity and this lane's job (never lose the user's staged
-    /// footage), anything that isn't a distinguishable, definitively
-    /// client-side rejection is treated as transient/retryable by default.
+    /// `APIError.requestFailed(status:)` carries the real HTTP status: 5xx and
+    /// 429 are transient (server hiccups / rate limiting), any other 4xx is a
+    /// definitive rejection of this upload.
     private static func isTransientResumeFailure(_ error: Error) -> Bool {
         if error is URLError { return true }
         if let apiError = error as? APIError {
             switch apiError {
-            case .requestFailed, .offline: return true
+            case .offline: return true
+            case .requestFailed(let status): return status >= 500 || status == 429
             case .invalidResponse, .sessionExpired, .conflict, .unsupported, .contentPlanUnavailable, .editorNotReady: return false
             }
         }

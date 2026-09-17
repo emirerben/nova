@@ -6,6 +6,7 @@ import CryptoKit
 import UIKit
 import OpenAPIRuntime
 import OpenAPIURLSession
+import KriaMediaEngine
 
 extension Notification.Name {
     static let kriaSessionExpired = Notification.Name("kria.session-expired")
@@ -81,6 +82,8 @@ protocol KriaAPIClient: Sendable {
     func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget
     func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws
+    func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread
     func deleteProject(_ project: ProjectSummary) async throws
@@ -150,6 +153,8 @@ extension KriaAPIClient {
     func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget { throw APIError.unsupported }
     func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget { throw APIError.unsupported }
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws { throw APIError.unsupported }
+    func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck { throw APIError.unsupported }
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck { throw APIError.unsupported }
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func deleteProject(_ project: ProjectSummary) async throws { throw APIError.unsupported }

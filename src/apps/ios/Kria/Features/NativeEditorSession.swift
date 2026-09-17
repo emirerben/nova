@@ -1202,7 +1202,9 @@ struct NativeEditorTemporaryVideo {
         case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal:
             return "The original video is unavailable on this iPhone. Open the edit on the device that imported it."
         default:
-            return "A source video or edit asset could not be loaded. Check your connection and retry."
+            return RequestFailureCause(error) == .connection
+                ? "A source video or edit asset could not be loaded. Check your connection and retry."
+                : "A source video or edit asset could not be loaded. \(error.localizedDescription)"
         }
     }
 
@@ -3569,6 +3571,7 @@ struct NativeEditorTemporaryVideo {
         }
         previewRefreshTask = Task { [weak self] in
             var hadNetworkFailure = false
+            var lastNonTransportError: Error?
             for _ in 0..<300 {
                 guard !Task.isCancelled else { return }
                 try? await Task.sleep(for: .seconds(1))
@@ -3576,8 +3579,14 @@ struct NativeEditorTemporaryVideo {
                 let variant: [String: JSONValue]
                 do {
                     variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+                } catch is CancellationError {
+                    return
                 } catch {
-                    hadNetworkFailure = true
+                    if RequestFailureCause(error) == .connection {
+                        hadNetworkFailure = true
+                    } else {
+                        lastNonTransportError = error
+                    }
                     continue
                 }
                 let currentGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
@@ -3600,7 +3609,9 @@ struct NativeEditorTemporaryVideo {
             self.saveState = .previewFailed(
                 hadNetworkFailure
                     ? "Your edit is saved, but Kria could not finish checking the preview. Check your connection and try again."
-                    : "Your edit is saved, but the preview is taking longer than expected. Try checking again."
+                    : lastNonTransportError.map {
+                        "Your edit is saved, but Kria could not finish checking the preview. \($0.localizedDescription)"
+                    } ?? "Your edit is saved, but the preview is taking longer than expected. Try checking again."
             )
         }
     }
