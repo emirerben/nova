@@ -1869,6 +1869,123 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(after.textLayers.map { $0.runs.map(\.text).joined(separator: " ") }, ["Edited words"])
     }
 
+    /// A loaded guided-story session with one caption element and, when
+    /// `finishedRender` is given, a completed cloud render installed as the
+    /// finished-render fallback — the state a real production video opens in.
+    private func loadGuidedStorySession(finishedRender: URL? = nil) async -> NativeEditorSession {
+        let threadID = UUID()
+        let captionElement: JSONValue = .object([
+            "id": .string("narration-caption-1"), "text": .string("Spoken words"),
+            "start_s": .number(0), "end_s": .number(1.5), "role": .string("generative_sequence"),
+            "position": .string("custom"), "x_frac": .number(0.5), "y_frac": .number(0.82),
+            "font_family": .string("Inter-Bold"), "size_px": .number(58), "color": .string("#FFFFFF"),
+            "effect": .string("static"), "alignment": .string("center"), "max_width_frac": .number(0.84),
+            "source_params": .object(["source": .string("caption_cue"), "key": .string("0"), "identity": .string("pinned-narration-caption-0")]),
+        ])
+        var variant: [String: JSONValue] = [
+            "resolved_archetype": .string("guided_story"),
+            "render_generation_id": .string("g1"),
+            "render_status": .string("ready"),
+            "editor_capabilities": .object(["text_elements": .bool(true), "caption_editor_style": .bool(true)]),
+            "text_elements": .array([captionElement]),
+            "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])]),
+        ]
+        if let finishedRender { variant["output_url"] = .string(finishedRender.absoluteString) }
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        return session
+    }
+
+    private func displayedCaptionTexts(_ session: NativeEditorSession) -> [String]? {
+        session.displayedSourcePreviewRecipe?.textLayers.map { $0.runs.map(\.text).joined(separator: " ") }
+    }
+
+    private func waitForDisplayedCaptionTexts(_ session: NativeEditorSession, _ expected: [String]) async throws {
+        for _ in 0..<200 where displayedCaptionTexts(session) != expected {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
+    // KRI-110: retyping a caption passes through the empty string. That is
+    // nothing to draw, not a broken edit — the live composition must stay on
+    // the canvas rather than fail over to the finished cloud render.
+    func testCaptionClearedMidEditKeepsTheLiveCompositionOnTheCanvas() async throws {
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = await loadGuidedStorySession(finishedRender: sourceURL)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        try await waitForDisplayedCaptionTexts(session, ["Spoken words"])
+
+        session.beginTransaction()
+        session.updateCaptionCue(id: "narration-caption-1", text: "")
+        try await waitForDisplayedCaptionTexts(session, [])
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertEqual(displayedCaptionTexts(session), [], "An empty caption draws nothing; it must not take the composition down")
+
+        session.updateCaptionCue(id: "narration-caption-1", text: "Edited words")
+        session.endTransaction()
+        try await waitForDisplayedCaptionTexts(session, ["Edited words"])
+        XCTAssertEqual(displayedCaptionTexts(session), ["Edited words"])
+    }
+
+    // KRI-110: a compile failure hands the canvas to the finished render as a
+    // fallback. When the very next edit compiles again, the recovered
+    // composition must take the canvas back — otherwise the user keeps
+    // watching the stale cloud render while every edit lands off-screen.
+    func testRecoveredCompositionTakesTheCanvasBackFromTheFinishedRenderFallback() async throws {
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = await loadGuidedStorySession(finishedRender: sourceURL)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        try await waitForDisplayedCaptionTexts(session, ["Spoken words"])
+
+        // Over the layout's 500-character ceiling: the one text-element input
+        // that still hard-fails a compile.
+        session.updateCaptionCue(id: "narration-caption-1", text: String(repeating: "x", count: 600))
+        for _ in 0..<200 where !session.isShowingRenderedFallback {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertTrue(session.isShowingRenderedFallback, "precondition: the failure fell back to the finished render")
+        XCTAssertNil(session.displayedSourcePreviewRecipe)
+
+        session.updateCaptionCue(id: "narration-caption-1", text: "Edited words")
+        try await waitForDisplayedCaptionTexts(session, ["Edited words"])
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertEqual(displayedCaptionTexts(session), ["Edited words"], "The canvas must show the recovered composition, not the stale render")
+    }
+
+    // KRI-110: a slider drag delivers many samples per second; each one used
+    // to recompile and repaint the entire composition (~170 caption layouts
+    // on a real guided story). Samples inside one transaction coalesce into
+    // a single rebuild once the finger pauses, and the result is the final
+    // value.
+    func testGestureSamplesInsideOneTransactionCoalesceIntoOneRebuild() async throws {
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = await loadGuidedStorySession()
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        try await waitForDisplayedCaptionTexts(session, ["Spoken words"])
+        let compiles = session.sourcePreviewCompileCount
+
+        session.beginTransaction()
+        for size in stride(from: 60, through: 74, by: 2) {
+            session.setCaptionSize(Double(size))
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        session.endTransaction()
+        try await Task.sleep(for: .milliseconds(NativeEditorSession.previewCoalesceMilliseconds * 4))
+        for _ in 0..<100 where session.sourcePreviewCompileCount == compiles {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        XCTAssertEqual(session.sourcePreviewCompileCount, compiles + 1, "Eight samples inside one drag must produce one rebuild")
+        let run = try XCTUnwrap(session.displayedSourcePreviewRecipe?.textLayers.first?.runs.first)
+        XCTAssertEqual(run.fontSize, 74)
+    }
+
     func testTypedTextMutationsKeepWireKeysAndOneGestureUndo() {
         let textID = UUID()
         let draft = EditorDraft(projectID: UUID(), clips: [], text: [TextLayer(id: textID, content: "old", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0)

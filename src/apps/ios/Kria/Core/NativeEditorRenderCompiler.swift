@@ -276,6 +276,12 @@ enum NativeEditorRenderError: Error, Equatable {
             guard let item = items.first(where: { $0.kind == .text && $0.id == element.id }) else {
                 throw RecipeError.invalidTimeline
             }
+            // Nothing to draw is not a broken edit. A caption or title passes
+            // through the empty string while its field is being retyped;
+            // failing the whole composition for that fell the canvas back to
+            // the stale finished render (KRI-110). Mirrors the caption-cue
+            // path below and the staged pendingText handling in the session.
+            if element.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
             // Trimming the video can leave authored text entirely beyond the
             // output. Keep that record for undo, but don't compile an empty or
             // reversed render interval after clipping its end to the new cut.
@@ -633,6 +639,14 @@ enum NativeEditorRenderError: Error, Equatable {
         if let value = meta["color"] { patched.raw["color"] = value }
         if let value = meta["stroke_width"] { patched.raw["stroke_width"] = value }
         if let value = meta["shadow_enabled"] { patched.raw["shadow_enabled"] = value }
+        // The Display choice projects onto the element's entrance exactly as
+        // the backend does: "word" pops each cue in, "sentence" holds it
+        // static. Per-word highlighting itself is still not mirrored here.
+        switch meta["style"] {
+        case .string("word"): patched.raw["effect"] = .string("pop-in")
+        case .string("sentence"): patched.raw["effect"] = .string("static")
+        default: break
+        }
         return patched
     }
 

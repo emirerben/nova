@@ -1436,12 +1436,24 @@ struct NativeEditorTemporaryVideo {
         }
         sourcePreviewUpdateDeferred = false
         let sequence = sourcePreviewSequence
+        // Inside a gesture or typing transaction (slider drag, caption
+        // keystrokes) every sample would otherwise recompile and repaint the
+        // whole composition — on a guided story that is ~170 caption layouts
+        // per sample, seconds of main-thread work per drag. Coalesce samples
+        // until the finger pauses; a standalone edit still rebuilds at once.
+        let coalesce = transactionBaseline != nil
         sourcePreviewTask = Task { [weak self] in
-            await Task.yield()
+            if coalesce {
+                try? await Task.sleep(for: .milliseconds(Self.previewCoalesceMilliseconds))
+            } else {
+                await Task.yield()
+            }
             guard !Task.isCancelled else { return }
             await self?.rebuildSourcePreview(sequence: sequence)
         }
     }
+
+    static let previewCoalesceMilliseconds = 80
 
     private func rebuildSourcePreview(sequence: Int) async {
         guard let compiler = sourceCompiler, var sources = resolvedSources else { return }
@@ -1474,6 +1486,7 @@ struct NativeEditorTemporaryVideo {
             let media = try await preparePreviewMedia(document: snapshot, sequence: sequence)
             guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             #if DEBUG
+            sourcePreviewCompileCount += 1
             NativePreviewDiagnostics.record("compile", fields: [
                 "textCount": String(snapshot.textElements.count),
                 "uniqueTextIDs": String(Set(snapshot.textElements.map(\.id)).count),
@@ -1487,7 +1500,15 @@ struct NativeEditorTemporaryVideo {
                                                sources: sources, audioSources: audio, mediaSources: media,
                                                referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                                sourceAudioPreserved: sourceAudioPreserved)
-            if let preview = sourcePreview, (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
+            // The in-place text update only applies while the canvas is still
+            // on this composition. After a transient compile failure handed
+            // the canvas to the finished-render fallback, its player item was
+            // detached and must not be re-attached to a new player; fall
+            // through and build a fresh composition so the canvas comes back
+            // to the live edit — otherwise every later edit lands off-screen
+            // while the user keeps watching the stale cloud render (KRI-110).
+            if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
+               (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
                 sourcePreviewState = .ready
                 if !isPlaying { seek(to: currentTime) }
                 prepareInteractionLayers()
@@ -1758,6 +1779,10 @@ struct NativeEditorTemporaryVideo {
     }
 
     #if DEBUG
+    /// How many times the source composition has been recompiled from the
+    /// document. Tests use it to pin that a gesture's samples coalesce.
+    private(set) var sourcePreviewCompileCount = 0
+
     /// The recipe behind the composition the canvas is showing right now.
     /// `nil` whenever the player is on anything else — the finished cloud
     /// render, a stale composition — so a test can assert an edit reached
