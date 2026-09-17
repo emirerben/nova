@@ -1622,6 +1622,20 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 raise SchemaError(
                     "edit_proposal: draft thought invents an unsupported personal experience"
                 )
+        if creator_labels:
+            # The label contract asks for each shot's requested seconds AND puts
+            # the title hold on top, so a faithful draft can overshoot the target
+            # it was asked for (3+5+5+5+5+5+2s plus a 3.2s title = 33.2s against
+            # 30s, plan item 5016d555). Beat durations are weights the compiler
+            # scales to the server target, so the model's declared total adds
+            # nothing: bound the beats themselves and pin the total to the target.
+            beat_duration = math.fsum(beat.duration_s for beat in output.story_beats)
+            if abs(beat_duration - _effective_target_duration_s(input)) > 5:
+                raise SchemaError(
+                    "edit_proposal: labeled beat durations are too far from the creator's target"
+                )
+            output.duration_s = input.target_duration_s
+            return output
         if abs(output.duration_s - _effective_target_duration_s(input)) > 5:
             raise SchemaError("edit_proposal: duration is too far from the creator's target")
         if input.direction != "fast_montage":

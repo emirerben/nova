@@ -642,3 +642,282 @@ def test_label_contract_fits_specialist_beat_limit() -> None:
     # specialist's output limit; otherwise label drafts fail parsing and quietly
     # fall back to the deterministic path.
     assert MAX_GUIDED_DRAFT_BEATS <= GUIDED_STORY_MAX_BEATS
+
+
+# ── More sources than labels ──────────────────────────────────────────────────
+#
+# Production regression (plan item 5016d555, 2026-09-17): "Make it 30 seconds.
+# Title: ... Use every uploaded file in chapter order. Show each chapter line
+# word for word." with 7 chapter labels over 5 clips + 6 Visuals photos.
+# Live Gemini drafts gave each chapter its requested seconds (3+5+5+5+5+5+2)
+# plus the 3.2s title hold, so the beats summed to 33.2s against a declared
+# 30s and parse rejected 3 of 4 runs. The labeled recovery then placed one
+# source per label and dropped 3 of the 11 required sources, which the
+# renderer refused ("The timeline does not cover the selected media.").
+
+LEGENDS_TITLE = "The 5 legends of Barcelona"
+LEGENDS_LABELS = [
+    "Messi is only #2.",
+    "#5 Ildefons Cerdà drew the city grid. Those cut corners? On purpose.",
+    "#4 Pablo Picasso moved here at 13 and had his first solo show here.",
+    "#3 Freddie Mercury & Montserrat Caballé: “Barcelona”, their Olympic song. "
+    "Freddie died before the Games.",
+    "#2 Lionel Messi. First deal: a paper napkin, at 13. 672 goals later…",
+    "#1 Antoni Gaudí gave Barcelona its skyline, and he’s buried inside his unfinished church.",
+    "Who’s missing?",
+]
+# The exact prod source durations; photo subjects follow the chapter notes.
+LEGENDS_MEDIA = [
+    ("clip-quatre-gats", "video", 8.846803, "Els Quatre Gats café front"),
+    ("clip-batllo", "video", 10.820499, "Casa Batlló facade"),
+    ("clip-camp-nou", "video", 12.747755, "Camp Nou stadium from outside"),
+    ("clip-basilica-wide", "video", 14.326712, "the whole basilica, wide"),
+    ("clip-towers", "video", 16.648707, "basilica towers close up"),
+    ("photo-messi", "image", None, "Lionel Messi in a Barça shirt"),
+    ("photo-stadium", "image", None, "Olympic stadium with a white tower"),
+    ("photo-picasso", "image", None, "young Pablo Picasso portrait"),
+    ("photo-cerda", "image", None, "older bearded man portrait"),
+    ("photo-blocks", "image", None, "city blocks from above"),
+    ("photo-gaudi", "image", None, "young bearded man portrait"),
+]
+LEGENDS_DRAFT_GROUPS = [
+    ["photo-messi"],
+    ["photo-cerda", "photo-blocks"],
+    ["photo-picasso", "clip-quatre-gats"],
+    ["photo-stadium"],
+    ["clip-camp-nou"],
+    ["photo-gaudi", "clip-batllo", "clip-towers"],
+    ["clip-basilica-wide"],
+]
+LEGENDS_DRAFT_SECONDS = [6.2, 5.0, 5.0, 5.0, 5.0, 5.0, 2.0]
+
+
+def _legends_refs() -> list[MediaRef]:
+    return [
+        MediaRef(
+            lane="asset" if kind == "image" else "clip",
+            media_id=media_id,
+            gcs_path=f"users/u/{media_id}.{'jpg' if kind == 'image' else 'mp4'}",
+            generation="1",
+            kind=kind,
+            duration_s=duration_s,
+            analysis={"subject": subject},
+        )
+        for media_id, kind, duration_s, subject in LEGENDS_MEDIA
+    ]
+
+
+def _legends_input(**overrides) -> EditProposalAgentInput:
+    values = {
+        "direction": "guided_story",
+        "creator_request": "Make it 30 seconds. Use every uploaded file in chapter order.",
+        "pace": "balanced",
+        "target_duration_s": 30,
+        "media_scope": "all",
+        "video_reuse_policy": "once",
+        "opening_title": LEGENDS_TITLE,
+        "shot_labels": LEGENDS_LABELS,
+        "media": [
+            EditProposalMedia(
+                media_id=media_id,
+                lane="asset" if kind == "image" else "clip",
+                kind=kind,
+                duration_s=duration_s,
+                subject=subject,
+            )
+            for media_id, kind, duration_s, subject in LEGENDS_MEDIA
+        ],
+    }
+    values.update(overrides)
+    return EditProposalAgentInput(**values)
+
+
+def _legends_draft(declared_s: float) -> dict:
+    return {
+        "title": LEGENDS_TITLE,
+        "duration_s": declared_s,
+        "story_beats": [
+            {
+                "topic": f"Chapter {index + 1}",
+                "thought": label,
+                "media_ids": media_ids,
+                "layout": "fullscreen",
+                "duration_s": seconds,
+            }
+            for index, (label, media_ids, seconds) in enumerate(
+                zip(LEGENDS_LABELS, LEGENDS_DRAFT_GROUPS, LEGENDS_DRAFT_SECONDS, strict=True)
+            )
+        ],
+    }
+
+
+def _legends_snapshot(refs: list[MediaRef], beats: list[StoryBeat]) -> EditProposalSnapshot:
+    return EditProposalSnapshot(
+        direction="guided_story",
+        pace="balanced",
+        duration_s=30,
+        title=LEGENDS_TITLE,
+        opening_title=LEGENDS_TITLE,
+        shot_labels=LEGENDS_LABELS,
+        media=refs,
+        story_beats=beats,
+        media_scope="all",
+        selected_media_ids=[ref.media_id for ref in refs],
+        video_reuse_policy="once",
+    )
+
+
+@pytest.mark.parametrize("declared_s", [30, 30.2, 33.2, 35.2])
+def test_planner_accepts_requested_shot_seconds_plus_title_hold(declared_s: float) -> None:
+    """Every declared total the live model returned for the same beats."""
+
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(_legends_draft(declared_s)), _legends_input()
+    )
+
+    assert output.duration_s == 30
+    assert [beat.thought for beat in output.story_beats] == LEGENDS_LABELS
+    assert [beat.duration_s for beat in output.story_beats] == LEGENDS_DRAFT_SECONDS
+
+
+def test_planner_still_rejects_labeled_beats_far_from_the_target() -> None:
+    draft = _legends_draft(30)
+    for beat in draft["story_beats"]:
+        beat["duration_s"] = 12
+
+    with pytest.raises(SchemaError, match="too far from the creator's target"):
+        EditProposalAgent(None).parse(json.dumps(draft), _legends_input())  # type: ignore[arg-type]
+
+
+def test_labeled_fallback_covers_every_required_source() -> None:
+    from app.pipeline.guided_story import validate_proposal_timing
+    from app.services.edit_direction_planner import (
+        GUIDED_STORY_MAX_MEDIA_PER_BEAT,
+        deterministic_labeled_beats,
+    )
+
+    refs = _legends_refs()
+    beats = deterministic_labeled_beats(
+        refs,
+        30,
+        shot_labels=LEGENDS_LABELS,
+        opening_title=LEGENDS_TITLE,
+        required_media_ids=[ref.media_id for ref in refs],
+    )
+
+    assert [beat.thought for beat in beats if beat.thought] == LEGENDS_LABELS
+    used = [media_id for beat in beats for media_id in beat.media_ids]
+    assert sorted(used) == sorted(ref.media_id for ref in refs)
+    assert all(len(beat.media_ids) <= GUIDED_STORY_MAX_MEDIA_PER_BEAT for beat in beats)
+    snapshot = _legends_snapshot(refs, beats)
+    validate_proposal_timing(snapshot)
+    texts = [row["text"] for row in _compile(snapshot)["text_elements"]]
+    assert texts == [LEGENDS_TITLE, *LEGENDS_LABELS]
+
+
+def test_labeled_fallback_stays_inside_a_selected_source_set() -> None:
+    from app.services.edit_direction_planner import (
+        CreatorTextInfeasibleError,
+        deterministic_labeled_beats,
+    )
+
+    refs = _legends_refs()
+    selected = ["photo-cerda", "clip-camp-nou", "photo-messi"]
+    beats = deterministic_labeled_beats(
+        refs, 12, shot_labels=LEGENDS_LABELS[:2], required_media_ids=selected
+    )
+
+    assert [beat.thought for beat in beats] == LEGENDS_LABELS[:2]
+    assert sorted(media_id for beat in beats for media_id in beat.media_ids) == sorted(selected)
+    too_short = MediaRef(
+        lane="clip",
+        media_id="clip-flash",
+        gcs_path="users/u/clip-flash.mp4",
+        generation="1",
+        kind="video",
+        duration_s=0.9,
+    )
+    with pytest.raises(CreatorTextInfeasibleError):
+        deterministic_labeled_beats(
+            [*refs, too_short],
+            12,
+            shot_labels=LEGENDS_LABELS[:2],
+            required_media_ids=[*selected, "clip-flash"],
+        )
+
+
+@pytest.mark.parametrize("planner", ["live_draft_shape", "planner_failure"])
+def test_draft_attempt_keeps_every_source_for_more_sources_than_labels(
+    monkeypatch, planner: str
+) -> None:
+    from app.schemas.edit_proposal import EditProposal
+
+    refs = _legends_refs()
+    clips = [ref for ref in refs if ref.kind == "video"]
+    photos = [ref for ref in refs if ref.kind == "image"]
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(
+        item_id,
+        clip_assignments=[
+            {
+                "media_id": ref.media_id,
+                "gcs_path": ref.gcs_path,
+                "generation": ref.generation,
+                "duration_s": ref.duration_s,
+            }
+            for ref in clips
+        ],
+    )
+    item.edit_proposal = EditProposal(
+        proposal_version=1,
+        generation_attempt_id="attempt-1",
+        status="analyzing",
+        brief=ProposalBrief(
+            direction="guided_story",
+            pace="balanced",
+            duration_s=30,
+            creator_request="Make it 30 seconds. Use every uploaded file in chapter order.",
+            media_scope="all",
+            video_reuse_policy="once",
+            opening_title=LEGENDS_TITLE,
+            shot_labels=LEGENDS_LABELS,
+        ),
+    ).model_dump(mode="json")
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+        if planner == "planner_failure":
+            raise TerminalError("schema: beat durations do not fit the declared duration")
+        return agent.parse(json.dumps(_legends_draft(30)), agent_input)
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(proposal_build, "_pool_refs", lambda *_a, **_kw: photos)
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda assignments, *_a, **_kw: list(zip(assignments, clips, strict=True)),
+    )
+    monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, False
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None and persisted.status == "draft", persisted.failure
+    snapshot = persisted.draft
+    assert snapshot is not None
+    assert snapshot.duration_s == 30
+    used = {media_id for beat in snapshot.story_beats for media_id in beat.media_ids}
+    assert used == {ref.media_id for ref in refs}
+    texts = [row["text"] for row in _compile(snapshot)["text_elements"]]
+    assert texts == [LEGENDS_TITLE, *LEGENDS_LABELS]

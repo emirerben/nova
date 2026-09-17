@@ -860,6 +860,7 @@ def deterministic_labeled_beats(
     opening_title: str | None = None,
     opening_title_duration_s: float | None = None,
     closing_title: str | None = None,
+    required_media_ids: Sequence[str] | None = None,
 ) -> list[StoryBeat]:
     """Place the creator's exact shot labels on renderable media.
 
@@ -867,6 +868,10 @@ def deterministic_labeled_beats(
     confirmed creator words. Each label gets its own shot (the best subject
     match, else the next source in fallback order); a separate unlabeled hold
     beat carries the opening/closing title only when a spare source exists.
+    With ``required_media_ids`` (a brief scoped to all or selected media) only
+    those sources are used, and any left after one per label and title hold
+    join the labeled shot they match best: the renderer refuses a timeline that
+    drops a required source (plan item 5016d555).
     Raises CreatorTextInfeasibleError when the labels cannot fit the media.
     """
 
@@ -874,9 +879,20 @@ def deterministic_labeled_beats(
     if not labels:
         raise CreatorTextInfeasibleError("no creator shot labels to place")
     ordered = _guided_fallback_order(media)
+    required_ids = set(required_media_ids or ())
+    if required_ids:
+        if required_ids - {ref.media_id for ref in ordered}:
+            raise CreatorTextInfeasibleError(
+                "guided story fallback cannot use every required source safely"
+            )
+        ordered = [ref for ref in ordered if ref.media_id in required_ids]
     if not ordered:
         raise CreatorTextInfeasibleError("guided story fallback found no usable media")
     target_s = float(max(3, min(MAX_PROPOSAL_DURATION_S, duration_s)))
+    if required_ids and target_s + 0.001 < len(ordered) * GUIDED_STORY_MIN_MOMENT_S:
+        raise CreatorTextInfeasibleError(
+            f"{len(ordered)} required sources need at least {GUIDED_STORY_MIN_MOMENT_S:g}s each"
+        )
     title_hold_s = float(opening_title_duration_s or GUIDED_TITLE_HOLD_S) if opening_title else 0.0
     closing_hold_s = closing_title_hold_s(target_s) if closing_title else 0.0
     shot_s = (target_s - title_hold_s - closing_hold_s) / len(labels)
@@ -948,13 +964,39 @@ def deterministic_labeled_beats(
     if outro_ref is not None:
         label_seconds[-1] -= closing_hold_s
 
-    raw: list[tuple[str, str, MediaRef, float, bool]] = []
+    labeled_media = [[ref] for ref in assigned]
+    placed = used | {ref.media_id for ref in (intro_ref, outro_ref) if ref is not None}
+    for ref in ordered:
+        if not required_ids or ref.media_id in placed:
+            continue
+        open_beats = [
+            index
+            for index, beat_refs in enumerate(labeled_media)
+            if len(beat_refs) < GUIDED_STORY_MAX_MEDIA_PER_BEAT
+        ]
+        if not open_beats:
+            raise CreatorTextInfeasibleError(
+                f"{len(labels)} shot labels cannot carry {len(ordered)} required sources"
+            )
+        # Best subject match, then the least crowded and earliest labeled shot.
+        beat_index = max(
+            open_beats,
+            key=lambda index, tokens=media_tokens[ref.media_id]: (
+                len(_label_match_tokens(labels[index]) & tokens),
+                -len(labeled_media[index]),
+                -index,
+            ),
+        )
+        labeled_media[beat_index].append(ref)
+        placed.add(ref.media_id)
+
+    raw: list[tuple[str, str, list[MediaRef], float, bool]] = []
     if intro_ref is not None:
-        raw.append(("Opening", "", intro_ref, title_hold_s, False))
-    for label, ref, seconds in zip(labels, assigned, label_seconds, strict=True):
-        raw.append((label[:80], label, ref, seconds, True))
+        raw.append(("Opening", "", [intro_ref], title_hold_s, False))
+    for label, beat_refs, seconds in zip(labels, labeled_media, label_seconds, strict=True):
+        raw.append((label[:80], label, beat_refs, seconds, True))
     if outro_ref is not None:
-        raw.append(("Closing", "", outro_ref, closing_hold_s, False))
+        raw.append(("Closing", "", [outro_ref], closing_hold_s, False))
     # StoryBeat.duration_s is a 1-12 weight the compiler scales to the target;
     # keep the ratios while respecting the schema bounds.
     scale = min(1.0, 12.0 / max(item[3] for item in raw))
@@ -964,11 +1006,11 @@ def deterministic_labeled_beats(
             topic=topic,
             thought=thought,
             thought_source="user" if labeled else "ai_draft",
-            media_ids=[ref.media_id],
+            media_ids=[ref.media_id for ref in beat_refs],
             layout="fullscreen",
             duration_s=max(1.0, round(seconds * scale, 3)),
         )
-        for index, (topic, thought, ref, seconds, labeled) in enumerate(raw)
+        for index, (topic, thought, beat_refs, seconds, labeled) in enumerate(raw)
     ]
 
 
@@ -1206,6 +1248,13 @@ def plan_direction_snapshot(
             opening_title=source.opening_title,
             opening_title_duration_s=source.opening_title_duration_s,
             closing_title=source.closing_title,
+            required_media_ids=(
+                [ref.media_id for ref in source.media]
+                if source.media_scope == "all"
+                else source.selected_media_ids
+                if source.media_scope == "selected"
+                else None
+            ),
         )
     elif output is None:
         beats = deterministic_guided_beats(
