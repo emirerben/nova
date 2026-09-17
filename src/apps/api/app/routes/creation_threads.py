@@ -76,6 +76,7 @@ from app.routes.plan_items import (
     _OVERLAY_ALLOWED_CONTENT_TYPES,
     _pool_asset_counts_toward_capacity,
 )
+from app.schemas.edit_proposal import EditProposal, parse_edit_proposal
 from app.services.creator_direction_receipts import project_direction_receipt
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
@@ -3212,6 +3213,30 @@ async def message_thread(
     return await _response(db, thread)
 
 
+async def _failed_planning_attempt(
+    db: AsyncSession, thread: CreationThread, session: CreatorAgentSession
+) -> EditProposal | None:
+    """Return the failed proposal for this session's exact guided attempt.
+
+    When async planning fails, reconcile_render_state fails the session with
+    no Job. Only the attempt id minted at confirmation proves the failure
+    belongs to this plan; a proposal from another tab must not reopen it.
+    """
+
+    attempt_id = (session.active_plan or {}).get("guided_generation_attempt_id")
+    if not isinstance(attempt_id, str) or not attempt_id or not thread.active_plan_item_id:
+        return None
+    item = await db.get(PlanItem, thread.active_plan_item_id)
+    proposal = parse_edit_proposal(getattr(item, "edit_proposal", None))
+    if (
+        proposal is None
+        or proposal.status != "failed"
+        or proposal.generation_attempt_id != attempt_id
+    ):
+        return None
+    return proposal
+
+
 @router.post("/{thread_id}/actions", response_model=CreationThreadOut)
 @limiter.limit("30/minute")
 async def action_thread(
@@ -3672,9 +3697,20 @@ async def action_thread(
                 body.action == "retry"
                 and current_job is None
                 and session.status == "failed"
-                and (getattr(session, "last_error", None) or {}).get("code") == "execution_failed"
                 and bool((session.active_plan or {}).get("plan_hash"))
             )
+            if (
+                failed_before_dispatch
+                and (getattr(session, "last_error", None) or {}).get("code") != "execution_failed"
+            ):
+                # Guided planning failed before any Job existed. Confirming
+                # again mints a fresh attempt, so planning reruns behind the
+                # same fences; a non-retryable failure needs new footage.
+                failed_planning = await _failed_planning_attempt(db, thread, session)
+                failed_before_dispatch = failed_planning is not None
+                failure = failed_planning.failure if failed_planning is not None else None
+                if failure is not None and not failure.retryable:
+                    raise HTTPException(status_code=409, detail=failure.message)
             if not failed_before_dispatch and (
                 current_job is None
                 or getattr(current_job, "status", None) not in PLAN_ITEM_JOB_TERMINAL
