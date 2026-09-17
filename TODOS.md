@@ -2173,37 +2173,65 @@ pipeline work, not a lane-classification fix).
 **Priority:** P3
 **Depends on:** a product decision on caption parity for these archetypes.
 
-### On-device render compiler ignores caption_meta for text-lane captions
-**What:** `NativeEditorRenderCompiler.swift`'s caption-styling block (~line
-339: `if !document.captionCues.isEmpty ...`) is cue-native only. For a
-phone-rendered guided_story job (`render_destination == "device"`, gated by
-`settings.phone_rendering_enabled` + the per-user `phone_rendering_for`
-allowlist — KRI-29's device-rendering pilot), captions persist as
-`caption_cue`-tagged text elements, so this block never runs: the caption
-still burns (via the generic text-element path just above), but with none of
-`caption_meta`'s font/color/size/stroke/shadow/position overrides. **Already
-mitigated in KRI-110:** `canEditCaptionAppearance` (`NativeEditorSession.swift`)
-now locks the Style tab specifically for this combination (`rendersOnDevice`
-+ text-lane captions), so the control no longer silently no-ops — listing and
-text editing stay open, only appearance is locked pending this fix.
-**Why:** Once fixed, phone-rendered guided_story captions get the same Style
-tab as every other caption archetype instead of a permanently locked one.
-Cloud-rendered guided_story (the overwhelming majority today) is unaffected:
-the backend's `_apply_guided_caption_meta` (`guided_story.py`) patches the
-same TextElement fields the generic renderer already honors, so styling
-already works correctly there.
-**How:** Extend the compiler's caption-styling block to also collect
-`document.textElements.filter(\.isCaption)`, excluding them from the earlier
-generic text loop so they aren't burned twice, and apply the same
-`captionStyle`/appearance construction to both sources. Word-level timing
-reads a different field per representation (`raw["words"]` for a
-`caption_cues` row vs. the `TextElement.word_timings` wire key) — normalize
-before reuse. Then remove the `canEditCaptionAppearance` lock added above.
-Needs new `NativeEditorRenderCompilerTests` coverage pinning a phone-rendered
-guided_story fixture's caption burn.
-**Effort:** M (CC: ~1–1.5h — compiler logic + word-timing field
-normalization + tests)
-**Priority:** P3 (downgraded from P2 now that the silent-no-op risk is
-mitigated — this is a feature gap, not a live bug)
-**Depends on:** KRI-29 device-rendering pilot (still allowlist-gated as of
-this writing).
+### On-device render compiler ignored caption_meta for text-lane captions — FIXED in KRI-110
+**What it was:** `NativeEditorRenderCompiler.swift`'s caption-styling block
+was cue-native only (`if !document.captionCues.isEmpty ...`). Guided-story
+captions (`caption_cue`-tagged text elements) never hit it, so the caption
+burned via the generic text-element path with none of `caption_meta`'s
+font/color/size/stroke/shadow/position overrides — confirmed live on a real
+cloud-rendered account video during KRI-110's phone verification: color/size
+changes saved correctly (proven via a live call-log) but never appeared in
+the burned/preview text.
+**Fix shipped:** `applyingCaptionMeta` (`NativeEditorRenderCompiler.swift`)
+overlays `caption_meta`/`appearance` fields onto a caption-tagged element's
+`raw` dict before the *existing* generic per-element styling reads them —
+mirroring the backend's `_apply_guided_caption_meta` (patch the ordinary
+TextElement fields, don't build a parallel renderer). Applies uniformly
+regardless of render destination (cloud or KRI-29's phone pilot), so the
+`canEditCaptionAppearance` lock added earlier in this same investigation was
+removed as unnecessary. Covered by
+`testGuidedStoryCaptionTaggedTextElementHonorsCaptionMetaStyling` and
+`testCaptionMetaDisabledSkipsOnlyCaptionTaggedTextElements`
+(`NativeEditorRenderCompilerTests.swift`).
+**Still open:** per-word highlighting/karaoke (`caption_meta.style ==
+"word"`) has no generic-per-element equivalent — a text-lane caption with
+that mode keeps its base (non-word-highlighted) style. Nobody has asked for
+it yet; revisit if guided-story word-highlight captions become a real
+request.
+
+### Row-tap-to-edit was broken for every caption archetype — FIXED in KRI-110
+**What it was:** discovered while verifying the fix above on a physical
+device — tapping a caption row anywhere in the app did nothing; typing,
+"Show captions" toggling, and color changes silently failed to become
+interactive (though the underlying document mutations worked once other
+gates were open). Root-caused and reproduced on **unmodified `origin/main`**
+using the native `caption_cues` fixture (`-ui-testing-editor-all-lanes`) — a
+pre-existing bug since guided-story captions launched in #1018, unrelated to
+KRI-110's actual scope, never caught because no test exercised the tap
+(only that the row existed). Cause: `@FocusState private var editingCueID`
+in `NativeCaptionPanel` (`NativeEditorLanePanel.swift`) never committed when
+set inside the row's own tap gesture, in the same turn as an
+`@ObservedObject` (`session`) mutation (`session.select(...)`, called one
+line earlier) — a known class of SwiftUI focus/observed-object race. A
+follow-up attempt to request focus from the TextField's own `.onAppear` hit
+the identical failure mode (the test hung until the runner's watchdog killed
+it with SIGKILL).
+**Fix shipped:** `editingCueID` is now a plain `@State` used only to swap
+Text for TextField; no code path attempts to auto-summon the system
+keyboard. Covered by
+`testTappingCaptionRowEntersEditModeAndPersistsTypedText`
+(`NativeEditorInspectorUITests.swift`), which taps the row, types, taps
+Done, and reopens the panel to confirm the edit survived a full
+close/reopen cycle — verified 3x on an isolated simulator (once flaky under
+contention from an unrelated concurrent test process on the same machine,
+confirmed unrelated to this fix by isolating to a dedicated simulator).
+**Still open:** the fix trades away auto-focusing the keyboard on first tap
+— the user now taps the row (swaps to TextField), then taps the TextField
+again (requests keyboard focus normally, no `@FocusState` involved). Two
+taps instead of one. A real fix would need to understand *why* `@FocusState`
+races with `@ObservedObject` mutations in this specific view hierarchy
+(possibly the custom bottom-panel/drawer host, not a plain `.sheet()`) —
+worth a dedicated investigation if the two-tap UX becomes a real complaint,
+but out of scope to chase further here.
+**Priority:** P2 (both fixed; the "still open" notes above are the residual
+follow-ups, not live bugs).

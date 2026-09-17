@@ -2417,20 +2417,7 @@ struct NativeEditorTemporaryVideo {
         guard canEditSection(.captionMeta) else { return }
         transactDocument(section: .captionMeta) { $0.captionMeta[key] = value ?? .null }
     }
-    var canEditCaptionAppearance: Bool {
-        guard canEditCaptions, canEdit("caption_editor_style") else { return false }
-        // The on-device render compiler's caption-styling pass
-        // (NativeEditorRenderCompiler) is cue-native only — it never applies
-        // caption_meta to caption_cue-tagged text elements (KRI-110's
-        // TODOS.md follow-up). A phone-rendered guided_story job would burn
-        // the caption text but silently ignore any style change made here.
-        // Text listing/editing stays open (the compiler burns any text
-        // element regardless of caption tag); only appearance locks.
-        if rendersOnDevice, document.captionCues.isEmpty, document.textElements.contains(where: \.isCaption) {
-            return false
-        }
-        return true
-    }
+    var canEditCaptionAppearance: Bool { canEditCaptions && canEdit("caption_editor_style") }
 
     func setCaptionAppearance(key: String, value: JSONValue) {
         guard canEditCaptionAppearance else { return }
@@ -3530,13 +3517,10 @@ struct NativeEditorTemporaryVideo {
             && variant["base_video_path"]?.stringValue != nil
         // Guided-story captions are caption_cue-tagged TextElements (KRI-110)
         // rather than caption_cues rows. The archetype allowlist above can
-        // never see them, so fall back to the capability the guided revision
-        // actually advertises for them (`captions`, mirroring canEditSection's
-        // capability-first lookup), or `text_elements` when that key is
-        // absent — a caption-tagged element still needs the text-edit
-        // permission to be mutable at all.
-        let textLaneCaptions = document.textElements.contains(where: \.isCaption)
-            && (capabilities?["captions"] == .bool(true) || canEditText)
+        // never see them, so fall back to `text_elements` — the backend has
+        // no dedicated "captions" capability key; a caption-tagged element
+        // is only ever mutable through the same permission as ordinary text.
+        let textLaneCaptions = canEditText && document.textElements.contains(where: \.isCaption)
         canEditCaptions = cueNativeCaptions || textLaneCaptions
         canEditMix = capabilities?["mix"] == .bool(true) && draft.music != nil
     }

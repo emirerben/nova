@@ -252,8 +252,27 @@ enum NativeEditorRenderError: Error, Equatable {
             return NativeEditorTimelineItem(selection: item.selection, start: item.start,
                 end: min(item.end, total), zIndex: item.zIndex, sourceIndex: item.sourceIndex)
         }
+        // KRI-110: guided-story captions persist as caption_cue-tagged text
+        // elements, not caption_cues rows, so the styled-caption block below
+        // (which is cue-native only) never sees them and they'd otherwise
+        // render with their raw, unstyled fields regardless of caption_meta.
+        // Patch caption_meta onto their raw fields before the generic
+        // per-element styling reads them — mirrors the backend's
+        // _apply_guided_caption_meta (guided_story.py), which does the exact
+        // same thing server-side: overlay style fields onto the ordinary
+        // TextElement rather than routing through a separate caption
+        // renderer. Per-word highlighting/karaoke ("style": "word") has no
+        // equivalent in the generic per-element path and is not covered here
+        // — see the render-compiler TODOS.md follow-up.
+        let captionMeta = document.captionMeta
+        let captionsGloballyDisabled = captionMeta["enabled"] == .bool(false)
         var text: [PortableTextLayer] = []
-        for element in document.textElements where element.raw["enabled"] != .bool(false) {
+        for rawElement in document.textElements where rawElement.raw["enabled"] != .bool(false) {
+            if rawElement.isCaption {
+                if captionsGloballyDisabled { continue }
+            }
+            let element = rawElement.isCaption
+                ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement
             guard let item = items.first(where: { $0.kind == .text && $0.id == element.id }) else {
                 throw RecipeError.invalidTimeline
             }
@@ -587,6 +606,34 @@ enum NativeEditorRenderError: Error, Equatable {
             output.replaceSubrange(range, with: word.prefix(1).uppercased() + word.dropFirst().lowercased())
         }
         return output
+    }
+
+    /// KRI-110: overlay caption_meta styling onto a caption_cue-tagged text
+    /// element's raw fields, so the generic per-element text pass (which
+    /// reads exactly these keys — `color`, `stroke_color`, `size_px`, etc.)
+    /// renders it styled without a separate caption code path. Mirrors the
+    /// backend's `_apply_guided_caption_meta`, field for field. Per-word
+    /// highlight/karaoke has no generic-path equivalent and is intentionally
+    /// not covered — the caption keeps its base style in that mode.
+    private static func applyingCaptionMeta(_ meta: [String: JSONValue], to element: EditorTextElement) -> EditorTextElement {
+        var patched = element
+        let appearance = meta["appearance"]?.objectValue ?? [:]
+        if case .string(let alignment)? = appearance["alignment"], ["left", "center", "right"].contains(alignment) {
+            patched.raw["alignment"] = .string(alignment)
+        }
+        if let value = appearance["stroke_color"] { patched.raw["stroke_color"] = value }
+        if let value = appearance["shadow_color"] { patched.raw["shadow_color"] = value }
+        if let value = appearance["shadow_opacity"] { patched.raw["shadow_opacity"] = value }
+        if let value = meta["y_frac"] {
+            patched.raw["position"] = .string("custom")
+            patched.raw["y_frac"] = value
+        }
+        if meta["font_set"] == .bool(true), let font = meta["font"] { patched.raw["font_family"] = font }
+        if let value = meta["size_px"] { patched.raw["size_px"] = value }
+        if let value = meta["color"] { patched.raw["color"] = value }
+        if let value = meta["stroke_width"] { patched.raw["stroke_width"] = value }
+        if let value = meta["shadow_enabled"] { patched.raw["shadow_enabled"] = value }
+        return patched
     }
 
     private func resolveFont(_ family: String) throws -> URL {

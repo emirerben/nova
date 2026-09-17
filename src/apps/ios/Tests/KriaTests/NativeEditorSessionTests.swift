@@ -1693,7 +1693,7 @@ final class NativeEditorSessionTests: XCTestCase {
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: [
                 "resolved_archetype": .string("guided_story"),
-                "editor_capabilities": .object(["captions": .bool(true)]),
+                "editor_capabilities": .object(["text_elements": .bool(true)]),
                 "text_elements": .array([captionElement]),
             ]
         )
@@ -1709,7 +1709,7 @@ final class NativeEditorSessionTests: XCTestCase {
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: [
                 "resolved_archetype": .string("guided_story"),
-                "editor_capabilities": .object(["captions": .bool(true)]),
+                "editor_capabilities": .object(["text_elements": .bool(true)]),
             ]
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
@@ -1728,7 +1728,7 @@ final class NativeEditorSessionTests: XCTestCase {
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
             authoritativeVariant: [
                 "resolved_archetype": .string("guided_story"),
-                "editor_capabilities": .object(["captions": .bool(true)]),
+                "editor_capabilities": .object(["text_elements": .bool(true)]),
                 "text_elements": .array([captionElement]),
             ],
             commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
@@ -1747,51 +1747,33 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(fake.lastRequest?.captionCues)
     }
 
-    // KRI-110 follow-up: the on-device render compiler's caption-styling
-    // pass is cue-native only (see TODOS.md), so a phone-rendered
-    // guided_story job would silently ignore a caption_meta style change.
-    // Listing/text-editing stay open; only appearance locks.
-    func testCaptionAppearanceLockedForPhoneRenderedTextLaneCaptions() async {
-        let threadID = UUID()
+    // KRI-110: the render compiler now overlays caption_meta onto
+    // caption_cue-tagged text elements' raw fields (applyingCaptionMeta),
+    // so appearance is open regardless of render destination — cloud or
+    // phone-pilot, the caption's style now actually reaches the burn.
+    func testCaptionAppearanceOpenForTextLaneCaptionsRegardlessOfRenderDestination() async {
         let captionElement: JSONValue = .object([
             "id": .string("narration-caption-1"), "text": .string("Spoken words"),
             "start_s": .number(0), "end_s": .number(2), "role": .string("generative_sequence"),
             "source_params": .object(["source": .string("caption_cue")]),
         ])
-        let fake = EditorCommitSpy(
-            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
-            authoritativeVariant: [
+        for renderDestination: JSONValue? in [nil, .string("device")] {
+            let threadID = UUID()
+            var variant: [String: JSONValue] = [
                 "resolved_archetype": .string("guided_story"),
-                "render_destination": .string("device"),
-                "editor_capabilities": .object(["captions": .bool(true), "caption_editor_style": .bool(true)]),
+                "editor_capabilities": .object(["text_elements": .bool(true), "caption_editor_style": .bool(true)]),
                 "text_elements": .array([captionElement]),
             ]
-        )
-        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
-        await session.load(api: fake, threadID: threadID)
-        XCTAssertTrue(session.canEditCaptions)
-        XCTAssertFalse(session.canEditCaptionAppearance)
-    }
-
-    func testCaptionAppearanceOpenForCloudRenderedTextLaneCaptions() async {
-        let threadID = UUID()
-        let captionElement: JSONValue = .object([
-            "id": .string("narration-caption-1"), "text": .string("Spoken words"),
-            "start_s": .number(0), "end_s": .number(2), "role": .string("generative_sequence"),
-            "source_params": .object(["source": .string("caption_cue")]),
-        ])
-        let fake = EditorCommitSpy(
-            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
-            authoritativeVariant: [
-                "resolved_archetype": .string("guided_story"),
-                "editor_capabilities": .object(["captions": .bool(true), "caption_editor_style": .bool(true)]),
-                "text_elements": .array([captionElement]),
-            ]
-        )
-        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
-        await session.load(api: fake, threadID: threadID)
-        XCTAssertTrue(session.canEditCaptions)
-        XCTAssertTrue(session.canEditCaptionAppearance)
+            if let renderDestination { variant["render_destination"] = renderDestination }
+            let fake = EditorCommitSpy(
+                draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+                authoritativeVariant: variant
+            )
+            let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+            await session.load(api: fake, threadID: threadID)
+            XCTAssertTrue(session.canEditCaptions)
+            XCTAssertTrue(session.canEditCaptionAppearance)
+        }
     }
 
     func testTypedTextMutationsKeepWireKeysAndOneGestureUndo() {
