@@ -2867,3 +2867,171 @@ def test_audio_mode_controls_active_soundtrack(
     kwargs = mock_build.call_args.kwargs
     assert kwargs["voiceover_gcs_path"] == expected_voiceover
     assert kwargs["variant_policy"] == expected_policy
+
+
+# --- KRI-114 P0-5: archetype-agnostic phone-render gate -------------------
+#
+# `_dispatch_item_render` requires an analysis-proxy clip to either belong to
+# an approved guided-story plan, or have its (non-guided) edit_format in the
+# positive `PHONE_RENDER_SUPPORTED_FORMATS` allowlist. Enrollment
+# (`phone_rendering_for`) is checked first regardless of format.
+
+
+def _phone_dispatch_item(edit_format: str = "montage") -> SimpleNamespace:
+    item = _cleanup_dispatch_item()
+    proxy_path = "users/u/plan/i/analysis-proxy-source.mp4"
+    item.clip_gcs_paths = [proxy_path]
+    item.clip_assignments = [
+        {
+            "media_id": "registered-spine",
+            "gcs_path": proxy_path,
+            "storage_generation": "generation-17",
+            "duration_s": 12.0,
+            "has_audio": True,
+        }
+    ]
+    item.edit_format = edit_format
+    item.edit_proposal = {"generation_attempt_id": "gid-1"}
+    return item
+
+
+def _run_phone_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    edit_format: str,
+    approved: bool,
+    phone_rendering_enabled: bool = True,
+    bound_sources: tuple = ("bound-source",),
+    voiceover: bool = False,
+):
+    from app.config import settings
+
+    item = _phone_dispatch_item(edit_format)
+    if voiceover:
+        item.audio_mode = "voiceover"
+        item.voiceover_gcs_path = "users/u/plan/i/voice.m4a"
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={})
+    session = MagicMock()
+
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "edit_format_talking_head_enabled", True)
+    monkeypatch.setattr(settings, "narrated_self_narration_enabled", True)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", phone_rendering_enabled)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+
+    approved_proposal = (
+        {"proposal_version": 1, "media_digest": "d" * 64, "snapshot": {"media": []}}
+        if approved
+        else None
+    )
+    bind_mock = MagicMock(return_value=bound_sources)
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch(
+            "app.services.edit_proposals.validate_approved_proposal_media_sync",
+            return_value=(None, approved_proposal),
+        ),
+        patch("app.services.phone_sources.bind_phone_sources", bind_mock),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+        )
+    return result, job, mock_build, bind_mock
+
+
+def test_phone_gate_guided_approved_binds_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(i) guided + approved -> binds phone sources (unchanged behavior)."""
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch, edit_format="montage", approved=True
+    )
+
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+    assert result.outcome == "dispatched"
+
+
+def test_phone_gate_guided_unapproved_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(ii) guided + unapproved -> rejected with the approval message."""
+    with patch("app.tasks.content_plan_build.log") as mock_log:
+        result, _job, mock_build, bind_mock = _run_phone_dispatch(
+            monkeypatch, edit_format="montage", approved=False
+        )
+
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+    assert result.outcome == "invalid_clips"
+    warning_call = mock_log.warning.call_args
+    assert warning_call.args[0] == "plan_item_render.invalid_clips"
+    assert warning_call.kwargs["error"] == "analysis proxies require an approved phone edit plan"
+    assert warning_call.kwargs["phone_gate"] == "unapproved_guided"
+
+
+def test_phone_gate_unsupported_format_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(iii) non-guided format with proxies -> rejected while the allowlist is empty."""
+    with patch("app.tasks.content_plan_build.log") as mock_log:
+        result, _job, mock_build, bind_mock = _run_phone_dispatch(
+            monkeypatch, edit_format="subtitled", approved=False
+        )
+
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+    assert result.outcome == "invalid_clips"
+    warning_call = mock_log.warning.call_args
+    assert (
+        warning_call.kwargs["error"] == "analysis proxies cannot render 'subtitled' on iPhone yet"
+    )
+    assert warning_call.kwargs["phone_gate"] == "unsupported_format"
+
+
+def test_phone_gate_allowlist_extension_binds_without_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(iv) growing PHONE_RENDER_SUPPORTED_FORMATS is the extension point.
+
+    A montage item WITHOUT an approved proposal is rejected today (case ii).
+    Once its format is added to the allowlist AND it is not itself routed
+    through the guided-story program (has_voiceover flips it to "native"),
+    the gate binds phone sources without requiring an approved proposal.
+    """
+    from app.agents._schemas import edit_format as edit_format_module
+
+    monkeypatch.setattr(
+        edit_format_module, "PHONE_RENDER_SUPPORTED_FORMATS", frozenset({"montage"})
+    )
+    result, _job, mock_build, bind_mock = _run_phone_dispatch(
+        monkeypatch, edit_format="montage", approved=False, voiceover=True
+    )
+
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+    assert result.outcome == "dispatched"
+
+
+def test_phone_gate_checks_enrollment_before_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enrollment is checked first regardless of format or approval state."""
+    with patch("app.tasks.content_plan_build.log") as mock_log:
+        result, _job, mock_build, bind_mock = _run_phone_dispatch(
+            monkeypatch, edit_format="montage", approved=True, phone_rendering_enabled=False
+        )
+
+    bind_mock.assert_not_called()
+    mock_build.assert_not_called()
+    assert result.outcome == "invalid_clips"
+    warning_call = mock_log.warning.call_args
+    assert warning_call.kwargs["error"] == "phone rendering is unavailable for this account"
+    assert warning_call.kwargs["phone_gate"] == "not_enrolled"

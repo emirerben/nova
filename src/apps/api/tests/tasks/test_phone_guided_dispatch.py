@@ -167,3 +167,19 @@ def test_initial_orchestrator_still_enters_phone_planning(monkeypatch):
     gb.orchestrate_generative_job.run(str(job.id))
     assert device_status(job, "guided_story").phase == "awaiting_device"
     cloud.assert_not_called()
+
+
+def test_dispatcher_rejects_phone_snapshot_without_a_registered_renderer(monkeypatch):
+    # KRI-114 P0-5: the dispatcher fork is archetype-agnostic — a snapshot that
+    # is neither a guided-story plan nor (future) another recognized archetype
+    # must fail loudly instead of silently entering the guided renderer or a
+    # cloud fallback.
+    job, _, session, planner, cloud = setup(monkeypatch)
+    del job.assembly_plan["guided_edit"]
+    phone_runner = Mock()
+    monkeypatch.setattr(gb, "_run_phone_guided_job", phone_runner)
+    with pytest.raises(ValueError, match="No phone renderer is registered"):
+        gb._run_generative_job(str(job.id))
+    phone_runner.assert_not_called()
+    planner.assert_not_called()
+    cloud.assert_not_called()

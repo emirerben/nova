@@ -16,6 +16,7 @@ from app.agents._schemas.edit_format import (
     EDIT_FORMATS,
     GUIDED_EDIT_FORMATS,
     NARRATED_EDIT_FORMATS,
+    PHONE_RENDER_SUPPORTED_FORMATS,
     coerce_edit_format,
     guided_edit_applicable,
     render_program_for_intent,
@@ -72,6 +73,13 @@ def test_render_program_for_intent_is_exhaustive(
     assert guided_edit_applicable(raw, has_voiceover=has_voiceover) is (
         expected_program == "guided"
     )
+
+
+def test_phone_render_supported_formats_is_a_subset_of_known_formats() -> None:
+    # The allowlist must only ever name real EditFormat values — a typo here
+    # would silently no-op (an unrecognized string can never equal a coerced
+    # format) rather than fail loudly.
+    assert PHONE_RENDER_SUPPORTED_FORMATS <= set(EDIT_FORMATS)
 
 
 def test_guided_and_audio_led_vocabularies_are_disjoint_and_exhaustive() -> None:

@@ -78,6 +78,15 @@ AUDIO_LED_EDIT_FORMATS: frozenset[str] = frozenset(
     set(NARRATED_EDIT_FORMATS) | {"subtitled", "talking_head"}
 )
 
+# Positive allowlist of EditFormat values whose decisions have a phone-recipe
+# compiler (app/pipeline/phone_<archetype>_plan.py) and can therefore render
+# directly from on-device analysis-proxy sources. Guided-story approval is a
+# SEPARATE gate handled via `guided_applicable` / an approved edit proposal in
+# content_plan_build — this set governs everything else. Grown one phase at a
+# time as each archetype's phone compiler ships; kept positive on purpose so
+# an unknown/future format never accidentally qualifies.
+PHONE_RENDER_SUPPORTED_FORMATS: frozenset[str] = frozenset()
+
 RenderProgram = Literal["guided", "native"]
 
 
