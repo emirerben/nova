@@ -63,6 +63,10 @@ from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
+from app.pipeline.generative_decision import (
+    GenerativeAssemblyStepDecision,
+    GenerativeVariantDecision,
+)
 from app.pipeline.look_presets import (
     LookPreset,
     normalize_look_adjustments,
@@ -15079,7 +15083,42 @@ def _discard_uncommitted_reburn_storage(
     _delete_cancelled_job_objects(job_id, paths)
 
 
-def _render_generative_variant(
+def _assembly_step_to_decision(
+    step: Any, clip_id_to_local: dict[str, str]
+) -> GenerativeAssemblyStepDecision:
+    """Project an `AssemblyStep` (matcher/timeline-override output) into the
+    decision's flatter, lossless shape. `slot_extra`/`moment_extra` carry every
+    `slot`/`moment` key not modeled as a dedicated field, so
+    `_assembly_step_from_decision` can reconstruct the exact same dicts.
+    """
+    slot = dict(step.slot or {})
+    moment = dict(step.moment or {})
+    modeled_slot_keys = {
+        "target_duration_s",
+        "transition_in",
+        "transition_duration_s",
+        "exact_window",
+        "slot_type",
+        "rate",
+    }
+    modeled_moment_keys = {"start_s", "end_s"}
+    return GenerativeAssemblyStepDecision(
+        clip_id=step.clip_id,
+        source_path=clip_id_to_local.get(step.clip_id),
+        in_s=moment.get("start_s"),
+        out_s=moment.get("end_s"),
+        target_duration_s=slot.get("target_duration_s"),
+        rate=slot.get("rate"),
+        transition_in=slot.get("transition_in"),
+        transition_duration_s=slot.get("transition_duration_s"),
+        exact_window=bool(slot.get("exact_window", False)),
+        slot_type=slot.get("slot_type"),
+        slot_extra={k: v for k, v in slot.items() if k not in modeled_slot_keys},
+        moment_extra={k: v for k, v in moment.items() if k not in modeled_moment_keys},
+    )
+
+
+def _decide_generative_variant(
     *,
     job_id: str,
     rank: int,
@@ -15126,8 +15165,14 @@ def _render_generative_variant(
     orientation: str | None = None,
     strict_day_vlog: bool = False,
     strict_single_hero: bool = False,
-) -> dict[str, Any]:
-    """Render one variant. Never raises — failures become a failure record.
+) -> GenerativeVariantDecision:
+    """Decide one variant's shot selection, music, and text/transition
+    parameters -- the pure, no-media-processing half of the pre-split
+    `_render_generative_variant` (KRI-114 P1-1). Raises on any failure,
+    including the day_vlog/single_hero policy errors below -- the composed
+    `_render_generative_variant` converts any exception raised after the
+    early pre-checks into the legacy failure-record dict (see
+    `_finish_generative_variant_failure`).
 
     `allow_sequence` gates the editorial sequence — transcript-synced AND
     rhythm (D16/D19): True on first renders and pure re-assembly re-renders
@@ -15180,12 +15225,9 @@ def _render_generative_variant(
         consolidate_slots,
         match,
     )
-    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+    from app.storage import download_to_file  # noqa: PLC0415
     from app.tasks.template_orchestrate import (  # noqa: PLC0415
-        _assemble_clips,
         _enrich_slots_with_energy,
-        _mix_template_audio,
-        _mix_user_voiceover,
         _probe_duration,
     )
 
@@ -15647,6 +15689,7 @@ def _render_generative_variant(
         _agent_text_intro_px = None
         _agent_text_intro_source = None
         text_placement_candidates: list[dict] = []
+        _at_params: dict[str, Any] | None = None
         if text_mode == "agent_text" and agent_text is not None:
             hero_safe_zone, hero_density = _hero_composition(clip_metas)
             text_placement_candidates = _placement_candidates_for_intro(
@@ -15818,331 +15861,792 @@ def _render_generative_variant(
                     is_music_variant=(track is not None and not voiceover_gcs_path),
                 )
 
-        # Blossom-carousel moment hook (Lane G, kill-switched): additive splice
-        # into the finalized montage `steps`, before assembly. No-op — zero
-        # carousel imports, `steps` unchanged — unless the flag is on AND the
-        # spec requests a moment. See `_insert_carousel_moment_step`.
-        _carousel_insert_sink: dict[str, float] = {}
-        moment_cfg = spec.get("carousel_moment") or {}
-        steps = _insert_carousel_moment_step(
-            steps,
-            spec,
+    except Exception as exc:
+        exc._nova_generative_decision_base = base  # noqa: SLF001
+        exc._nova_generative_decision_variant_t0 = variant_t0  # noqa: SLF001
+        raise
+
+    assembly_steps = [_assembly_step_to_decision(step, clip_id_to_local) for step in steps]
+    _step_durations = [
+        s.target_duration_s for s in assembly_steps if s.target_duration_s is not None
+    ]
+    duration_s = sum(_step_durations) if _step_durations else None
+    # `base["music_track_id"]` is `track.id`, a UUID (persisted as-is on the
+    # legacy dict) -- stringify only for the typed decision field so the phone
+    # lane gets a JSON-plain value; `extras["base"]` keeps the original UUID,
+    # matching the pre-split output byte-for-byte.
+    _music_track_id_raw = base.get("music_track_id")
+    _music_track_id = str(_music_track_id_raw) if _music_track_id_raw is not None else None
+
+    return GenerativeVariantDecision(
+        variant_id=variant_id,
+        rank=rank,
+        text_mode=text_mode,
+        resolved_archetype=base.get("resolved_archetype"),
+        edit_format=spec.get("archetype"),
+        music_track_id=_music_track_id,
+        music_start_s=base.get("music_start_s"),
+        music_window_video_duration_s=base.get("music_window_video_duration_s"),
+        mix=base.get("mix"),
+        orientation=base["orientation"],
+        duration_s=duration_s,
+        assembly_steps=assembly_steps,
+        text_elements=_intro_text_elements_projection(agent_text, _at_params),
+        extras={
+            "base": base,
+            "variant_t0": variant_t0,
+            # Only these two attributes are read back by `_process_generative_variant`
+            # (`recipe.beat_timestamps_s` / `recipe.color_grade` for the classic
+            # montage assembly call) -- a minimal projection rather than
+            # `dataclasses.asdict(recipe)` so this also works when `recipe` is a
+            # duck-typed test double (not a real `TemplateRecipe` instance).
+            "recipe": {
+                "beat_timestamps_s": list(getattr(recipe, "beat_timestamps_s", None) or []),
+                "color_grade": getattr(recipe, "color_grade", "none"),
+            },
+            "beats": beats,
+            "effective_music_window": effective_music_window,
+            "voiceover_gcs_path": voiceover_gcs_path,
+            "voiceover_local": voiceover_local,
+            "voiceover_target_s": voiceover_target_s,
+            "mix": mix,
+            "masonry_requested": masonry_requested,
+            "resolved_montage_preset": resolved_montage_preset,
+            "effective_available_footage_s": effective_available_footage_s,
+            "assembly_landscape_fit": assembly_landscape_fit,
+            "canvas": {"width": canvas.width, "height": canvas.height},
+            "resolved_orientation": resolved_orientation,
+            "lyrics_rendered": lyrics_rendered,
+            "intro_overlay_params": _at_params,
+            "agent_text_intro_px": _agent_text_intro_px,
+            "single_hero_order": single_hero_order,
+        },
+    )
+
+
+def _assembly_step_from_decision(step: GenerativeAssemblyStepDecision) -> Any:
+    """Inverse of `_assembly_step_to_decision` -- reconstructs the exact
+    `AssemblyStep` (slot/moment dict shape) `_process_generative_variant` needs
+    for `_assemble_clips`/`_build_ai_timeline`/etc.
+    """
+    from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
+
+    slot: dict[str, Any] = dict(step.slot_extra)
+    if step.target_duration_s is not None:
+        slot["target_duration_s"] = step.target_duration_s
+    if step.rate is not None:
+        slot["rate"] = step.rate
+    if step.transition_in is not None:
+        slot["transition_in"] = step.transition_in
+    if step.transition_duration_s is not None:
+        slot["transition_duration_s"] = step.transition_duration_s
+    if step.exact_window:
+        slot["exact_window"] = step.exact_window
+    if step.slot_type is not None:
+        slot["slot_type"] = step.slot_type
+    moment: dict[str, Any] = dict(step.moment_extra)
+    if step.in_s is not None:
+        moment["start_s"] = step.in_s
+    if step.out_s is not None:
+        moment["end_s"] = step.out_s
+    return AssemblyStep(slot=slot, clip_id=step.clip_id, moment=moment)
+
+
+def _intro_text_elements_projection(
+    agent_text: Any, at_params: dict[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    """Best-effort projection of the resolved agent-text intro into a
+    TextElement-shaped dict, for phone-lane/decision consumers only. This is
+    NOT validated against `app.agents._schemas.text_element.TextElement` (its
+    font-registry/allowlist checks could reject a value the legacy Skia burn
+    path already accepts) and is NOT read by `_process_generative_variant`,
+    which burns from `extras["intro_overlay_params"]` + `agent_text` exactly
+    as the pre-split renderer did. None when there is no agent-text intro to
+    project (footage-only, lyrics-only, or context-label-only variants whose
+    `at_params` carries no text).
+    """
+    if not at_params:
+        return None
+    text = at_params.get("text") or (agent_text.text if agent_text is not None else None)
+    if not text:
+        return None
+    return [
+        {
+            "kind": "intro",
+            "text": text,
+            "highlight_word": (
+                getattr(agent_text, "highlight_word", None) if agent_text is not None else None
+            ),
+            "layout": at_params.get("layout"),
+            "position": at_params.get("position"),
+            "text_color": at_params.get("text_color"),
+            "highlight_color": at_params.get("highlight_color"),
+            "text_anchor": at_params.get("text_anchor"),
+            "effect": at_params.get("effect"),
+        }
+    ]
+
+
+def _process_generative_variant(
+    decision: GenerativeVariantDecision,
+    *,
+    job_id: str,
+    rank: int,
+    spec: dict[str, Any],
+    clip_metas: list,
+    clip_id_to_local: dict[str, str],
+    clip_id_to_gcs: dict[str, str],
+    probe_map: dict,
+    available_footage_s: float,
+    agent_text,
+    agent_form: dict,
+    variant_dir: str,
+    style_set_id: str | None = None,
+    intro_size_override_px: int | None = None,
+    user_style_knobs: dict | None = None,
+    creator_target_duration_s: float | None = None,
+    creator_pacing: str | None = None,
+    creator_video_reuse_policy: str | None = None,
+    narrative_order: list[str] | None = None,
+    filming_guide: list[dict] | None = None,
+    assembly_steps_override: list | None = None,
+    allow_sequence: bool = True,
+    author_quote_fn: Any | None = None,
+    existing_sequence_quote: str | None = None,
+    scene_timing_overrides: list[dict] | None = None,
+    language: str = "en",
+    font_family_override: str | None = None,
+    effect_override: str | None = None,
+    text_color_override: str | None = None,
+    cluster_hero_font_override: str | None = None,
+    cluster_body_font_override: str | None = None,
+    cluster_accent_font_override: str | None = None,
+    cluster_hero_size_px_override: int | None = None,
+    cluster_body_size_px_override: int | None = None,
+    cluster_accent_size_px_override: int | None = None,
+    landscape_fit: str = "fill",
+    montage_preset: str = "classic",
+    speech_cleanup_contract: str = "legacy_auto",
+    speech_cleanup_fallback_reason: str | None = None,
+    creator_context_label: dict | list[dict] | None = None,
+    behind_subject_override: bool | None = None,
+    lyrics_enabled: bool | None = None,
+    lyric_line_overrides: dict | None = None,
+    orientation: str | None = None,
+    strict_day_vlog: bool = False,
+    strict_single_hero: bool = False,
+) -> dict[str, Any]:
+    """Assemble, mix, burn, validate and upload a decided variant -- the tail
+    half of the pre-split `_render_generative_variant` (KRI-114 P1-1). Accepts
+    the SAME kwargs `_decide_generative_variant` did (several are unused here;
+    everything they fed into `decision` is read back from `decision.extras`
+    instead -- see `app.pipeline.generative_decision` for the full mapping).
+    Does not catch exceptions itself -- the composed `_render_generative_variant`
+    converts any exception raised here into the legacy failure-record dict.
+    """
+    from app.storage import upload_public_read  # noqa: PLC0415
+    from app.tasks.template_orchestrate import (  # noqa: PLC0415
+        _assemble_clips,
+        _mix_template_audio,
+        _mix_user_voiceover,
+        _probe_duration,
+    )
+
+    base = decision.base
+    variant_t0 = decision.variant_t0
+    variant_id = spec["variant_id"]
+    text_mode = spec["text_mode"]
+    track: MusicTrack | None = spec["track"]
+    # Lightweight stand-in carrying only the two attributes this function reads
+    # (`recipe.beat_timestamps_s` / `recipe.color_grade`) -- see the matching
+    # comment in `_decide_generative_variant`.
+    recipe = SimpleNamespace(**decision.extras["recipe"])
+    beats: list[float] = decision.extras["beats"]
+    effective_music_window: dict[str, Any] | None = decision.extras["effective_music_window"]
+    voiceover_gcs_path: str | None = decision.extras["voiceover_gcs_path"]
+    voiceover_local: str | None = decision.extras["voiceover_local"]
+    voiceover_target_s: float = decision.extras["voiceover_target_s"]
+    mix: float = decision.extras["mix"]
+    masonry_requested: bool = decision.extras["masonry_requested"]
+    resolved_montage_preset: str = decision.extras["resolved_montage_preset"]
+    effective_available_footage_s: float = decision.extras["effective_available_footage_s"]
+    assembly_landscape_fit: str = decision.extras["assembly_landscape_fit"]
+    canvas = Canvas(**decision.extras["canvas"])
+    resolved_orientation: str = decision.extras["resolved_orientation"]
+    lyrics_rendered: bool = decision.extras["lyrics_rendered"]
+    _at_params: dict[str, Any] | None = decision.extras["intro_overlay_params"]
+    _agent_text_intro_px = decision.extras["agent_text_intro_px"]
+    steps = [_assembly_step_from_decision(step) for step in decision.assembly_steps]
+
+    # Blossom-carousel moment hook (Lane G, kill-switched): additive splice
+    # into the finalized montage `steps`, before assembly. No-op — zero
+    # carousel imports, `steps` unchanged — unless the flag is on AND the
+    # spec requests a moment. See `_insert_carousel_moment_step`.
+    _carousel_insert_sink: dict[str, float] = {}
+    moment_cfg = spec.get("carousel_moment") or {}
+    steps = _insert_carousel_moment_step(
+        steps,
+        spec,
+        clip_id_to_local=clip_id_to_local,
+        clip_id_to_gcs=clip_id_to_gcs,
+        probe_map=probe_map,
+        variant_dir=variant_dir,
+        clip_metas=clip_metas,
+        inserted_duration_out=_carousel_insert_sink,
+    )
+    if "duration_s" in _carousel_insert_sink:
+        base["carousel_inserted_duration_s"] = _carousel_insert_sink["duration_s"]
+    if moment_cfg.get("timing_model") == "ripple_v1":
+        if "insertion_base_s" in _carousel_insert_sink:
+            base["carousel_insertion_base_s"] = round(_carousel_insert_sink["insertion_base_s"], 3)
+        if "ripple_duration_s" in _carousel_insert_sink:
+            base["carousel_ripple_duration_s"] = round(
+                _carousel_insert_sink["ripple_duration_s"], 3
+            )
+    if voiceover_gcs_path and "duration_s" in _carousel_insert_sink:
+        # `voiceover_target_s` was sized to the voice BEFORE this splice
+        # (min(footage, voice, cap), above) — extend it by the spliced
+        # moment's real rendered length so `_mix_user_voiceover`'s final
+        # `-t` truncation doesn't chop the moment off the tail. Only the
+        # mix-stage target changes; the recipe/slot layout built earlier
+        # from the pre-splice value is untouched.
+        voiceover_target_s += _carousel_insert_sink["duration_s"]
+
+    assembled_path = os.path.join(variant_dir, "assembled.mp4")
+    resolved_plans: list[dict] = []
+    classic_steps = steps
+    classic_clip_id_to_local = clip_id_to_local
+    classic_clip_id_to_gcs = clip_id_to_gcs
+    classic_probe_map = probe_map
+    classic_clip_metas = clip_metas
+    classic_image_substitutions = 0
+    if masonry_requested:
+        (
+            classic_steps,
+            classic_clip_id_to_local,
+            classic_clip_id_to_gcs,
+            classic_probe_map,
+            classic_clip_metas,
+            classic_image_substitutions,
+        ) = _masonry_classic_safe_inputs(
+            steps=steps,
             clip_id_to_local=clip_id_to_local,
             clip_id_to_gcs=clip_id_to_gcs,
             probe_map=probe_map,
-            variant_dir=variant_dir,
             clip_metas=clip_metas,
-            inserted_duration_out=_carousel_insert_sink,
-        )
-        if "duration_s" in _carousel_insert_sink:
-            base["carousel_inserted_duration_s"] = _carousel_insert_sink["duration_s"]
-        if moment_cfg.get("timing_model") == "ripple_v1":
-            if "insertion_base_s" in _carousel_insert_sink:
-                base["carousel_insertion_base_s"] = round(
-                    _carousel_insert_sink["insertion_base_s"], 3
-                )
-            if "ripple_duration_s" in _carousel_insert_sink:
-                base["carousel_ripple_duration_s"] = round(
-                    _carousel_insert_sink["ripple_duration_s"], 3
-                )
-        if voiceover_gcs_path and "duration_s" in _carousel_insert_sink:
-            # `voiceover_target_s` was sized to the voice BEFORE this splice
-            # (min(footage, voice, cap), above) — extend it by the spliced
-            # moment's real rendered length so `_mix_user_voiceover`'s final
-            # `-t` truncation doesn't chop the moment off the tail. Only the
-            # mix-stage target changes; the recipe/slot layout built earlier
-            # from the pre-splice value is untouched.
-            voiceover_target_s += _carousel_insert_sink["duration_s"]
-
-        assembled_path = os.path.join(variant_dir, "assembled.mp4")
-        resolved_plans: list[dict] = []
-        classic_steps = steps
-        classic_clip_id_to_local = clip_id_to_local
-        classic_clip_id_to_gcs = clip_id_to_gcs
-        classic_probe_map = probe_map
-        classic_clip_metas = clip_metas
-        classic_image_substitutions = 0
-        if masonry_requested:
-            (
-                classic_steps,
-                classic_clip_id_to_local,
-                classic_clip_id_to_gcs,
-                classic_probe_map,
-                classic_clip_metas,
-                classic_image_substitutions,
-            ) = _masonry_classic_safe_inputs(
-                steps=steps,
-                clip_id_to_local=clip_id_to_local,
-                clip_id_to_gcs=clip_id_to_gcs,
-                probe_map=probe_map,
-                clip_metas=clip_metas,
-            )
-
-        # Masonry song variants replace footage audio with the matched track later
-        # in the normal audio-mix branch. Rendering a full classic montage first is
-        # therefore pure waste and can consume the whole Celery budget on heavy
-        # uploads before the collage compositor even starts. Original-audio masonry
-        # still needs this pass because it derives its audio bed from source clips.
-        skip_classic_assembly_for_masonry_song = masonry_requested and track is not None
-        classic_assembly_done = False
-        assembly_t0 = time.monotonic()
-
-        def _assemble_classic_montage() -> None:
-            nonlocal classic_assembly_done
-            if masonry_requested and (not classic_steps or not classic_clip_id_to_local):
-                raise RuntimeError("classic montage fallback unavailable: no video clips")
-            _assemble_clips(
-                classic_steps,
-                classic_clip_id_to_local,
-                classic_probe_map,
-                assembled_path,
-                variant_dir,
-                beat_timestamps_s=recipe.beat_timestamps_s,
-                clip_metas=classic_clip_metas,
-                global_color_grade=recipe.color_grade,
-                job_id=f"{job_id}#v{rank}",
-                user_subject="",
-                interstitials=[],
-                force_single_pass=False,
-                is_agentic=True,  # route overlays through the Skia renderer
-                # Generative edits must never stretch footage to fill a slot. When a
-                # clip is shorter than its slot, shrink the slot instead of slowing
-                # the clip down — the output stays bounded by real footage length.
-                allow_slowdown_fill=False,
-                # Post-resolution source windows per slot — the clip editor's
-                # ground truth for what each slot actually rendered.
-                resolved_plans_out=resolved_plans,
-                landscape_fit=assembly_landscape_fit,
-                canvas=canvas,
-            )
-            classic_assembly_done = True
-
-        if not skip_classic_assembly_for_masonry_song:
-            if masonry_requested and not classic_steps:
-                log.info(
-                    "masonry_original_audio_bed_skipped_no_video",
-                    job_id=job_id,
-                    variant_id=variant_id,
-                    image_clips=classic_image_substitutions,
-                )
-            else:
-                _assemble_classic_montage()
-
-        masonry_applied = False
-        if masonry_requested:
-            from app.pipeline.masonry_montage import assemble_masonry_montage  # noqa: PLC0415
-            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
-
-            if classic_image_substitutions:
-                record_pipeline_event(
-                    "assembly",
-                    "masonry_classic_inputs_sanitized",
-                    {
-                        "variant_id": variant_id,
-                        "image_clips": classic_image_substitutions,
-                        "video_clips": len(classic_clip_id_to_local),
-                    },
-                )
-
-            masonry_path = os.path.join(variant_dir, "masonry.mp4")
-            try:
-                assemble_masonry_montage(
-                    steps=steps,
-                    clip_id_to_local=clip_id_to_local,
-                    output_path=masonry_path,
-                    tmpdir=variant_dir,
-                    duration_s=effective_available_footage_s,
-                    audio_source_path=assembled_path if classic_assembly_done else None,
-                    job_id=job_id,
-                    preset=resolved_montage_preset,
-                )
-                assembled_path = masonry_path
-                masonry_applied = True
-                base["montage_preset_rendered"] = resolved_montage_preset
-                record_pipeline_event(
-                    "assembly",
-                    "masonry_preset_applied",
-                    {"variant_id": variant_id, "duration_s": effective_available_footage_s},
-                )
-            except Exception as exc:  # noqa: BLE001
-                base["montage_preset_fallback"] = "classic_render_failed"
-                record_pipeline_event(
-                    "assembly",
-                    "masonry_preset_fallback",
-                    {"variant_id": variant_id, "error": str(exc)[:300]},
-                )
-                log.warning(
-                    "masonry_preset_fallback_classic",
-                    job_id=job_id,
-                    variant_id=variant_id,
-                    error=str(exc),
-                )
-                if not classic_assembly_done:
-                    _assemble_classic_montage()
-        _record_render_subphase(
-            job_id,
-            "render_variants",
-            "variant_assembly",
-            assembly_t0,
-            detail={
-                "variant_id": variant_id,
-                "masonry": masonry_applied,
-                "classic": classic_assembly_done,
-            },
         )
 
-        # ai_timeline persistence (clip timeline editor): rewritten on every
-        # FRESH montage assembly (first render, swap-song, mix re-render), so
-        # the stored AI cut tracks what the matcher actually produced.
-        # Voiceover variants are skipped — the voice, not a slot grid, drives
-        # their layout. `beats` is the section-relative grid this assembly
-        # snapped against (empty for the no-music variant).
-        #
-        # Override path (user timeline render): the steps ARE the user's cut,
-        # not an AI cut — rebuilding here would make "Reset to AI cut" re-render
-        # the user's own edit. Pop the key so `_update_variant_entry`'s
-        # {**v, **patch} merge carries the variant's persisted ai_timeline
-        # forward untouched (writing None instead would null the stored
-        # timeline and flip the variant uneditable).
-        if (
-            settings.GENERATIVE_TIMELINE_EDITOR_ENABLED
-            and not voiceover_gcs_path
-            and not masonry_applied
-        ):
-            if assembly_steps_override is not None:
-                base.pop("ai_timeline", None)
-            else:
-                base["ai_timeline"] = _build_ai_timeline(
-                    steps=classic_steps if masonry_requested else steps,
-                    resolved_plans=resolved_plans,
-                    clip_id_to_gcs=classic_clip_id_to_gcs if masonry_requested else clip_id_to_gcs,
-                    clip_id_to_local=(
-                        classic_clip_id_to_local if masonry_requested else clip_id_to_local
-                    ),
-                    probe_map=classic_probe_map if masonry_requested else probe_map,
-                    beat_grid=beats,
-                )
-        elif masonry_applied:
-            base.pop("ai_timeline", None)
+    # Masonry song variants replace footage audio with the matched track later
+    # in the normal audio-mix branch. Rendering a full classic montage first is
+    # therefore pure waste and can consume the whole Celery budget on heavy
+    # uploads before the collage compositor even starts. Original-audio masonry
+    # still needs this pass because it derives its audio bed from source clips.
+    skip_classic_assembly_for_masonry_song = masonry_requested and track is not None
+    classic_assembly_done = False
+    assembly_t0 = time.monotonic()
 
-        # audio_mixed_path: the assembled+audio-mixed video before text burn.
-        # For agent_text variants this becomes the cached base.
-        audio_mixed_path = os.path.join(variant_dir, "audio_mixed.mp4")
-        final_path = os.path.join(variant_dir, "final.mp4")
-        audio_t0 = time.monotonic()
-        if voiceover_gcs_path:
-            # Voiceover variants: the user's voice is the bed. voiceover_only ducks the
-            # footage audio under the voice; voiceover_music drops a matched track low
-            # under the voice instead. `mix` is the voice-prominence slider.
-            cfg = (track.track_config or {}) if track is not None else {}
-            _mix_user_voiceover(
-                assembled_path,
-                voiceover_local,
-                audio_mixed_path,
-                variant_dir,
-                mix=mix,
-                target_duration_s=voiceover_target_s,
-                music_gcs_path=track.audio_gcs_path if track is not None else None,
-                music_start_offset_s=float(cfg.get("best_start_s", 0.0)),
-            )
-            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+    def _assemble_classic_montage() -> None:
+        nonlocal classic_assembly_done
+        if masonry_requested and (not classic_steps or not classic_clip_id_to_local):
+            raise RuntimeError("classic montage fallback unavailable: no video clips")
+        _assemble_clips(
+            classic_steps,
+            classic_clip_id_to_local,
+            classic_probe_map,
+            assembled_path,
+            variant_dir,
+            beat_timestamps_s=recipe.beat_timestamps_s,
+            clip_metas=classic_clip_metas,
+            global_color_grade=recipe.color_grade,
+            job_id=f"{job_id}#v{rank}",
+            user_subject="",
+            interstitials=[],
+            force_single_pass=False,
+            is_agentic=True,  # route overlays through the Skia renderer
+            # Generative edits must never stretch footage to fill a slot. When a
+            # clip is shorter than its slot, shrink the slot instead of slowing
+            # the clip down — the output stays bounded by real footage length.
+            allow_slowdown_fill=False,
+            # Post-resolution source windows per slot — the clip editor's
+            # ground truth for what each slot actually rendered.
+            resolved_plans_out=resolved_plans,
+            landscape_fit=assembly_landscape_fit,
+            canvas=canvas,
+        )
+        classic_assembly_done = True
 
-            record_pipeline_event(
-                "audio_mix",
-                "voiceover_mixed",
-                {
-                    "variant_id": variant_id,
-                    "mix": round(mix, 3),
-                    "bed": "music" if track is not None else "footage",
-                    "target_s": round(voiceover_target_s, 3),
-                },
-            )
-        elif track is not None:
-            # Song variants: replace source audio with the matched track.
-            if effective_music_window is None:
-                raise RuntimeError("Music window was not resolved")
-            _mix_template_audio(
-                assembled_path,
-                track.audio_gcs_path,
-                audio_mixed_path,
-                variant_dir,
-                audio_start_offset_s=float(effective_music_window["start_s"]),
-                validated_window_duration_s=(
-                    float(effective_music_window["duration_s"])
-                    if effective_music_window["validated"]
-                    else None
-                ),
-                require_audio=True,
+    if not skip_classic_assembly_for_masonry_song:
+        if masonry_requested and not classic_steps:
+            log.info(
+                "masonry_original_audio_bed_skipped_no_video",
+                job_id=job_id,
+                variant_id=variant_id,
+                image_clips=classic_image_substitutions,
             )
         else:
-            # Original-audio variant: KEEP the clips' source audio — skip the mix.
-            # `_assemble_clips` already muxed source audio into assembled.mp4.
-            audio_mixed_path = assembled_path
+            _assemble_classic_montage()
+
+    masonry_applied = False
+    if masonry_requested:
+        from app.pipeline.masonry_montage import assemble_masonry_montage  # noqa: PLC0415
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        if classic_image_substitutions:
+            record_pipeline_event(
+                "assembly",
+                "masonry_classic_inputs_sanitized",
+                {
+                    "variant_id": variant_id,
+                    "image_clips": classic_image_substitutions,
+                    "video_clips": len(classic_clip_id_to_local),
+                },
+            )
+
+        masonry_path = os.path.join(variant_dir, "masonry.mp4")
+        try:
+            assemble_masonry_montage(
+                steps=steps,
+                clip_id_to_local=clip_id_to_local,
+                output_path=masonry_path,
+                tmpdir=variant_dir,
+                duration_s=effective_available_footage_s,
+                audio_source_path=assembled_path if classic_assembly_done else None,
+                job_id=job_id,
+                preset=resolved_montage_preset,
+            )
+            assembled_path = masonry_path
+            masonry_applied = True
+            base["montage_preset_rendered"] = resolved_montage_preset
+            record_pipeline_event(
+                "assembly",
+                "masonry_preset_applied",
+                {"variant_id": variant_id, "duration_s": effective_available_footage_s},
+            )
+        except Exception as exc:  # noqa: BLE001
+            base["montage_preset_fallback"] = "classic_render_failed"
+            record_pipeline_event(
+                "assembly",
+                "masonry_preset_fallback",
+                {"variant_id": variant_id, "error": str(exc)[:300]},
+            )
+            log.warning(
+                "masonry_preset_fallback_classic",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc),
+            )
+            if not classic_assembly_done:
+                _assemble_classic_montage()
+    _record_render_subphase(
+        job_id,
+        "render_variants",
+        "variant_assembly",
+        assembly_t0,
+        detail={
+            "variant_id": variant_id,
+            "masonry": masonry_applied,
+            "classic": classic_assembly_done,
+        },
+    )
+
+    # ai_timeline persistence (clip timeline editor): rewritten on every
+    # FRESH montage assembly (first render, swap-song, mix re-render), so
+    # the stored AI cut tracks what the matcher actually produced.
+    # Voiceover variants are skipped — the voice, not a slot grid, drives
+    # their layout. `beats` is the section-relative grid this assembly
+    # snapped against (empty for the no-music variant).
+    #
+    # Override path (user timeline render): the steps ARE the user's cut,
+    # not an AI cut — rebuilding here would make "Reset to AI cut" re-render
+    # the user's own edit. Pop the key so `_update_variant_entry`'s
+    # {**v, **patch} merge carries the variant's persisted ai_timeline
+    # forward untouched (writing None instead would null the stored
+    # timeline and flip the variant uneditable).
+    if (
+        settings.GENERATIVE_TIMELINE_EDITOR_ENABLED
+        and not voiceover_gcs_path
+        and not masonry_applied
+    ):
+        if assembly_steps_override is not None:
+            base.pop("ai_timeline", None)
+        else:
+            base["ai_timeline"] = _build_ai_timeline(
+                steps=classic_steps if masonry_requested else steps,
+                resolved_plans=resolved_plans,
+                clip_id_to_gcs=classic_clip_id_to_gcs if masonry_requested else clip_id_to_gcs,
+                clip_id_to_local=(
+                    classic_clip_id_to_local if masonry_requested else clip_id_to_local
+                ),
+                probe_map=classic_probe_map if masonry_requested else probe_map,
+                beat_grid=beats,
+            )
+    elif masonry_applied:
+        base.pop("ai_timeline", None)
+
+    # audio_mixed_path: the assembled+audio-mixed video before text burn.
+    # For agent_text variants this becomes the cached base.
+    audio_mixed_path = os.path.join(variant_dir, "audio_mixed.mp4")
+    final_path = os.path.join(variant_dir, "final.mp4")
+    audio_t0 = time.monotonic()
+    if voiceover_gcs_path:
+        # Voiceover variants: the user's voice is the bed. voiceover_only ducks the
+        # footage audio under the voice; voiceover_music drops a matched track low
+        # under the voice instead. `mix` is the voice-prominence slider.
+        cfg = (track.track_config or {}) if track is not None else {}
+        _mix_user_voiceover(
+            assembled_path,
+            voiceover_local,
+            audio_mixed_path,
+            variant_dir,
+            mix=mix,
+            target_duration_s=voiceover_target_s,
+            music_gcs_path=track.audio_gcs_path if track is not None else None,
+            music_start_offset_s=float(cfg.get("best_start_s", 0.0)),
+        )
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "audio_mix",
+            "voiceover_mixed",
+            {
+                "variant_id": variant_id,
+                "mix": round(mix, 3),
+                "bed": "music" if track is not None else "footage",
+                "target_s": round(voiceover_target_s, 3),
+            },
+        )
+    elif track is not None:
+        # Song variants: replace source audio with the matched track.
+        if effective_music_window is None:
+            raise RuntimeError("Music window was not resolved")
+        _mix_template_audio(
+            assembled_path,
+            track.audio_gcs_path,
+            audio_mixed_path,
+            variant_dir,
+            audio_start_offset_s=float(effective_music_window["start_s"]),
+            validated_window_duration_s=(
+                float(effective_music_window["duration_s"])
+                if effective_music_window["validated"]
+                else None
+            ),
+            require_audio=True,
+        )
+    else:
+        # Original-audio variant: KEEP the clips' source audio — skip the mix.
+        # `_assemble_clips` already muxed source audio into assembled.mp4.
+        audio_mixed_path = assembled_path
+    _record_render_subphase(
+        job_id,
+        "render_variants",
+        "variant_audio_mix",
+        audio_t0,
+        detail={
+            "variant_id": variant_id,
+            "mode": (
+                "voiceover"
+                if voiceover_gcs_path
+                else ("music" if track is not None else "original")
+            ),
+        },
+    )
+
+    if not os.path.exists(audio_mixed_path) or os.path.getsize(audio_mixed_path) == 0:
+        raise RuntimeError(f"variant {variant_id} produced empty audio-mixed output")
+
+    # Materialize confirmed contextual labels only after the final matcher
+    # steps and post-resolution durations are known. This keeps each label
+    # attached to the exact output slot without changing the AI timeline.
+    context_label_elements = _context_sport_text_elements(
+        creator_context_label,
+        clip_metas=clip_metas,
+        steps=steps,
+        resolved_plans=resolved_plans,
+        clip_id_to_gcs=clip_id_to_gcs,
+        video_duration_s=sum(float(p.get("duration_s") or 0.0) for p in resolved_plans),
+    )
+    if context_label_elements:
+        base["context_label_text_elements"] = context_label_elements
+    if strict_day_vlog or strict_single_hero:
+        try:
+            actual_duration_s = float(_probe_duration(audio_mixed_path))
+        except Exception as exc:  # noqa: BLE001 - strict policy must fail closed
+            error_type = SingleHeroPolicyError if strict_single_hero else DayVlogPolicyError
+            strict_name = "single_hero" if strict_single_hero else "day_vlog"
+            raise error_type(
+                "duration_unreadable",
+                f"{strict_name} output duration could not be verified.",
+            ) from exc
+        if not 0.1 <= actual_duration_s <= MAX_PROPOSAL_DURATION_S + 0.05:
+            error_type = SingleHeroPolicyError if strict_single_hero else DayVlogPolicyError
+            strict_name = "single_hero" if strict_single_hero else "day_vlog"
+            raise error_type(
+                "duration_out_of_bounds",
+                f"{strict_name} output duration is outside the product bounds.",
+            )
+
+    # For agent_text variants: upload the text-free base for fast-reburn, then
+    # burn text on top to produce the final output. Lyrics variants cache the
+    # lyric-burned, user-text-free base so user TextElements can layer above it.
+    if text_mode == "agent_text" and (agent_text is not None or creator_context_label):
+        from app.pipeline.generative_overlays import (  # noqa: PLC0415
+            build_persistent_intro_overlays,
+        )
+        from app.pipeline.intro_cluster import (  # noqa: PLC0415
+            cluster_style_marker,
+            resolve_cluster_style,
+        )
+        from app.pipeline.probe import probe_video  # noqa: PLC0415
+        from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        # Upload the text-free base first.
+        base_gcs = _variant_storage_key(
+            job_id,
+            f"base_{rank}_{variant_id}.mp4",
+            spec.get("storage_generation"),
+        )
+        base_upload_t0 = time.monotonic()
+        base_url_unused = upload_public_read(audio_mixed_path, base_gcs)  # noqa: F841
         _record_render_subphase(
             job_id,
             "render_variants",
-            "variant_audio_mix",
-            audio_t0,
-            detail={
-                "variant_id": variant_id,
-                "mode": (
-                    "voiceover"
-                    if voiceover_gcs_path
-                    else ("music" if track is not None else "original")
-                ),
-            },
+            "variant_base_upload",
+            base_upload_t0,
+            detail={"variant_id": variant_id},
+        )
+        base["base_video_path"] = base_gcs
+        log.info(
+            "generative_base_uploaded",
+            job_id=job_id,
+            variant_id=variant_id,
+            base_gcs=base_gcs,
         )
 
-        if not os.path.exists(audio_mixed_path) or os.path.getsize(audio_mixed_path) == 0:
-            raise RuntimeError(f"variant {variant_id} produced empty audio-mixed output")
+        # Burn the agent intro overlay on top of the base.
+        try:
+            base_dur = float(probe_video(audio_mixed_path).duration_s)
+        except Exception:  # noqa: BLE001
+            base_dur = MAX_INTRO_S
+        reveal_window_s = min(base_dur, MAX_INTRO_S) if base_dur > 0 else MAX_INTRO_S
 
-        # Materialize confirmed contextual labels only after the final matcher
-        # steps and post-resolution durations are known. This keeps each label
-        # attached to the exact output slot without changing the AI timeline.
-        context_label_elements = _context_sport_text_elements(
-            creator_context_label,
-            clip_metas=clip_metas,
-            steps=steps,
-            resolved_plans=resolved_plans,
-            clip_id_to_gcs=clip_id_to_gcs,
-            video_duration_s=sum(float(p.get("duration_s") or 0.0) for p in resolved_plans),
-        )
-        if context_label_elements:
-            base["context_label_text_elements"] = context_label_elements
-        if strict_day_vlog or strict_single_hero:
-            try:
-                actual_duration_s = float(_probe_duration(audio_mixed_path))
-            except Exception as exc:  # noqa: BLE001 - strict policy must fail closed
-                error_type = SingleHeroPolicyError if strict_single_hero else DayVlogPolicyError
-                strict_name = "single_hero" if strict_single_hero else "day_vlog"
-                raise error_type(
-                    "duration_unreadable",
-                    f"{strict_name} output duration could not be verified.",
-                ) from exc
-            if not 0.1 <= actual_duration_s <= MAX_PROPOSAL_DURATION_S + 0.05:
-                error_type = SingleHeroPolicyError if strict_single_hero else DayVlogPolicyError
-                strict_name = "single_hero" if strict_single_hero else "day_vlog"
-                raise error_type(
-                    "duration_out_of_bounds",
-                    f"{strict_name} output duration is outside the product bounds.",
+        def _burn_agent_text_overlays(
+            overlay_dicts: list[dict], output_path: str, *, matte=None
+        ) -> None:
+            if masonry_applied:
+                from app.pipeline.masonry_montage import (  # noqa: PLC0415
+                    burn_masonry_text_overlays,
+                    masonry_board_width_for_preset,
                 )
 
-        # For agent_text variants: upload the text-free base for fast-reburn, then
-        # burn text on top to produce the final output. Lyrics variants cache the
-        # lyric-burned, user-text-free base so user TextElements can layer above it.
-        if text_mode == "agent_text" and (agent_text is not None or creator_context_label):
-            from app.pipeline.generative_overlays import (  # noqa: PLC0415
-                build_persistent_intro_overlays,
+                # Masonry's board-motion burn has no matte-occlusion support
+                # (Lane B scoped it to the standard burn path only).
+                overlay_dicts = [
+                    {k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlay_dicts
+                ]
+                burn_masonry_text_overlays(
+                    audio_mixed_path,
+                    overlay_dicts,
+                    output_path,
+                    variant_dir,
+                    duration_s=base_dur,
+                    board_width=masonry_board_width_for_preset(resolved_montage_preset),
+                )
+                return
+            burn_text_overlays_skia(
+                audio_mixed_path,
+                overlay_dicts,
+                output_path,
+                variant_dir,
+                matte=matte,
+                **_canvas_kwargs(canvas),
             )
-            from app.pipeline.intro_cluster import (  # noqa: PLC0415
-                cluster_style_marker,
-                resolve_cluster_style,
-            )
-            from app.pipeline.probe import probe_video  # noqa: PLC0415
-            from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
-            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-            # Upload the text-free base first.
+        def _burn_agent_text_overlays_with_matte(
+            overlay_dicts: list[dict], output_path: str
+        ) -> None:
+            # Text-behind-subject: resolve (or compute-and-cache) the matte for
+            # THIS overlay set, then burn. `base["subject_matte_path"]` doubles
+            # as the resolution cache key — a copy-through retry below re-burns
+            # a fresh overlay set on the SAME base, so the second call reuses
+            # whatever the first call just computed instead of recomputing.
+            provider, matte_path, overlay_dicts = _resolve_subject_matte_for_burn(
+                video_path=audio_mixed_path,
+                overlays=overlay_dicts,
+                tmpdir=variant_dir,
+                cached_matte_path=base.get("subject_matte_path"),
+                upload_key_base=base_gcs,
+                duration_s=base_dur,
+                job_id=job_id,
+                variant_id=variant_id,
+                # Slot joins in a classic cut-only assembly are exact cut
+                # times; masonry/collage boards have no timeline cuts.
+                cut_boundaries_s=(
+                    _cut_boundaries_from_durations(
+                        [float(p.get("duration_s") or 0.0) for p in resolved_plans]
+                    )
+                    if classic_assembly_done and not masonry_applied
+                    else None
+                ),
+            )
+            base["subject_matte_path"] = matte_path
+            _burn_agent_text_overlays(overlay_dicts, output_path, matte=provider)
+
+        # Editorial sequence auto-upgrade (D6/D16): when the kill switch is
+        # ON and the layout resolved to "cluster", the variant gets the
+        # typographic sequence. Source precedence:
+        #   1. TRANSCRIPT sync — only when the final mix keeps the montage's
+        #      original speech audible (_sequence_gate) AND the speech is
+        #      eligible: transcribe the PRE-mix montage (assembled_path —
+        #      D11) and sync the typography to the spoken words.
+        #   2. RHYTHM — speech ineligible for ANY reason (no/too-little
+        #      speech, low coverage, ASR failure, song-replaced audio,
+        #      voiceover bed): pace an authored quote across the video
+        #      (rhythm mode works on ANY audio — it needs no audible
+        #      speech).
+        # Any rhythm failure falls through to the static styled cluster
+        # (the `cluster_style` arg below) — never a failed variant. A
+        # linear layout stays static (the sequence is the editorial
+        # auto-upgrade, never a linear-intro upgrade — D6).
+        editorial_enabled = bool(getattr(settings, "editorial_sequence_enabled", True))
+        sequence_result = None
+        if editorial_enabled and allow_sequence:
+            sequence_ok, gate_reason = _sequence_gate(
+                layout=_at_params.get("layout"),
+                track=track,
+                voiceover_gcs_path=voiceover_gcs_path,
+            )
+            record_pipeline_event(
+                "overlay",
+                "sequence_eligibility",
+                {"variant_id": variant_id, "eligible": sequence_ok, "reason": gate_reason},
+            )
+            if sequence_ok:
+                sequence_result = _attempt_sequence_overlays(
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    assembled_path=assembled_path,  # PRE-mix montage audio (D11)
+                    video_duration_s=base_dur,
+                    base_size_px=int(_agent_text_intro_px or 60),
+                    text_color=str(_at_params.get("text_color") or "#FFFFFF"),
+                    scene_timing_overrides=scene_timing_overrides or None,
+                    **_canvas_kwargs(canvas),
+                )
+            if sequence_result is None and gate_reason != "layout_not_cluster":
+                sequence_result = _attempt_rhythm_overlays(
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    video_duration_s=base_dur,
+                    base_size_px=int(_agent_text_intro_px or 60),
+                    text_color=str(_at_params.get("text_color") or "#FFFFFF"),
+                    author_quote_fn=author_quote_fn,
+                    persisted_quote=existing_sequence_quote,
+                    scene_timing_overrides=scene_timing_overrides or None,
+                    **_canvas_kwargs(canvas),
+                )
+
+        # Static intro (cluster or linear) style. Sequence-eligible fallback
+        # keeps PR #508's editorial restyle; explicit opt-outs (layout/text
+        # edits) use the legacy static cluster path so Slice 3a's registry
+        # pairing owns the faces. Resolved ONCE here — `_apply_static_layout`
+        # stamps the matching marker so the read adapter can rebuild it.
+        _sio_cs = resolve_cluster_style(
+            editorial=editorial_enabled and allow_sequence,
+            hero_font=cluster_hero_font_override,
+            body_font=cluster_body_font_override,
+            accent_font=cluster_accent_font_override,
+            hero_size_px=cluster_hero_size_px_override,
+            body_size_px=cluster_body_size_px_override,
+            accent_size_px=cluster_accent_size_px_override,
+        )
+
+        def _static_intro_overlays() -> list[dict]:
+            return build_persistent_intro_overlays(
+                reveal_window_s=reveal_window_s,
+                beats=beats,
+                cluster_style=_sio_cs,
+                **_at_params,
+                **_canvas_kwargs(canvas),
+            )
+
+        def _apply_static_layout(static_overlays: list[dict]) -> None:
+            # EFFECTIVE layout: the engine can decline at build time (word
+            # count, fit) and fall back to linear — a linear pair is exactly
+            # 2 overlays, a cluster is 2 per block. Legacy inference (D19) —
+            # kept ONLY to derive intro_mode/intro_layout for static renders.
+            effective = "cluster" if len(static_overlays) > 2 else "linear"
+            base["intro_layout"] = effective
+            base["intro_mode"] = effective
+            # Snapshot of the style these overlays were built with, so the
+            # read adapter projects the same blocks/faces/sizes/positions.
+            # Stamped for linear too — harmless (the linear path ignores
+            # cluster_style) and it keeps a later cluster edit honest.
+            base["intro_cluster_style"] = cluster_style_marker(_sio_cs)
+            base["transcript"] = None
+            base["scenes"] = None
+            base["sequence_base_size_px"] = None
+            base["sequence_mode"] = None
+            # base["sequence_quote"] is deliberately NOT cleared: a known
+            # quote (persisted carry or just authored) survives a static
+            # fallback so a later eligible render re-times it LLM-free.
+
+        text_burn_t0 = time.monotonic()
+        if sequence_result is not None:
+            overlays, sequence_persist = sequence_result
+            base.update(sequence_persist)
+            base["intro_layout"] = "cluster"
+            base["intro_mode"] = "sequence"
+        else:
+            overlays = _static_intro_overlays()
+            _apply_static_layout(overlays)
+        overlays.extend(
+            _context_sport_burn_dicts(
+                context_label_elements,
+                video_duration_s=base_dur,
+            )
+        )
+        if agent_text is None:
+            base["intro_layout"] = None
+            base["intro_mode"] = None
+        _burn_agent_text_overlays_with_matte(overlays, final_path)
+
+        # D20: copy-through detection ported from the fast-reburn path. A
+        # silent textless output must never ship as a "ready" variant.
+        if overlays and _burn_copy_through(final_path, audio_mixed_path):
+            if base["intro_mode"] == "sequence":
+                # Loud static fallback: re-burn the static styled cluster.
+                record_pipeline_event(
+                    "overlay",
+                    "sequence_fallback",
+                    {
+                        "variant_id": variant_id,
+                        "reason": "burn_copy_through",
+                        "mode": base.get("sequence_mode"),
+                    },
+                )
+                log.warning(
+                    "generative_sequence_burn_copy_through",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                )
+                overlays = _static_intro_overlays()
+                _apply_static_layout(overlays)
+                _burn_agent_text_overlays_with_matte(overlays, final_path)
+            if overlays and _burn_copy_through(final_path, audio_mixed_path):
+                raise RuntimeError(
+                    f"burn_text_overlays_skia copy-through detected on variant "
+                    f"{variant_id}; failing the render instead of shipping a "
+                    "textless video"
+                )
+        _record_render_subphase(
+            job_id,
+            "render_variants",
+            "variant_text_burn",
+            text_burn_t0,
+            detail={"variant_id": variant_id, "mode": base.get("intro_mode")},
+        )
+    else:
+        if text_mode == "lyrics" or lyrics_rendered:
             base_gcs = _variant_storage_key(
                 job_id,
                 f"base_{rank}_{variant_id}.mp4",
@@ -16164,328 +16668,138 @@ def _render_generative_variant(
                 variant_id=variant_id,
                 base_gcs=base_gcs,
             )
+        final_path = audio_mixed_path
 
-            # Burn the agent intro overlay on top of the base.
-            try:
-                base_dur = float(probe_video(audio_mixed_path).duration_s)
-            except Exception:  # noqa: BLE001
-                base_dur = MAX_INTRO_S
-            reveal_window_s = min(base_dur, MAX_INTRO_S) if base_dur > 0 else MAX_INTRO_S
+    if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+        raise RuntimeError(f"variant {variant_id} produced empty output")
+    if resolved_orientation == "landscape":
+        from app.pipeline.validator import validate_output  # noqa: PLC0415
 
-            def _burn_agent_text_overlays(
-                overlay_dicts: list[dict], output_path: str, *, matte=None
-            ) -> None:
-                if masonry_applied:
-                    from app.pipeline.masonry_montage import (  # noqa: PLC0415
-                        burn_masonry_text_overlays,
-                        masonry_board_width_for_preset,
-                    )
-
-                    # Masonry's board-motion burn has no matte-occlusion support
-                    # (Lane B scoped it to the standard burn path only).
-                    overlay_dicts = [
-                        {k: v for k, v in ov.items() if k != "behind_subject"}
-                        for ov in overlay_dicts
-                    ]
-                    burn_masonry_text_overlays(
-                        audio_mixed_path,
-                        overlay_dicts,
-                        output_path,
-                        variant_dir,
-                        duration_s=base_dur,
-                        board_width=masonry_board_width_for_preset(resolved_montage_preset),
-                    )
-                    return
-                burn_text_overlays_skia(
-                    audio_mixed_path,
-                    overlay_dicts,
-                    output_path,
-                    variant_dir,
-                    matte=matte,
-                    **_canvas_kwargs(canvas),
-                )
-
-            def _burn_agent_text_overlays_with_matte(
-                overlay_dicts: list[dict], output_path: str
-            ) -> None:
-                # Text-behind-subject: resolve (or compute-and-cache) the matte for
-                # THIS overlay set, then burn. `base["subject_matte_path"]` doubles
-                # as the resolution cache key — a copy-through retry below re-burns
-                # a fresh overlay set on the SAME base, so the second call reuses
-                # whatever the first call just computed instead of recomputing.
-                provider, matte_path, overlay_dicts = _resolve_subject_matte_for_burn(
-                    video_path=audio_mixed_path,
-                    overlays=overlay_dicts,
-                    tmpdir=variant_dir,
-                    cached_matte_path=base.get("subject_matte_path"),
-                    upload_key_base=base_gcs,
-                    duration_s=base_dur,
-                    job_id=job_id,
-                    variant_id=variant_id,
-                    # Slot joins in a classic cut-only assembly are exact cut
-                    # times; masonry/collage boards have no timeline cuts.
-                    cut_boundaries_s=(
-                        _cut_boundaries_from_durations(
-                            [float(p.get("duration_s") or 0.0) for p in resolved_plans]
-                        )
-                        if classic_assembly_done and not masonry_applied
-                        else None
-                    ),
-                )
-                base["subject_matte_path"] = matte_path
-                _burn_agent_text_overlays(overlay_dicts, output_path, matte=provider)
-
-            # Editorial sequence auto-upgrade (D6/D16): when the kill switch is
-            # ON and the layout resolved to "cluster", the variant gets the
-            # typographic sequence. Source precedence:
-            #   1. TRANSCRIPT sync — only when the final mix keeps the montage's
-            #      original speech audible (_sequence_gate) AND the speech is
-            #      eligible: transcribe the PRE-mix montage (assembled_path —
-            #      D11) and sync the typography to the spoken words.
-            #   2. RHYTHM — speech ineligible for ANY reason (no/too-little
-            #      speech, low coverage, ASR failure, song-replaced audio,
-            #      voiceover bed): pace an authored quote across the video
-            #      (rhythm mode works on ANY audio — it needs no audible
-            #      speech).
-            # Any rhythm failure falls through to the static styled cluster
-            # (the `cluster_style` arg below) — never a failed variant. A
-            # linear layout stays static (the sequence is the editorial
-            # auto-upgrade, never a linear-intro upgrade — D6).
-            editorial_enabled = bool(getattr(settings, "editorial_sequence_enabled", True))
-            sequence_result = None
-            if editorial_enabled and allow_sequence:
-                sequence_ok, gate_reason = _sequence_gate(
-                    layout=_at_params.get("layout"),
-                    track=track,
-                    voiceover_gcs_path=voiceover_gcs_path,
-                )
-                record_pipeline_event(
-                    "overlay",
-                    "sequence_eligibility",
-                    {"variant_id": variant_id, "eligible": sequence_ok, "reason": gate_reason},
-                )
-                if sequence_ok:
-                    sequence_result = _attempt_sequence_overlays(
-                        job_id=job_id,
-                        variant_id=variant_id,
-                        assembled_path=assembled_path,  # PRE-mix montage audio (D11)
-                        video_duration_s=base_dur,
-                        base_size_px=int(_agent_text_intro_px or 60),
-                        text_color=str(_at_params.get("text_color") or "#FFFFFF"),
-                        scene_timing_overrides=scene_timing_overrides or None,
-                        **_canvas_kwargs(canvas),
-                    )
-                if sequence_result is None and gate_reason != "layout_not_cluster":
-                    sequence_result = _attempt_rhythm_overlays(
-                        job_id=job_id,
-                        variant_id=variant_id,
-                        video_duration_s=base_dur,
-                        base_size_px=int(_agent_text_intro_px or 60),
-                        text_color=str(_at_params.get("text_color") or "#FFFFFF"),
-                        author_quote_fn=author_quote_fn,
-                        persisted_quote=existing_sequence_quote,
-                        scene_timing_overrides=scene_timing_overrides or None,
-                        **_canvas_kwargs(canvas),
-                    )
-
-            # Static intro (cluster or linear) style. Sequence-eligible fallback
-            # keeps PR #508's editorial restyle; explicit opt-outs (layout/text
-            # edits) use the legacy static cluster path so Slice 3a's registry
-            # pairing owns the faces. Resolved ONCE here — `_apply_static_layout`
-            # stamps the matching marker so the read adapter can rebuild it.
-            _sio_cs = resolve_cluster_style(
-                editorial=editorial_enabled and allow_sequence,
-                hero_font=cluster_hero_font_override,
-                body_font=cluster_body_font_override,
-                accent_font=cluster_accent_font_override,
-                hero_size_px=cluster_hero_size_px_override,
-                body_size_px=cluster_body_size_px_override,
-                accent_size_px=cluster_accent_size_px_override,
-            )
-
-            def _static_intro_overlays() -> list[dict]:
-                return build_persistent_intro_overlays(
-                    reveal_window_s=reveal_window_s,
-                    beats=beats,
-                    cluster_style=_sio_cs,
-                    **_at_params,
-                    **_canvas_kwargs(canvas),
-                )
-
-            def _apply_static_layout(static_overlays: list[dict]) -> None:
-                # EFFECTIVE layout: the engine can decline at build time (word
-                # count, fit) and fall back to linear — a linear pair is exactly
-                # 2 overlays, a cluster is 2 per block. Legacy inference (D19) —
-                # kept ONLY to derive intro_mode/intro_layout for static renders.
-                effective = "cluster" if len(static_overlays) > 2 else "linear"
-                base["intro_layout"] = effective
-                base["intro_mode"] = effective
-                # Snapshot of the style these overlays were built with, so the
-                # read adapter projects the same blocks/faces/sizes/positions.
-                # Stamped for linear too — harmless (the linear path ignores
-                # cluster_style) and it keeps a later cluster edit honest.
-                base["intro_cluster_style"] = cluster_style_marker(_sio_cs)
-                base["transcript"] = None
-                base["scenes"] = None
-                base["sequence_base_size_px"] = None
-                base["sequence_mode"] = None
-                # base["sequence_quote"] is deliberately NOT cleared: a known
-                # quote (persisted carry or just authored) survives a static
-                # fallback so a later eligible render re-times it LLM-free.
-
-            text_burn_t0 = time.monotonic()
-            if sequence_result is not None:
-                overlays, sequence_persist = sequence_result
-                base.update(sequence_persist)
-                base["intro_layout"] = "cluster"
-                base["intro_mode"] = "sequence"
-            else:
-                overlays = _static_intro_overlays()
-                _apply_static_layout(overlays)
-            overlays.extend(
-                _context_sport_burn_dicts(
-                    context_label_elements,
-                    video_duration_s=base_dur,
-                )
-            )
-            if agent_text is None:
-                base["intro_layout"] = None
-                base["intro_mode"] = None
-            _burn_agent_text_overlays_with_matte(overlays, final_path)
-
-            # D20: copy-through detection ported from the fast-reburn path. A
-            # silent textless output must never ship as a "ready" variant.
-            if overlays and _burn_copy_through(final_path, audio_mixed_path):
-                if base["intro_mode"] == "sequence":
-                    # Loud static fallback: re-burn the static styled cluster.
-                    record_pipeline_event(
-                        "overlay",
-                        "sequence_fallback",
-                        {
-                            "variant_id": variant_id,
-                            "reason": "burn_copy_through",
-                            "mode": base.get("sequence_mode"),
-                        },
-                    )
-                    log.warning(
-                        "generative_sequence_burn_copy_through",
-                        job_id=job_id,
-                        variant_id=variant_id,
-                    )
-                    overlays = _static_intro_overlays()
-                    _apply_static_layout(overlays)
-                    _burn_agent_text_overlays_with_matte(overlays, final_path)
-                if overlays and _burn_copy_through(final_path, audio_mixed_path):
-                    raise RuntimeError(
-                        f"burn_text_overlays_skia copy-through detected on variant "
-                        f"{variant_id}; failing the render instead of shipping a "
-                        "textless video"
-                    )
-            _record_render_subphase(
-                job_id,
-                "render_variants",
-                "variant_text_burn",
-                text_burn_t0,
-                detail={"variant_id": variant_id, "mode": base.get("intro_mode")},
-            )
-        else:
-            if text_mode == "lyrics" or lyrics_rendered:
-                base_gcs = _variant_storage_key(
-                    job_id,
-                    f"base_{rank}_{variant_id}.mp4",
-                    spec.get("storage_generation"),
-                )
-                base_upload_t0 = time.monotonic()
-                base_url_unused = upload_public_read(audio_mixed_path, base_gcs)  # noqa: F841
-                _record_render_subphase(
-                    job_id,
-                    "render_variants",
-                    "variant_base_upload",
-                    base_upload_t0,
-                    detail={"variant_id": variant_id},
-                )
-                base["base_video_path"] = base_gcs
-                log.info(
-                    "generative_base_uploaded",
-                    job_id=job_id,
-                    variant_id=variant_id,
-                    base_gcs=base_gcs,
-                )
-            final_path = audio_mixed_path
-
-        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-            raise RuntimeError(f"variant {variant_id} produced empty output")
-        if resolved_orientation == "landscape":
-            from app.pipeline.validator import validate_output  # noqa: PLC0415
-
-            validation = validate_output(
-                final_path,
-                expected_resolution=(canvas.width, canvas.height),
-                # The validator's default 45–59s contract belongs to the
-                # template pipeline. Generative montages use the creator-agent
-                # ceiling instead, while still rejecting empty/truncated output.
-                expected_duration_range=(0.1, MAX_PROPOSAL_DURATION_S),
-            )
-            if not validation.passed:
-                raise RuntimeError("; ".join(validation.errors))
-
-        output_gcs = _variant_storage_key(
-            job_id,
-            f"variant_{rank}_{variant_id}.mp4",
-            spec.get("storage_generation"),
+        validation = validate_output(
+            final_path,
+            expected_resolution=(canvas.width, canvas.height),
+            # The validator's default 45–59s contract belongs to the
+            # template pipeline. Generative montages use the creator-agent
+            # ceiling instead, while still rejecting empty/truncated output.
+            expected_duration_range=(0.1, MAX_PROPOSAL_DURATION_S),
         )
-        output_upload_t0 = time.monotonic()
-        output_url = upload_public_read(final_path, output_gcs)
-        _record_render_subphase(
-            job_id,
-            "render_variants",
-            "variant_output_upload",
-            output_upload_t0,
-            detail={"variant_id": variant_id},
+        if not validation.passed:
+            raise RuntimeError("; ".join(validation.errors))
+
+    output_gcs = _variant_storage_key(
+        job_id,
+        f"variant_{rank}_{variant_id}.mp4",
+        spec.get("storage_generation"),
+    )
+    output_upload_t0 = time.monotonic()
+    output_url = upload_public_read(final_path, output_gcs)
+    _record_render_subphase(
+        job_id,
+        "render_variants",
+        "variant_output_upload",
+        output_upload_t0,
+        detail={"variant_id": variant_id},
+    )
+    log.info("generative_variant_uploaded", job_id=job_id, variant_id=variant_id)
+    _record_render_subphase(
+        job_id,
+        "render_variants",
+        "variant_total",
+        variant_t0,
+        detail={"variant_id": variant_id, "ok": True},
+    )
+    return {
+        **base,
+        "ok": True,
+        "render_status": "ready",
+        "video_path": output_gcs,
+        "output_url": output_url,
+        **(
+            {"duration_s": _rendered_duration_s(final_path)}
+            if settings.visual_blocks_enabled
+            else {}
+        ),
+    }
+
+
+def _finish_generative_variant_failure(
+    base: dict[str, Any],
+    exc: Exception,
+    *,
+    job_id: str,
+    variant_id: str,
+    variant_t0: float,
+) -> dict[str, Any]:
+    """Shared failure-record builder for `_render_generative_variant` -- the
+    pre-split function's single `except Exception` tail, now reused for both a
+    decide-phase and a process-phase failure (KRI-114 P1-1 split).
+    """
+    err = str(exc)[:MAX_ERROR_DETAIL_LEN]
+    log.error(
+        "generative_variant_failed",
+        job_id=job_id,
+        variant_id=variant_id,
+        error=err,
+        exc_info=True,
+    )
+    _record_render_subphase(
+        job_id,
+        "render_variants",
+        "variant_total",
+        variant_t0,
+        detail={"variant_id": variant_id, "ok": False, "error": err},
+    )
+    return {
+        **base,
+        "ok": False,
+        "render_status": "failed",
+        "error": err,
+        "error_class": _classify_error(exc),
+    }
+
+
+def _render_generative_variant(**kwargs: Any) -> dict[str, Any]:
+    """Render one variant. Never raises -- failures become a failure record.
+
+    Composed from `_decide_generative_variant` + `_process_generative_variant`
+    (KRI-114 P1-1 split); see both for the decision/processing docs this
+    docstring used to carry in full. This wrapper exists ONLY to preserve the
+    pre-split exception boundary exactly: the day_vlog renderer-version-
+    mismatch / flag-disabled / insufficient-media pre-checks (the only raises
+    that ran before the original function's `variant_t0 = time.monotonic();
+    try:`) still propagate raw here -- see
+    `test_day_vlog_rerender_rejects_missing_or_mixed_renderer_version`. Every
+    other exception, whether it happened while deciding or while processing,
+    is caught and converted into the historical `{**base, "ok": False, ...}`
+    failure record via `_finish_generative_variant_failure`.
+
+    Accepts the exact kwargs `_decide_generative_variant`/
+    `_process_generative_variant` do; forwarded verbatim to both.
+    """
+    job_id = kwargs["job_id"]
+    variant_id = kwargs["spec"]["variant_id"]
+    try:
+        decision = _decide_generative_variant(**kwargs)
+    except Exception as exc:  # noqa: BLE001 - see docstring: this is the legacy contract
+        partial_base = getattr(exc, "_nova_generative_decision_base", None)
+        if partial_base is None:
+            # One of the true pre-`try` policy pre-checks -- propagate raw,
+            # matching the pre-split function's behavior exactly.
+            raise
+        variant_t0 = exc._nova_generative_decision_variant_t0  # noqa: SLF001
+        return _finish_generative_variant_failure(
+            partial_base, exc, job_id=job_id, variant_id=variant_id, variant_t0=variant_t0
         )
-        log.info("generative_variant_uploaded", job_id=job_id, variant_id=variant_id)
-        _record_render_subphase(
-            job_id,
-            "render_variants",
-            "variant_total",
-            variant_t0,
-            detail={"variant_id": variant_id, "ok": True},
-        )
-        return {
-            **base,
-            "ok": True,
-            "render_status": "ready",
-            "video_path": output_gcs,
-            "output_url": output_url,
-            **(
-                {"duration_s": _rendered_duration_s(final_path)}
-                if settings.visual_blocks_enabled
-                else {}
-            ),
-        }
-    except Exception as exc:
-        err = str(exc)[:MAX_ERROR_DETAIL_LEN]
-        log.error(
-            "generative_variant_failed",
+    try:
+        return _process_generative_variant(decision, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - see docstring: this is the legacy contract
+        return _finish_generative_variant_failure(
+            decision.base,
+            exc,
             job_id=job_id,
             variant_id=variant_id,
-            error=err,
-            exc_info=True,
+            variant_t0=decision.variant_t0,
         )
-        _record_render_subphase(
-            job_id,
-            "render_variants",
-            "variant_total",
-            variant_t0,
-            detail={"variant_id": variant_id, "ok": False, "error": err},
-        )
-        return {
-            **base,
-            "ok": False,
-            "render_status": "failed",
-            "error": err,
-            "error_class": _classify_error(exc),
-        }
 
 
 def _render_talking_head_variant(
