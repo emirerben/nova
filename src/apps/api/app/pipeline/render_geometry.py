@@ -723,6 +723,135 @@ def choose_caption_y_frac(
     }
 
 
+def _translate_centered_box_to_y(box: NormalizedBox, y_frac: float) -> NormalizedBox:
+    """Move a block box so its CENTER sits at ``y_frac``; size unchanged.
+
+    Authored TextElements (guided-story titles, chapter lines) render with
+    ``vertical_anchor="center"`` (``generative_overlays.build_overlays_from_text_elements``
+    with ``independent_box_alignment=True``) — unlike captions, whose ``y_frac``
+    is the block's BOTTOM edge (``_translate_box_to_y``). Translating the wrong
+    way would certify a candidate "clear" here while the renderer actually burns
+    it somewhere else.
+    """
+
+    half = box.height / 2.0
+    return NormalizedBox(box.left, max(0.0, y_frac - half), box.right, min(1.0, y_frac + half))
+
+
+def choose_guided_text_y_frac(
+    face_regions: list[ProtectedRegion],
+    face_receipt: dict[str, Any],
+    probe_box: NormalizedBox,
+    protected_boxes: list[NormalizedBox],
+    candidates: tuple[float, ...],
+) -> tuple[float, dict[str, Any]]:
+    """Pick ONE static, CENTER-anchored y_frac for a guided-story text block
+    that keeps it off the dominant face in its time window (KRI-116).
+
+    Mirrors ``choose_caption_y_frac``'s fail-open branches and receipt shape
+    (same ``status`` values, same ``face_sampler`` embed) so both are legible
+    the same way in ``/admin/jobs/<id>/debug``, but differs in two respects
+    guided-story text needs:
+
+    - Boxes translate around their CENTER (``_translate_centered_box_to_y``),
+      not their bottom edge, matching how these elements actually render.
+    - There is no caption-style retreat-to-0.80 on a sampler timeout/error —
+      a guided-story title legitimately belongs near the top of frame, so
+      "could not look" fails open to the AUTHORED default (``candidates[0]``)
+      rather than a caption-shaped safe band. KRI-116 asks for exactly this:
+      "fail open to today's position if face sampling times out or errors."
+    """
+
+    ladder = tuple(candidates) or (0.5,)
+    preset_y = ladder[0]
+
+    def _boxes_clear_chrome(boxes: Sequence[NormalizedBox]) -> bool:
+        return all(
+            box.top >= _CAPTION_TOP_SAFE_FRAC and box.bottom <= _CAPTION_BOTTOM_SAFE_FRAC
+            for box in boxes
+        )
+
+    def _preset(reason: str, **extra: Any) -> tuple[float, dict[str, Any]]:
+        receipt: dict[str, Any] = {
+            "status": "preset",
+            "reason": reason,
+            "chosen_y_frac": preset_y,
+            "preset_y_frac": preset_y,
+            "candidates": list(ladder),
+            "face_sampler": dict(face_receipt),
+        }
+        receipt.update(extra)
+        return preset_y, receipt
+
+    if face_receipt.get("timed_out") and not face_receipt.get("partial"):
+        return _preset("sampler_timeout")
+    if face_receipt.get("worker_error"):
+        return _preset("sampler_error")
+    raw_decoded = face_receipt.get("decoded")
+    decoded = (
+        int(raw_decoded) if raw_decoded is not None else int(face_receipt.get("attempted") or 0)
+    )
+    if decoded < _MIN_USABLE_ANCHORS:
+        return _preset("insufficient_anchors", decoded=decoded)
+    if not face_regions:
+        return _preset("no_face", decoded=decoded)
+    cluster = _dominant_face_cluster([region.box for region in face_regions])
+    presence = len(cluster) / decoded
+    if presence < _DOMINANT_FACE_MIN_PRESENCE:
+        return _preset(
+            "no_face",
+            decoded=decoded,
+            face_presence=round(presence, 3),
+            detections=len(face_regions),
+        )
+
+    band = _union_box(cluster)
+    protected = [band, *protected_boxes]
+
+    evaluated: list[dict[str, Any]] = []
+    for index, y_frac in enumerate(ladder):
+        translated = _translate_centered_box_to_y(probe_box, y_frac)
+        coverage = round(max((translated.coverage_by(area) for area in protected), default=0.0), 5)
+        clears_chrome = _boxes_clear_chrome([translated])
+        evaluated.append({"y_frac": y_frac, "coverage": coverage, "clears_chrome": clears_chrome})
+        if coverage <= _FACE_OVERLAP_MAX_COVERAGE and clears_chrome:
+            return y_frac, {
+                "status": "well_framed" if index == 0 else "moved",
+                "chosen_y_frac": y_frac,
+                "preset_y_frac": preset_y,
+                "candidate_index": index,
+                "candidates": list(ladder),
+                "coverage": coverage,
+                "face_band": band.as_dict(),
+                "face_presence": round(presence, 3),
+                "decoded": decoded,
+                "evaluated": evaluated,
+                "face_sampler": dict(face_receipt),
+            }
+
+    best = min(
+        range(len(ladder)),
+        key=lambda i: (
+            0 if evaluated[i]["clears_chrome"] else 1,
+            evaluated[i]["coverage"],
+            i,
+        ),
+    )
+    return ladder[best], {
+        "status": "best_effort",
+        "chosen_y_frac": ladder[best],
+        "preset_y_frac": preset_y,
+        "candidate_index": best,
+        "candidates": list(ladder),
+        "coverage": evaluated[best]["coverage"],
+        "face_band": band.as_dict(),
+        "face_presence": round(presence, 3),
+        "decoded": decoded,
+        "evaluated": evaluated,
+        "face_sampler": dict(face_receipt),
+    }
+
+
 def media_dimensions(path: str) -> tuple[int, int]:
     """Return real pixel dimensions for image or video assets, square on failure."""
 

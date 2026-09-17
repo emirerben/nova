@@ -18,3 +18,10 @@ by the dedicated renderer/parity suites rather than this settled-frame fixture.
 `high_visibility_shadow.json` explicitly selects `shadow_style="high_visibility"`
 and pins the opt-in dual-shadow profile in both white and yellow at every reference
 calibration size (48/60/88/128px).
+
+`guided_title_face_avoid_band.json` (KRI-116) is the guided-story title burn dict
+(`vertical_anchor="center"`, 104px Fraunces) parked at `position_y_frac=0.34` — one
+of the candidate bands `choose_guided_text_y_frac` moves a title to when the
+authored default (`y_frac=0.16`) collides with a face. Confirms the move itself
+never clips text; face-avoidance placement logic is unit-tested separately in
+`tests/pipeline/test_render_geometry.py` and `tests/pipeline/test_guided_story.py`.
