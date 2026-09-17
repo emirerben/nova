@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.45.0] - 2026-09-17
+
+### Changed
+- feat(ios): device-health telemetry + physical-device procedure (KRI-97) (#1054) <!-- release-pr: 1054 -->
+
 ## [0.76.44.0] - 2026-09-17
 
 ### Changed
