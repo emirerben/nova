@@ -2196,6 +2196,33 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
     }
 
 
+def test_specialist_brief_keeps_long_request_and_bounds_transcript_turns(monkeypatch) -> None:
+    # A chat request may run to CREATOR_REQUEST_MAX_CHARS and a rationale to
+    # 2,000 chars, but a transcript turn holds 1,000. Seeding used to raise
+    # string_too_long, so "Create this video" returned a 500.
+    creator_request = "Chapter 1 · Messi in a Barça shirt · 3 seconds · Messi is only #2. " * 19
+    manifest = _manifest(monkeypatch)
+    edit_plan = compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            direction="guided_story",
+            edit_format="montage",
+            render_program="guided",
+            selected_media_ids=["clip-1"],
+            rationale="r" * 2000,
+        ),
+    )
+    item = SimpleNamespace(edit_proposal=None)
+
+    _seed_guided_specialist_brief(item, edit_plan, summary="", creator_request=creator_request)
+
+    assert len(creator_request) > 1000
+    assert item.edit_proposal["brief"]["creator_request"] == creator_request
+    user_turn, agent_turn = item.edit_proposal["conversation"]
+    assert user_turn["content"] == creator_request.strip()[:1000]
+    assert agent_turn["content"] == "r" * 1000
+
+
 def test_specialist_brief_normalizes_pool_asset_audio_and_cadence_ids(monkeypatch) -> None:
     from app.services import creator_capabilities
 

@@ -12,6 +12,7 @@ from app.config import settings
 from app.models import PlanItem
 from app.schemas.edit_proposal import (
     EDIT_CONVERSATION_MAX_TURNS,
+    EDIT_CONVERSATION_TURN_MAX_CHARS,
     MAX_PROPOSAL_DURATION_S,
     ApprovalMode,
     ApprovedProposalSnapshot,
@@ -221,13 +222,20 @@ def save_edit_conversation_turn(
     # direction. Analysis/drafting states have already been rejected above, so
     # every remaining proposal state is a valid continuation of the same chat.
     prior_turns = list(current.conversation) if current is not None else []
+    # Turns are a bounded transcript, not the plan input: a confirmed Main
+    # Creator request (up to CREATOR_REQUEST_MAX_CHARS) or strategy rationale
+    # can outgrow a turn, and the brief keeps the full request for the planner.
     conversation = [
         *prior_turns,
-        EditConversationTurn(role="user", phase=conversation_phase, content=user_message.strip()),
+        EditConversationTurn(
+            role="user",
+            phase=conversation_phase,
+            content=user_message.strip()[:EDIT_CONVERSATION_TURN_MAX_CHARS],
+        ),
         EditConversationTurn(
             role="agent",
             phase=conversation_phase,
-            content=agent_reply.strip(),
+            content=agent_reply.strip()[:EDIT_CONVERSATION_TURN_MAX_CHARS],
             suggestions=suggestions[:3],
         ),
     ][-EDIT_CONVERSATION_MAX_TURNS:]
