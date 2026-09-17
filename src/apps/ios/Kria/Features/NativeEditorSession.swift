@@ -1758,6 +1758,16 @@ struct NativeEditorTemporaryVideo {
     }
 
     #if DEBUG
+    /// The recipe behind the composition the canvas is showing right now.
+    /// `nil` whenever the player is on anything else — the finished cloud
+    /// render, a stale composition — so a test can assert an edit reached
+    /// what the user actually sees, not merely some off-screen object.
+    var displayedSourcePreviewRecipe: KriaMediaEngine.EditRecipe? {
+        guard sourcePreviewState == .ready, let sourcePreview,
+              player?.currentItem === sourcePreview.preview.playerItem else { return nil }
+        return sourcePreview.exportSnapshot().recipe
+    }
+
     func auditPreviewWindow() async -> [[String: String]] {
         var rows: [[String: String]] = []
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]

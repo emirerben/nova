@@ -1776,6 +1776,99 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    // KRI-110: a variant that never carries the narrated-only
+    // `captions_enabled` field (guided_story never does) must not load as
+    // captions-off. The backend treats missing as enabled; deriving `false`
+    // here manufactured an explicit `caption_meta.enabled == false` that the
+    // render compiler honors by hiding every caption in the on-device preview.
+    func testVariantWithoutCaptionsEnabledFieldLoadsAsCaptionsOn() async {
+        let threadID = UUID()
+        let captionElement: JSONValue = .object([
+            "id": .string("narration-caption-1"), "text": .string("Spoken words"),
+            "start_s": .number(0), "end_s": .number(2), "role": .string("generative_sequence"),
+            "source_params": .object(["source": .string("caption_cue")]),
+        ])
+        for captionsEnabled: JSONValue? in [nil, .null] {
+            var variant: [String: JSONValue] = [
+                "resolved_archetype": .string("guided_story"),
+                "editor_capabilities": .object(["text_elements": .bool(true)]),
+                "text_elements": .array([captionElement]),
+            ]
+            if let captionsEnabled { variant["captions_enabled"] = captionsEnabled }
+            let fake = EditorCommitSpy(
+                draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+                authoritativeVariant: variant
+            )
+            let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+            await session.load(api: fake, threadID: threadID)
+            XCTAssertNotEqual(session.document.captionMeta["enabled"], .bool(false), "captions_enabled=\(String(describing: captionsEnabled)) must not manufacture an explicit captions-off")
+            XCTAssertTrue(session.draft.captions.enabled)
+            XCTAssertFalse(session.hasUnsavedChanges)
+        }
+        // An explicit server-side off still loads as off.
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: ["resolved_archetype": .string("subtitled"), "base_video_path": .string("base.mp4"), "captions_enabled": .bool(false)]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: true, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertEqual(session.document.captionMeta["enabled"], .bool(false))
+        XCTAssertFalse(session.draft.captions.enabled)
+    }
+
+    // KRI-110: editing a guided-story caption's text must reach the video
+    // the canvas is actually showing, through the same live text update any
+    // ordinary text edit takes. Uses the exact element shape guided_story.py
+    // persists (word_timings, static effect, custom position, pinned
+    // source_params).
+    func testGuidedStoryCaptionTextEditReachesTheDisplayedSourcePreview() async throws {
+        let threadID = UUID()
+        let captionElement: JSONValue = .object([
+            "id": .string("narration-caption-1"), "text": .string("Spoken words"),
+            "start_s": .number(0), "end_s": .number(1.5), "role": .string("generative_sequence"),
+            "position": .string("custom"), "x_frac": .number(0.5), "y_frac": .number(0.82),
+            "font_family": .string("Inter-Bold"), "size_px": .number(58), "color": .string("#FFFFFF"),
+            "highlight_color": .string("#FFFFFF"), "stroke_width": .number(6), "shadow_enabled": .bool(true),
+            "effect": .string("static"), "alignment": .string("center"), "max_width_frac": .number(0.84),
+            "word_timings": .array([
+                .object(["text": .string("Spoken"), "start_s": .number(0), "end_s": .number(0.7)]),
+                .object(["text": .string("words"), "start_s": .number(0.7), "end_s": .number(1.5)]),
+            ]),
+            "source_params": .object(["source": .string("caption_cue"), "key": .string("0"), "identity": .string("pinned-narration-caption-0")]),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "resolved_archetype": .string("guided_story"),
+                "render_generation_id": .string("g1"),
+                "editor_capabilities": .object(["text_elements": .bool(true), "caption_editor_style": .bool(true)]),
+                "text_elements": .array([captionElement]),
+                "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptions)
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertTrue(session.hasSourcePreview)
+        let before = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        XCTAssertEqual(before.textLayers.map { $0.runs.map(\.text).joined(separator: " ") }, ["Spoken words"])
+
+        session.beginTransaction()
+        session.updateCaptionCue(id: "narration-caption-1", text: "Edited words")
+        session.endTransaction()
+        XCTAssertEqual(session.document.captionUnits.first?.text, "Edited words")
+
+        for _ in 0..<200 {
+            if session.displayedSourcePreviewRecipe?.textLayers.first?.runs.map(\.text).joined(separator: " ") == "Edited words" { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(session.sourcePreviewState, .ready, "A caption text edit must never fail the source preview over to the stale finished render")
+        let after = try XCTUnwrap(session.displayedSourcePreviewRecipe, "The canvas must still be showing the editable source composition after a caption edit")
+        XCTAssertEqual(after.textLayers.map { $0.runs.map(\.text).joined(separator: " ") }, ["Edited words"])
+    }
+
     func testTypedTextMutationsKeepWireKeysAndOneGestureUndo() {
         let textID = UUID()
         let draft = EditorDraft(projectID: UUID(), clips: [], text: [TextLayer(id: textID, content: "old", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0)
