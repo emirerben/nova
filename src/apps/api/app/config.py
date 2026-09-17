@@ -378,6 +378,16 @@ class Settings(BaseSettings):
     # do anything, but is independent of the emphasis/layout flags.
     smart_caption_face_placement_enabled: bool = False
 
+    # GUIDED-STORY FACE PLACEMENT (KRI-116): same face-sampling primitives as
+    # smart_caption_face_placement_enabled above, applied to the guided-story
+    # opening title / chapter lines / closing card instead of captions. Resolved
+    # once at render time against the composited base video and persisted onto
+    # each TextElement's y_frac, so every renderer (Skia burn, phone/native-editor
+    # recipe) reads the same chosen position — see
+    # render_geometry.choose_guided_text_y_frac. Default OFF ⇒ byte-identical to
+    # today's fixed y_frac placement.
+    guided_text_face_placement_enabled: bool = False
+
     # Kill switch for authored TextElements on subtitled variants. When False,
     # subtitled remains captions-only and the text-element routes/capabilities
     # reject it. When True, user-authored text is burned onto the caption-free

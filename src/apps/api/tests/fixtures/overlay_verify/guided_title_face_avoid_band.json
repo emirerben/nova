@@ -1,0 +1,20 @@
+{
+  "overlays": [
+    {
+      "text": "The 5 legends of Barcelona",
+      "effect": "fade-in",
+      "text_size_px": 104,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.34,
+      "vertical_anchor": "center",
+      "text_color": "#FFF8F0",
+      "text_anchor": "center",
+      "font_family": "Fraunces",
+      "max_width_frac": 0.8,
+      "letter_spacing": -0.025,
+      "line_spacing": 1.0,
+      "start_s": 0.0,
+      "end_s": 3.2
+    }
+  ]
+}

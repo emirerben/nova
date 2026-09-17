@@ -4167,6 +4167,177 @@ def _apply_guided_caption_meta(
     return revised, hidden
 
 
+# Guided-story text ids eligible for face-aware repositioning (KRI-116): the
+# opening title, chapter/beat lines, and the closing card — the confirmed-copy
+# elements that hold a fixed position across the whole shot. Narration
+# captions and context/narration labels already move per-cue and are excluded.
+_GUIDED_FACE_PLACEMENT_FIXED_IDS = frozenset({"guided-title", "guided-closing-title"})
+_GUIDED_FACE_PLACEMENT_PREFIX = "guided-thought-"
+_GUIDED_FACE_PLACEMENT_ANCHORS = 6
+_GUIDED_FACE_PLACEMENT_TIMEOUT_BASE_S = 2.5
+_GUIDED_FACE_PLACEMENT_TIMEOUT_PER_ANCHOR_S = 0.35
+
+
+def _is_guided_face_placement_eligible(element_id: str) -> bool:
+    return element_id in _GUIDED_FACE_PLACEMENT_FIXED_IDS or element_id.startswith(
+        _GUIDED_FACE_PLACEMENT_PREFIX
+    )
+
+
+def _guided_text_y_candidates(default_y: float) -> tuple[float, ...]:
+    """Ladder of bands to try when the authored default collides with a face.
+
+    ``default_y`` is always tried first (unmoved is the common case). The rest
+    spans top / upper-third / center / lower-third / bottom so a title
+    (defaults near the top) and a chapter line (defaults near the bottom) both
+    have somewhere else to go; ``choose_guided_text_y_frac`` still rejects any
+    band that fails the TikTok/Reels chrome safe-area check.
+    """
+
+    ladder = [default_y, 0.16, 0.34, 0.5, 0.66, 0.8]
+    kept: list[float] = []
+    for value in ladder:
+        if all(abs(value - existing) > 0.01 for existing in kept):
+            kept.append(value)
+    return tuple(kept)
+
+
+def _evenly_spaced_window_anchors(start_s: float, end_s: float, n: int) -> list[float]:
+    """``n`` sample times centered in each 1/n bucket of ``[start_s, end_s]``."""
+
+    span = end_s - start_s
+    if span <= 0 or n <= 0:
+        return [round(start_s, 3)]
+    return [round(start_s + span * (index + 0.5) / n, 3) for index in range(n)]
+
+
+def _apply_guided_text_face_placement(
+    base_path: str,
+    text_element_rows: list[dict[str, Any]],
+    *,
+    job_id: str,
+    canvas: Canvas,
+) -> list[dict[str, Any]]:
+    """Move the guided-story title/chapter/closing text off any face in its shot.
+
+    Reuses the same face-sampling + candidate-ladder primitives Smart Captions
+    already uses (``sample_face_regions`` / ``choose_guided_text_y_frac`` in
+    ``render_geometry.py``), resolved once here at compile time so every
+    renderer (Skia, phone/native-editor recipe) burns the same stored
+    ``y_frac`` — see KRI-116's renderer-parity requirement. Fail-open by
+    design: any sampling/measurement error leaves that element's authored
+    position untouched, only logging a trace event so the collision (or the
+    failure to check) stays visible in ``/admin/jobs/<id>/debug``.
+    """
+
+    from app.pipeline.generative_overlays import (  # noqa: PLC0415
+        build_overlays_from_text_elements,
+    )
+    from app.pipeline.render_geometry import (  # noqa: PLC0415
+        NormalizedBox,
+        choose_guided_text_y_frac,
+        sample_face_regions,
+    )
+    from app.pipeline.text_overlay_skia import measure_text_overlay_box  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    eligible = [
+        (index, row)
+        for index, row in enumerate(text_element_rows)
+        if row.get("position") == "custom"
+        and row.get("y_frac") is not None
+        and _is_guided_face_placement_eligible(str(row.get("id", "")))
+    ]
+    if not eligible:
+        return text_element_rows
+
+    try:
+        duration_s = float(probe_video(base_path).duration_s)
+    except Exception as exc:  # noqa: BLE001 - fail open, nothing to sample against
+        log.warning("guided_text_face_placement_probe_failed", job_id=job_id, error=str(exc))
+        return text_element_rows
+    if duration_s <= 0:
+        return text_element_rows
+
+    updated = list(text_element_rows)
+    for index, row in eligible:
+        element_id = str(row.get("id"))
+        default_y = float(row["y_frac"])
+        start_s = max(0.0, min(duration_s, float(row.get("start_s", 0.0))))
+        end_s = max(start_s + _FRAME_S, min(duration_s, float(row.get("end_s", duration_s))))
+        anchors = _evenly_spaced_window_anchors(start_s, end_s, _GUIDED_FACE_PLACEMENT_ANCHORS)
+        try:
+            face_regions, face_receipt = sample_face_regions(
+                base_path,
+                anchors,
+                max_samples=max(len(anchors), 1),
+                timeout_s=(
+                    _GUIDED_FACE_PLACEMENT_TIMEOUT_BASE_S
+                    + _GUIDED_FACE_PLACEMENT_TIMEOUT_PER_ANCHOR_S * len(anchors)
+                ),
+                count_decoded=True,
+            )
+            [overlay] = build_overlays_from_text_elements(
+                [TextElement.model_validate(row)],
+                video_duration_s=duration_s,
+                independent_box_alignment=True,
+            )
+            measured = measure_text_overlay_box(overlay, render_canvas=canvas)
+            probe_box = NormalizedBox(
+                measured["left"], measured["top"], measured["right"], measured["bottom"]
+            )
+            chosen_y, receipt = choose_guided_text_y_frac(
+                face_regions,
+                face_receipt,
+                probe_box,
+                [],
+                _guided_text_y_candidates(default_y),
+            )
+        except Exception as exc:  # noqa: BLE001 - fail open to the authored default
+            log.warning(
+                "guided_text_face_placement_failed",
+                job_id=job_id,
+                element_id=element_id,
+                error=str(exc),
+            )
+            try:
+                record_pipeline_event(
+                    "overlay",
+                    "guided_text_placement_error",
+                    {
+                        "element_id": element_id,
+                        "default_y_frac": default_y,
+                        "error": str(exc),
+                    },
+                )
+            except Exception as trace_exc:  # noqa: BLE001 - instrumentation must never break render
+                log.warning("guided_text_placement_event_emit_failed", error=str(trace_exc))
+            continue
+
+        try:
+            record_pipeline_event(
+                "overlay",
+                "guided_text_placement_chosen",
+                {
+                    "element_id": element_id,
+                    "default_y_frac": default_y,
+                    "chosen_y_frac": chosen_y,
+                    "status": receipt.get("status"),
+                    "reason": receipt.get("reason"),
+                    "coverage": receipt.get("coverage"),
+                    "face_presence": receipt.get("face_presence"),
+                    "decoded": receipt.get("decoded"),
+                },
+            )
+        except Exception as trace_exc:  # noqa: BLE001 - instrumentation must never break render
+            log.warning("guided_text_placement_event_emit_failed", error=str(trace_exc))
+        if chosen_y != default_y:
+            new_row = dict(row)
+            new_row["y_frac"] = chosen_y
+            updated[index] = new_row
+    return updated
+
+
 def render_execution_plan(
     plan: dict[str, Any],
     *,
@@ -4334,6 +4505,11 @@ def render_execution_plan(
             clean_base,
             os.path.join(tmpdir, "guided_story_base_duration_capped.mp4"),
             target_s=float(plan["resolved_duration_s"]),
+        )
+
+    if settings.guided_text_face_placement_enabled:
+        plan["text_elements"] = _apply_guided_text_face_placement(
+            clean_base, plan["text_elements"], job_id=job_id, canvas=canvas
         )
 
     final_path = os.path.join(tmpdir, "guided_story_final.mp4")
