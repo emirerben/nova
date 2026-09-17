@@ -18,12 +18,14 @@ from fastapi import HTTPException, Request, Response
 from pydantic import ValidationError
 
 from app.routes.generative_jobs import (
+    AddClipRequest,
     ChangeStyleRequest,
     CreateGenerativeJobRequest,
     GenerativeUploadUrlRequest,
     RetextRequest,
     SwapSongRequest,
     _consume_project_upload_reservations,
+    add_clip,
     cancel_temporary_upload,
     create_generative_job,
     create_generative_upload_url,
@@ -4108,3 +4110,144 @@ def test_variants_for_response_survives_a_guided_revision_that_fails_to_recompil
     # not crashing the READ, not about hiding that the render failed.
     assert out[0]["render_status"] == "failed"
     assert out[0]["error_class"] == "guided_story_revision_invalid"
+
+
+# ── POST /{job_id}/clips (KRI-109: add a clip/photo post-generation) ───────────────
+
+
+def _add_clip_job(*, clip_paths: list[str] | None = None, status: str = "variants_ready"):
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        status=status,
+        all_candidates={"clip_paths": list(clip_paths or [])},
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_clip_appends_to_pool_and_consumes_reservation(monkeypatch):
+    from app.storage import ObjectMetadata
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    path = f"users/{user.id}/generative/abc123def456/clip.mp4"
+    job = _add_clip_job(clip_paths=["users/other/generative/aaa111aaa111/clip.mp4"])
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+    consumed: list[list[str]] = []
+
+    async def fake_consume(db_arg, *, user_id, object_paths):
+        consumed.append(object_paths)
+
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._load_generative_job", AsyncMock(return_value=job)
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._consume_project_upload_reservations", fake_consume
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path, generation="1", etag="etag", size=25_000, content_type="video/mp4"
+        ),
+    )
+
+    response = await add_clip(str(job.id), AddClipRequest(gcs_path=path), user, db)
+
+    # The pool had one existing entry — the new clip must land at index 1, not
+    # overwrite index 0, so an in-flight AI timeline referencing index 0 stays valid.
+    assert response.clip_index == 1
+    assert response.kind == "video"
+    assert job.all_candidates["clip_paths"] == [
+        "users/other/generative/aaa111aaa111/clip.mp4",
+        path,
+    ]
+    assert consumed == [[path]]
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_add_clip_rejects_cross_user_direct_path(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    other = uuid.uuid4()
+    path = f"users/{other}/generative/abc123def456/clip.mp4"
+    job = _add_clip_job()
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._load_generative_job", AsyncMock(return_value=job)
+    )
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+    with pytest.raises(HTTPException) as exc:
+        await add_clip(str(job.id), AddClipRequest(gcs_path=path), user, db)
+    assert exc.value.status_code == 403
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_add_clip_rejects_when_pool_at_max(monkeypatch):
+    from app.storage import ObjectMetadata
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    path = f"users/{user.id}/generative/abc123def456/clip.mp4"
+    # _MAX_CLIPS is 20 — a job that already reached the cap must reject a
+    # 21st clip rather than silently growing the render past its budget.
+    full_pool = [f"users/{user.id}/generative/{i:012x}/clip.mp4" for i in range(20)]
+    job = _add_clip_job(clip_paths=full_pool)
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._load_generative_job", AsyncMock(return_value=job)
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._consume_project_upload_reservations", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path, generation="1", etag="etag", size=1_000, content_type="video/mp4"
+        ),
+    )
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+    with pytest.raises(HTTPException) as exc:
+        await add_clip(str(job.id), AddClipRequest(gcs_path=path), user, db)
+    assert exc.value.status_code == 422
+    assert job.all_candidates["clip_paths"] == full_pool
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_add_clip_rejects_non_video_or_image_kind(monkeypatch):
+    from app.storage import ObjectMetadata
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    path = f"users/{user.id}/generative/abc123def456/clip.mp3"
+    job = _add_clip_job()
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._load_generative_job", AsyncMock(return_value=job)
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._consume_project_upload_reservations", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path, generation="1", etag="etag", size=1_000, content_type="audio/mpeg"
+        ),
+    )
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+    with pytest.raises(HTTPException) as exc:
+        await add_clip(str(job.id), AddClipRequest(gcs_path=path), user, db)
+    assert exc.value.status_code == 422
+    assert job.all_candidates["clip_paths"] == []
+
+
+@pytest.mark.asyncio
+async def test_add_clip_rejects_cancelled_job(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    path = f"users/{user.id}/generative/abc123def456/clip.mp4"
+    job = _add_clip_job(status="cancelled")
+    monkeypatch.setattr(
+        "app.routes.generative_jobs._load_generative_job", AsyncMock(return_value=job)
+    )
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+    with pytest.raises(HTTPException) as exc:
+        await add_clip(str(job.id), AddClipRequest(gcs_path=path), user, db)
+    assert exc.value.status_code == 409

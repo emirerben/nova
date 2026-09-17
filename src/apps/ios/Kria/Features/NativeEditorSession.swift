@@ -369,6 +369,15 @@ struct NativeEditorTemporaryVideo {
     @Published private(set) var visualLibraryLoading = false
     @Published private(set) var isAddingVisual = false
     @Published var visualError: String?
+    @Published private(set) var isAddingClip = false
+    @Published var addClipError: String?
+    /// Default window given to a freshly added timeline clip/photo. The server
+    /// has never probed this source, so it can't bound the window itself — see
+    /// `resolve_timeline_slots_for_edit`'s "New clips the AI never probed have
+    /// no known duration" skip. Beat-gridded (song) variants snap this to the
+    /// nearest beat; no-grid variants snap it to the nearest half second — the
+    /// same server-side resolution every other slot edit already goes through.
+    private static let addedClipDurationS: Double = 3.0
     private var authoredVisualSources: [String: ResolvedEditorSource] = [:]
     private var variantKey: String?
     private var jobID: UUID?
@@ -1959,6 +1968,35 @@ struct NativeEditorTemporaryVideo {
         guard canEditTimeline, draft.clips.count > 1, let id = selectedClipID, let index = draft.clips.firstIndex(where: { $0.id == id }) else { return }
         transact(section: .timeline) { draft in draft.clips.remove(at: index); reflow(&draft.clips, from: max(0, index)) }
         selectedClipID = draft.clips.indices.contains(index) ? draft.clips[index].id : draft.clips.last?.id
+    }
+
+    /// Upload a freshly picked clip or photo and append it to the end of the
+    /// timeline. Two network calls happen before anything is staged locally:
+    /// reserve + upload the bytes, then mint the new `clip_index` in the job's
+    /// shared footage pool (`KriaAPIClient.addClip`) — the pool is otherwise
+    /// fixed at job creation, so a slot referencing an unminted index would be
+    /// rejected on Save. The new slot itself then round-trips through the
+    /// normal Save path like any other timeline edit.
+    func addClip(fileURL: URL) async {
+        // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
+        // no-op instead of a round trip that would 422 anyway.
+        guard canEditTimeline, !isAddingClip, let api, let jobID, draft.clips.count < 20 else { return }
+        isAddingClip = true
+        addClipError = nil
+        defer { isAddingClip = false }
+        do {
+            let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+            guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
+            let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
+            let reservation = try await api.reserveUpload(filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), purpose: nil)
+            try await api.uploadFile(to: reservation, fileURL: fileURL)
+            let result = try await api.addClip(jobID: jobID, gcsPath: reservation.gcsPath)
+            guard canEditTimeline else { return }
+            transactDocument(section: .timeline) { doc in
+                doc.clips.append(EditorTimelineSlot(clipIndex: result.clipIndex, inS: 0, durationS: Self.addedClipDurationS))
+            }
+            addClipError = nil
+        } catch { addClipError = "This file couldn’t be added. Your edit is unchanged. " + error.localizedDescription }
     }
 
     func addText(content: String? = nil) {
