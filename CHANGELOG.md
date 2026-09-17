@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.57.0] - 2026-09-17
+
+### Changed
+- refactor(api): archetype-agnostic phone-render gate with PHONE_RENDER_SUPPORTED_FORMATS allowlist (KRI-114 P0-5) (#1066) <!-- release-pr: 1066 -->
+
 ## [0.76.56.0] - 2026-09-17
 
 ### Changed
