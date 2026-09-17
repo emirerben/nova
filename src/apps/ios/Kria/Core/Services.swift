@@ -1183,7 +1183,16 @@ extension DraftSnapshot {
             let window = Self.object(sections["music_window"]); let mix = Self.object(sections["audio_mix"])
             music = MusicSelection(trackID: trackID, title: sections["music_track_title"]?.stringValue ?? "Music", start: Self.number(window?["start_s"]) ?? 0, volume: Self.number(mix?["music_level"]) ?? 1)
         } else { music = nil }
-        let captionsEnabled = (sections["captions_enabled"] ?? legacy["captions_enabled"]) == .bool(true)
+        // Only an explicit `false` turns captions off. The backend documents
+        // `captions_enabled` as None on every variant that predates or never
+        // carries the narrated-only field, with missing meaning enabled — the
+        // render-time default (generative_jobs.py, `captions_enabled`).
+        // Guided-story variants never carry it: deriving `false` here used to
+        // flow through persistedSnapshot() as a manufactured explicit
+        // `captions_enabled: false` → `caption_meta.enabled == false`, which
+        // the on-device compiler honors by dropping every caption_cue-tagged
+        // text element from the composition (KRI-110).
+        let captionsEnabled = (sections["captions_enabled"] ?? legacy["captions_enabled"]) != .bool(false)
         let captionStyle = (sections["caption_style"] ?? legacy["captions_style"])?.stringValue ?? "sentence"
         return EditorDraft(
             projectID: projectID,

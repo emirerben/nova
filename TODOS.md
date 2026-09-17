@@ -2110,3 +2110,128 @@ direction).
 **Effort:** M (CC: ~45min)
 **Priority:** P3
 **Depends on:** `app/tasks/poster_repair.py` shipped (this train).
+
+## Guided-story captions — adjacent surfaces (from KRI-110 investigation, 2026-09-16)
+
+KRI-110 fixed the iOS Captions tab's blind spot for guided-story captions
+(persisted as `caption_cue`-tagged `TextElement`s, not `caption_cues` rows).
+The same root cause has three other surfaces; each is real but out of scope
+for a single-client bugfix. Root-cause narrative and code map:
+`~/.claude/plans/kri-110-fluffy-sky.md`.
+
+### Web editor has the identical Captions-tab blind spot
+**What:** `captionToolState` (`src/apps/web/src/app/plan/items/[id]/_editor/editor-capabilities.ts:27-51`)
+requires `resolved_archetype ∈ {narrated, subtitled}`, so `captionsControl` stays
+`undefined` (`EditorShell.tsx:6730`) and the Captions rail button greys out for
+every guided-story video on the web. `captionCueRows` (`EditorShell.tsx:3416`)
+also filters with the narrow `isCaptionBar` instead of the union predicate.
+**Why:** Guided-story is the dominant archetype for new videos (chat-first
+creation is canonical), so this is not a corner case — it is the common case,
+on the surface most creators actually use to edit.
+**How:** Structurally identical fix to the iOS one. The union predicate
+already exists — `isCaptionUnitBar` (`editor-bars.ts:280`) — unlike iOS, which
+had to add one. Swap it into `captionCueRows`'s filter, widen
+`captionToolState` to also accept a `guided_story` variant carrying
+`caption_cue`-tagged text elements, and route the drawer's edit callback to
+`text_elements` for those bars (mirrors the iOS `updateCaptionCue` split).
+**Effort:** M (CC: ~1h — same shape as the iOS fix, plus web test fixtures)
+**Priority:** P1
+**Depends on:** —
+
+### AI copilot cannot see or edit guided-story captions
+**What:** `kria_editor_ops.py`'s caption snapshot (~line 198) is built from
+`variant["caption_cues"]` only, so `cues_editable` is always `false` and the
+copilot has no caption context for a guided-story video.
+**Why:** Nova (the chat copilot) is blind to the captions on the majority of
+videos it's asked to edit — it can't answer "what does the caption at 0:04
+say" or apply a caption text change through chat.
+**How:** Extend the snapshot builder to fall back to
+`text_elements`-projected captions (same union used by the two fixes above)
+when `caption_cues` is empty, and route any resulting caption mutation
+through `text_elements` instead of the caption-cue commit path.
+**Effort:** S (CC: ~30min)
+**Priority:** P2
+**Depends on:** the web editor fix above (shares the union helper).
+
+### `subtitled` and `talking_head` can lose caption identity entirely
+**What:** Unrelated to the tab-routing bug above, but adjacent: `subtitled`
+falls back to `montage` whenever `subtitled_archetype_enabled` is off, and
+`talking_head` (`_render_talking_head_variant`, `generative_build.py:16491`)
+never produces `caption_cues` at all. Both burn transcript speech as styled
+typography (`sequence_scene`-sourced text elements) with no `caption_cue`
+marker of any kind — not even the union fix above can recover them, since
+there is no caption identity left to find.
+**Why:** This is a product/flag decision (is transcript-as-typography an
+acceptable substitute for editable captions on these archetypes?), not a
+classification bug — flagging so it isn't mistaken for scope creep on the
+above fixes.
+**How:** Decide first: either accept the current behavior as intentional and
+document it, or extend `_render_subtitled_variant`'s and
+`_render_talking_head_variant`'s caption assembly to these paths (real
+pipeline work, not a lane-classification fix).
+**Effort:** L (CC: unscoped — pipeline change once the product call is made)
+**Priority:** P3
+**Depends on:** a product decision on caption parity for these archetypes.
+
+### On-device render compiler ignored caption_meta for text-lane captions — FIXED in KRI-110
+**What it was:** `NativeEditorRenderCompiler.swift`'s caption-styling block
+was cue-native only (`if !document.captionCues.isEmpty ...`). Guided-story
+captions (`caption_cue`-tagged text elements) never hit it, so the caption
+burned via the generic text-element path with none of `caption_meta`'s
+font/color/size/stroke/shadow/position overrides — confirmed live on a real
+cloud-rendered account video during KRI-110's phone verification: color/size
+changes saved correctly (proven via a live call-log) but never appeared in
+the burned/preview text.
+**Fix shipped:** `applyingCaptionMeta` (`NativeEditorRenderCompiler.swift`)
+overlays `caption_meta`/`appearance` fields onto a caption-tagged element's
+`raw` dict before the *existing* generic per-element styling reads them —
+mirroring the backend's `_apply_guided_caption_meta` (patch the ordinary
+TextElement fields, don't build a parallel renderer). Applies uniformly
+regardless of render destination (cloud or KRI-29's phone pilot), so the
+`canEditCaptionAppearance` lock added earlier in this same investigation was
+removed as unnecessary. Covered by
+`testGuidedStoryCaptionTaggedTextElementHonorsCaptionMetaStyling` and
+`testCaptionMetaDisabledSkipsOnlyCaptionTaggedTextElements`
+(`NativeEditorRenderCompilerTests.swift`).
+**Still open:** per-word highlighting/karaoke (`caption_meta.style ==
+"word"`) has no generic-per-element equivalent — a text-lane caption with
+that mode keeps its base (non-word-highlighted) style. Nobody has asked for
+it yet; revisit if guided-story word-highlight captions become a real
+request.
+
+### Row-tap-to-edit was broken for every caption archetype — FIXED in KRI-110
+**What it was:** discovered while verifying the fix above on a physical
+device — tapping a caption row anywhere in the app did nothing; typing,
+"Show captions" toggling, and color changes silently failed to become
+interactive (though the underlying document mutations worked once other
+gates were open). Root-caused and reproduced on **unmodified `origin/main`**
+using the native `caption_cues` fixture (`-ui-testing-editor-all-lanes`) — a
+pre-existing bug since guided-story captions launched in #1018, unrelated to
+KRI-110's actual scope, never caught because no test exercised the tap
+(only that the row existed). Cause: `@FocusState private var editingCueID`
+in `NativeCaptionPanel` (`NativeEditorLanePanel.swift`) never committed when
+set inside the row's own tap gesture, in the same turn as an
+`@ObservedObject` (`session`) mutation (`session.select(...)`, called one
+line earlier) — a known class of SwiftUI focus/observed-object race. A
+follow-up attempt to request focus from the TextField's own `.onAppear` hit
+the identical failure mode (the test hung until the runner's watchdog killed
+it with SIGKILL).
+**Fix shipped:** `editingCueID` is now a plain `@State` used only to swap
+Text for TextField; no code path attempts to auto-summon the system
+keyboard. Covered by
+`testTappingCaptionRowEntersEditModeAndPersistsTypedText`
+(`NativeEditorInspectorUITests.swift`), which taps the row, types, taps
+Done, and reopens the panel to confirm the edit survived a full
+close/reopen cycle — verified 3x on an isolated simulator (once flaky under
+contention from an unrelated concurrent test process on the same machine,
+confirmed unrelated to this fix by isolating to a dedicated simulator).
+**Still open:** the fix trades away auto-focusing the keyboard on first tap
+— the user now taps the row (swaps to TextField), then taps the TextField
+again (requests keyboard focus normally, no `@FocusState` involved). Two
+taps instead of one. A real fix would need to understand *why* `@FocusState`
+races with `@ObservedObject` mutations in this specific view hierarchy
+(possibly the custom bottom-panel/drawer host, not a plain `.sheet()`) —
+worth a dedicated investigation if the two-tap UX becomes a real complaint,
+but out of scope to chase further here.
+**Priority:** P2 (both fixed; the "still open" notes above are the residual
+follow-ups, not live bugs).

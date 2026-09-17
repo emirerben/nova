@@ -108,7 +108,13 @@ struct NativeEditorView: View {
                     lanePanel = .visuals; inspector = nil; textInspectorID = nil
                     return
                 }
-                if selection.kind == .captionCue {
+                // Guided-story captions (KRI-110) are `.text`-kind bars tagged
+                // `source_params.source == "caption_cue"` — route them to the
+                // Captions panel just like a native `.captionCue` selection,
+                // instead of falling through to the Text inspector below.
+                let isTextLaneCaption = selection.kind == .text
+                    && session.document.textElements.first(where: { $0.id == selection.id })?.isCaption == true
+                if selection.kind == .captionCue || isTextLaneCaption {
                     lanePanel = .captions; inspector = nil; textInspectorID = nil
                     return
                 }

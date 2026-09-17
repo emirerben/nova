@@ -231,6 +231,20 @@ struct EditorDocument: Equatable, Sendable {
     var revision: EditorRevision
     var opaqueRecords: [EditorSection: [EditorOpaqueRecord]]
 
+    /// Captions regardless of persisted representation: `caption_cues` for
+    /// narrated/subtitled, `caption_cue`-marked text elements for guided_story
+    /// (KRI-110). The two are mutually exclusive on a real variant — one
+    /// renderer writes one or the other, never both — so this is a union, not
+    /// a merge. Deliberately does not replace `captionCues` itself, which
+    /// other call sites (e.g. `documentCaptionsEnabled`'s fallback) rely on
+    /// as narrow and cue-native only.
+    var captionUnits: [EditorCaptionCue] {
+        if !captionCues.isEmpty { return captionCues }
+        return textElements.filter(\.isCaption)
+            .sorted { ($0.startS, $0.id) < ($1.startS, $1.id) }
+            .map { EditorCaptionCue(id: $0.id, startS: $0.startS, endS: $0.endS, text: $0.text, raw: $0.raw) }
+    }
+
     /// The original root is retained as an AST-like JSON envelope. This is
     /// what lets a no-op save preserve server additions this client cannot yet
     /// interpret.
