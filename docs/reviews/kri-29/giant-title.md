@@ -174,3 +174,115 @@ The next launch was explicitly refused because the iPhone was locked. The earlie
 stalls are not attributed to that lock without lifecycle evidence. Karaoke, giant
 handwriting glow and themed dissolve still need their physical export checks;
 the expanded catalog is not a passing release gate.
+
+
+## Giant-title handwriting performance — increment 1 (profiler + L0/L1 caching)
+
+[`iphone32-optimized.json`](iphone32-optimized.json) measured giant-title
+handwriting at **106.128 s to export 6 s** on the user's iPhone 13 Pro, even with
+`SWIFT_OPTIMIZATION_LEVEL=-O` — golden-hour exported the same duration in 3.078 s.
+`phone_rollout.py` hard-rejects the combination for this reason. The earlier
+32-case pilot report asked to "profile its per-stroke shadow blur and compositing
+path before enabling it," without establishing the cause.
+
+**Root cause.** `NativeGiantHandwritingPainter.image` called the (then-stateless)
+static `NativeSkiaShadowPainter.draw` once per stroke per blur layer per frame —
+up to 297 calls/frame for this fixture's 99 strokes × 3 blur layers, though the
+giant-title painter's own settled fast-path skips most of the zoom phase, leaving
+roughly 18,700 calls across the whole export. Each call allocated a fresh mask
+`CGContext`, ran the CIBoxBlur/tint pipeline, and finished with a **synchronous
+`imageContext.createCGImage` GPU readback** — a per-call cost estimated (not yet
+measured on-device) to dominate the observed 106 s.
+
+**Fix (byte-exact, no Metal).** `NativeGiantHandwritingPainter` became a stateful
+class retained by `NativeGiantTitlePainter` across frames, mirroring the
+non-giant `NativeHandwritingPainter`'s settled-shadow cache:
+
+- A stroke's centerline path and stroked ink bounds are cached once the stroke is
+  fully revealed (`endProgress <= progress`) — `visiblePoints(at:)` returns the
+  identical point list for any later progress, so this is exact by construction.
+  Ink bounds were also being recomputed once PER BLUR LAYER (3x/stroke); now once.
+- A settled stroke's blurred, tinted shadow tile
+  (`NativeSkiaShadowPainter.tile`, split out of `draw` so a caller can retain the
+  returned `CGImage` instead of only compositing it once) is cached per
+  `(blurLayerIndex, strokeIndex)`, keyed by `(transform, opacity)` — the only two
+  inputs it depends on beyond the stroke itself. Any change to that signature
+  invalidates every cached tile before the next draw, so a stale byte can never be
+  served — only real GPU/CPU work can be skipped.
+- The tile cache carries its own 32 MiB soft budget, independent of
+  `maxBitmapBytes`; exceeding it (comfortably above the ~15 MB this fixture needs)
+  only disables caching for the overflow tile, never a correctness risk.
+
+For the `handwriting` effect specifically, `TextTransformTiming` holds
+`alpha == 1, scale == 1, translate == 0, blur == 0` for the whole writing phase,
+so the composed camera transform is `.identity` until the zoom starts (~68% of
+the duration) — the same frame-invariant-transform precondition the non-giant
+painter's cache already relies on. This collapses the writing phase (the
+majority of drawn frames) from one real render per stroke per frame to one real
+render per stroke total.
+
+**A real bug this design caught before it shipped.** The very first call into
+the new stateful painter is `settledImage()`'s one-time warm-up
+(`progress: 1, transform: .identity`), called before any real animated frame —
+not a monotonically-forward playback step. Initially the path/ink-bounds cache
+trusted a cache hit as soon as *any* prior call had marked a stroke settled,
+without re-checking that the *current* call's progress also qualified. That let
+the progress-1 warm-up poison every subsequent lower-progress frame with the
+fully-written path. Caught by the cloud-reference suite (`GiantTitleTests`)
+immediately — 10 failures, up to 14.48/255 mean error against a 3.5/255 limit —
+before any device build. Fixed by gating the cache read on
+`progress >= stroke.endProgress` for the *current* call, not just cache presence.
+
+**Verification.**
+- `swift test` (`src/apps/ios/Packages/KriaMediaEngine`): 132/132 tests pass,
+  including the full 396-frame cloud-reference suite in `GiantTitleTests`
+  (unmodified, unchanged tolerances) and `HandwritingTests`. Per-handwriting-row
+  max RGBA error confirmed byte-identical to the pre-change baseline (compared via
+  `git stash`): `handwriting-legacy` 0.168, `handwriting-glow` 0.309,
+  `handwriting-fading-glow` 0.408, `handwriting-gradient` 0.107 — all far under
+  the 3.5/255 budget, all unchanged by this PR.
+- New `GiantTitleShadowParityTests`: zero-tolerance `XCTAssertEqual` on raw RGBA8
+  bytes between the cached painter (driven through the real warm-up-then-forward-
+  then-backward sequence) and a freshly-constructed, never-reused reference
+  painter, across all four handwriting fixture rows. A second test forces the
+  32 MiB cache budget down to 1 byte and re-checks the same parity, pinning the
+  starved-cache fallback path.
+- New `GiantTitleProfileTests`: counter-based (not wall-clock, to avoid CI
+  flakiness) proof the cache actually engages — a repeated identical-signature
+  call produces zero fresh `shadow.tile` builds and all cache hits; a
+  transform change invalidates every cached tile.
+- `make ios-verify` (`KRIA_IOS_TEST_MODE=unit`): 285/285 `KriaTests` pass. App
+  target (including `DeviceEffectsView`'s new profiler wiring) builds clean for
+  simulator.
+- Backend: unaffected by this increment (no `src/apps/api` changes); ran
+  `tests/kria/`, `tests/services/test_phone_rollout.py`, `tests/test_device_render.py`,
+  `tests/routes/test_device_render.py` (308 passed) and `kria_contracts --check`
+  anyway, since the shared render-recipe contract is a blast-radius neighbor.
+
+**Instrumentation added, not yet run on-device.** `RenderProfiler` (signpost +
+accumulator, ~1 ns overhead when disabled) buckets each stage of
+`NativeSkiaShadowPainter.tile` (mask alloc, mask stroke, CI blur graph, the
+`createCGImage` readback, the composite) plus the giant-handwriting painter's own
+path/ink-bounds/frame stages. `DeviceEffectsView` surfaces a `profile` snapshot in
+its report JSON when launched with `-render-profile`, alongside the existing
+`export_seconds`.
+
+**Outstanding — the actual gate.** This increment has NOT been run on the user's
+iPhone 13 Pro yet. Until it is:
+- The stage-by-stage `profile` breakdown that would confirm or correct the
+  synchronous-readback hypothesis is unmeasured.
+- The before/after `export_seconds` for `giant-title-handwriting` is unmeasured;
+  expected to drop from 106.128 s given the writing phase now does ~1 real render
+  per stroke instead of ~1 per stroke per frame, but this is a prediction, not a
+  result.
+- Whether this alone reaches the release gate (60 s export in <=120 s, i.e. a 6 s
+  case at <=~9 s) is unknown. If it doesn't, GPU-batched compositing (PR 2 in
+  `plans/kri-29-phone-rendering.md`'s handwriting-perf plan) is the next rung.
+- `phone_rollout.py`'s rejection of giant-title handwriting stays in place
+  regardless of this PR's outcome — the pilot's `PHONE_RENDER_VERIFIED_FEATURES`
+  flag is deliberately not touched here (see that plan's deploy-ordering
+  section); lifting it needs the on-device number confirmed first.
+
+Run `-device-effects-only giant-title-handwriting -render-profile` on the
+iPhone 13 Pro (see `docs/runbooks/ios-development.md` for the physical-build
+steps) and record the result here as the next entry in this file.
