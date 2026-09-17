@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.54.0] - 2026-09-17
+
+### Changed
+- Add clips/photos to the editor post-generation (KRI-109) (#1069) <!-- release-pr: 1069 -->
+
 ## [0.76.53.0] - 2026-09-17
 
 ### Changed
