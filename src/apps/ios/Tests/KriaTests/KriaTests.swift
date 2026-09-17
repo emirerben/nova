@@ -457,6 +457,135 @@ final class KriaTests: XCTestCase {
         XCTAssertTrue(url.query?.contains("Expires=123") == true)
     }
 
+    func testFinishedVideoDownloadRefreshesSignedURLBeforeTransfer() async throws {
+        let store = MemoryTokenStore(MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900))
+        let lock = NSLock()
+        var requestedURLs: [URL] = []
+        let freshURL = URL(string: "https://storage.example.test/fresh.mp4?Expires=999")!
+        URLProtocolStub.handler = { request in
+            lock.withLock { requestedURLs.append(request.url!) }
+            if request.url?.path == "/me/jobs/\(PreviewFixtures.projectID.uuidString)/playback-url" {
+                return (200, Data("{\"video_url\":\"\(freshURL.absoluteString)\"}".utf8))
+            }
+            XCTAssertEqual(request.url, freshURL)
+            return (200, Data("fresh-video".utf8))
+        }
+        let session = stubSession()
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: session)
+
+        let result = try await FinishedVideoDownloader(session: session)
+            .download(api: api, jobID: PreviewFixtures.projectID)
+        defer { try? FileManager.default.removeItem(at: result.fileURL) }
+
+        let urls = lock.withLock { requestedURLs }
+        XCTAssertEqual(urls.map(\.path), [
+            "/me/jobs/\(PreviewFixtures.projectID.uuidString)/playback-url",
+            "/fresh.mp4",
+        ])
+        XCTAssertEqual(result.playbackURL, freshURL)
+        XCTAssertEqual(try Data(contentsOf: result.fileURL), Data("fresh-video".utf8))
+    }
+
+    func testEditorDownloadFetchesFreshURLForSelectedVariantBeforeTransfer() async throws {
+        let store = MemoryTokenStore(MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900))
+        let lock = NSLock()
+        var requestedURLs: [URL] = []
+        let jobID = PreviewFixtures.projectID
+        let freshURL = URL(string: "https://storage.example.test/selected.mp4?Expires=999")!
+        URLProtocolStub.handler = { request in
+            lock.withLock { requestedURLs.append(request.url!) }
+            if request.url?.path == "/generative-jobs/\(jobID.uuidString)/status" {
+                return (200, Data(#"{"job_id":"job","status":"variants_ready","variants":[{"variant_id":"other","render_status":"ready","output_url":"https://storage.example.test/other.mp4"},{"variant_id":"selected","render_status":"ready","output_url":"https://storage.example.test/selected.mp4?Expires=999"}]}"#.utf8))
+            }
+            XCTAssertEqual(request.url, freshURL)
+            return (200, Data("selected-video".utf8))
+        }
+        let session = stubSession()
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: session)
+
+        let file = try await NativeEditorVideoDownloader(session: session).download(
+            api: api,
+            target: NativeEditorVideoDownloadTarget(jobID: jobID, variantID: "selected")
+        )
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        XCTAssertEqual(lock.withLock { requestedURLs }.map(\.path), [
+            "/generative-jobs/\(jobID.uuidString)/status",
+            "/selected.mp4",
+        ])
+        XCTAssertEqual(try Data(contentsOf: file), Data("selected-video".utf8))
+    }
+
+    func testEditorDownloadUsesAvailableOutputEvenWhenVariantStatusIsNotReady() async throws {
+        let jobID = PreviewFixtures.projectID
+        let outputURL = URL(string: "https://storage.example.test/draft.mp4?Expires=999")!
+        URLProtocolStub.handler = { request in
+            if request.url?.path == "/generative-jobs/\(jobID.uuidString)/status" {
+                return (200, Data(#"{"job_id":"job","variants":[{"variant_id":"selected","render_status":"draft","output_url":"https://storage.example.test/draft.mp4?Expires=999"}]}"#.utf8))
+            }
+            XCTAssertEqual(request.url, outputURL)
+            return (200, Data("draft-video".utf8))
+        }
+        let session = stubSession()
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: session)
+
+        let file = try await NativeEditorVideoDownloader(session: session).download(
+            api: api,
+            target: NativeEditorVideoDownloadTarget(jobID: jobID, variantID: "selected")
+        )
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        XCTAssertEqual(try Data(contentsOf: file), Data("draft-video".utf8))
+    }
+
+    func testEditorDownloadReportsRenderingWhenVariantHasNoOutputYet() async throws {
+        let jobID = PreviewFixtures.projectID
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/generative-jobs/\(jobID.uuidString)/status")
+            return (200, Data(#"{"job_id":"job","variants":[{"variant_id":"selected","render_status":"rendering"}]}"#.utf8))
+        }
+        let session = stubSession()
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: session)
+
+        do {
+            _ = try await NativeEditorVideoDownloader(session: session).download(
+                api: api,
+                target: NativeEditorVideoDownloadTarget(jobID: jobID, variantID: "selected")
+            )
+            XCTFail("Expected an in-progress variant without output to be rejected")
+        } catch let error as NativeEditorVideoDownloadError {
+            guard case .rendering = error else {
+                return XCTFail("Expected rendering error, got \(error)")
+            }
+        }
+    }
+
+    func testEditorDownloadRejectsOutputFromDifferentGeneration() async throws {
+        let jobID = PreviewFixtures.projectID
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/generative-jobs/\(jobID.uuidString)/status")
+            return (200, Data(#"{"job_id":"job","variants":[{"variant_id":"selected","render_status":"ready","render_generation_id":"generation-old","output_url":"https://storage.example.test/old.mp4"}]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+
+        do {
+            _ = try await NativeEditorVideoDownloader().download(
+                api: api,
+                target: NativeEditorVideoDownloadTarget(
+                    jobID: jobID,
+                    variantID: "selected",
+                    expectedGenerationID: "generation-current",
+                    expectedOutputPath: "/current.mp4"
+                )
+            )
+            XCTFail("Expected a stale render generation to be rejected")
+        } catch let error as NativeEditorVideoDownloadError {
+            guard case .rendering = error else {
+                return XCTFail("Expected rendering error, got \(error)")
+            }
+        }
+    }
+
     func testEditorVariantLoadsAuthoritativeStatusProjection() async throws {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.url?.path, "/generative-jobs/\(PreviewFixtures.projectID.uuidString)/status")

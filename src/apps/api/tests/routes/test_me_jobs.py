@@ -149,7 +149,13 @@ def test_list_returns_users_jobs_with_derived_status_and_preview(monkeypatch) ->
         lambda path, ttl: f"https://resigned.example/{path}",
     )
     db = _db(
-        [_scalars([ready_variant_job, single_output_job]), _rows([]), _scalars([]), _scalars([])]
+        [
+            _scalars([ready_variant_job, single_output_job]),
+            _rows([]),
+            _rows([]),
+            _scalars([]),
+            _scalars([]),
+        ]
     )
     _override(user, db)
 
@@ -172,6 +178,60 @@ def test_list_returns_users_jobs_with_derived_status_and_preview(monkeypatch) ->
     assert body["next_cursor"] is None
 
 
+def test_list_prefers_thread_selected_variant_over_rank(monkeypatch) -> None:
+    """KRI-91: the gallery grid and the native editor must name the same cut
+    for a job. The editor already prefers the owning creation thread's
+    `selected_variant_id`; the gallery used to consult only `rank`.
+    """
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "rank-one",
+                    "rank": 1,
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/rank-one.mp4",
+                },
+                {
+                    "variant_id": "rank-two",
+                    "rank": 2,
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/rank-two.mp4",
+                },
+            ]
+        },
+    )
+    job.assembly_plan["variants"][0]["video_path"] = f"generative-jobs/{job.id}/rank-one.mp4"
+    selected_path = f"generative-jobs/{job.id}/rank-two.mp4"
+    job.assembly_plan["variants"][1]["video_path"] = selected_path
+    monkeypatch.setattr(
+        "app.routes.me.signed_get_url",
+        lambda path, ttl: f"https://resigned.example/{path}",
+    )
+    # The thread lookup returns (active_job_id, state) tuples — the same
+    # shape as the batched feedback/publication lookups.
+    db = _db(
+        [
+            _scalars([job]),
+            _rows([(job.id, {"selected_variant_id": "rank-two"})]),
+            _rows([]),
+            _scalars([]),
+            _scalars([]),
+        ]
+    )
+    _override(user, db)
+
+    resp = client.get("/me/jobs")
+
+    assert resp.status_code == 200
+    row = resp.json()["jobs"][0]
+    assert row["output_variant_id"] == "rank-two"
+    assert row["output_url"] == f"https://resigned.example/{selected_path}"
+
+
 def test_list_generating_job_has_no_preview_url() -> None:
     user = _user()
     job = _job(
@@ -179,7 +239,7 @@ def test_list_generating_job_has_no_preview_url() -> None:
         status="processing",
         assembly_plan={"variants": [{"variant_id": "song_text", "render_status": "rendering"}]},
     )
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -260,7 +320,7 @@ def test_list_never_signs_control_owned_media_when_contract_is_missing(monkeypat
             }
         ],
     }
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
     sign_playback = MagicMock(return_value="https://signed.example/provisional")
     sign_download = MagicMock(return_value="https://download.example/provisional")
@@ -299,7 +359,7 @@ def test_list_never_signs_nonterminal_required_media_when_owners_are_missing(
             }
         ],
     }
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
     sign_playback = MagicMock(return_value="https://signed.example/provisional")
     sign_download = MagicMock(return_value="https://download.example/provisional")
@@ -328,7 +388,7 @@ def test_list_marks_legacy_signed_only_ready_poster_unavailable() -> None:
         job_type="template",
         assembly_plan={"output_url": stale_url},
     )
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     response = client.get("/me/jobs")
@@ -878,7 +938,7 @@ def test_list_marks_terminal_repair_marker_unavailable_only_for_matching_video_p
         "terminal": "attempts_exhausted",
         "enqueued_at": "2026-01-01T00:00:00+00:00",
     }
-    db = _db([_scalars([settled, rerendered]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([settled, rerendered]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     response = client.get("/me/jobs")
@@ -907,7 +967,7 @@ def test_flag_off_ignores_persisted_terminal_verdicts(monkeypatch) -> None:
         "terminal": "expired_source",
         "enqueued_at": "2026-01-01T00:00:00+00:00",
     }
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     response = client.get("/me/jobs")
@@ -920,7 +980,7 @@ def test_list_sets_cache_control_no_store(monkeypatch) -> None:
     _stub_library_signers(monkeypatch)
     user = _user()
     job = _posterless_job(user.id)
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     response = client.get("/me/jobs")
@@ -1293,7 +1353,7 @@ def test_edit_recipe_is_owner_fenced_and_projects_only_portable_fields() -> None
             ],
         },
     )
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
 
     response = client.get(f"/me/jobs/{job.id}/edit-recipe?variant_id=selected")
@@ -1346,7 +1406,7 @@ def test_playback_url_refresh_rejects_not_ready_job_without_signing(monkeypatch)
         status="processing",
         assembly_plan={"output_path": f"jobs/{uuid.uuid4()}/unfinished.mp4"},
     )
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
     signer = MagicMock(return_value="https://fresh.example/should-not-be-used.mp4")
     monkeypatch.setattr("app.routes.me.signed_get_url", signer)
@@ -1380,7 +1440,7 @@ def test_playback_url_refresh_does_not_fall_back_after_private_media_is_removed(
             }
         ],
     }
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
     signer = MagicMock(return_value="https://signed.example/provisional")
     monkeypatch.setattr("app.routes.me.signed_get_url", signer)
@@ -1392,7 +1452,7 @@ def test_playback_url_refresh_does_not_fall_back_after_private_media_is_removed(
     assert provisional_path not in response.text
     signer.assert_not_called()
     # Suppressed plan media must not trigger an unprojected JobClip fallback.
-    assert db.execute.await_count == 1
+    assert db.execute.await_count == 2
 
 
 def test_playback_url_refresh_signs_current_owned_ready_preview(monkeypatch) -> None:
@@ -1420,7 +1480,7 @@ def test_playback_url_refresh_signs_current_owned_ready_preview(monkeypatch) -> 
     selected_path = f"generative-jobs/{job.id}/rank-one.mp4"
     job.assembly_plan["variants"][0]["video_path"] = f"generative-jobs/{job.id}/rank-two.mp4"
     job.assembly_plan["variants"][1]["video_path"] = selected_path
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
     signer = MagicMock(return_value="https://fresh.example/rank-one.mp4?signature=new")
     monkeypatch.setattr("app.routes.me.signed_get_url", signer)
@@ -1431,7 +1491,52 @@ def test_playback_url_refresh_signs_current_owned_ready_preview(monkeypatch) -> 
     assert response.json() == {"video_url": "https://fresh.example/rank-one.mp4?signature=new"}
     assert response.headers["cache-control"] == "no-store"
     signer.assert_called_once_with(selected_path, 360)
-    assert db.execute.await_count == 1
+    assert db.execute.await_count == 2
+
+
+def test_playback_url_refresh_prefers_thread_selected_variant_over_rank(monkeypatch) -> None:
+    """KRI-91: the owning creation thread's selected variant must win over
+    rank, so this endpoint (native gallery/results playback) and the native
+    editor (which already prefers `selected_variant_id`) never resolve
+    different cuts of the same job.
+    """
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "rank-one",
+                    "rank": 1,
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/rank-one.mp4",
+                },
+                {
+                    "variant_id": "rank-two",
+                    "rank": 2,
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/rank-two.mp4",
+                },
+            ]
+        },
+    )
+    job.assembly_plan["variants"][0]["video_path"] = f"generative-jobs/{job.id}/rank-one.mp4"
+    selected_path = f"generative-jobs/{job.id}/rank-two.mp4"
+    job.assembly_plan["variants"][1]["video_path"] = selected_path
+    # The user (or an in-editor selection) picked the higher-rank-number
+    # variant; without the fix this endpoint would ignore that and sign the
+    # lowest-rank ("rank-one") variant instead.
+    db = _db([_scalar(job), _scalar({"selected_variant_id": "rank-two"})])
+    _override(user, db)
+    signer = MagicMock(return_value="https://fresh.example/rank-two.mp4?signature=new")
+    monkeypatch.setattr("app.routes.me.signed_get_url", signer)
+
+    response = client.get(f"/me/jobs/{job.id}/playback-url")
+
+    assert response.status_code == 200
+    assert response.json() == {"video_url": "https://fresh.example/rank-two.mp4?signature=new"}
+    signer.assert_called_once_with(selected_path, 360)
 
 
 def test_playback_url_refresh_loads_ready_jobclip_when_job_has_no_plan_output(
@@ -1448,7 +1553,7 @@ def test_playback_url_refresh_loads_ready_jobclip_when_job_has_no_plan_output(
         video_path=f"{user.id}/{job.id}/task-runs/run/clip.mp4",
         thumbnail_path=None,
     )
-    db = _db([_scalar(job), _scalars([clip])])
+    db = _db([_scalar(job), _scalar(None), _scalars([clip])])
     _override(user, db)
     signer = MagicMock(return_value="https://fresh.example/clip.mp4?signature=new")
     monkeypatch.setattr("app.routes.me.signed_get_url", signer)
@@ -1458,7 +1563,7 @@ def test_playback_url_refresh_loads_ready_jobclip_when_job_has_no_plan_output(
     assert response.status_code == 200
     assert response.json() == {"video_url": "https://fresh.example/clip.mp4?signature=new"}
     signer.assert_called_once_with(clip.video_path, 360)
-    assert db.execute.await_count == 2
+    assert db.execute.await_count == 3
 
 
 def test_playback_url_refresh_never_returns_stored_legacy_url(monkeypatch) -> None:
@@ -1471,7 +1576,7 @@ def test_playback_url_refresh_never_returns_stored_legacy_url(monkeypatch) -> No
         job_type="template",
         assembly_plan={"output_url": stale_url},
     )
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
     signer = MagicMock(return_value=stale_url)
     monkeypatch.setattr("app.routes.me.signed_get_url", signer)
@@ -1500,7 +1605,7 @@ def test_playback_url_refresh_signing_failure_never_falls_back_to_stale_url(
         },
     )
     job.assembly_plan["output_path"] = f"jobs/{job.id}/output.mp4"
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
     monkeypatch.setattr(
         "app.routes.me.signed_get_url",
@@ -1526,7 +1631,7 @@ def test_list_uses_ready_jobclip_video_and_poster_without_downloading_video(monk
         thumbnail_path=f"{user.id}/{job.id}/task-runs/run/thumb_1.jpg",
     )
     monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"signed://{path}")
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([clip])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([clip])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -1560,7 +1665,7 @@ def test_list_falls_through_to_next_ready_clip_when_lowest_rank_path_is_unowned(
         thumbnail_path=f"{user.id}/{job.id}/task-runs/run/clip_2.jpg",
     )
     monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"signed://{path}")
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([unowned, owned])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([unowned, owned])])
     _override(user, db)
 
     response = client.get("/me/jobs")
@@ -1592,7 +1697,7 @@ def test_list_signs_source_matched_variant_poster_and_ignores_forged_poster(monk
     job.assembly_plan["variants"][0]["video_path"] = f"generative-jobs/{job.id}/output.mp4"
     job.assembly_plan["variants"][0]["poster_path"] = "users/other/private.jpg"
     monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"signed://{path}")
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     response = client.get("/me/jobs")
@@ -2062,7 +2167,7 @@ def test_list_exposes_only_structured_failure_taxonomy() -> None:
             ]
         },
     )
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -2098,7 +2203,7 @@ def test_list_keeps_playback_when_download_signing_fails(monkeypatch) -> None:
         "app.routes.me.signed_get_url",
         lambda path, ttl: "https://play.example/video.mp4",
     )
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -2128,7 +2233,7 @@ def test_list_resigns_playback_url_from_video_path(monkeypatch) -> None:
     job.assembly_plan["variants"][0]["video_path"] = f"generative-jobs/{job.id}/out.mp4"
     resign = MagicMock(return_value="https://fresh.example/resigned.mp4")
     monkeypatch.setattr("app.routes.me.signed_get_url", resign)
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -2158,7 +2263,7 @@ def test_list_resigns_template_job_playback_url_from_output_path(monkeypatch) ->
     job.assembly_plan["output_path"] = f"jobs/{job.id}/out.mp4"
     resign = MagicMock(return_value="https://fresh.example/resigned-tpl.mp4")
     monkeypatch.setattr("app.routes.me.signed_get_url", resign)
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -2191,7 +2296,7 @@ def test_list_keeps_stored_playback_url_when_resign_fails(monkeypatch) -> None:
         "app.routes.me.signed_get_url",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("signer down")),
     )
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -2208,7 +2313,7 @@ def test_list_does_not_resign_without_output_path() -> None:
         status="done",
         assembly_plan={"output_url": "https://stored.example/no-path.mp4"},
     )
-    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -2223,7 +2328,7 @@ def test_list_forged_user_id_query_param_is_ignored() -> None:
     the scope always comes from the authenticated dependency."""
     user = _user()
     own_job = _job(user_id=user.id, status="done", assembly_plan={"output_url": "gs://x/own.mp4"})
-    db = _db([_scalars([own_job]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([own_job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     resp = client.get(f"/me/jobs?user_id={uuid.uuid4()}")
@@ -2238,7 +2343,7 @@ def test_list_paginates_with_next_cursor() -> None:
     older = _job(user_id=user.id, created_at=datetime(2026, 5, 29, tzinfo=UTC))
     newer = _job(user_id=user.id, created_at=datetime(2026, 5, 30, tzinfo=UTC))
     # limit=1 → route fetches limit+1=2 rows, returns 1, emits cursor from it.
-    db = _db([_scalars([newer, older]), _rows([]), _scalars([]), _scalars([])])
+    db = _db([_scalars([newer, older]), _rows([]), _rows([]), _scalars([]), _scalars([])])
     _override(user, db)
 
     resp = client.get("/me/jobs?limit=1")
@@ -2262,7 +2367,9 @@ def test_list_populates_feedback_signal_from_batch_lookup() -> None:
     liked = _job(user_id=user.id, status="done", assembly_plan={"output_url": "gs://x/a.mp4"})
     none = _job(user_id=user.id, status="done", assembly_plan={"output_url": "gs://x/b.mp4"})
     # The batched second query returns (job_id, signal) tuples for thumbed jobs only.
-    db = _db([_scalars([liked, none]), _rows([(liked.id, "up")]), _scalars([]), _scalars([])])
+    db = _db(
+        [_scalars([liked, none]), _rows([]), _rows([(liked.id, "up")]), _scalars([]), _scalars([])]
+    )
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -2309,7 +2416,7 @@ def test_add_to_plan_links_both_fk_sides() -> None:
 def test_add_to_plan_404_when_job_not_owned() -> None:
     user = _user()
     job = _job(user_id=uuid.uuid4())  # a different user's job
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
     resp = client.post(f"/me/jobs/{job.id}/add-to-plan", json={"day_index": 1})
     assert resp.status_code == 404
@@ -2551,7 +2658,7 @@ def test_open_in_editor_cross_user_job_is_404_without_plan_lookup() -> None:
         user_id=uuid.uuid4(),
         assembly_plan={"variants": _ready_variants()},
     )
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
 
     resp = client.post(f"/me/jobs/{job.id}/open-in-editor", json={})
@@ -2605,7 +2712,7 @@ def test_open_in_editor_unfinished_job_has_stable_409() -> None:
             "variants": [{"variant_id": "one", "rank": 1, "render_status": "rendering"}]
         },
     )
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
 
     resp = client.post(f"/me/jobs/{job.id}/open-in-editor", json={})
@@ -2637,7 +2744,7 @@ def test_open_in_editor_rejects_control_owned_ready_row_when_contract_is_missing
             }
         ],
     }
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
 
     response = client.post(f"/me/jobs/{job.id}/open-in-editor", json={})
@@ -2725,7 +2832,7 @@ def test_open_in_editor_all_failed_variants_have_same_stable_409() -> None:
         status="variants_failed",
         assembly_plan={"variants": [{"variant_id": "one", "rank": 1, "render_status": "failed"}]},
     )
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
 
     resp = client.post(f"/me/jobs/{job.id}/open-in-editor", json={})
@@ -2741,7 +2848,7 @@ def test_open_in_editor_cancelled_job_with_retained_ready_variant_is_409() -> No
         status="cancelled",
         assembly_plan={"variants": _ready_variants()},
     )
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
 
     resp = client.post(f"/me/jobs/{job.id}/open-in-editor", json={})
@@ -2825,7 +2932,7 @@ def test_retry_publish_failure_returns_503_and_restores_retryable_terminal(monke
 def test_retry_cross_user_job_is_404_without_lock_or_enqueue(monkeypatch) -> None:
     user = _user()
     job = _job(user_id=uuid.uuid4(), status="processing_failed")
-    db = _db([_scalar(job)])
+    db = _db([_scalar(job), _scalar(None)])
     _override(user, db)
     enqueue = AsyncMock()
     monkeypatch.setattr("app.services.job_dispatch.enqueue_orchestrator", enqueue)

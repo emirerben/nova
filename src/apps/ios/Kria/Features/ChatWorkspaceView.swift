@@ -9,6 +9,7 @@ struct ChatWorkspaceView: View {
     @GestureState private var drawerGestureActive = false
     @State private var drawerMounted = false
     @State private var horizontalDrawerDrag: Bool?
+    @State private var drawerDragStartTime: Date?
     @State private var drawerGestureExclusions: [CGRect] = []
     @State private var showsGallery = false
     @State private var showsAccount = false
@@ -135,6 +136,7 @@ struct ChatWorkspaceView: View {
                 if horizontalDrawerDrag == nil {
                     let startsInScroller = !showsProjects && drawerGestureExclusions.contains { $0.contains(value.startLocation) }
                     horizontalDrawerDrag = !startsInScroller && abs(value.translation.width) > abs(value.translation.height)
+                    drawerDragStartTime = value.time
                 }
                 guard horizontalDrawerDrag == true else { return }
                 var transaction = Transaction()
@@ -143,14 +145,37 @@ struct ChatWorkspaceView: View {
             }
             .onEnded { value in
                 let wasHorizontal = horizontalDrawerDrag == true
+                let startTime = drawerDragStartTime
                 horizontalDrawerDrag = nil
+                drawerDragStartTime = nil
                 guard wasHorizontal else { return }
-                // Honor a deliberate flick; cancellation still settles by the
-                // actual position so the drawer can never remain half open.
-                let projectedOffset = (showsProjects ? width : 0) + value.predictedEndTranslation.width
-                setDrawerOpen(projectedOffset > width / 2)
+                // SwiftUI's own value.velocity/predictedEndTranslation are
+                // measured (not requested) and, for a short, fast release,
+                // unreliable here — the same nominally-fast flick has been
+                // observed reporting wildly different velocities from one run
+                // to the next. Elapsed wall-clock time over the gesture's own
+                // translation is exact and reproduces the real release speed.
+                let elapsed = startTime.map { value.time.timeIntervalSince($0) } ?? 0
+                let measuredVelocity = elapsed > 0.001 ? value.translation.width / elapsed : 0
+                let isDeliberateFlick = abs(measuredVelocity) > Self.flickVelocityThreshold
+                let isOpen: Bool
+                if isDeliberateFlick {
+                    // Honor a deliberate flick's direction outright, regardless
+                    // of exactly how far it travelled.
+                    isOpen = measuredVelocity > 0
+                } else {
+                    // Anything slower settles purely by how far it was actually
+                    // dragged, landing at the true nearest endpoint.
+                    let settledOffset = (showsProjects ? width : 0) + value.translation.width
+                    isOpen = settledOffset > width / 2
+                }
+                setDrawerOpen(isOpen)
             }
     }
+
+    // XCUIGestureVelocity.slow synthesizes ~250pt/s and .fast ~750pt/s; a real
+    // deliberate flick is comfortably faster than an intentional slow drag.
+    private static let flickVelocityThreshold: CGFloat = 450
 }
 
 private struct WorkspaceEmptyView: View {
@@ -330,7 +355,7 @@ private struct CreationWorkspaceView: View {
             .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
 
             ScrollViewReader { proxy in
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 20) {
                         ForEach(Array(transcript.enumerated()), id: \.element.id) { index, message in
                             ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } }).id(message.id)
@@ -440,7 +465,7 @@ private struct CreationWorkspaceView: View {
             Text("Kria").font(KriaFont.body(17).weight(.semibold)).padding(.top, 20)
                 .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
             ScrollViewReader { proxy in
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 20) {
                         ForEach(transcript) { message in ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } }).id(message.id) }
                         if approval != nil { stageContent }
