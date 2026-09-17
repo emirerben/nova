@@ -757,19 +757,43 @@ struct ThinkingRow: View {
     }
 }
 
-struct RecoveryCard: View {
+/// A problem shown in the chat's recovery card. Its cause picks the card's title
+/// and button, so only a failure to reach Kria asks the user to reconnect.
+struct ChatFailure: Equatable {
     let message: String
+    let cause: RequestFailureCause
+
+    init(_ message: String, cause: RequestFailureCause = .other) {
+        self.message = message
+        self.cause = cause
+    }
+
+    /// `summary` says what didn't happen; the rest explains `error`, pointing at
+    /// the connection only when the request never got a response.
+    init(_ summary: String, error: Error) {
+        let cause = RequestFailureCause(error)
+        let reason = cause == .connection ? "Check your connection and try again." : error.localizedDescription
+        self.init("\(summary) \(reason)", cause: cause)
+    }
+
+    var title: String { cause == .connection ? "Connection interrupted" : "Something went wrong" }
+    /// The card's button reloads the chat; it doesn't resend the failed request.
+    var retryLabel: String { cause == .connection ? "Reconnect" : "Refresh" }
+}
+
+struct RecoveryCard: View {
+    let failure: ChatFailure
     let retry: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Connection interrupted")
+            Text(failure.title)
                 .font(KriaFont.body(13).weight(.semibold))
-            Text(message)
+            Text(failure.message)
                 .font(KriaFont.body(12))
                 .foregroundStyle(KriaColor.zinc)
                 .lineSpacing(3)
-            Button("Reconnect", action: retry)
+            Button(failure.retryLabel, action: retry)
                 .font(KriaFont.body(12).weight(.semibold))
         }
         .padding(14)

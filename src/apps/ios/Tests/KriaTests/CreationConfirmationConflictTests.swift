@@ -34,7 +34,7 @@ import XCTest
         let apiError = try XCTUnwrap(error as? APIError)
         XCTAssertEqual(apiError.conflictDetail, "Footage or capabilities changed; review the plan again")
         XCTAssertEqual(apiError, .conflict)
-        XCTAssertNotEqual(apiError, .requestFailed)
+        XCTAssertNotEqual(apiError, .requestFailed(status: 409))
         var caughtByPattern = false
         do { throw error } catch APIError.conflict { caughtByPattern = true } catch {}
         XCTAssertTrue(caughtByPattern)
@@ -60,7 +60,7 @@ import XCTest
         let blank = try XCTUnwrap(blankResult as? APIError)
         XCTAssertNil(blank.conflictDetail)
         XCTAssertNil(APIError.conflict.conflictDetail)
-        XCTAssertNil(APIError.requestFailed.conflictDetail)
+        XCTAssertNil(APIError.requestFailed(status: 500).conflictDetail)
     }
 
     func testKnownConflictDetailsKeepTheirDedicatedErrors() async throws {

@@ -217,9 +217,13 @@ final class CreationUITests: XCTestCase {
         app.launchArguments = ["-ui-testing-chat"]
         app.launch()
         createFreshChat(in: app)
-        XCTAssertTrue(app.staticTexts["Kria couldn’t load creation options. Check your connection and retry."].waitForExistence(timeout: 5))
+        // The unconfigured fixture answers every request with HTTP 503: the
+        // server was reached, so recovery must not blame the connection.
+        XCTAssertTrue(app.staticTexts["Kria couldn’t load creation options. Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment."].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["format-montage"].exists)
-        XCTAssertTrue(app.buttons["Reconnect"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Something went wrong"].exists)
+        XCTAssertTrue(app.buttons["Refresh"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["Reconnect"].exists)
     }
 
     func testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap() {

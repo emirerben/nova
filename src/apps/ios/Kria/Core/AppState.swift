@@ -146,7 +146,11 @@ enum ProjectCollectionState: Equatable, Sendable {
                 projectsState = .loaded
             }
             #else
-            let message = APIError.requestFailed.localizedDescription
+            // Keep Kria's own copy rather than raw system text, and mention the
+            // connection only when the request never got a response.
+            let message = RequestFailureCause(error) == .connection
+                ? APIError.offline.localizedDescription
+                : ((error as? APIError) ?? .invalidResponse).localizedDescription
             errorMessage = message
             projectsState = projects.isEmpty ? .failed(message) : .loaded
             #endif

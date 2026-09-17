@@ -299,7 +299,7 @@ import SwiftData
         await model.loadLibrary()
 
         XCTAssertTrue(model.libraryProjects.isEmpty)
-        XCTAssertEqual(model.libraryState, .failed(APIError.requestFailed.localizedDescription))
+        XCTAssertEqual(model.libraryState, .failed(APIError.requestFailed(status: 500).localizedDescription))
         XCTAssertNotNil(model.errorMessage)
     }
 

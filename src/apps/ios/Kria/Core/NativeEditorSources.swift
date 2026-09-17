@@ -275,7 +275,8 @@ actor NativeEditorSourceResolver {
         if let value = cachedDownload(key: key, id: id) { return value }
         let (file, response) = try await downloads.download(from: sourceURL)
         defer { try? FileManager.default.removeItem(at: file) }
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { throw APIError.requestFailed }
+        guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard response.statusCode == 200 else { throw APIError.requestFailed(status: response.statusCode) }
         try Task.checkCancellation()
         var asset = try await NativeDownloadedMedia.importAsset(from: file, sourceURL: sourceURL, response: response, project: diskCache.project)
         let url = diskCache.project.root.appendingPathComponent(asset.relativePath)
@@ -293,7 +294,8 @@ actor NativeEditorSourceResolver {
         if let value = cachedDownload(key: key, id: id) { return try await decoderCompatible(value) }
         let (file, response) = try await downloads.download(from: sourceURL)
         defer { try? FileManager.default.removeItem(at: file) }
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { throw APIError.requestFailed }
+        guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard response.statusCode == 200 else { throw APIError.requestFailed(status: response.statusCode) }
         try Task.checkCancellation()
         var asset = try await NativeDownloadedMedia.importAsset(from: file, sourceURL: sourceURL, response: response, project: diskCache.project)
         let url = diskCache.project.root.appendingPathComponent(asset.relativePath)
@@ -398,7 +400,8 @@ actor NativeEditorSourceResolver {
                 NativePreviewDiagnostics.record("source-downloaded", fields: ["index": String(clip.clipIndex)])
                 #endif
                 defer { try? FileManager.default.removeItem(at: file) }
-                guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { throw APIError.requestFailed }
+                guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+                guard response.statusCode == 200 else { throw APIError.requestFailed(status: response.statusCode) }
                 try Task.checkCancellation()
                 asset = try await NativeDownloadedMedia.importAsset(from: file, sourceURL: sourceURL, response: response, project: diskCache.project)
                 url = diskCache.project.root.appendingPathComponent(asset.relativePath)
