@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.47.0] - 2026-09-17
+
+### Changed
+- fix(ios): collapse the posting-song card into a thin bar so editor tools stay on screen (KRI-90) (#1056) <!-- release-pr: 1056 -->
+
 ## [0.76.46.0] - 2026-09-17
 
 ### Changed
