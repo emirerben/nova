@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.63.0] - 2026-09-17
+
+### Changed
+- feat(api): device-render failure report, retry re-pin and stale reaper (KRI-114 P0-1/P0-3) (#1073) <!-- release-pr: 1073 -->
+
 ## [0.76.62.0] - 2026-09-17
 
 ### Changed
