@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.41.0] - 2026-09-17
+
+### Changed
+- feat(ios): name every creator lane as a negotiated capability (KRI-92) (#1049) <!-- release-pr: 1049 -->
+
 ## [0.76.40.0] - 2026-09-17
 
 ### Changed
