@@ -51,7 +51,7 @@ A case existing in the enum is **vocabulary**, never a claim of support. Three s
 
 | Capability | Plan lane / source catalog | What's missing |
 | --- | --- | --- |
-| `musicBed` | `GuidedStoryExecutionPlan.music` | The licensed music bed. V6 guided plans dodge this by sending a timing-only `song_reference` (no audio) instead — see `docs/runbooks/phone-rendering.md` §"Matched songs as posting references". Mixing/gain/duck for a real bed is unbuilt. |
+| `musicBed` | `GuidedStoryExecutionPlan.music`; `GenerativeVariantDecision.music_track_id` (montage/day_vlog/single_hero) | The licensed music bed. V6 guided plans dodge this by sending a timing-only `song_reference` (no audio) instead — see `docs/runbooks/phone-rendering.md` §"Matched songs as posting references". KRI-114 P1-2/P1-3's `app.pipeline.phone_montage_plan.compile_phone_montage_plan` is the first Python-side producer that actually derives this bit from real recipe content (a `PhoneMusicBed` → `LibraryRenderAsset` + an audio-kind `TimelineTrack` clip), gated by `_resolve_phone_music_bed`'s publish/ready checks. Still "local-later" here because no `KriaMediaEngine` native primitive plays a library music asset yet — local-v1 is pending device-side verification, not schema/Python work. |
 | `narrationAudio` | `GuidedStoryExecutionPlan.narration` | Recorded voiceover track. |
 | `soundEffects` | `.licensed_sfx_intent`, `.editor_sound_effects` | `SoundEffectPlacement` (library + user uploads, `at_s`, gain, trim, effect groups) — `app/agents/_schemas/sound_effect.py`. |
 | `mediaCards` | `.editor_media_overlays` | `MediaOverlay` (pip/fullscreen, entrance/exit tokens, source crop, playback rate, z-order) — `app/agents/_schemas/media_overlay.py`. |

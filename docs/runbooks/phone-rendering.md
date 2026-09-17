@@ -57,9 +57,46 @@ The dispatch gate (`_dispatch_item_render` in `content_plan_build.py`) is
 archetype-agnostic: a guided format (`GUIDED_EDIT_FORMATS`) still requires an
 approved edit proposal; any other format is checked against the positive
 `PHONE_RENDER_SUPPORTED_FORMATS` allowlist in `app/agents/_schemas/
-edit_format.py` (empty today — grown one phase at a time as each archetype
-gets a phone-recipe compiler). Enrollment (`phone_rendering_for`) is checked
-first regardless of format.
+edit_format.py` (`{montage, day_vlog, single_hero}` as of KRI-114 P1-2/P1-4 —
+grown one phase at a time as each archetype gets a phone-recipe compiler).
+Enrollment (`phone_rendering_for`) is checked first regardless of format.
+
+### Montage family on the phone (KRI-114 P1-2/P1-3)
+
+`montage`/`day_vlog`/`single_hero` items **without a voiceover** compile
+straight from the analysis proxies: `app.tasks.generative_build
+._run_phone_montage_job` runs the SAME ingest → text agents → style selector
+→ music matcher → `_resolve_archetype` → `_specs_for_archetype` prework the
+cloud path uses, then hands the top-ranked spec to `_decide_generative_variant`
+(pure — no media I/O) and `app.pipeline.phone_montage_plan
+.compile_phone_montage_plan` (also pure — no media I/O, no DB). The compiler
+maps each decided `AssemblyStep` to a `TimelineClip` (crossfade/fade-to-black/
+fade-to-white transitions; the on-device refit math shared with the guided
+compiler via `app.pipeline.phone_recipe_shared` when a step's proxy-measured
+window overruns the device's own original), and a matched track to a
+`PhoneMusicBed` → `LibraryRenderAsset` + an audio-kind `TimelineTrack` clip
+(offset = the beat-snapped `music_start_s`; volume 1.0, original muted —
+mirrors `_mix_template_audio`'s song-variant replace-with-no-fade mix
+exactly). The agent-text intro burns through the identical
+`build_persistent_intro_overlays` → `compile_text_overlay` path the cloud
+renderer's static-intro branch uses.
+
+**Supported today:** one variant per job (content-plan single-variant
+policy), song or original-audio text intro (linear/cluster static layout,
+not the sequence/rhythm upgrade), crossfade/fade-to-black/fade-to-white
+transitions, variable speed, the `golden_hour` look on exact-canvas
+unrotated sources, a licensed music bed at its matched offset.
+
+**Deferred, fails closed via `UnsupportedPhonePlan`:** every variant but the
+top-ranked one (the rest are recorded under
+`assembly_plan["phone_deferred_variants"]` so nothing is silently lost —
+multi-variant phone rendering is a follow-up), SFX/media-overlay lanes,
+masonry/collage presets, lyric overlays, carousel-moment splices, letterboxed
+landscape fit, the editorial sequence/rhythm typographic upgrade, non-
+`golden_hour`/`none` color grades, and audio ducking. A voiceover on any of
+these formats is rejected and stays on the cloud renderer (checked
+independently of the dispatch-time allowlist, since a voiceover can be
+attached to a montage-family item regardless of `edit_format`).
 
 When Generate creates no Job, inspect the Creator session's `last_error` and
 the `plan_item_render.invalid_clips` log detail, plus its `phone_gate` field
