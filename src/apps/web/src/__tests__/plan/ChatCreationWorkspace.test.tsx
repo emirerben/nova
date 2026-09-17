@@ -563,6 +563,33 @@ describe("ChatCreationWorkspace", () => {
     }
   });
 
+  it("routes a slide-post item's media through the Assets pool, not the clip composer (KRI-33)", async () => {
+    // A `slides` item (TikTok photo post / Instagram carousel) has no clip
+    // concept at all — its media lives only in the PlanItemAsset pool the
+    // dedicated slides upload card already renders. Before this fix, the
+    // composer's always-on "+" attach button stayed enabled here too and
+    // silently routed uploads into `clip_gcs_paths`, where slide-post
+    // compose could never see them — the exact bug behind "Compose fails
+    // for both TikTok and Instagram after uploading four videos."
+    const setup = {
+      ...baseThread,
+      state: { edit_format: "slides", media: [], media_count: 0 },
+      active_plan_item_id: "item-1",
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByTestId("creation-slides-artifact")).toBeInTheDocument();
+    expect(screen.getByTestId("mock-asset-pool")).toHaveTextContent("item-1");
+    expect(screen.getByRole("button", { name: "Continue to compose" })).toBeInTheDocument();
+
+    const attachButton = screen.getByRole("button", { name: "Attach primary video clips" });
+    expect(attachButton).toBeDisabled();
+    const picker = document.getElementById("creation-file-picker") as HTMLInputElement;
+    expect(picker).toBeDisabled();
+  });
+
   it("does not render an empty visuals artifact when the PlanItem pool is disabled", async () => {
     const previousVisualFlag = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
     const previousGuidedFlag = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED;

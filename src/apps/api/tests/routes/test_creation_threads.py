@@ -1824,6 +1824,49 @@ async def test_subtitled_upload_reservation_enforces_one_clip_limit(
 
 
 @pytest.mark.asyncio
+async def test_upload_urls_rejects_media_for_slide_post_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-33: a slide post has no clip/voiceover concept — its media lives
+    only in the PlanItemAsset pool (Visuals tab), never `clip_gcs_paths`. The
+    composer's primary attach affordance must be refused here (with an
+    actionable pointer to the Visuals pool) rather than silently accepting a
+    video that slide-post compose/render can never see."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        active_plan_item_id=uuid.uuid4(),
+    )
+    item = SimpleNamespace(edit_format="slides", clip_gcs_paths=[])
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    with pytest.raises(HTTPException, match="Visuals pool") as exc:
+        await upload_urls(
+            _request(),
+            str(thread.id),
+            UploadBody(
+                files=[
+                    UploadFile(
+                        filename="clip-1.mp4",
+                        content_type="video/mp4",
+                        file_size_bytes=10,
+                        client_upload_id="clip-1",
+                    )
+                ]
+            ),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_attach_rejects_tampered_reserved_path(monkeypatch: pytest.MonkeyPatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     thread = SimpleNamespace(id=uuid.uuid4(), creator_id=user.id, status="active", revision=0)
@@ -2259,6 +2302,58 @@ async def test_attach_rejects_images_from_primary_creation_media() -> None:
             )
     finally:
         # Keep this isolated test from mutating the imported route globally.
+        routes._load = original_load
+        routes._duplicate = original_duplicate
+
+
+@pytest.mark.asyncio
+async def test_attach_rejects_video_for_slide_post_from_primary_creation_media() -> None:
+    """KRI-33 regression: uploading videos through the primary composer
+    attach (not the Assets/Visuals pool) for a `slides`-format item must be
+    refused with an actionable error — the previous silent-accept landed
+    footage in `clip_gcs_paths`, where slide-post compose could never see it,
+    so both platform options failed identically with a generic "couldn't
+    compose" error and no indication why."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_job_id=None,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [], "media_count": 0},
+    )
+    item = SimpleNamespace(
+        edit_format="slides",
+        current_job_id=None,
+        clip_gcs_paths=[],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+    )
+    import app.routes.creation_threads as routes
+
+    original_load = routes._load
+    original_duplicate = routes._duplicate
+    routes._load = AsyncMock(return_value=thread)
+    routes._duplicate = AsyncMock(return_value=None)
+    try:
+        db = Mock()
+        db.get = AsyncMock(return_value=item)
+        with pytest.raises(HTTPException, match="Visuals pool") as exc:
+            await routes.attach_media(
+                _request(),
+                str(thread.id),
+                AttachBody(
+                    media=[MediaInput(media_id="clip-1.mp4", kind="video", filename="clip-1.mp4")],
+                    client_event_id="attach-video-to-slides",
+                    expected_revision=0,
+                ),
+                user,
+                db,
+            )
+        assert exc.value.status_code == 422
+    finally:
         routes._load = original_load
         routes._duplicate = original_duplicate
 
