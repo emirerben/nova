@@ -215,6 +215,15 @@ struct NativeEditorTemporaryVideo {
     private var scrubFrameTask: Task<Void, Never>?
     private var pendingScrubFrameTime: TimeInterval?
     private var scrubFrameGeneration = 0
+    /// KRI-95: measures the real editor's scrub-to-visible-frame latency.
+    /// `MetricsCollector.record` is a lock + array append — cheap at the rate
+    /// scrub gestures actually happen — so, matching how `MediaDiagnosticView`
+    /// (DEBUG-only) already records unconditionally, this isn't gated behind a
+    /// toggle. Previously only that debug screen collected this metric; this
+    /// is the path KRI-97's physical-device seek p95 measurement actually
+    /// needs numbers from.
+    let previewInstrumentation = MetricsCollector()
+    private var seekLatencyMeter = SeekLatencyMeter()
     @Published private(set) var sourcePreviewState: NativeSourcePreviewState = .idle
     private var finishedRenderURL: URL?
     private var finishedRenderDuration: TimeInterval?
@@ -1627,6 +1636,11 @@ struct NativeEditorTemporaryVideo {
         }
         playbackSeekTarget = min(time, max(0, duration - 1.0 / 600))
         pendingScrubFrameTime = playbackSeekTarget
+        // Coalescing finger events (above) means only the latest requested
+        // position ever becomes visible, so re-arming on every call and
+        // measuring from the last one read is the correct "time to the frame
+        // the user actually sees," not an average across dropped intermediates.
+        seekLatencyMeter.request()
         guard scrubFrameTask == nil, let generator = scrubFrameGenerator else { return true }
         let generation = scrubFrameGeneration
         scrubFrameTask = Task { @MainActor [weak self, generator] in
@@ -1646,6 +1660,9 @@ struct NativeEditorTemporaryVideo {
                     self.scrubPreviewTime = frame.actualTime.seconds
                     self.scrubPreviewFrame = UIImage(cgImage: frame.image)
                     self.prepareInteractionLayers()
+                    if let elapsed = self.seekLatencyMeter.visible() {
+                        self.previewInstrumentation.record(MetricEvent(name: .seekLatency, value: elapsed))
+                    }
                 } catch {
                     guard !Task.isCancelled, let self, self.scrubFrameGeneration == generation else { return }
                     #if DEBUG
