@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.56.0] - 2026-09-17
+
+### Changed
+- fix(ios): recognize guided-story captions in the native Captions tab (KRI-110) (#1057) <!-- release-pr: 1057 -->
+
+## [0.76.55.0] - 2026-09-17
+
+### Changed
+- fix(ios): wait for typed text and give the native CI job headroom (KRI-112) (#1070) <!-- release-pr: 1070 -->
+
+## [0.76.54.0] - 2026-09-17
+
+### Changed
+- Add clips/photos to the editor post-generation (KRI-109) (#1069) <!-- release-pr: 1069 -->
+
+## [0.76.53.0] - 2026-09-17
+
+### Changed
+- fix(creator): stop chapter-label plans with more files than labels from failing to plan (#1068) <!-- release-pr: 1068 -->
+
+## [0.76.52.0] - 2026-09-17
+
+### Changed
+- fix(creator): stop long chat requests from crashing "Create this video" (#1064) <!-- release-pr: 1064 -->
+
+## [0.76.51.0] - 2026-09-17
+
+### Changed
+- fix(chat): show the server's reason when confirming a direction is rejected (#1063) <!-- release-pr: 1063 -->
+
+## [0.76.50.0] - 2026-09-17
+
+### Changed
+- fix(ios-editor): play button icon no longer stalls behind audio-session setup (KRI-41) (#1062) <!-- release-pr: 1062 -->
+
+## [0.76.49.0] - 2026-09-17
+
+### Changed
+- fix(slide-post): route slides-item media through the Visuals pool, not clips (#1061) <!-- release-pr: 1061 -->
+
 ## [0.76.48.0] - 2026-09-17
 
 ### Changed

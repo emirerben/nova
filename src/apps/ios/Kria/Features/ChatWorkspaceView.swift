@@ -288,6 +288,8 @@ private struct CreationWorkspaceView: View {
     @State private var isActing = false
     @State private var isThinking = false
     @State private var errorMessage: String?
+    /// The server's reason the last confirmation was rejected, shown inside the card.
+    @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
     @State private var showsResult = false
     @StateObject private var editorSession: NativeEditorSession
@@ -534,7 +536,13 @@ private struct CreationWorkspaceView: View {
                 )
                 .id("approval-\(approval.id)")
             } else if let thread = fullThread {
-                CreationConfirmationStage(thread: thread, isBusy: isActing || isSending || pendingUploadCount > 0, action: performAction)
+                CreationConfirmationStage(
+                    thread: thread,
+                    isBusy: isActing || isSending || pendingUploadCount > 0,
+                    conflict: visibleConfirmationConflict(for: thread),
+                    refreshDirection: refreshDirection,
+                    action: performAction
+                )
             }
         case .rendering:
             if let deviceRenderKey {
@@ -567,11 +575,38 @@ private struct CreationWorkspaceView: View {
             }
         case .failed:
             if let thread = fullThread, thread.runtimeVersion == 1 {
-                CreationConfirmationStage(thread: thread, isBusy: isActing || isSending || pendingUploadCount > 0, action: performAction)
+                CreationConfirmationStage(
+                    thread: thread,
+                    isBusy: isActing || isSending || pendingUploadCount > 0,
+                    conflict: visibleConfirmationConflict(for: thread),
+                    refreshDirection: refreshDirection,
+                    action: performAction
+                )
             } else {
                 FailedStage(retry: { Task { await send(message: "Try generating this edit again") } }).id("failed")
             }
         }
+    }
+
+    /// Mirrors `stageContent`: whether the runtime-v1 confirmation card is on screen.
+    private var showsCreationConfirmation: Bool {
+        guard let fullThread else { return false }
+        switch workspaceStage {
+        case .direction: return approval == nil
+        case .failed: return fullThread.runtimeVersion == 1
+        default: return false
+        }
+    }
+
+    private func visibleConfirmationConflict(for thread: CreationThread) -> CreationConfirmationConflict? {
+        guard let confirmationConflict, confirmationConflict.planIdentity == thread.creatorPlanIdentity else { return nil }
+        return confirmationConflict
+    }
+
+    /// Asks Kria to plan again against the footage attached now, so a direction
+    /// the server rejected as stale can be confirmed.
+    private func refreshDirection() {
+        Task { await send(message: CreationConfirmationConflict.refreshDirectionMessage) }
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
@@ -588,6 +623,7 @@ private struct CreationWorkspaceView: View {
         guard !message.isEmpty else { return }
         isSending = true
         errorMessage = nil
+        confirmationConflict = nil
         defer { isSending = false }
         if editorSession.hasUnsavedChanges {
             await editorSession.save()
@@ -670,6 +706,7 @@ private struct CreationWorkspaceView: View {
         guard !isActing, !isSending else { return }
         isActing = true
         errorMessage = nil
+        confirmationConflict = nil
         let identity = CreationActionIdentity.reusing(pendingAction, action: action, payload: payload, revision: threadRevision)
         pendingAction = identity
         Task {
@@ -681,11 +718,20 @@ private struct CreationWorkspaceView: View {
                 apply(thread, requestSequence: requestSequence)
                 if action == "select_format" { isChoosingFormat = false }
                 errorMessage = await acceptedMutationRefreshError("Saved, but the conversation couldn’t refresh.", refresh: { try await refreshDelta() })
-            } catch APIError.conflict {
+            } catch let error as APIError where error == .conflict {
                 pendingAction = nil
                 await refreshCapabilities()
                 await refreshNow()
-                errorMessage = "This project changed. Review the latest options and try again."
+                guard CreationConfirmationConflict.confirmationActions.contains(action), payload["variant_id"] == nil else {
+                    errorMessage = CreationConfirmationConflict.changedMessage
+                    return
+                }
+                let conflict = CreationConfirmationConflict(
+                    detail: error.conflictDetail,
+                    planIdentity: fullThread?.creatorPlanIdentity ?? ""
+                )
+                if showsCreationConfirmation { confirmationConflict = conflict }
+                else { errorMessage = conflict.message }
             } catch { errorMessage = "That change wasn’t saved. \(error.localizedDescription)" }
         }
     }

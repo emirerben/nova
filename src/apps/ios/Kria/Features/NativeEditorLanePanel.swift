@@ -79,7 +79,18 @@ struct NativeCaptionPanel: View {
     @ObservedObject var session: NativeEditorSession
     let onDone: () -> Void
     @State private var tab: Tab = .edit
-    @FocusState private var editingCueID: String?
+    // Pre-existing bug (not introduced by KRI-110, confirmed on unmodified
+    // origin/main with native caption_cues fixtures too): @FocusState never
+    // committed when set from this row's tap gesture, in the same turn as
+    // an @ObservedObject (session) mutation (session.select(...) just
+    // before it) — the TextField this drove into existence never actually
+    // appeared. A follow-up @FocusState requested from the TextField's own
+    // `.onAppear` hit the identical failure mode (hung until the test
+    // runner's watchdog killed it), so this deliberately does not attempt
+    // to auto-summon the keyboard: the row tap only swaps Text for
+    // TextField via a plain @State; the user taps the field itself (a
+    // completely ordinary, un-conflicted first-responder request) to type.
+    @State private var editingCueID: String?
     private var meta: [String: JSONValue] { session.document.captionMeta }
     private var appearance: [String: JSONValue] { meta["appearance"]?.objectValue ?? [:] }
 
@@ -108,21 +119,20 @@ struct NativeCaptionPanel: View {
 
     private var transcript: some View {
         VStack(spacing: 8) {
-            if session.document.captionCues.isEmpty {
+            if session.document.captionUnits.isEmpty {
                 Text("There are no captions in this edit.")
                     .frame(maxWidth: .infinity, minHeight: 80)
                     .foregroundStyle(KriaColor.mutedInk)
             }
-            ForEach(Array(session.document.captionCues.enumerated()), id: \.element.id) { index, cue in
+            ForEach(Array(session.document.captionUnits.enumerated()), id: \.element.id) { index, cue in
                 HStack(spacing: 12) {
                     Text(String(index + 1)).font(KriaFont.body(12))
                         .foregroundStyle(KriaColor.mutedInk).frame(width: 22)
                     VStack(alignment: .leading, spacing: 5) {
                         if editingCueID == cue.id {
                             TextField("Caption", text: Binding(get: {
-                                session.document.captionCues.first { $0.id == cue.id }?.text ?? ""
+                                session.document.captionUnits.first { $0.id == cue.id }?.text ?? ""
                             }, set: { session.updateCaptionCue(id: cue.id, text: $0) }), axis: .vertical)
-                            .focused($editingCueID, equals: cue.id)
                             .accessibilityIdentifier("native-editor-caption-content-" + cue.id)
                         } else {
                             Text(cue.text).frame(maxWidth: .infinity, alignment: .leading)

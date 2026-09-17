@@ -563,6 +563,33 @@ describe("ChatCreationWorkspace", () => {
     }
   });
 
+  it("routes a slide-post item's media through the Assets pool, not the clip composer (KRI-33)", async () => {
+    // A `slides` item (TikTok photo post / Instagram carousel) has no clip
+    // concept at all — its media lives only in the PlanItemAsset pool the
+    // dedicated slides upload card already renders. Before this fix, the
+    // composer's always-on "+" attach button stayed enabled here too and
+    // silently routed uploads into `clip_gcs_paths`, where slide-post
+    // compose could never see them — the exact bug behind "Compose fails
+    // for both TikTok and Instagram after uploading four videos."
+    const setup = {
+      ...baseThread,
+      state: { edit_format: "slides", media: [], media_count: 0 },
+      active_plan_item_id: "item-1",
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByTestId("creation-slides-artifact")).toBeInTheDocument();
+    expect(screen.getByTestId("mock-asset-pool")).toHaveTextContent("item-1");
+    expect(screen.getByRole("button", { name: "Continue to compose" })).toBeInTheDocument();
+
+    const attachButton = screen.getByRole("button", { name: "Attach primary video clips" });
+    expect(attachButton).toBeDisabled();
+    const picker = document.getElementById("creation-file-picker") as HTMLInputElement;
+    expect(picker).toBeDisabled();
+  });
+
   it("does not render an empty visuals artifact when the PlanItem pool is disabled", async () => {
     const previousVisualFlag = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
     const previousGuidedFlag = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED;
@@ -1593,6 +1620,86 @@ describe("ChatCreationWorkspace", () => {
     await screen.findByText("New exact direction");
     expect(screen.getByRole("button", { name: "Create this video" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry render" })).not.toBeInTheDocument();
+  });
+
+  function awaitingConfirmationThread(planVersion: string): CreationThread {
+    return {
+      ...baseThread,
+      revision: 4,
+      state: { format: "montage", edit_format: "montage", media: [{ media_id: "m1", kind: "video" }], media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_creator_agent_session_id: "session-1",
+      creator_agent: { status: "awaiting_confirmation", version: planVersion, plan_hash: `plan-${planVersion}` },
+      events: [confirmationEvent],
+    };
+  }
+
+  it("shows the server's reason for a rejected confirmation and refreshes the direction", async () => {
+    const stale = awaitingConfirmationThread("1");
+    jest.mocked(listCreationThreads).mockResolvedValue([stale]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(stale);
+    jest.mocked(applyCreationAction).mockRejectedValue(
+      new CreationThreadError("Footage or capabilities changed; review the plan again", 409),
+    );
+    render(<ChatCreationWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create this video" }));
+    expect(await screen.findByText("Footage or capabilities changed; review the plan again.")).toBeInTheDocument();
+    expect(screen.queryByText(/couldn’t start that render/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create this video" })).toBeEnabled();
+
+    const replanned = { ...awaitingConfirmationThread("2"), revision: 6 };
+    jest.mocked(sendCreationMessage).mockResolvedValueOnce(replanned);
+    jest.mocked(refreshCreationThread).mockResolvedValue(replanned);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh the direction" }));
+
+    await waitFor(() => expect(sendCreationMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "thread-1" }),
+      "Keep the same plan with my current footage",
+    ));
+    await waitFor(() => expect(screen.queryByText("Footage or capabilities changed; review the plan again.")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Refresh the direction" })).not.toBeInTheDocument();
+
+    jest.mocked(applyCreationAction).mockResolvedValueOnce(replanned);
+    fireEvent.click(screen.getByRole("button", { name: "Create this video" }));
+    await waitFor(() => expect(applyCreationAction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "thread-1", revision: 6 }),
+      "generate",
+      {},
+    ));
+  });
+
+  it("keeps create retryable without a refresh action while a render is still settling", async () => {
+    const waiting = awaitingConfirmationThread("1");
+    jest.mocked(listCreationThreads).mockResolvedValue([waiting]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(waiting);
+    jest.mocked(applyCreationAction)
+      .mockRejectedValueOnce(new CreationThreadError("Wait for the current render before confirming", 409))
+      .mockResolvedValueOnce(waiting);
+    render(<ChatCreationWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create this video" }));
+    expect(await screen.findByText("Wait for the current render before confirming.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh the direction" })).not.toBeInTheDocument();
+
+    const create = screen.getByRole("button", { name: "Create this video" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    await waitFor(() => expect(applyCreationAction).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText("Wait for the current render before confirming.")).not.toBeInTheDocument());
+    expect(sendCreationMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the generic render copy when confirmation fails without a conflict", async () => {
+    const ready = awaitingConfirmationThread("1");
+    jest.mocked(listCreationThreads).mockResolvedValue([ready]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(ready);
+    jest.mocked(applyCreationAction).mockRejectedValueOnce(new CreationThreadError("Render queue unavailable", 503));
+    render(<ChatCreationWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create this video" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("I couldn’t start that render. Your project is safe—adjust the direction or try again.");
+    expect(screen.queryByRole("button", { name: "Refresh the direction" })).not.toBeInTheDocument();
   });
 
   it("prepares a queued revision once when its exact job becomes ready", async () => {

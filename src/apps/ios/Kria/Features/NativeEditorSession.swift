@@ -369,6 +369,15 @@ struct NativeEditorTemporaryVideo {
     @Published private(set) var visualLibraryLoading = false
     @Published private(set) var isAddingVisual = false
     @Published var visualError: String?
+    @Published private(set) var isAddingClip = false
+    @Published var addClipError: String?
+    /// Default window given to a freshly added timeline clip/photo. The server
+    /// has never probed this source, so it can't bound the window itself — see
+    /// `resolve_timeline_slots_for_edit`'s "New clips the AI never probed have
+    /// no known duration" skip. Beat-gridded (song) variants snap this to the
+    /// nearest beat; no-grid variants snap it to the nearest half second — the
+    /// same server-side resolution every other slot edit already goes through.
+    private static let addedClipDurationS: Double = 3.0
     private var authoredVisualSources: [String: ResolvedEditorSource] = [:]
     private var variantKey: String?
     private var jobID: UUID?
@@ -1427,12 +1436,24 @@ struct NativeEditorTemporaryVideo {
         }
         sourcePreviewUpdateDeferred = false
         let sequence = sourcePreviewSequence
+        // Inside a gesture or typing transaction (slider drag, caption
+        // keystrokes) every sample would otherwise recompile and repaint the
+        // whole composition — on a guided story that is ~170 caption layouts
+        // per sample, seconds of main-thread work per drag. Coalesce samples
+        // until the finger pauses; a standalone edit still rebuilds at once.
+        let coalesce = transactionBaseline != nil
         sourcePreviewTask = Task { [weak self] in
-            await Task.yield()
+            if coalesce {
+                try? await Task.sleep(for: .milliseconds(Self.previewCoalesceMilliseconds))
+            } else {
+                await Task.yield()
+            }
             guard !Task.isCancelled else { return }
             await self?.rebuildSourcePreview(sequence: sequence)
         }
     }
+
+    static let previewCoalesceMilliseconds = 80
 
     private func rebuildSourcePreview(sequence: Int) async {
         guard let compiler = sourceCompiler, var sources = resolvedSources else { return }
@@ -1465,6 +1486,7 @@ struct NativeEditorTemporaryVideo {
             let media = try await preparePreviewMedia(document: snapshot, sequence: sequence)
             guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             #if DEBUG
+            sourcePreviewCompileCount += 1
             NativePreviewDiagnostics.record("compile", fields: [
                 "textCount": String(snapshot.textElements.count),
                 "uniqueTextIDs": String(Set(snapshot.textElements.map(\.id)).count),
@@ -1478,7 +1500,15 @@ struct NativeEditorTemporaryVideo {
                                                sources: sources, audioSources: audio, mediaSources: media,
                                                referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                                sourceAudioPreserved: sourceAudioPreserved)
-            if let preview = sourcePreview, (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
+            // The in-place text update only applies while the canvas is still
+            // on this composition. After a transient compile failure handed
+            // the canvas to the finished-render fallback, its player item was
+            // detached and must not be re-attached to a new player; fall
+            // through and build a fresh composition so the canvas comes back
+            // to the live edit — otherwise every later edit lands off-screen
+            // while the user keeps watching the stale cloud render (KRI-110).
+            if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
+               (try? preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)) != nil {
                 sourcePreviewState = .ready
                 if !isPlaying { seek(to: currentTime) }
                 prepareInteractionLayers()
@@ -1561,8 +1591,17 @@ struct NativeEditorTemporaryVideo {
                 }
             }
         }
-        activatePreviewAudio()
         player.play()
+        // AVAudioSession.setCategory/setActive block the calling thread for tens
+        // of ms while they round-trip to mediaserverd. Deferring just that call
+        // one run-loop turn lets SwiftUI flush the isPlaying=true icon swap
+        // immediately instead of stalling behind audio-session setup on every
+        // play tap; player.play() itself is cheap and stays synchronous so a
+        // pause landing before this fires still wins.
+        Task { @MainActor [weak self, weak player] in
+            guard let self, self.player === player, self.isPlaying else { return }
+            self.activatePreviewAudio()
+        }
     }
 
     func pausePlayback() {
@@ -1740,6 +1779,20 @@ struct NativeEditorTemporaryVideo {
     }
 
     #if DEBUG
+    /// How many times the source composition has been recompiled from the
+    /// document. Tests use it to pin that a gesture's samples coalesce.
+    private(set) var sourcePreviewCompileCount = 0
+
+    /// The recipe behind the composition the canvas is showing right now.
+    /// `nil` whenever the player is on anything else — the finished cloud
+    /// render, a stale composition — so a test can assert an edit reached
+    /// what the user actually sees, not merely some off-screen object.
+    var displayedSourcePreviewRecipe: KriaMediaEngine.EditRecipe? {
+        guard sourcePreviewState == .ready, let sourcePreview,
+              player?.currentItem === sourcePreview.preview.playerItem else { return nil }
+        return sourcePreview.exportSnapshot().recipe
+    }
+
     func auditPreviewWindow() async -> [[String: String]] {
         var rows: [[String: String]] = []
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -1950,6 +2003,35 @@ struct NativeEditorTemporaryVideo {
         guard canEditTimeline, draft.clips.count > 1, let id = selectedClipID, let index = draft.clips.firstIndex(where: { $0.id == id }) else { return }
         transact(section: .timeline) { draft in draft.clips.remove(at: index); reflow(&draft.clips, from: max(0, index)) }
         selectedClipID = draft.clips.indices.contains(index) ? draft.clips[index].id : draft.clips.last?.id
+    }
+
+    /// Upload a freshly picked clip or photo and append it to the end of the
+    /// timeline. Two network calls happen before anything is staged locally:
+    /// reserve + upload the bytes, then mint the new `clip_index` in the job's
+    /// shared footage pool (`KriaAPIClient.addClip`) — the pool is otherwise
+    /// fixed at job creation, so a slot referencing an unminted index would be
+    /// rejected on Save. The new slot itself then round-trips through the
+    /// normal Save path like any other timeline edit.
+    func addClip(fileURL: URL) async {
+        // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
+        // no-op instead of a round trip that would 422 anyway.
+        guard canEditTimeline, !isAddingClip, let api, let jobID, draft.clips.count < 20 else { return }
+        isAddingClip = true
+        addClipError = nil
+        defer { isAddingClip = false }
+        do {
+            let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+            guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
+            let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
+            let reservation = try await api.reserveUpload(filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), purpose: nil)
+            try await api.uploadFile(to: reservation, fileURL: fileURL)
+            let result = try await api.addClip(jobID: jobID, gcsPath: reservation.gcsPath)
+            guard canEditTimeline else { return }
+            transactDocument(section: .timeline) { doc in
+                doc.clips.append(EditorTimelineSlot(clipIndex: result.clipIndex, inS: 0, durationS: Self.addedClipDurationS))
+            }
+            addClipError = nil
+        } catch { addClipError = "This file couldn’t be added. Your edit is unchanged. " + error.localizedDescription }
     }
 
     func addText(content: String? = nil) {
@@ -2417,6 +2499,17 @@ struct NativeEditorTemporaryVideo {
 
     func updateCaptionCue(id: String, text: String? = nil, startS: Double? = nil, endS: Double? = nil) {
         guard canEditSection(.captions) else { return }
+        if let index = document.textElements.firstIndex(where: { $0.id == id && $0.isCaption }) {
+            // Guided-story captions (KRI-110) are pinned to the approved
+            // narration: timing and identity are server-owned (see
+            // guided_story.py's narration merge), so only display text is
+            // editor-owned here — mirrors the web's timing lock on narration
+            // captions (KRI-18). They persist through `text_elements`, not
+            // `caption_cues` — the guided commit path hard-rejects the latter.
+            guard let text else { return }
+            transactDocument(section: .text) { $0.textElements[index].text = text }
+            return
+        }
         guard let index = document.captionCues.firstIndex(where: { $0.id == id }) else { return }
         transactDocument(section: .captions) { doc in
             var cue = doc.captionCues[index]
@@ -3455,7 +3548,15 @@ struct NativeEditorTemporaryVideo {
         canEditTimeline = capabilities?["timeline"] == .bool(true)
         canEditText = capabilities?["text_elements"] == .bool(true)
         let archetype = variant["resolved_archetype"]?.stringValue
-        canEditCaptions = ["subtitled", "narrated"].contains(archetype) && variant["base_video_path"]?.stringValue != nil
+        let cueNativeCaptions = ["subtitled", "narrated"].contains(archetype)
+            && variant["base_video_path"]?.stringValue != nil
+        // Guided-story captions are caption_cue-tagged TextElements (KRI-110)
+        // rather than caption_cues rows. The archetype allowlist above can
+        // never see them, so fall back to `text_elements` — the backend has
+        // no dedicated "captions" capability key; a caption-tagged element
+        // is only ever mutable through the same permission as ordinary text.
+        let textLaneCaptions = canEditText && document.textElements.contains(where: \.isCaption)
+        canEditCaptions = cueNativeCaptions || textLaneCaptions
         canEditMix = capabilities?["mix"] == .bool(true) && draft.music != nil
     }
 

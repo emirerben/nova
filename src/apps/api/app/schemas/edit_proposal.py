@@ -90,6 +90,7 @@ ConversationRole = Literal["user", "agent"]
 ConversationPhase = Literal["briefing", "review"]
 ConversationSuggestion = Annotated[str, Field(min_length=1, max_length=100)]
 EDIT_CONVERSATION_MAX_TURNS = 20
+EDIT_CONVERSATION_TURN_MAX_CHARS = 1000
 CREATOR_SELECTED_ORIENTATION_REASON = "The creator selected this output format."
 
 # Exact creator-authored on-screen copy beyond the opening title: ordered
@@ -1311,7 +1312,7 @@ class EditConversationTurn(BaseModel):
 
     role: ConversationRole
     phase: ConversationPhase = "briefing"
-    content: str = Field(min_length=1, max_length=1000)
+    content: str = Field(min_length=1, max_length=EDIT_CONVERSATION_TURN_MAX_CHARS)
     suggestions: list[ConversationSuggestion] = Field(default_factory=list, max_length=3)
 
 

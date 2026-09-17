@@ -15,6 +15,22 @@ final class NativeEditorMediaViewTests: XCTestCase {
         XCTAssertFalse(overlay.isCaption)
     }
 
+    // KRI-110: guided-story captions persist as `caption_cue`-tagged
+    // TextElements, never as `caption_cues` rows. `captionUnits` is the union
+    // accessor the Captions panel reads instead of the narrow `captionCues`.
+    func testCaptionUnitsProjectsCaptionTaggedTextElementsWhenCaptionCuesEmpty() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.projectedCaptions)
+        XCTAssertTrue(session.document.captionCues.isEmpty)
+        XCTAssertEqual(session.document.captionUnits.map(\.id), ["00000000-0000-4000-8000-000000000301"])
+        XCTAssertEqual(session.document.captionUnits.first?.text, "Spoken words")
+    }
+
+    func testCaptionUnitsPrefersNativeCueCuesOverTextElementProjection() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.boundary)
+        XCTAssertFalse(session.document.captionCues.isEmpty)
+        XCTAssertEqual(session.document.captionUnits.map(\.id), session.document.captionCues.map(\.id))
+    }
+
     func testVoiceoverAndGuidedNarrationUseRenderedVoiceTrack() {
         for variant: [String: JSONValue] in [
             ["resolved_archetype": .string("narrated")],
@@ -27,7 +43,7 @@ final class NativeEditorMediaViewTests: XCTestCase {
         XCTAssertFalse(NativeEditorSession.usesRenderedNarration(["resolved_archetype": .string("guided_story"), "render_receipt": .object(["narration_applied": .bool(false)])]))
     }
 
-    func testPreviewActivatesMediaAudioAndRestoresItAfterRecording() throws {
+    func testPreviewActivatesMediaAudioAndRestoresItAfterRecording() async throws {
         let audio = AVAudioSession.sharedInstance()
         let category = audio.category, mode = audio.mode, options = audio.categoryOptions
         defer {
@@ -40,6 +56,10 @@ final class NativeEditorMediaViewTests: XCTestCase {
             try audio.setActive(false)
             try audio.setCategory(previousCategory)
             session.togglePlayback()
+            // Session activation is deferred a run-loop turn so the play button's
+            // icon swap isn't stalled behind the blocking AVAudioSession call.
+            await Task.yield()
+            await Task.yield()
             XCTAssertEqual(audio.category, .playback)
             XCTAssertEqual(audio.mode, .moviePlayback)
             XCTAssertEqual(session.player?.isMuted, false)

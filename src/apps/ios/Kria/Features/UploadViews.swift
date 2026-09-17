@@ -182,7 +182,7 @@ struct ClipSelectionCapacity: Equatable, Sendable {
     }
 }
 
-private struct ImportedMedia: Transferable {
+struct ImportedMedia: Transferable {
     let url: URL
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(importedContentType: .movie) { try imported($0) }

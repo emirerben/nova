@@ -1793,6 +1793,13 @@ def _run_draft_attempt(
                     opening_title=brief.opening_title,
                     opening_title_duration_s=brief.opening_title_duration_s,
                     closing_title=brief.closing_title,
+                    required_media_ids=(
+                        [ref.media_id for ref in media]
+                        if brief.media_scope == "all"
+                        else brief.selected_media_ids
+                        if brief.media_scope == "selected"
+                        else None
+                    ),
                 )
             except CreatorTextInfeasibleError as exc:
                 with sync_session() as db:

@@ -4005,6 +4005,22 @@ async def upload_urls(
         if getattr(thread, "active_plan_item_id", None)
         else None
     )
+    if item is not None and getattr(item, "edit_format", None) == "slides":
+        # A slide post has no clip/voiceover concept at all (plans/024) — its
+        # media lives exclusively in the PlanItemAsset pool, resolved by the
+        # dedicated Assets-pool upload endpoint the SlidePostPanel/AssetPool
+        # UI already uses. Without this fence, the composer's always-visible
+        # primary attach affordance (which only knows the clip pipeline) lets
+        # a creator upload straight into `clip_gcs_paths`, where slide-post
+        # compose/render can never see it — the exact class of KRI-33 bug
+        # ("Compose" 422s with an empty pool after uploading videos here).
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This item is a Photo & video post — add photos and videos "
+                "from its Visuals pool above, not here."
+            ),
+        )
     # Keep the reservation helper usable by migration/recovery callers that
     # only have a thread shell. Normal chat threads always have a PlanItem and
     # therefore use the canonical PlanItem namespace below.
@@ -4175,6 +4191,18 @@ async def attach_media(
     item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
     if item is None:
         raise HTTPException(status_code=409, detail="Creation project is missing its draft")
+    if getattr(item, "edit_format", None) == "slides":
+        # Same fence as `upload_urls` above — a slide post's media lives only
+        # in the PlanItemAsset pool, never `clip_gcs_paths`/voiceover, so this
+        # legacy clip/voiceover attach path must never register media for one
+        # (plans/024, KRI-33).
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This item is a Photo & video post — add photos and videos "
+                "from its Visuals pool above, not here."
+            ),
+        )
     existing_state = dict(getattr(thread, "state", None) or {})
     existing_media = [entry for entry in existing_state.get("media", []) if isinstance(entry, dict)]
     existing_media_ids = {str(entry.get("media_id")) for entry in existing_media}

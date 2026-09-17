@@ -136,6 +136,130 @@ import KriaMediaEngine
         }
     }
 
+    // KRI-110: guided-story captions are caption_cue-tagged TextElements, not
+    // caption_cues rows, so the block above never sees them. The generic
+    // per-element pass must apply the same caption_meta styling via
+    // applyingCaptionMeta's raw-field overlay.
+    func testGuidedStoryCaptionTaggedTextElementHonorsCaptionMetaStyling() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let captionElement = EditorTextElement(id: "caption-1", text: "Spoken words", startS: 0, endS: 2,
+            role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")])])
+        let document = EditorDocument(
+            textElements: [captionElement],
+            captionMeta: ["color": .string("#FF0000"), "stroke_width": .number(9), "size_px": .number(101)]
+        )
+        let item = NativeEditorTimelineItem(selection: .init(kind: .text, id: "caption-1"), start: 0, end: 2)
+        let recipe = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source]).recipe
+        let run = try XCTUnwrap(XCTUnwrap(recipe.textLayers.first).runs.first)
+        XCTAssertEqual(run.fill, TextInk(red: 1, green: 0, blue: 0, alpha: 1))
+        // AuthoredTextLayout doubles the authored stroke width (a centered
+        // outline needs 2x the visible border thickness) — matches the
+        // pre-existing cue-native caption path's own convention.
+        XCTAssertEqual(run.strokeWidth, 18)
+        XCTAssertEqual(run.fontSize, 101)
+    }
+
+    // KRI-110: every font the Captions Style tab offers must resolve to its
+    // registry file for a caption-tagged text element, the same file the
+    // backend's registry names — "Inter" is deliberately the guided caption's
+    // own default face (Inter-Bold), so picking it is a visual no-op.
+    func testGuidedStoryCaptionFontChoiceResolvesToTheRegistryFile() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let captionElement = EditorTextElement(id: "caption-1", text: "Spoken words", startS: 0, endS: 2,
+            role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")]), "font_family": .string("Inter-Bold")])
+        let item = NativeEditorTimelineItem(selection: .init(kind: .text, id: "caption-1"), start: 0, end: 2)
+        XCTAssertEqual(NativeEditorWireContract.captionFonts, ["Inter", "Fraunces", "Space Grotesk"])
+        for (font, file) in [("Inter", "Inter-Bold.ttf"), ("Fraunces", "Fraunces-Bold.ttf"), ("Space Grotesk", "SpaceGrotesk-Bold.ttf")] {
+            let document = EditorDocument(textElements: [captionElement],
+                captionMeta: ["font": .string(font), "font_set": .bool(true)])
+            let program = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source])
+            let run = try XCTUnwrap(XCTUnwrap(program.recipe.textLayers.first).runs.first)
+            XCTAssertEqual(program.assetURLs[run.fontAssetID]?.lastPathComponent, file, font)
+        }
+        // Without font_set the element keeps its own face even if a font is named.
+        let untouched = try compiler.compile(document: EditorDocument(textElements: [captionElement], captionMeta: ["font": .string("Fraunces")]),
+            clips: [clip], items: [item], sources: [0: source])
+        let run = try XCTUnwrap(XCTUnwrap(untouched.recipe.textLayers.first).runs.first)
+        XCTAssertEqual(untouched.assetURLs[run.fontAssetID]?.lastPathComponent, "Inter-Bold.ttf")
+    }
+
+    // KRI-110: the Display choice projects onto the caption's entrance the way
+    // the backend's _apply_guided_caption_meta does — "word" pops in,
+    // "sentence" is static — so the toggle is visible in the local preview.
+    func testGuidedStoryCaptionDisplayStyleProjectsOntoTheEntranceEffect() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let captionElement = EditorTextElement(id: "caption-1", text: "Spoken words", startS: 0, endS: 2,
+            role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")]), "effect": .string("static")])
+        let plainElement = EditorTextElement(id: "title-1", text: "A title", startS: 0, endS: 2, role: "generative_intro", raw: ["effect": .string("static")])
+        let items = [
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: "caption-1"), start: 0, end: 2),
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: "title-1"), start: 0, end: 2),
+        ]
+        for (style, effect) in [("word", "pop-in"), ("sentence", "static")] {
+            let recipe = try compiler.compile(document: EditorDocument(textElements: [captionElement, plainElement], captionMeta: ["style": .string(style)]),
+                clips: [clip], items: items, sources: [0: source]).recipe
+            XCTAssertEqual(recipe.textLayers.first(where: { $0.id == "caption-1" })?.effect.rawValue, effect, style)
+            XCTAssertEqual(recipe.textLayers.first(where: { $0.id == "title-1" })?.effect.rawValue, "static", "ordinary text is untouched")
+        }
+    }
+
+    // KRI-110: a text element whose text is (transiently) empty draws nothing
+    // rather than failing the whole composition — retyping a caption passes
+    // through the empty string.
+    func testWhitespaceOnlyTextElementIsSkippedNotFatal() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let document = EditorDocument(textElements: [
+            EditorTextElement(id: "caption-1", text: "  \n", startS: 0, endS: 2, role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")])]),
+            EditorTextElement(id: "title-1", text: "A title", startS: 0, endS: 2, role: "generative_intro"),
+        ])
+        let items = [
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: "caption-1"), start: 0, end: 2),
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: "title-1"), start: 0, end: 2),
+        ]
+        let recipe = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source]).recipe
+        XCTAssertEqual(recipe.textLayers.map(\.id), ["title-1"])
+    }
+
+    // A non-caption text element must not be touched by caption_meta, and
+    // the global "Show captions" off toggle must drop caption-tagged
+    // elements while leaving ordinary text alone.
+    func testCaptionMetaDisabledSkipsOnlyCaptionTaggedTextElements() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let captionElement = EditorTextElement(id: "caption-1", text: "Spoken words", startS: 0, endS: 2,
+            role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")]), "color": .string("#0000FF")])
+        let plainElement = EditorTextElement(id: "title-1", text: "A title", startS: 0, endS: 2, role: "generative_intro")
+        let document = EditorDocument(textElements: [captionElement, plainElement], captionMeta: ["enabled": .bool(false), "color": .string("#FF0000")])
+        let items = [
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: "caption-1"), start: 0, end: 2),
+            NativeEditorTimelineItem(selection: .init(kind: .text, id: "title-1"), start: 0, end: 2),
+        ]
+        let recipe = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source]).recipe
+        XCTAssertEqual(recipe.textLayers.map(\.id), ["title-1"])
+        // The surviving element's own color is untouched by captionMeta.
+        let run = try XCTUnwrap(XCTUnwrap(recipe.textLayers.first).runs.first)
+        XCTAssertEqual(run.fill, TextInk(red: 1, green: 1, blue: 1, alpha: 1))
+    }
+
     func testNarrationKeepsVoiceTrackAndSlowsShortOriginalFootage() throws {
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
