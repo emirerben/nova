@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     phone_rendering_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
     phone_render_user_ids: list[UUID] = Field(default_factory=list)
+    # A device recipe with no delivery (no poll, no upload) for this long is
+    # presumed abandoned (app crashed, app deleted, notification never seen).
+    # The reaper (app/tasks/device_render_reaper.py) flips it to
+    # needs_attention so the item page can surface a retry instead of polling
+    # forever. Default: 24h.
+    device_render_stale_after_s: int = 86400
 
     def phone_rendering_for(self, user_id: object) -> bool:
         """Apply the kill switch and optional account-scoped pilot cohort."""

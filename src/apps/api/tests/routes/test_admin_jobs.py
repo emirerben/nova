@@ -1291,6 +1291,100 @@ class TestCancelJob:
         ] == []
 
 
+# ── Admin device-render retry endpoint ───────────────────────────────────────
+
+
+class TestAdminDeviceRenderRetry:
+    """POST /admin/jobs/{id}/device-render/retry — unstick a stuck phone recipe
+    with no owner fence (KRI-114 P0-3, prod job 22d1ce8a)."""
+
+    def _pinned_job(self, *, phase: str = "awaiting_device") -> SimpleNamespace:
+        from pathlib import Path
+
+        from app.kria.device_render import make_device_request
+        from app.kria.recipes import EditRecipeV1
+        from app.services.device_render import device_record, pin_device_request, save_device_record
+
+        recipe = EditRecipeV1.model_validate_json(
+            (Path(__file__).parent.parent / "fixtures/kria_edit_recipe_v1.json").read_text()
+        )
+        job = _job_row(status="awaiting_device")
+        request = make_device_request(
+            job_id=job.id, variant_id="original_text", revision=1, recipe=recipe
+        )
+        pin_device_request(job, request, base_generation="approved")
+        job.assembly_plan["variants"] = [
+            {"variant_id": "original_text", "render_generation_id": "approved"}
+        ]
+        if phase != "awaiting_device":
+            record = device_record(job, "original_text")
+            record["status"]["phase"] = phase
+            save_device_record(job, "original_text", record)
+        return job
+
+    def _db_gen(self, job):
+        async def _gen():
+            db = AsyncMock()
+            job_res = MagicMock()
+            job_res.scalar_one_or_none.return_value = job
+            db.execute = AsyncMock(return_value=job_res)
+            db.commit = AsyncMock()
+            yield db
+
+        return _gen
+
+    def _post(self, client, job):
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = self._db_gen(job)
+            try:
+                return client.post(
+                    f"/admin/jobs/{job.id}/device-render/retry?variant_id=original_text",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+    def test_force_fails_then_retries_when_awaiting_device(self, client):
+        from app.services.device_render import device_status
+
+        job = self._pinned_job()
+        old_identity = device_status(job, "original_text").request.identity
+        res = self._post(client, job)
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["phase"] == "awaiting_device"
+        assert body["identity"]["recipe_revision"] == old_identity.recipe_revision + 1
+        new_status = device_status(job, "original_text")
+        assert new_status.phase == "awaiting_device"
+        assert new_status.reason_code is None
+        assert job.assembly_plan["variants"][0]["render_status"] == "awaiting_device"
+        assert job.failure_reason is None
+
+    def test_retries_directly_when_already_needs_attention(self, client):
+        from app.services.device_render import device_status
+
+        job = self._pinned_job(phase="needs_attention")
+        res = self._post(client, job)
+        assert res.status_code == 200, res.text
+        assert device_status(job, "original_text").phase == "awaiting_device"
+
+    def test_rejects_published_record(self, client):
+        job = self._pinned_job(phase="published")
+        res = self._post(client, job)
+        assert res.status_code == 409
+
+    def test_missing_recipe_returns_404(self, client):
+        job = _job_row(status="processing", assembly_plan={})
+        res = self._post(client, job)
+        assert res.status_code == 404
+
+    def test_requires_admin_token(self, client):
+        job = self._pinned_job()
+        res = client.post(f"/admin/jobs/{job.id}/device-render/retry?variant_id=original_text")
+        assert res.status_code in (401, 422)
+
+
 # ── Silence-cut disable endpoint ─────────────────────────────────────────────
 
 

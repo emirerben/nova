@@ -28,19 +28,39 @@ from app.kria.device_render import (
     DeviceExportCompleteOut,
     DeviceExportReservationBody,
     DeviceExportReservationOut,
+    DeviceRenderFailureBody,
+    DeviceRenderFailureOut,
     DeviceRenderIdentity,
     DeviceRenderStatus,
+    DeviceRetryBody,
+    DeviceRetryOut,
     require_current_request,
 )
 from app.kria.render_assets import LibraryRenderAsset
 from app.limiter import limiter
 from app.models import ContentPlan, Job, PlanItem, TemporaryMediaUpload
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
-from app.services.device_render import device_record, device_status, save_device_record
+from app.services.device_render import (
+    apply_device_failure_variant_update,
+    apply_retry_variant_reset,
+    device_record,
+    device_status,
+    mark_device_failed,
+    retry_device_render,
+    save_device_record,
+    touch_device_poll,
+)
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.render_library import catalog_path, inspect_library_asset
 
 router = APIRouter()
+
+# GET /device-render is polled continuously by the phone client and the item
+# page while a render is in flight. Throttle the last_polled_at write (the
+# reaper's staleness signal — app/tasks/device_render_reaper.py) to at most
+# once per this many seconds per record so polling never turns into a write
+# on every request.
+_POLL_TOUCH_THROTTLE_S = 60
 
 
 async def _owned_job(db: AsyncSession, user_id: uuid.UUID, job_id: uuid.UUID) -> Job:
@@ -124,7 +144,20 @@ async def get_device_render(
         status = device_status(job, variant_id)
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
-    _record(job, status.request.identity)
+    record, status = _record(job, status.request.identity)
+    now = datetime.now(UTC)
+    last_polled_raw = record.get("last_polled_at")
+    should_touch = True
+    if isinstance(last_polled_raw, str):
+        try:
+            last_polled = datetime.fromisoformat(last_polled_raw)
+        except ValueError:
+            last_polled = None
+        if last_polled is not None:
+            should_touch = (now - last_polled) >= timedelta(seconds=_POLL_TOUCH_THROTTLE_S)
+    if should_touch:
+        touch_device_poll(job, variant_id, now)
+        await db.commit()
     if not settings.phone_rendering_for(user.id) and status.phase == "awaiting_device":
         return status.model_copy(
             update={
@@ -243,6 +276,79 @@ async def reserve_device_export(
         upload_headers={"Content-Type": "video/mp4", "x-goog-if-generation-match": "0"},
         expires_at=now + timedelta(minutes=15),
     )
+
+
+@router.post("/jobs/{job_id}/device-render/failures", response_model=DeviceRenderFailureOut)
+@limiter.limit("10/minute")
+async def report_device_failure(
+    request: Request,
+    job_id: uuid.UUID,
+    body: DeviceRenderFailureBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> DeviceRenderFailureOut:
+    """The phone could not produce (or finish uploading) a local export.
+
+    Without this endpoint a phone-side crash/cancel/thermal-throttle leaves
+    the job parked `awaiting_device`/`syncing` forever — nothing else ever
+    tells the server the device gave up. The recipe stays pinned (never
+    `processing_failed`): `/device-render/retry` re-pins the same recipe
+    under a fresh identity once the user asks to try again.
+    """
+    job = await _owned_job(db, user.id, job_id)
+    record, status = _record(job, body.identity)
+    if status.phase == "published":
+        raise HTTPException(409, "Render already published")
+    if status.phase == "needs_attention":
+        # Idempotent: a duplicate/retried failure report for the same pinned
+        # identity returns the current state rather than erroring.
+        return DeviceRenderFailureOut(
+            identity=body.identity,
+            phase="needs_attention",
+            reason_code=status.reason_code or body.reason_code,
+        )
+    try:
+        mark_device_failed(
+            job, body.identity.variant_id, reason_code=body.reason_code, detail=body.detail
+        )
+    except ValueError as exc:
+        raise HTTPException(409, "Render no longer accepts a failure report") from exc
+    apply_device_failure_variant_update(
+        job, body.identity.variant_id, reason_code=body.reason_code, detail=body.detail
+    )
+    await db.commit()
+    return DeviceRenderFailureOut(
+        identity=body.identity, phase="needs_attention", reason_code=body.reason_code
+    )
+
+
+@router.post("/jobs/{job_id}/device-render/retry", response_model=DeviceRetryOut)
+@limiter.limit("5/minute")
+async def retry_device_export(
+    request: Request,
+    job_id: uuid.UUID,
+    body: DeviceRetryBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> DeviceRetryOut:
+    """Re-pin the SAME approved recipe under a fresh (revision + 1) identity.
+
+    This is a pure re-delivery vehicle — it never re-runs decision logic
+    (regenerate is a separate, existing product action). The phone sees a
+    new identity, re-downloads assets, and re-exports from scratch.
+    """
+    identity = body.identity
+    job = await _owned_job(db, user.id, job_id)
+    _, status = _record(job, identity)
+    if status.phase != "needs_attention":
+        raise HTTPException(409, "Render is not awaiting a retry")
+    try:
+        new_status = retry_device_render(job, identity.variant_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    apply_retry_variant_reset(job, identity.variant_id)
+    await db.commit()
+    return DeviceRetryOut(identity=new_status.request.identity, phase="awaiting_device")
 
 
 def _verify_export(

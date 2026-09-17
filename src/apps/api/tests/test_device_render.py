@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import uuid
 from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -16,7 +17,15 @@ from fastapi import HTTPException
 from app.kria.device_render import DeviceRenderRequest, DeviceRenderStatus, make_device_request
 from app.kria.recipes import EditRecipeV1
 from app.routes.device_render import _record, _verify_export
-from app.services.device_render import device_status, pin_device_request
+from app.services.device_render import (
+    device_record,
+    device_status,
+    mark_device_failed,
+    pin_device_request,
+    retry_device_render,
+    save_device_record,
+    touch_device_poll,
+)
 from app.services.public_assembly_plan import project_public_assembly_plan
 
 
@@ -199,3 +208,70 @@ def test_real_h264_aac_export_passes_verification(tmp_path):
             hashlib.sha256(data).hexdigest(),
             DeviceRenderStatus(phase="syncing", request=request),
         )
+
+
+@pytest.mark.parametrize("phase", ["awaiting_device", "syncing"])
+def test_mark_device_failed_transitions_from_failable_phases(phase):
+    job, _ = _fixture()
+    record = device_record(job, "original_text")
+    record["status"]["phase"] = phase
+
+    save_device_record(job, "original_text", record)
+    status = mark_device_failed(
+        job, "original_text", reason_code="export_failed", detail="custom detail"
+    )
+    assert status.phase == "needs_attention"
+    assert status.reason == "custom detail"
+    assert status.reason_code == "export_failed"
+    persisted = device_record(job, "original_text")
+    assert persisted["status"]["phase"] == "needs_attention"
+    assert persisted["failed_at"]
+    assert persisted["failure"] == {
+        "reason_code": "export_failed",
+        "detail": "custom detail",
+        "failed_at": persisted["failed_at"],
+    }
+
+
+def test_mark_device_failed_uses_default_detail_when_empty():
+    job, _ = _fixture()
+    status = mark_device_failed(job, "original_text", reason_code="thermal", detail="")
+    assert status.reason
+    assert "device" in status.reason.lower()
+
+
+@pytest.mark.parametrize("phase", ["published", "needs_attention"])
+def test_mark_device_failed_rejects_non_failable_phases(phase):
+    job, _ = _fixture()
+    record = device_record(job, "original_text")
+    record["status"]["phase"] = phase
+
+    save_device_record(job, "original_text", record)
+    with pytest.raises(ValueError, match="cannot fail"):
+        mark_device_failed(job, "original_text", reason_code="unknown", detail="")
+
+
+def test_touch_device_poll_writes_iso_timestamp():
+    job, _ = _fixture()
+    now = datetime.now(UTC)
+    touch_device_poll(job, "original_text", now)
+    assert device_record(job, "original_text")["last_polled_at"] == now.isoformat()
+
+
+def test_retry_device_render_reissues_revision_and_preserves_recipe_and_base_generation():
+    job, request = _fixture()
+    mark_device_failed(job, "original_text", reason_code="export_failed", detail="")
+    new_status = retry_device_render(job, "original_text")
+    assert new_status.phase == "awaiting_device"
+    assert new_status.request.identity.recipe_revision == request.identity.recipe_revision + 1
+    assert new_status.request.recipe == request.recipe
+    assert new_status.reason is None
+    assert new_status.reason_code is None
+    assert device_record(job, "original_text")["base_generation"] == "approved"
+    assert device_record(job, "original_text")["attempts"] == {}
+
+
+def test_retry_device_render_requires_needs_attention_phase():
+    job, _ = _fixture()
+    with pytest.raises(ValueError, match="not awaiting a retry"):
+        retry_device_render(job, "original_text")

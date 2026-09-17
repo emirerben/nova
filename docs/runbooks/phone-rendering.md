@@ -218,6 +218,55 @@ proposal do not repair it.
   reject instead of disappearing. Supported plans enter `awaiting_device`
   instead of a cloud-render state; the chat status card consumes this state.
 
+## Device failure reporting and retry (KRI-114 P0-1/P0-3)
+
+A pinned device recipe has no OS-level completion signal — a crashed/deleted
+app or a missed push notification otherwise leaves a job `awaiting_device` (or
+`syncing`, mid-upload) forever. Two mechanisms close that gap:
+
+- **Client-driven failure report** — `POST /me/jobs/{job_id}/device-render/failures`
+  (10/min): body `{identity, reason_code, detail}` where `reason_code` is one
+  of `export_failed`, `insufficient_storage`, `thermal`, `unsupported_recipe`,
+  `cancelled_by_user`, `unknown`; `detail` is an optional free-text string
+  (≤2000 chars). Valid only from `awaiting_device`/`syncing`; a repeat report
+  against an already-`needs_attention` identity returns 200 idempotently
+  (current state, original reason preserved); against a `published` record it
+  409s. On success: the device record flips to `needs_attention`
+  (`app/services/device_render.py::mark_device_failed`), the matching
+  `variants[]` entry gets `render_status="needs_attention"`/`ok=false`, and
+  `job.failure_reason`/`job.error_detail` are set — **`job.status` stays
+  `awaiting_device`** (the recipe stays pinned; this never becomes
+  `processing_failed`). Response: `DeviceRenderFailureOut {identity, phase,
+  reason_code}`.
+- **Retry (re-pin)** — `POST /me/jobs/{job_id}/device-render/retry` (5/min):
+  body is a bare `DeviceRenderIdentity`. Valid only when the record is
+  `needs_attention`; re-pins the exact same recipe under `recipe_revision + 1`
+  (`app/services/device_render.py::retry_device_render` — a pure re-delivery
+  vehicle, never a decision point), which resets `attempts` to empty and
+  clears `job.failure_reason`/`error_detail`. Response: `DeviceRetryOut
+  {identity, phase: "awaiting_device"}`. The admin equivalent, `POST
+  /admin/jobs/{job_id}/device-render/retry?variant_id=...`, skips the owner
+  fence and force-fails an `awaiting_device`/`syncing` record first
+  (`reason_code="unknown"`) before re-pinning — this is the unstick path for a
+  phone that never reports anything at all (used on prod job
+  `22d1ce8a-3852-4726-ac8e-165730a6d031`).
+- **Stale reaper** (`app/tasks/device_render_reaper.py::reap_stale_device_renders`,
+  Beat every 10 min, `tasks.reap_stale_device_renders` on the `maintenance`
+  queue) — the backstop when no client-driven signal ever arrives. For every
+  job `status == "awaiting_device"`, each `awaiting_device`/`syncing` record is
+  reaped once its freshest signal (`last_polled_at` if the client has ever
+  polled `GET /device-render` — throttled to one write per 60s — else
+  `pinned_at`, stamped at pin time, else `job.updated_at`) is older than
+  `settings.device_render_stale_after_s` (default 86400s = 24h). Reaping calls
+  `mark_device_failed(reason_code="unknown", ...)`, sets
+  `job.failure_reason="device_render_stale"`, and stamps `reaped_at` on the
+  record so it is never re-reaped.
+
+Record fields added by this work (inside `_device_render_v1[variant_id]`):
+`pinned_at` (ISO, set by `pin_device_request`), `last_polled_at` (ISO, set by
+`touch_device_poll`), `failed_at` + `failure: {reason_code, detail, failed_at}`
+(set by `mark_device_failed`), `reaped_at` (ISO, set only by the reaper).
+
 ## Native handwriting coverage
 
 The portable text contract carries authored handwriting centerlines and per-stroke

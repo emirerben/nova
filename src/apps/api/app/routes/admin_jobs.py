@@ -28,6 +28,7 @@ from sqlalchemy.orm import defer
 from app import storage
 from app.agents._runtime import SUCCESS_OUTCOMES
 from app.database import get_db
+from app.kria.device_render import DeviceRetryOut
 from app.models import (
     AgentRun,
     CreatorAgentExecution,
@@ -44,6 +45,12 @@ from app.routes._admin_schemas import (
     agent_run_to_payload_summary,
 )
 from app.routes.admin import _require_admin
+from app.services.device_render import (
+    apply_retry_variant_reset,
+    device_status,
+    mark_device_failed,
+    retry_device_render,
+)
 from app.services.public_assembly_plan import (
     project_admin_debug_candidates,
     project_public_assembly_plan,
@@ -1085,6 +1092,62 @@ async def cancel_job(
         task_id=task_id,
         revoke_dispatched=revoke_dispatched,
     )
+
+
+# ── device-render retry endpoint (KRI-114 P0-3, unstick prod job 22d1ce8a) ───
+
+
+@router.post(
+    "/{job_id}/device-render/retry",
+    response_model=DeviceRetryOut,
+    dependencies=[Depends(_require_admin)],
+)
+async def admin_retry_device_render(
+    job_id: str,
+    variant_id: str = Query(..., min_length=1, max_length=160),
+    db: AsyncSession = Depends(get_db),
+) -> DeviceRetryOut:
+    """Support/ops unstick — no owner fence, unlike the user-facing endpoint.
+
+    If the phone never reported anything (still `awaiting_device`/`syncing`),
+    force-fail the record first with reason_code "unknown" — mirroring what a
+    client-driven failure report would have done — then re-pin the SAME
+    approved recipe under a fresh identity. Never re-runs decision logic;
+    that's a separate, existing product action (regenerate).
+    """
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid job_id: {exc}",
+        ) from exc
+    job = (
+        await db.execute(select(Job).where(Job.id == job_uuid).with_for_update())
+    ).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
+    try:
+        current = device_status(job, variant_id)
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device recipe unavailable") from exc
+    if current.phase == "published":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Render already published")
+    if current.phase in {"awaiting_device", "syncing"}:
+        mark_device_failed(
+            job,
+            variant_id,
+            reason_code="unknown",
+            detail="Manually retried by an administrator.",
+        )
+    try:
+        new_status = retry_device_render(job, variant_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    apply_retry_variant_reset(job, variant_id)
+    await db.commit()
+    log.info("admin_device_render_retry", job_id=job_id, variant_id=variant_id)
+    return DeviceRetryOut(identity=new_status.request.identity, phase="awaiting_device")
 
 
 # ── silence-cut disable endpoint ─────────────────────────────────────────────

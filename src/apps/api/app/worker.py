@@ -70,6 +70,7 @@ celery_app = Celery(
         "app.tasks.storage_retention",
         "app.tasks.billing_reconciliation",
         "app.tasks.template_upload_promotion",
+        "app.tasks.device_render_reaper",
         # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
         # a full MP4 into the RAM-backed /tmp, which is exactly the workload that
         # OOM'd the 1GB `light`/Beat machine on 2026-08-02. It is dispatched with
@@ -121,6 +122,7 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "tasks.sweep_storage_retention",
     "tasks.reconcile_ai_billing",
     "tasks.reconcile_template_upload_promotions",
+    "tasks.reap_stale_device_renders",
 )
 
 celery_app.conf.update(
@@ -301,6 +303,14 @@ celery_app.conf.update(
         "reconcile-speech-cleanup-analyses-every-30s": {
             "task": "tasks.reconcile_speech_cleanup_analyses",
             "schedule": 30.0,
+        },
+        # KRI-114 P0-3: abandoned phone recipes (no client-driven failure report
+        # ever arrives — app crashed/deleted, notification never seen) otherwise
+        # sit `awaiting_device` forever. 10 min is generous against the default
+        # 24h staleness threshold (settings.device_render_stale_after_s).
+        "reap-stale-device-renders-every-10-min": {
+            "task": "tasks.reap_stale_device_renders",
+            "schedule": 600.0,
         },
     },
 )
