@@ -31,11 +31,11 @@ class TestNormalizePostgresScheme:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_postgresql_scheme_unchanged(self, monkeypatch):
-        monkeypatch.setenv("DATABASE_URL", "postgresql://host:5432/db")
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
-        assert s.database_url == "postgresql://host:5432/db"
+        assert s.database_url == "postgresql://u:p@host:5432/db"
 
 
 class TestAsyncpgDatabaseUrl:
@@ -43,7 +43,7 @@ class TestAsyncpgDatabaseUrl:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_scheme_swap(self, monkeypatch):
-        monkeypatch.setenv("DATABASE_URL", "postgresql://host:5432/db")
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -54,7 +54,7 @@ class TestAsyncpgDatabaseUrl:
     def test_sslmode_translated_to_ssl(self, monkeypatch):
         monkeypatch.setenv(
             "DATABASE_URL",
-            "postgresql://host:5432/db?sslmode=disable",
+            "postgresql://u:p@host:5432/db?sslmode=disable",
         )
         from app.config import Settings
 
@@ -65,7 +65,7 @@ class TestAsyncpgDatabaseUrl:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_no_sslmode_no_ssl_param(self, monkeypatch):
-        monkeypatch.setenv("DATABASE_URL", "postgresql://host:5432/db")
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         from app.config import Settings
 
         s = Settings()
@@ -77,7 +77,7 @@ class TestAsyncpgDatabaseUrl:
     def test_existing_ssl_not_overwritten(self, monkeypatch):
         monkeypatch.setenv(
             "DATABASE_URL",
-            "postgresql://host:5432/db?sslmode=require&ssl=prefer",
+            "postgresql://u:p@host:5432/db?sslmode=require&ssl=prefer",
         )
         from app.config import Settings
 
@@ -102,7 +102,7 @@ class TestGuidedEditRolloutSafety:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_enforcement_requires_capability(self, monkeypatch):
-        monkeypatch.setenv("DATABASE_URL", "postgresql://host:5432/db")
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "false")
         monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
         from app.config import Settings
@@ -112,7 +112,7 @@ class TestGuidedEditRolloutSafety:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_enforcement_is_available_with_capability_after_strict_renderer(self, monkeypatch):
-        monkeypatch.setenv("DATABASE_URL", "postgresql://host:5432/db")
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "true")
         monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
         from app.config import Settings
@@ -123,7 +123,7 @@ class TestGuidedEditRolloutSafety:
 
     @pytest.mark.usefixtures("_clean_env")
     def test_enforcement_still_fails_closed_without_renderer_readiness(self, monkeypatch):
-        monkeypatch.setenv("DATABASE_URL", "postgresql://host:5432/db")
+        monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@host:5432/db")
         monkeypatch.setenv("GUIDED_EDIT_CAPABILITY_ENABLED", "true")
         monkeypatch.setenv("GUIDED_EDIT_ENFORCEMENT_ENABLED", "true")
         import app.config as config
