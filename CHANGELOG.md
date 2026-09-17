@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.46.0] - 2026-09-17
+
+### Changed
+- feat(ios): save a device-rendered video to Photos (KRI-96) (#1053) <!-- release-pr: 1053 -->
+
 ## [0.76.45.0] - 2026-09-17
 
 ### Changed
