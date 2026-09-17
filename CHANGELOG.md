@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.64.0] - 2026-09-17
+
+### Changed
+- feat(api): compile montage-family plans to phone recipes with music bed (KRI-114 P1-2/P1-3) (#1076) <!-- release-pr: 1076 -->
+
 ## [0.76.63.0] - 2026-09-17
 
 ### Changed
