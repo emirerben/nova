@@ -65,5 +65,63 @@ final class NativeVP9SourceTests: XCTestCase {
         let passthrough = try await NativeVP9Source.shared.prepare(output, cacheDirectory: cache)
         XCTAssertEqual(passthrough, output)
     }
+
+    @MainActor func testHEVCSourceConvertsToSDRH264Proxy() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try await makeHEVCVideo(in: directory)
+        let cache = directory.appendingPathComponent("cache")
+
+        let output = try await NativeVP9Source.shared.prepare(source, cacheDirectory: cache)
+        XCTAssertNotEqual(output, source)
+        let asset = AVURLAsset(url: output)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let video = try XCTUnwrap(tracks.first)
+        let formats = try await video.load(.formatDescriptions)
+        XCTAssertEqual(formats.map(CMFormatDescriptionGetMediaSubType), [kCMVideoCodecType_H264])
+        let color = (CMFormatDescriptionGetExtensions(try XCTUnwrap(formats.first)) as NSDictionary?) ?? [:]
+        XCTAssertEqual(color[kCMFormatDescriptionExtension_TransferFunction] as? String,
+                       AVVideoTransferFunction_ITU_R_709_2 as String)
+        let reader = try AVAssetReader(asset: asset)
+        let decoded = AVAssetReaderTrackOutput(track: video, outputSettings: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ])
+        reader.add(decoded)
+        XCTAssertTrue(reader.startReading())
+        XCTAssertNotNil(decoded.copyNextSampleBuffer())
+        reader.cancelReading()
+        let again = try await NativeVP9Source.shared.prepare(source, cacheDirectory: cache)
+        XCTAssertEqual(again, output)
+    }
+
+    @MainActor private func makeHEVCVideo(in directory: URL) async throws -> URL {
+        let source = directory.appendingPathComponent("phone-hevc.mp4")
+        let writer = try AVAssetWriter(outputURL: source, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: 64, AVVideoHeightKey: 64
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64
+        ])
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<3 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            var raw: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &raw), kCVReturnSuccess)
+            let pixel = try XCTUnwrap(raw)
+            CVPixelBufferLockBaseAddress(pixel, [])
+            memset(try XCTUnwrap(CVPixelBufferGetBaseAddress(pixel)), Int32(frame * 40), CVPixelBufferGetDataSize(pixel))
+            CVPixelBufferUnlockBaseAddress(pixel, [])
+            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed, "\(String(describing: writer.error))")
+        return source
+    }
 }
 #endif

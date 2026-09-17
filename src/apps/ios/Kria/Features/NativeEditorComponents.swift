@@ -12,8 +12,6 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
     case captions = "Captions"
     case visuals = "Visuals"
     case sounds = "Sounds"
-    case overlays = "Overlays"
-    case styles = "Styles"
 
     var id: String { rawValue }
 
@@ -24,8 +22,6 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .captions: "captions.bubble"
         case .visuals: "camera.filters"
         case .sounds: "waveform"
-        case .overlays: "square.on.square"
-        case .styles: "paintpalette"
         }
     }
 
@@ -36,8 +32,6 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .captions: "Turn captions on or off and choose a style"
         case .visuals: "Browse visual lanes and adjust supported effects"
         case .sounds: "Adjust the music volume"
-        case .overlays: "Browse and adjust media overlay cards"
-        case .styles: "Choose a text style preset"
         }
     }
 }
@@ -128,6 +122,19 @@ struct NativeEditorSaveBanner: View {
     }
 
     private func banner(title: String, detail: String, systemImage: String, tint: Color) -> some View {
+        NativeEditorBannerRow(title: title, detail: detail, systemImage: systemImage, tint: tint, identifier: "native-editor-save-state")
+    }
+}
+
+/// Status row shared by the editor's save and export feedback.
+struct NativeEditorBannerRow: View {
+    let title: String
+    let detail: String
+    let systemImage: String
+    let tint: Color
+    let identifier: String
+
+    var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: systemImage)
                 .foregroundStyle(tint)
@@ -142,7 +149,7 @@ struct NativeEditorSaveBanner: View {
         .padding(.vertical, 9)
         .background(KriaColor.softZinc)
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("native-editor-save-state")
+        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -316,36 +323,36 @@ struct NativeEditorToolRail: View {
     let onSelect: (NativeEditorTool) -> Void
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(NativeEditorTool.allCases.filter { $0 != .kria }) { tool in
-                    Button { selected = tool; onSelect(tool) } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: tool.icon)
-                                .font(.system(size: 17, weight: .medium))
-                            Text(tool.rawValue)
-                                .font(KriaFont.body(11).weight(.medium))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
-                        .frame(width: 60, height: 58)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .fill(selected == tool ? KriaColor.ink : .clear)
-                                .frame(height: 2)
-                                .padding(.horizontal, 10)
-                        }
+        HStack(spacing: 2) {
+            ForEach(NativeEditorTool.allCases.filter { $0 != .kria }) { tool in
+                Button { selected = tool; onSelect(tool) } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: tool.icon)
+                            .font(.system(size: 17, weight: .medium))
+                        Text(tool.rawValue)
+                            .font(KriaFont.body(11).weight(.medium))
+                            .lineLimit(1)
                     }
-                    .accessibilityLabel(tool.rawValue)
-                    .accessibilityHint(tool.accessibilityHint)
-                    .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
+                    .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
+                    .frame(maxWidth: .infinity, minHeight: 58)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(selected == tool ? KriaColor.ink : .clear)
+                            .frame(height: 2)
+                            .padding(.horizontal, 10)
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel(tool.rawValue)
+                .accessibilityHint(tool.accessibilityHint)
+                .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
             }
-            .padding(.horizontal, 8)
         }
+        .padding(.horizontal, 8)
         .frame(height: 66)
         .background(KriaColor.paper)
         .overlay(alignment: .top) { Rectangle().fill(KriaColor.line).frame(height: 1) }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native-editor-tool-rail")
     }
 }

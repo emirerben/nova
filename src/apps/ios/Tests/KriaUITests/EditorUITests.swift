@@ -64,8 +64,15 @@ final class EditorUITests: XCTestCase {
         XCTAssertEqual(clock.value as? String, "0:00.0")
 
         play.tap()
+        // The label flips optimistically, synchronously with the tap, before
+        // playback actually starts — but that flip can't reach the screen
+        // until togglePlayback() returns, and it activates AVAudioSession
+        // (setCategory/setActive) synchronously right after. That system
+        // call's completion time is not under app control and can occasionally
+        // exceed 2s on a loaded CI simulator, so this waits generously for
+        // real app state rather than media readiness.
         expectation(for: NSPredicate(format: "label == %@", "Pause preview"), evaluatedWith: play)
-        waitForExpectations(timeout: 2)
+        waitForExpectations(timeout: 5)
         let advanced = NSPredicate(format: "value != %@", "0:00.0")
         expectation(for: advanced, evaluatedWith: clock)
         waitForExpectations(timeout: 4)
