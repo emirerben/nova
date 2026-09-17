@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.42.0] - 2026-09-17
+
+### Changed
+- feat(ios): add a kind-aware narration/voiceover analysis-proxy contract (KRI-93) (#1050) <!-- release-pr: 1050 -->
+
 ## [0.76.41.0] - 2026-09-17
 
 ### Changed
