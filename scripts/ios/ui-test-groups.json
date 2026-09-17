@@ -6,6 +6,8 @@
       "KriaUITests/CreationUITests/testEveryCreationFormatOpensTheAttachmentFlow",
       "KriaUITests/CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
       "KriaUITests/CreationUITests/testSlowDirectionAndPreJobFailureNeverReturnToUploading",
+      "KriaUITests/CreationUITests/testStaleFootageConflictShowsServerReasonAndRefreshesTheDirection",
+      "KriaUITests/CreationUITests/testWaitForRenderConflictKeepsCreateRetryable",
       "KriaUITests/CreationUITests/testExpiredApprovalCannotStartGeneration",
       "KriaUITests/CreationUITests/testUnavailableCapabilitiesShowRetryInsteadOfDeadFormatCards",
       "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap"

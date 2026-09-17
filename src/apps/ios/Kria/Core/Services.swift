@@ -817,7 +817,7 @@ struct KriaAPI: KriaAPIClient {
             #endif
             if detail == "Content plan is unavailable" { throw APIError.contentPlanUnavailable }
             if detail == "Video is not ready to open in the editor." { throw APIError.editorNotReady }
-            throw APIError.conflict
+            throw APIError.conflict(detail: ConflictDetail(detail))
         }
         guard (200..<300).contains(http.statusCode) else {
             #if DEBUG
@@ -861,7 +861,30 @@ private struct ProjectMediaInput: Encodable { let mediaID: String; let gcsPath: 
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
 private struct DraftUndoRequest: Encodable { let expectedRevision: Int; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision" } }
-enum APIError: Error, LocalizedError, Equatable { case requestFailed, offline, invalidResponse, sessionExpired, conflict, unsupported, contentPlanUnavailable, editorNotReady; var errorDescription: String? { switch self { case .sessionExpired: "Your session expired. Please sign in again."; case .conflict: "This edit changed elsewhere. Review your local changes before saving again."; case .contentPlanUnavailable: "This video’s content plan is unavailable. Its editor cannot be opened."; case .editorNotReady: "This video has no ready edit to open."; case .unsupported: "This API client does not support native editor saves."; default: "Kria couldn’t complete that request. Check your connection and try again." } } }
+enum APIError: Error, LocalizedError, Equatable {
+    case requestFailed, offline, invalidResponse, sessionExpired, unsupported, contentPlanUnavailable, editorNotReady
+    /// A 409/412. `detail` carries the server's `detail` string when it sent one.
+    case conflict(detail: ConflictDetail)
+    /// Detail-free conflict. Keeps `throw APIError.conflict`, `== .conflict`,
+    /// and `catch APIError.conflict` working for every conflict, with or without a detail.
+    static let conflict = APIError.conflict(detail: ConflictDetail(nil))
+    /// The server's human-readable reason for a conflict, if it sent one.
+    var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
+    var errorDescription: String? { switch self { case .sessionExpired: "Your session expired. Please sign in again."; case .conflict: "This edit changed elsewhere. Review your local changes before saving again."; case .contentPlanUnavailable: "This video’s content plan is unavailable. Its editor cannot be opened."; case .editorNotReady: "This video has no ready edit to open."; case .unsupported: "This API client does not support native editor saves."; default: "Kria couldn’t complete that request. Check your connection and try again." } }
+}
+
+/// Server text attached to `APIError.conflict`. Every detail compares equal, so
+/// the detail is context for the UI and never changes which conflict checks match.
+struct ConflictDetail: Equatable, Sendable, CustomStringConvertible {
+    let message: String?
+    init(_ message: String?) {
+        let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.message = trimmed?.isEmpty == false ? trimmed : nil
+    }
+    static func == (_: ConflictDetail, _: ConflictDetail) -> Bool { true }
+    /// Diagnostics print errors with `String(describing:)`; keep server text out of them.
+    var description: String { message == nil ? "none" : "present" }
+}
 
 protocol AuthProvider { func signIn() async throws -> AuthCredential }
 struct AuthCredential: Sendable { let token: String; let displayName: String?; let nonce: String; init(token: String, displayName: String?, nonce: String = "") { self.token = token; self.displayName = displayName; self.nonce = nonce } }
