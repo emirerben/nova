@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.58.0] - 2026-09-17
+
+### Changed
+- fix(ios): keep proxy preparation alive in background and resume interrupted uploads (KRI-114 P0-4) (#1067) <!-- release-pr: 1067 -->
+
 ## [0.76.57.0] - 2026-09-17
 
 ### Changed
