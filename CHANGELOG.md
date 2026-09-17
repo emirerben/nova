@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.43.0] - 2026-09-17
+
+### Changed
+- feat(ios): stage a recoverable placeholder before proxy transcode (KRI-94) (#1051) <!-- release-pr: 1051 -->
+
 ## [0.76.42.0] - 2026-09-17
 
 ### Changed
