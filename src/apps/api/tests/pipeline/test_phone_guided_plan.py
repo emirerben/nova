@@ -98,6 +98,80 @@ def test_shared_timing_and_original_metadata_preserved():
     assert compile_phone_guided_plan(plan, bindings).audio.original_volume == 0.4
 
 
+def test_tolerates_millisecond_rounding_noise_between_stored_timing_fields():
+    # `story_timeline` moments persist source/output timestamps independently
+    # rounded to milliseconds. `source_end_s - source_start_s` and the stored
+    # `duration_s` are two separately-rounded quantities that can legitimately
+    # differ by ~1ms of compounding rounding noise -- confirmed live (job
+    # a994fddd: source_duration=10.288 vs moment_duration_s=10.287, a 1ms gap
+    # that a microsecond-scale tolerance rejected outright even though the
+    # plan was perfectly valid.
+    plan, bindings = fixture()
+    # source_end(5) - source_start(2) == 3 exactly
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"duration_s": 3.001})
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert recipe.tracks[0].clips[0].source_duration == pytest.approx(3)
+
+
+def test_rejects_a_timing_mismatch_larger_than_rounding_noise():
+    plan, bindings = fixture()
+    # 100ms off -- a real timing-program mismatch, not rounding noise
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"duration_s": 3.1})
+    with pytest.raises(ValueError, match="exact source window"):
+        compile_phone_guided_plan(plan, bindings)
+
+
+def test_source_window_shifts_start_to_preserve_full_duration_when_it_fits():
+    # The proxy is measured by server-side ffprobe; the original by the
+    # client's on-device AVFoundation. Planning saturates a clip's
+    # proxy-measured capacity (and centers shorter windows within it) when
+    # the target duration demands it, so these two independent measurements
+    # of the same file routinely disagree for a clip carrying a fraction of
+    # a beat (observed live: jobs aeb62e3c/0e84c6f8/031c8ff0). When the full
+    # requested duration still fits somewhere in the device's real file,
+    # shift the start rather than truncating — a truncated moment would
+    # desync from the text/audio timed against its original duration.
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 4.85  # moment.source_end_s == 5, overrun == 0.15s
+    recipe = compile_phone_guided_plan(plan, bindings)
+    clip = recipe.tracks[0].clips[0]
+    # A 0.05s export safety margin comes off the available window first
+    # (4.85 - 0.05 = 4.8), so the full 3s duration still fits by shifting.
+    assert clip.source_start == pytest.approx(1.8)
+    assert clip.source_duration == pytest.approx(3)
+
+
+def test_source_window_truncates_only_when_shifting_cannot_fit_it():
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 2.5  # shorter than the requested 3s duration itself
+    recipe = compile_phone_guided_plan(plan, bindings)
+    clip = recipe.tracks[0].clips[0]
+    assert clip.source_start == 0
+    # 2.5 - the 0.05s safety margin = 2.45 available to fit.
+    assert clip.source_duration == pytest.approx(2.45)
+
+
+def test_source_window_never_fits_exactly_to_the_device_boundary():
+    # Reading a track to its precise reported duration is a classic
+    # AVFoundation edge case -- the on-device export failed even after the
+    # refit landed exactly on binding.original.duration_s (job 22d1ce8a: the
+    # server compiled successfully but the local export then failed with no
+    # output file). The refit must always leave a small safety margin.
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 4.999  # triggers the refit, close to the boundary
+    recipe = compile_phone_guided_plan(plan, bindings)
+    clip = recipe.tracks[0].clips[0]
+    end = clip.source_start + clip.source_duration
+    assert bindings[0].original.duration_s - end == pytest.approx(0.05)
+
+
+def test_source_window_rejects_when_essentially_nothing_is_available():
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 0.05  # below the 0.1s viable-content floor
+    with pytest.raises(ValueError, match="exact source window"):
+        compile_phone_guided_plan(plan, bindings)
+
+
 def transition_fixture(kind="crossfade", duration=0.3):
     plan, bindings = fixture()
     first = plan.story_timeline[0]

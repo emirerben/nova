@@ -28,6 +28,7 @@ import uuid as _uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import Response
 
 from app.services.nova_steps import (
     STEP_ALLOWLIST,
@@ -480,7 +481,9 @@ async def _status_response_for(
     monkeypatch.setattr(gj, "_load_agent_runs_for_nova_steps", _load_runs)
     monkeypatch.setattr(pb, "get_baselines", lambda mode: None)
     monkeypatch.setattr(settings, "nova_steps_feed_enabled", flag_on)
-    return await gj.get_generative_job_status(str(job.id), current_user=object(), db=object())
+    return await gj.get_generative_job_status(
+        str(job.id), current_user=object(), http_response=Response(), db=object()
+    )
 
 
 async def test_status_route_steps_none_when_flag_off(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -111,4 +111,43 @@ final class MediaEngineTests: XCTestCase {
         let b = TimelineClip(id: "b", sourceAssetID: "b", sourceDuration: 3, timelineStart: 2, transition: Transition(duration: 0.5))
         XCTAssertEqual(TimelineMath.crossfadeOverlap(a, b), 0.5)
     }
+
+    /// A device export failure must name the real cause (KRI-91): before this,
+    /// these three error types had no `LocalizedError` conformance, so every
+    /// failure surfaced as an opaque Cocoa description like "The operation
+    /// couldn't be completed. (KriaMediaEngine.NativePreviewFeatureError
+    /// error 1.)" — useless to the user and to triage.
+    func testExportErrorsDescribeThemselvesInsteadOfFallingBackToACocoaDescription() {
+        for error in [
+            MediaEngineError.avFoundationUnavailable, .exportUnavailable, .exportFailed,
+            .thumbnailWriteFailed, .waveformFailed, .insufficientStorage, .unsupportedCapability,
+            .missingAsset("clip-1"), .cancelled,
+        ] as [MediaEngineError] {
+            let description = try? XCTUnwrap(error.errorDescription)
+            XCTAssertNotNil(description, "\(error) must describe itself")
+            XCTAssertFalse(description?.isEmpty ?? true)
+        }
+
+        let featureError = NativePreviewFeatureError("layer-composition")
+        XCTAssertEqual(
+            featureError.errorDescription,
+            "This video uses a preview feature (layer-composition) that isn’t supported yet."
+        )
+
+        // The asset/track identifier must actually reach the user-visible
+        // message — this is the difference between an actionable error and
+        // a report of "something is missing" with no lead to follow.
+        XCTAssertEqual(
+            MediaEngineError.missingAsset("track-7").errorDescription,
+            "One of the clips in this video is missing (track-7)."
+        )
+
+        for error in [
+            RecipeError.unsupportedSchema(9), .invalidFrameRate(0), .invalidTimeline, .missingAssetReference,
+        ] {
+            let description = try? XCTUnwrap(error.errorDescription)
+            XCTAssertNotNil(description, "\(error) must describe itself")
+            XCTAssertFalse(description?.isEmpty ?? true)
+        }
+    }
 }

@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from pydantic import ValidationError
 
 from app.routes.generative_jobs import (
@@ -1971,6 +1971,7 @@ async def test_status_race_removes_unpersisted_preview_attempt_marker(monkeypatc
     response = await gj.get_generative_job_status(
         str(unlocked.id),
         current_user=object(),
+        http_response=Response(),
         db=db,
     )
 
@@ -2180,6 +2181,7 @@ async def test_owner_status_omits_private_controls_and_admin_timing_receipt(monk
     response = await gj.get_generative_job_status(
         str(job.id),
         current_user=object(),
+        http_response=Response(),
         db=AsyncMock(),
     )
     payload = response.model_dump(mode="python")
@@ -3739,9 +3741,52 @@ async def test_status_exposes_archetype_fallback(monkeypatch):
     monkeypatch.setattr(gj, "_load_generative_job", _load)
     monkeypatch.setattr(pb, "get_baselines", lambda mode: None)
 
-    resp = await gj.get_generative_job_status(str(job.id), current_user=object(), db=object())
+    resp = await gj.get_generative_job_status(
+        str(job.id), current_user=object(), http_response=Response(), db=object()
+    )
     assert resp.archetype_fallback is not None
     assert resp.archetype_fallback.model_dump() == fallback
+
+
+async def test_status_sets_cache_control_no_store(monkeypatch):
+    """KRI-91: `variants[].output_url` is a re-signed playback URL that goes
+    stale underneath a heuristically cached response. Without this header the
+    native editor's status poll can hand back a variant it believes is
+    current but isn't.
+    """
+    import types
+    import uuid
+    from datetime import datetime
+
+    import app.routes.generative_jobs as gj
+    import app.services.phase_baselines as pb
+
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        status="variants_ready",
+        mode="generative",
+        assembly_plan={"variants": []},
+        error_detail=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        all_candidates={},
+        current_phase=None,
+        phase_log=None,
+        started_at=None,
+        finished_at=None,
+    )
+
+    async def _load(job_id, db, user, allowed_modes=None, **_kwargs):
+        return job
+
+    monkeypatch.setattr(gj, "_load_generative_job", _load)
+    monkeypatch.setattr(pb, "get_baselines", lambda mode: None)
+
+    http_response = Response()
+    await gj.get_generative_job_status(
+        str(job.id), current_user=object(), http_response=http_response, db=object()
+    )
+    assert http_response.headers["cache-control"] == "no-store"
 
 
 async def test_status_archetype_fallback_null_when_absent_or_malformed(monkeypatch):
@@ -3775,7 +3820,9 @@ async def test_status_archetype_fallback_null_when_absent_or_malformed(monkeypat
         monkeypatch.setattr(gj, "_load_generative_job", _load)
         monkeypatch.setattr(pb, "get_baselines", lambda mode: None)
 
-        resp = await gj.get_generative_job_status(str(job.id), current_user=object(), db=object())
+        resp = await gj.get_generative_job_status(
+            str(job.id), current_user=object(), http_response=Response(), db=object()
+        )
         assert resp.archetype_fallback is None
 
 
@@ -3839,7 +3886,9 @@ async def test_status_attaches_music_preview_for_unpublished_track(monkeypatch):
         music_routes, "_preview_audio_url", lambda path: f"https://signed.example/{path}"
     )
 
-    resp = await gj.get_generative_job_status(str(job.id), current_user=object(), db=_DB())
+    resp = await gj.get_generative_job_status(
+        str(job.id), current_user=object(), http_response=Response(), db=_DB()
+    )
 
     # GenerativeJobStatusResponse.variants is list[dict] — raw pass-through.
     song = next(v for v in resp.variants if v["variant_id"] == "song_text")

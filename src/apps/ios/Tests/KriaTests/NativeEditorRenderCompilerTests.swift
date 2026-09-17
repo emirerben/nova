@@ -5,6 +5,78 @@ import KriaMediaEngine
 @testable import Kria
 
 @MainActor final class NativeEditorRenderCompilerTests: XCTestCase {
+    func testFootageRateAndCropCompileAsAdditiveRecipeFields() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: fingerprint, duration: 4),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0.5, trimOut: 4, sourceDuration: 4, slotID: "slot")
+        let document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 3,
+            raw: ["playback_rate": .number(2), "source_crop": .object([
+                "x": .number(0.1), "y": .number(0.2), "width": .number(0.7), "height": .number(0.6)
+            ])])])
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let rendered = try XCTUnwrap(compiler.compile(document: document, clips: [clip], items: [], sources: [0: source]).recipe.tracks.first?.clips.first)
+        XCTAssertEqual(rendered.rate, 2)
+        XCTAssertEqual(rendered.sourceStart, 0.5)
+        XCTAssertEqual(rendered.sourceDuration, 3.5)
+        XCTAssertEqual(try XCTUnwrap(rendered.holdDuration), 1.25, accuracy: 0.0001)
+        XCTAssertEqual(rendered.sourceCrop, .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
+    }
+
+    func testRetimingPreservesAdjacentClipWindows() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: fingerprint, duration: 6),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        var clips: [EditorClip] = []
+        for index in 0..<2 {
+            let start = Double(index) * 3
+            clips.append(EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0,
+                start: start, end: start + 3, trimIn: 0, trimOut: 3,
+                sourceDuration: 6, slotID: "slot-\(index)"))
+        }
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        for rate in [0.5, 2.0] {
+            let first = EditorTimelineSlot(id: "slot-0", clipIndex: 0, inS: 0, durationS: 3,
+                raw: ["playback_rate": .number(rate)])
+            let second = EditorTimelineSlot(id: "slot-1", clipIndex: 0, inS: 0, durationS: 3)
+            let document = EditorDocument(clips: [first, second])
+            let recipe = try compiler.compile(document: document, clips: clips, items: [], sources: [0: source]).recipe
+            let rendered = try XCTUnwrap(recipe.tracks.first(where: { $0.kind == .video })?.clips)
+            XCTAssertEqual(rendered[0].duration, 3, accuracy: 0.0001)
+            XCTAssertEqual(rendered[0].sourceDuration, min(3, 3 * rate), accuracy: 0.0001)
+            XCTAssertEqual(rendered[1].timelineStart, 3)
+            XCTAssertEqual(rendered[1].duration, 3)
+            XCTAssertNoThrow(try recipe.validate())
+        }
+    }
+
+    func testStillVisualKeepsItsWindowWhenFootageRateIsStored() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: fingerprint, duration: 4),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        let image = ResolvedEditorSource(clipIndex: -1, mediaID: "still",
+            asset: MediaAsset(id: "still", relativePath: "still.png", fingerprint: fingerprint),
+            url: URL(fileURLWithPath: "/fixture/still.png"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 4,
+            trimIn: 0, trimOut: 4, sourceDuration: 4, slotID: "slot")
+        var document = EditorDocument(snapshot: NativeEditorUITestFixtures.captionVisuals.serverSnapshot)
+        document.captionCues = []
+        document.visualBlocks[0].startS = 0
+        document.visualBlocks[0].endS = 3
+        document.visualBlocks[0].raw["media_kind"] = .string("image")
+        document.visualBlocks[0].raw["playback_rate"] = .number(2)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source],
+            mediaSources: ["visual:paper-media:paper-media": image]).recipe
+        let rendered = try XCTUnwrap(recipe.tracks.first(where: { $0.kind == .overlay })?.clips.first)
+        XCTAssertEqual(rendered.duration, 3)
+        XCTAssertEqual(rendered.rate, 1)
+    }
+
     func testExplicitWordDisplaySeparatesWordsAndClampsEditedTiming() throws {
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
             fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
@@ -42,7 +114,7 @@ import KriaMediaEngine
             let item = NativeEditorTimelineItem(selection: .init(kind: .mediaOverlay, id: "overlay"), start: 0, end: 3)
             var recipe = try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source], mediaSources: ["overlay:overlay": media]).recipe
             let trackIndex = try XCTUnwrap(recipe.tracks.firstIndex { $0.kind == .overlay })
-            XCTAssertEqual(recipe.tracks[trackIndex].clips[0].holdDuration, 3 - sourceDuration)
+            XCTAssertEqual(try XCTUnwrap(recipe.tracks[trackIndex].clips[0].holdDuration), 3 - sourceDuration)
             XCTAssertNoThrow(try recipe.validate())
             recipe.tracks[trackIndex].clips[0].holdDuration = 4
             XCTAssertThrowsError(try recipe.validate(), "Held time cannot exceed the placement window")
@@ -81,6 +153,28 @@ import KriaMediaEngine
         XCTAssertEqual(voice.volume, 1)
         XCTAssertEqual(program.recipe.tracks.filter { $0.kind == .audio }.count, 1, "Do not layer the music bed over the rendered voiceover mix twice")
         XCTAssertEqual(program.assetURLs["narration"], narration.url)
+    }
+
+    func testNarrationTailHoldsUntouchedFinalClipInsteadOfSlowingIt() throws {
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let first = ResolvedEditorSource(clipIndex: 0, mediaID: "first", asset: MediaAsset(id: "first", relativePath: "first.mp4", fingerprint: fingerprint, duration: 2), url: URL(fileURLWithPath: "/first.mp4"))
+        let last = ResolvedEditorSource(clipIndex: 1, mediaID: "last", asset: MediaAsset(id: "last", relativePath: "last.mp4", fingerprint: fingerprint, duration: 3), url: URL(fileURLWithPath: "/last.mp4"))
+        let document = EditorDocument(clips: [
+            .init(id: "first", clipIndex: 0, inS: 0, durationS: 2),
+            .init(id: "last", clipIndex: 1, inS: 0, durationS: 3)
+        ])
+        // A retimed first shot leaves the final authored shot at three seconds,
+        // while narration extends its output window to five seconds.
+        let clips = [
+            EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 2, trimIn: 0, trimOut: 2, sourceDuration: 2, slotID: "first"),
+            EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 1, start: 2, end: 7, trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "last")
+        ]
+        let recipe = try compiler.compile(document: document, clips: clips, items: [], sources: [0: first, 1: last]).recipe
+        let rendered = try XCTUnwrap(recipe.tracks.first(where: { $0.kind == .video })?.clips.last)
+        XCTAssertEqual(rendered.rate, 1, accuracy: 0.0001)
+        XCTAssertEqual(rendered.sourceDuration, 3, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(rendered.holdDuration), 2, accuracy: 0.0001)
     }
 
     func testNarrationCanEndBeforeAnExtendedVisualTimeline() throws {
@@ -285,6 +379,7 @@ import KriaMediaEngine
             var draft = NativeEditorUITestFixtures.captionVisuals
             var document = EditorDocument(snapshot: draft.serverSnapshot)
             document.visualBlocks[0].raw["media_kind"] = .string(kind)
+            document.visualBlocks[0].raw["playback_rate"] = .number(2)
             draft.serverSnapshot = document.encodeSnapshot()
             let session = NativeEditorSession(draft: draft)
             let media = ResolvedEditorSource(clipIndex: -1, mediaID: "fixture",

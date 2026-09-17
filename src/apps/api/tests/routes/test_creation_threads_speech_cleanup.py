@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -854,10 +854,42 @@ async def test_get_thread_commits_stale_cleanup_repair_before_publishing(
         str(thread.id),
         SimpleNamespace(id=uuid.uuid4()),
         db,
+        Response(),
     )
 
     assert response is thread
     assert order == ["commit", "publish"]
+
+
+async def test_get_thread_sets_cache_control_no_store(monkeypatch) -> None:
+    """KRI-91: `job.variants[].output_url` is a re-signed playback URL that
+    goes stale underneath a heuristically cached response. Without this
+    header the native editor can install a variant it believes is current
+    but isn't.
+    """
+    thread = SimpleNamespace(id=uuid.uuid4(), active_creator_agent_session_id=None)
+    db = Mock(spec=AsyncSession)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(
+        routes, "_repair_stale_cleanup_failure_graph", AsyncMock(return_value=(False, None))
+    )
+    monkeypatch.setattr(
+        routes, "_repair_missing_thread_job_projection", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(routes, "_sync_render_projection", AsyncMock(return_value=False))
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+
+    http_response = Response()
+    await routes.get_thread(
+        str(thread.id),
+        SimpleNamespace(id=uuid.uuid4()),
+        db,
+        http_response,
+    )
+
+    assert http_response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.asyncio

@@ -46,6 +46,12 @@ def test_edit_proposal_eval(
             if cut["media_id"] in video_ids
         ]
         assert len(used) == len(set(used)), "default plans must not revisit a video"
+    shot_labels = fixture.input.get("shot_labels")
+    if shot_labels:
+        # Exact creator copy is burned verbatim: labeled beats carry exactly the
+        # confirmed labels, in order, live or replay (prod job ac795019).
+        labeled = [beat["thought"] for beat in result.output["story_beats"] if beat["thought"]]
+        assert labeled == shot_labels
     if eval_mode == "replay":
         # Golden cassettes pin the intended chapter vocabulary. Live outputs are
         # allowed natural synonyms; optional replay judging scores semantic coverage.

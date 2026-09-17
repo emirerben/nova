@@ -111,14 +111,17 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         try motionScenes?.validate(assets: ids, manifest: assetManifest)
         guard ids.count == assets.count else { throw RecipeError.invalidTimeline }
         for track in tracks {
-            for clip in track.clips where clip.overlayDissolveSeed != nil || clip.overlayAboveText != nil || clip.holdDuration != nil || clip.overlayPopIn != nil || clip.overlayPreserveAlpha != nil {
-                guard schemaVersion == 2, track.kind == .overlay, (clip.holdDuration ?? 0).isFinite,
+            for clip in track.clips where clip.holdDuration != nil {
+                guard schemaVersion == 2, track.kind != .audio, (clip.holdDuration ?? 0).isFinite,
                       (0...1800).contains(clip.holdDuration ?? 0) else { throw RecipeError.invalidTimeline }
+            }
+            for clip in track.clips where clip.overlayDissolveSeed != nil || clip.overlayAboveText != nil || clip.overlayPopIn != nil || clip.overlayPreserveAlpha != nil {
+                guard schemaVersion == 2, track.kind == .overlay else { throw RecipeError.invalidTimeline }
             }
         }
         for clip in clips {
             if let placement = clip.visualPlacement {
-                guard schemaVersion == 2, tracks.contains(where: { $0.kind == .overlay && $0.clips.contains(where: { $0.id == clip.id }) }), clip.volume == 0, clip.holdDuration == nil || clip.overlayAboveText == true else { throw RecipeError.invalidTimeline }
+                guard schemaVersion == 2, tracks.contains(where: { $0.kind == .overlay && $0.clips.contains(where: { $0.id == clip.id }) }), clip.volume == 0 else { throw RecipeError.invalidTimeline }
                 try placement.validate()
                 guard clip.timelineStart >= placement.windowStart, clip.timelineStart + clip.duration <= placement.windowEnd + 0.000_001 else { throw RecipeError.invalidTimeline }
             }
@@ -131,6 +134,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                   (0...2).contains(clip.volume), clip.transform.scale > 0, clip.transform.scale <= 20 else {
                 throw RecipeError.invalidTimeline
             }
+            try clip.sourceCrop?.validate()
             if let transition = clip.transition {
                 guard transition.duration.isFinite, transition.duration > 0,
                       transition.duration <= min(10, clip.duration) else { throw RecipeError.invalidTimeline }
@@ -182,7 +186,18 @@ public struct EditRecipe: Codable, Equatable, Sendable {
 
 }
 
-public enum RecipeError: Error, Equatable, Sendable { case unsupportedSchema(Int), invalidFrameRate(Double), invalidTimeline, missingAssetReference }
+public enum RecipeError: Error, Equatable, Sendable, LocalizedError {
+    case unsupportedSchema(Int), invalidFrameRate(Double), invalidTimeline, missingAssetReference
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedSchema: "This edit was made with a newer version of Kria. Update the app to open it."
+        case .invalidFrameRate: "This video has an unsupported frame rate."
+        case .invalidTimeline: "This edit’s timeline couldn’t be read."
+        case .missingAssetReference: "One of the clips in this edit is missing."
+        }
+    }
+}
 
 /// Canonical wire coding for API payloads. Keeping this explicit avoids relying on a caller's encoder
 /// settings and leaves the ordinary Codable conformance useful for local persistence.
@@ -272,16 +287,28 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var overlayPreserveAlpha: Bool?
     public var visualPlacement: VisualMediaPlacement?
     public var overlayDissolveSeed: UInt32?
+    /// A normalized rectangle in the decoded source. It is applied before
+    /// placement so preview and export crop the same pixels.
+    public var sourceCrop: NormalizedSourceRect?
     public var volume: Double
     public var duration: TimeInterval { sourceDuration / rate + (holdDuration ?? 0) }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
-        self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed
+        self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed; self.sourceCrop = sourceCrop
+    }
+}
+
+public struct NormalizedSourceRect: Codable, Equatable, Sendable {
+    public var x: Double; public var y: Double; public var width: Double; public var height: Double
+    public init(x: Double, y: Double, width: Double, height: Double) { self.x = x; self.y = y; self.width = width; self.height = height }
+    public func validate() throws {
+        guard [x, y, width, height].allSatisfy(\.isFinite), x >= 0, y >= 0, width > 0, height > 0,
+              x + width <= 1.000_001, y + height <= 1.000_001 else { throw RecipeError.invalidTimeline }
     }
 }
 

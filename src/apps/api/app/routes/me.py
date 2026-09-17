@@ -416,13 +416,26 @@ def _legacy_browser_url(value: object) -> str | None:
     return value if parsed.scheme in {"http", "https"} and parsed.netloc else None
 
 
-def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | None:
+def _preview(
+    job: Job,
+    clips: list[JobClip] | None = None,
+    *,
+    preferred_variant_id: str | None = None,
+) -> _LibraryPreview | None:
     """Resolve the best playable object and its source-matched poster.
 
     A library row may be backed by generative variants, a single assembly-plan
     output, or the legacy/default JobClip writer. Candidate ordering is stable:
     ready variants by rank, then the top-level output, then the lowest-ranked
     ready clip. Every path is ownership-checked before it is signed.
+
+    ``preferred_variant_id`` — the owning creation thread's
+    ``selected_variant_id`` — wins over rank when it names a ready (or
+    last-good-masked) variant. Without this, the gallery and the native
+    editor can each name a different variant "the" video for the same job:
+    the editor already prefers ``selected_variant_id``
+    (``CreationThreadDetail.selectedPlayableVariant`` on iOS), while this
+    resolver used to consult only ``rank``. See KRI-91.
     """
     if job.status == "cancelled":
         return None
@@ -439,7 +452,14 @@ def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | 
                 or variant.get("variant_id") in projection.masked_last_good_variant_ids
             )
         ]
-        for index, variant in sorted(ready, key=lambda item: _variant_rank(item[1], item[0])):
+        ordered = sorted(ready, key=lambda item: _variant_rank(item[1], item[0]))
+        if preferred_variant_id:
+            # Stable sort: only reorders the preferred variant (if present)
+            # to the front, leaving every other tie in its rank order.
+            ordered.sort(
+                key=lambda item: str(item[1].get("variant_id") or "") != preferred_variant_id
+            )
+        for index, variant in ordered:
             video_path = owned_job_output_path(
                 variant.get("video_path") or variant.get("output_url"), job
             )
@@ -743,8 +763,9 @@ def _to_library_job(
     content_plan_item_id: str | None = None,
     feedback_signal: str | None = None,
     tiktok_publication: TikTokPublication | None = None,
+    preferred_variant_id: str | None = None,
 ) -> LibraryJob:
-    preview = _preview(job, clips)
+    preview = _preview(job, clips, preferred_variant_id=preferred_variant_id)
     output_url: str | None = preview.legacy_url if preview else None
     poster_url: str | None = None
     poster_identity: str | None = None
@@ -927,9 +948,28 @@ async def list_my_jobs(
     thumbs: dict[uuid.UUID, str] = {}
     latest_tiktok: dict[uuid.UUID, TikTokPublication] = {}
     clips_by_job: dict[uuid.UUID, list[JobClip]] = {}
+    preferred_variant_by_job: dict[uuid.UUID, str] = {}
     retention_warnings: list[LibraryRetentionWarning] = []
     retention_summary: LibraryRetentionSummary | None = None
     if rows:
+        thread_rows = (
+            await db.execute(
+                select(CreationThread.active_job_id, CreationThread.state)
+                .where(
+                    CreationThread.creator_id == user.id,
+                    CreationThread.active_job_id.in_([j.id for j in rows]),
+                )
+                # A job could, in principle, be `active_job_id` for more than
+                # one thread row over its lifetime; the most recently updated
+                # thread is the one the user is actually looking at.
+                .order_by(CreationThread.updated_at.asc())
+            )
+        ).all()
+        for active_job_id, state in thread_rows:
+            selected = (state or {}).get("selected_variant_id")
+            if isinstance(selected, str) and selected.strip():
+                preferred_variant_by_job[active_job_id] = selected.strip()  # last (newest) wins
+
         fb_rows = (
             await db.execute(
                 select(VideoFeedback.job_id, VideoFeedback.signal)
@@ -1067,6 +1107,7 @@ async def list_my_jobs(
                 clips=clips_by_job.get(j.id),
                 feedback_signal=thumbs.get(j.id),
                 tiktok_publication=latest_tiktok.get(j.id),
+                preferred_variant_id=preferred_variant_by_job.get(j.id),
             )
             for j in rows
         ],
@@ -1494,7 +1535,29 @@ async def refresh_library_playback_url(
             detail=PLAYBACK_NOT_READY_DETAIL,
         )
 
-    preview = _preview(job)
+    # The owning creation thread's selected variant, when ready, must win
+    # over rank so this endpoint and the native editor never resolve
+    # different cuts of the same job (KRI-91).
+    preferred_variant_id: str | None = None
+    owning_thread_state = (
+        await db.execute(
+            select(CreationThread.state)
+            .where(
+                CreationThread.creator_id == user.id,
+                CreationThread.active_job_id == jid,
+            )
+            # A job could, in principle, be `active_job_id` for more than one
+            # thread row over its lifetime; take the most recently updated.
+            .order_by(CreationThread.updated_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if owning_thread_state:
+        selected = owning_thread_state.get("selected_variant_id")
+        if isinstance(selected, str) and selected.strip():
+            preferred_variant_id = selected.strip()
+
+    preview = _preview(job, preferred_variant_id=preferred_variant_id)
     if preview is None and not _preview_media_suppressed(job):
         clips = list(
             (
@@ -1522,7 +1585,7 @@ async def refresh_library_playback_url(
             .scalars()
             .all()
         )
-        preview = _preview(job, clips)
+        preview = _preview(job, clips, preferred_variant_id=preferred_variant_id)
 
     # A legacy URL without an owned object key cannot be refreshed safely.
     if preview is None or not preview.video_path:
