@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.48.0] - 2026-09-17
+
+### Changed
+- fix(creator): keep Visuals in the manifest while their analysis is pending (#1060) <!-- release-pr: 1060 -->
+
 ## [0.76.47.0] - 2026-09-17
 
 ### Changed
