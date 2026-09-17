@@ -8,26 +8,51 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 PROXY_MEDIA_PREFIX = "analysis-proxy-"
 
+# "image" (visual-pool stills) is deliberately not in this set yet: unlike audio,
+# no existing registration path (see creation_threads._probe_registered_media,
+# which only branches on "video"/"audio") probes a still image's duration/audio
+# presence, and visual-pool attachments upload through a separate route entirely
+# (plan_items/{id}/assets). Adding "image" needs that path investigated first —
+# see docs/reviews/kri-29/coverage.md.
+MediaSourceKind = Literal["video", "audio"]
+
 # The proxy is measured by server-side ffprobe; the original's duration is
 # measured by the client's AVFoundation on-device. Two independent
 # measurements of conceptually the same file are allowed to disagree by this
-# much — see `AnalysisProxyDescriptor.validate_timing` below. Anything
-# downstream that compares a proxy-derived quantity (e.g. a planned source
-# window) against `OriginalMediaDescriptor.duration_s` must tolerate the same
-# slack instead of asserting bit-exact agreement.
+# much — see `AnalysisProxyDescriptor.validate_shape_and_timing` below.
+# Anything downstream that compares a proxy-derived quantity (e.g. a planned
+# source window) against `OriginalMediaDescriptor.duration_s` must tolerate
+# the same slack instead of asserting bit-exact agreement.
 PROXY_ORIGINAL_DURATION_TOLERANCE_S = 0.1
 
 
 class OriginalMediaDescriptor(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
+    # Defaults to "video" so every existing persisted/in-flight payload (all of
+    # which predate this field) decodes exactly as before.
+    kind: MediaSourceKind = "video"
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     byte_count: int = Field(gt=0, le=16 * 1024**3)
     duration_s: float = Field(gt=0, le=1800)
-    width: int = Field(gt=0, le=32768)
-    height: int = Field(gt=0, le=32768)
+    width: int | None = Field(default=None, gt=0, le=32768)
+    height: int | None = Field(default=None, gt=0, le=32768)
     orientation_degrees: Literal[0, 90, 180, 270] = 0
     has_audio: bool
+
+    @model_validator(mode="after")
+    def validate_kind_shape(self) -> OriginalMediaDescriptor:
+        if self.kind == "video":
+            if self.width is None or self.height is None:
+                raise ValueError("a video original requires dimensions")
+        else:  # audio
+            if self.width is not None or self.height is not None:
+                raise ValueError("an audio original has no dimensions")
+            if self.orientation_degrees != 0:
+                raise ValueError("an audio original has no orientation")
+            if not self.has_audio:
+                raise ValueError("an audio original must have an audible track")
+        return self
 
 
 class AnalysisProxyDescriptor(BaseModel):
@@ -38,13 +63,19 @@ class AnalysisProxyDescriptor(BaseModel):
     # Analysis timestamps are original timestamps; no trim or retiming is allowed.
     timing_version: Literal[1] = 1
     duration_s: float = Field(gt=0, le=1800)
-    width: int = Field(gt=0, le=640)
-    height: int = Field(gt=0, le=640)
-    frame_rate: float = Field(ge=1, le=30)
+    width: int | None = Field(default=None, gt=0, le=640)
+    height: int | None = Field(default=None, gt=0, le=640)
+    frame_rate: float | None = Field(default=None, ge=1, le=30)
     orientation_degrees: Literal[0] = 0
 
     @model_validator(mode="after")
-    def validate_timing(self) -> AnalysisProxyDescriptor:
+    def validate_shape_and_timing(self) -> AnalysisProxyDescriptor:
+        if self.original.kind == "video":
+            if self.width is None or self.height is None or self.frame_rate is None:
+                raise ValueError("a video proxy requires dimensions and a frame rate")
+        else:  # audio
+            if self.width is not None or self.height is not None or self.frame_rate is not None:
+                raise ValueError("an audio proxy has no dimensions or frame rate")
         if abs(self.duration_s - self.original.duration_s) > PROXY_ORIGINAL_DURATION_TOLERANCE_S:
             raise ValueError("analysis proxy must preserve the complete original timeline")
         return self

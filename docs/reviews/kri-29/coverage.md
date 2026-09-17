@@ -68,7 +68,10 @@ and `KriaMediaEngine/PortableTextDrawing.swift`.
 - Visual blocks + embedded/grouped text + media/audio policies.
 - Looks + transitions + variable speed + source audio; portrait/landscape and phone orientation.
 - Motion scenes/carousels + user media + all exposed controls and persisted versions.
-- Local original bindings for footage, visual pool, overlays, and recorded narration;
+- Local original bindings for footage, visual pool, overlays, and recorded narration
+  (KRI-93 added the `kind`-aware proxy contract for narration/voiceover — see
+  [runbook](../../runbooks/phone-rendering.md) — but no recipe field consumes it yet,
+  and visual-pool stills remain unaddressed pending their own upload-route audit);
   explicit cloud-recovery consent and relinking after missing files or another device.
 - Final poster/publication side effects, retention/account deletion, upload renewal,
   Gallery/cross-device viewing, and revision-fenced retry/recovery.

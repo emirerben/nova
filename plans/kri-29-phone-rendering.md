@@ -23,7 +23,10 @@ not pixel-identical encoding. Do not introduce new generated-media features.
       [capability-matrix.md](../docs/reviews/kri-29/capability-matrix.md) —
       but most lanes still have no recipe-schema fields; still open).
 - [ ] Shared analysis/planning split that stops before cloud effect generation.
-- [ ] Visual-pool/narration local sources and licensed asset downloads.
+- [ ] Visual-pool/narration local sources and licensed asset downloads
+      (KRI-93 added the narration/voiceover `kind`-aware proxy contract; not yet
+      wired to `ProjectUploadDestination.resolve` or consumable by any recipe;
+      visual-pool stills still need their own upload-route investigation).
 - [ ] Chat creation and editor-save coordinator integration and local playback.
 - [ ] Explicit cloud consent, relinking, retry, and interruption user flows.
 - [ ] Full native effect/typography/audio port and combination coverage matrix.

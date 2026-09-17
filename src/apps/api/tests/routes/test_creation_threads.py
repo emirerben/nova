@@ -1939,6 +1939,88 @@ async def test_attach_persists_stable_mixed_media_manifest(
 
 
 @pytest.mark.asyncio
+async def test_attach_rejects_a_proxy_contract_whose_kind_does_not_match_the_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`media.kind` (this request) and the reserved proxy's declared kind (KRI-93's
+    OriginalMediaDescriptor.kind) are independent fields; a mismatch must fail closed
+    rather than silently verifying against the wrong descriptor shape."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_job_id=None,
+        active_creator_agent_session_id=None,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [], "media_count": 0},
+    )
+    item = SimpleNamespace(
+        id=thread.active_plan_item_id,
+        clip_gcs_paths=[],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+        audio_mode="kria",
+        edit_proposal=None,
+    )
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda path: SimpleNamespace(size=100, content_type="audio/mp4", generation="1"),
+    )
+    # The route's own probe would report an audio result for an audio attach;
+    # the proxy descriptor below is (default) kind="video" regardless.
+    monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    media_id = "analysis-proxy-narration-1.m4a"
+    contract = {
+        "purpose": "analysis_proxy",
+        "proxy": {
+            "original": {
+                "sha256": "a" * 64,
+                "byte_count": 4000,
+                "duration_s": 10,
+                "width": 1080,
+                "height": 1920,
+                "has_audio": True,
+            },
+            "duration_s": 10,
+            "width": 360,
+            "height": 640,
+            "frame_rate": 30,
+        },
+    }
+    reservation = SimpleNamespace(
+        media_id=media_id,
+        upload_contract=contract,
+        object_path=_media_path(user.id, thread.id, media_id),
+    )
+    result = Mock()
+    result.scalars.return_value.all.return_value = [reservation]
+    db.execute = AsyncMock(return_value=result)
+    media = [MediaInput(media_id=f" {media_id} ", kind="audio", filename="narration.m4a")]
+    with pytest.raises(HTTPException) as exc:
+        await attach_media(
+            _request(),
+            str(thread.id),
+            AttachBody(media=media, client_event_id="attach-kind-mismatch", expected_revision=0),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_attach_consumes_the_matching_upload_reservation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

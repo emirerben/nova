@@ -57,15 +57,19 @@
             "type": "number"
           },
           "frame_rate": {
+            "default": null,
             "maximum": 30,
             "minimum": 1,
+            "nullable": true,
             "title": "Frame Rate",
             "type": "number"
           },
           "height": {
+            "default": null,
             "exclusiveMinimum": true,
             "maximum": 640,
             "minimum": 0,
+            "nullable": true,
             "title": "Height",
             "type": "integer"
           },
@@ -89,19 +93,18 @@
             "type": "integer"
           },
           "width": {
+            "default": null,
             "exclusiveMinimum": true,
             "maximum": 640,
             "minimum": 0,
+            "nullable": true,
             "title": "Width",
             "type": "integer"
           }
         },
         "required": [
           "original",
-          "duration_s",
-          "width",
-          "height",
-          "frame_rate"
+          "duration_s"
         ],
         "title": "AnalysisProxyDescriptor",
         "type": "object"
@@ -4042,11 +4045,22 @@
             "type": "boolean"
           },
           "height": {
+            "default": null,
             "exclusiveMinimum": true,
             "maximum": 32768,
             "minimum": 0,
+            "nullable": true,
             "title": "Height",
             "type": "integer"
+          },
+          "kind": {
+            "default": "video",
+            "enum": [
+              "video",
+              "audio"
+            ],
+            "title": "Kind",
+            "type": "string"
           },
           "orientation_degrees": {
             "default": 0,
@@ -4065,9 +4079,11 @@
             "type": "string"
           },
           "width": {
+            "default": null,
             "exclusiveMinimum": true,
             "maximum": 32768,
             "minimum": 0,
+            "nullable": true,
             "title": "Width",
             "type": "integer"
           }
@@ -4076,8 +4092,6 @@
           "sha256",
           "byte_count",
           "duration_s",
-          "width",
-          "height",
           "has_audio"
         ],
         "title": "OriginalMediaDescriptor",

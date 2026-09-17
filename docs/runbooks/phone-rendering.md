@@ -163,7 +163,21 @@ proposal do not repair it.
   Existing phone sources lock the destination: rollback pauses attachment,
   never converts it to original upload. Existing cloud projects retain their
   original-upload consent. Mixed/unknown sources and unsupported attachment
-  roles are blocked; visual-pool/narration proxy support remains outstanding.
+  roles are blocked. KRI-93 added a `kind` (`video`/`audio`) discriminator to
+  `OriginalMediaDescriptor`/`AnalysisProxyDescriptor` (both mirrors) so a
+  narration/voiceover analysis-proxy contract can be constructed and
+  registered — `MediaSourceContract.swift`'s `audioAnalysisProxy(...)`, the
+  registration route's existing audio probe path
+  (`creation_threads._probe_registered_media`), and a `media.kind`-vs-
+  `proxy.original.kind` consistency check. `ProjectUploadDestination.resolve`
+  still routes `.voiceover` (and `.visual`) attachments to
+  `.cloud`/`.unsupportedRole` regardless — no recipe schema field exists yet
+  to carry a narration track (`MediaCapability.narrationAudio` is
+  local-later), so flipping that gate before KRI-94+ lands would strand a
+  proxy-only original with nothing able to render it. "image" (visual-pool
+  stills) is intentionally not covered: the registration route has no
+  still-image probe path, and visual-pool attachments use an entirely
+  separate upload route (`plan_items/{id}/assets`) that needs its own look.
 - `services/phone_sources.py` resolves selected server-owned upload receipts
   into immutable original bindings, rejects mixed/missing/conflicting sources,
   and requires each approved moment's media ID, path, and generation to match.
