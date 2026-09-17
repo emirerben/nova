@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.39.0] - 2026-09-17
+
+### Changed
+- fix(api): tolerate proxy/original duration drift in phone moment windows (#1058) <!-- release-pr: 1058 -->
+
 ## [0.76.38.0] - 2026-09-16
 
 ### Changed
