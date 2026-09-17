@@ -282,6 +282,71 @@ From the worktree root: `make ios-verify` and `bash scripts/preship-check.sh`.
 Simulator and synthetic fixture checks do not satisfy the physical-device or
 cloud-reference parity gates.
 
+## Physical-device procedure (KRI-97)
+
+Runs the `-device-effects` harness (`DeviceEffectsView`/`DeviceEffectsSession`,
+DEBUG-only) through gate 7's conditions. It now reports peak resident memory,
+thermal state, battery level/state, low-power-mode, and a crash-free-launch
+marker alongside the existing export/preview timings — read `report.json` in
+the app's `DeviceEffects` Documents folder (pull via Xcode's Devices window or
+the Files app if "Supports opening in place"/"Supports Files sharing" is on for
+the Debug build). None of this replaces gate 6's cloud-reference comparison;
+it's the perf/health telemetry gate 7 asks for.
+
+1. **Build and install.** `API_BASE_URL=https://nova-video.fly.dev xcodebuild
+   -project src/apps/ios/Kria.xcodeproj -scheme Kria -configuration Debug
+   -destination 'platform=iOS,name=<device>' build`, then install via Xcode.
+   A physical build needs a signing team; see `docs/runbooks/ios-development.md`.
+2. **Baseline run.** Launch with `-device-effects -device-effects-auto`
+   (add `-device-effects-only <id,id,…>` to scope to specific cases — case IDs
+   are in `Kria/Resources/device-effects.json`). Let it run to `"phase":
+   "finished"` untouched. Confirm `crash_free_launch: true` and note
+   `peak_memory_bytes` as the baseline.
+3. **Low storage.** Fill device storage to within ~500 MB free (e.g. via the
+   Photos app with large video imports, or the Files app), rerun. A local
+   export must fail closed with a clear error — never crash or fill storage to
+   zero — matching `CapabilityNegotiator.decide`'s `freeStorageBytes` check.
+4. **Low battery / Low Power Mode.** Enable Low Power Mode (Settings ▸
+   Battery) and, separately, run below ~20% battery. Confirm the run still
+   completes or fails closed; note `battery_level`/`low_power_mode` in the
+   report either way.
+5. **Thermal pressure.** Run the baseline case repeatedly back-to-back (or
+   record 4K video in the background first) until Settings ▸ Battery shows
+   thermal state elevated, then run `-device-effects-auto` again. `thermal_state`
+   in each result should show the elevation; `CapabilityNegotiator.decide`
+   routes to cloud at `.serious`/`.critical` — confirm no local case silently
+   proceeds at those levels instead of falling back.
+6. **Network loss.** Enable Airplane Mode mid-run (the export phase itself
+   needs no network; the sync/upload phase does — see `DeviceRenderStatusCard`).
+   Confirm the phase reads `needsAttention`/`syncing`-stalled rather than
+   crashing, and that re-enabling network lets `retrySync` recover it.
+7. **iCloud-only asset.** Attach a Photos asset that's iCloud-only (not
+   downloaded locally) through the normal footage picker, not this harness.
+   Confirm the import either waits for the iCloud download or surfaces a clear
+   "not fully downloaded" state — never a silent hang or crash.
+8. **Media-format variation.** Run `-device-effects-only` against cases that
+   exercise HEVC and non-standard frame rates if present in the catalog;
+   otherwise attach an HEVC clip via the normal picker and repeat step 2's
+   editor flow manually.
+9. **Interruption / termination / relaunch.** Start `-device-effects-auto`,
+   then force-quit mid-`export` phase (check `report.json`'s `phase` first to
+   confirm you hit it mid-case). Relaunch with the same arguments.
+   `crash_free_launch` must read `false` on the next report, and the harness
+   must resume cleanly rather than double-run or corrupt `report.json`.
+10. **Seek latency.** In the *real* editor (not this harness) on the same
+    device, scrub the timeline for ~30 seconds. `NativeEditorSession
+    .previewInstrumentation.snapshot()` accumulates `.seekLatency`
+    `MetricEvent`s in-memory for the session — there's no on-device UI to
+    read it yet, so pull it via a debugger breakpoint/`po` on
+    `session.previewInstrumentation.snapshot()`, or add a temporary print,
+    until a dedicated surface exists. Compare p95 against the runbook's
+    <=250 ms device gate (<=100 ms is the local/simulator target).
+
+Record pass/fail per step, per device (iPhone 13 and a current iPhone), in a
+dated file under `docs/reviews/kri-29/` (follow the existing
+`iphone13pro-*.md` / `iphone32-*.md` naming) — this runbook stays the
+procedure, not the results ledger.
+
 ### Native editor revision integration (staged)
 
 Editor saves retain the existing timeline behavior. The canonical guided runtime

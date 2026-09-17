@@ -2,6 +2,8 @@
 import SwiftUI
 import AVKit
 import KriaMediaEngine
+import Darwin
+import UIKit
 
 /// Account-free physical-device exercise of backend-compiled render recipes.
 struct DeviceEffectsView: View {
@@ -74,6 +76,15 @@ private final class DeviceEffectsSession {
     private var requestedCount = 0
     private var exportProgress = 0.0
     private var lifecycle: [[String: Any]] = []
+    // KRI-97: the runbook's physical-device gates need peak memory, thermal
+    // state, battery impact, and a crash-free marker alongside the existing
+    // export/preview timings — none of that was captured before.
+    private var peakMemoryBytes: UInt64 = 0
+    private var crashFreeLaunch = true
+    private var crashMarkerURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("DeviceEffects-run-in-progress.marker")
+    }
     private let comparisonSamples: [(label: String, seconds: Double)] = [
         ("0.6", 0.6),
         ("1.0", 1.0),
@@ -83,6 +94,37 @@ private final class DeviceEffectsSession {
     func recordLifecycle(_ event: String) {
         lifecycle.append(["event": event, "date": ISO8601DateFormatter().string(from: Date())])
         saveReport()
+    }
+
+    /// Resident memory footprint (`mach_task_basic_info`, the standard
+    /// per-process RSS reading on Apple platforms — Foundation/UIKit expose no
+    /// higher-level equivalent). Returns 0 on failure rather than throwing:
+    /// this is best-effort telemetry, never a reason to fail a render case.
+    private static func currentResidentMemoryBytes() -> UInt64 {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? info.resident_size : 0
+    }
+
+    /// Snapshots device health and folds resident memory into the session's
+    /// running peak. Call at every phase boundary — cheap relative to the
+    /// transcode/export work it brackets.
+    private func sampleDeviceHealth() -> [String: Any] {
+        let resident = Self.currentResidentMemoryBytes()
+        peakMemoryBytes = max(peakMemoryBytes, resident)
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        return [
+            "resident_memory_bytes": resident,
+            "thermal_state": ProcessInfo.processInfo.thermalState.rawValue,
+            "battery_level": UIDevice.current.batteryLevel,
+            "battery_state": UIDevice.current.batteryState.rawValue,
+            "low_power_mode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+        ]
     }
     private let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("DeviceEffects", isDirectory: true)
@@ -113,6 +155,11 @@ private final class DeviceEffectsSession {
 
     func load() async {
         guard cases.isEmpty else { return }
+        // A marker written at testAll()'s start and removed only at its clean
+        // finish (see below). Still present at the next launch means the
+        // previous run never reached "finished" — a crash, not a graceful stop.
+        crashFreeLaunch = !FileManager.default.fileExists(atPath: crashMarkerURL.path)
+        try? FileManager.default.removeItem(at: crashMarkerURL)
         do {
             RenderProfiler.enabled = ProcessInfo.processInfo.arguments.contains("-render-profile")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -232,16 +279,20 @@ private final class DeviceEffectsSession {
         let exportFrames = try await saveSampledFrames(asset: asset, caseID: id, kind: "export")
         output = destination
         status = String(format: "%@: exported 6 seconds in %.2f seconds", id, seconds)
-        var result: [String: Any] = ["effect": id, "export_seconds": seconds, "duration": duration,
+        var entry: [String: Any] = ["effect": id, "export_seconds": seconds, "duration": duration,
                         "status": "exported", "export_frames": exportFrames]
-        if RenderProfiler.enabled { result["profile"] = profile }
-        results.append(result)
+        for (key, value) in sampleDeviceHealth() { entry[key] = value }
+        if RenderProfiler.enabled { entry["profile"] = profile }
+        results.append(entry)
     }
 
     func testAll() async {
         guard !busy else { return }
         busy = true
         UIApplication.shared.isIdleTimerDisabled = true
+        // Written now, removed only on the clean "finished" path below — a
+        // crash/force-quit mid-run leaves it behind for the next load() to see.
+        try? Data().write(to: crashMarkerURL, options: .atomic)
         defer {
             busy = false
             UIApplication.shared.isIdleTimerDisabled = false
@@ -250,6 +301,7 @@ private final class DeviceEffectsSession {
         player.replaceCurrentItem(with: nil)
         prepared = nil
         results = []
+        peakMemoryBytes = 0
         let arguments = ProcessInfo.processInfo.arguments
         let requested: [Case]
         if let index = arguments.firstIndex(of: "-device-effects-only"), index + 1 < arguments.count {
@@ -282,6 +334,7 @@ private final class DeviceEffectsSession {
                     _ = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
                 }
                 let frameSeconds = Date().timeIntervalSince(frameStart)
+                _ = sampleDeviceHealth() // fold preview's own footprint into the session peak
                 try await export(value, id: item.id)
                 results[results.count - 1]["preview_prepare_seconds"] = prepareSeconds
                 results[results.count - 1]["preview_frame_requests_seconds"] = frameSeconds
@@ -293,7 +346,10 @@ private final class DeviceEffectsSession {
             }
             activeCase = nil; phase = "between_cases"; saveReport()
         }
-        phase = "finished"; saveReport()
+        phase = "finished"
+        try? FileManager.default.removeItem(at: crashMarkerURL)
+        crashFreeLaunch = true
+        saveReport()
         let failed = results.filter { $0["status"] as? String == "failed" }.count
         status = "Finished: \(results.count - failed)/\(requested.count) exported; \(failed) failed. Report saved in DeviceEffects."
         print("DEVICE_EFFECTS_RESULT \(status)")
@@ -306,6 +362,8 @@ private final class DeviceEffectsSession {
                                        "phase": phase, "active_case": activeCase ?? "", "requested_count": requestedCount,
                                        "export_progress": exportProgress, "lifecycle": lifecycle,
                                        "application_state": UIApplication.shared.applicationState.rawValue,
+                                       "peak_memory_bytes": peakMemoryBytes,
+                                       "crash_free_launch": crashFreeLaunch,
                                        "scope": "Preview frame requests and six-second exports; not a playback FPS or 60-second performance gate."]
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 .write(to: directory.appendingPathComponent("report.json"), options: .atomic)
