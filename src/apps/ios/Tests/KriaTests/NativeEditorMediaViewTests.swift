@@ -27,7 +27,7 @@ final class NativeEditorMediaViewTests: XCTestCase {
         XCTAssertFalse(NativeEditorSession.usesRenderedNarration(["resolved_archetype": .string("guided_story"), "render_receipt": .object(["narration_applied": .bool(false)])]))
     }
 
-    func testPreviewActivatesMediaAudioAndRestoresItAfterRecording() throws {
+    func testPreviewActivatesMediaAudioAndRestoresItAfterRecording() async throws {
         let audio = AVAudioSession.sharedInstance()
         let category = audio.category, mode = audio.mode, options = audio.categoryOptions
         defer {
@@ -40,6 +40,10 @@ final class NativeEditorMediaViewTests: XCTestCase {
             try audio.setActive(false)
             try audio.setCategory(previousCategory)
             session.togglePlayback()
+            // Session activation is deferred a run-loop turn so the play button's
+            // icon swap isn't stalled behind the blocking AVAudioSession call.
+            await Task.yield()
+            await Task.yield()
             XCTAssertEqual(audio.category, .playback)
             XCTAssertEqual(audio.mode, .moviePlayback)
             XCTAssertEqual(session.player?.isMuted, false)
