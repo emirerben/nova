@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.60.0] - 2026-09-17
+
+### Changed
+- fix(ios-chat): tell server errors apart from connection failures (#1074) <!-- release-pr: 1074 -->
+
 ## [0.76.59.0] - 2026-09-17
 
 ### Changed
