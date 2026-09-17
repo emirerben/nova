@@ -54,6 +54,31 @@ import UIKit
         XCTAssertNotEqual(CreationActionIdentity.reusing(identity, action: "select_format", payload: [:], revision: 5).id, identity.id)
     }
 
+    /// KRI-114 P0-2 regression: `ChatWorkspaceView.performAction` used to leave
+    /// `pendingAction` set after any non-conflict failure. Because `reusing`
+    /// dedupes on action+payload alone, a same-action retry silently replayed
+    /// the failed attempt's stale `expected_revision` and looped on 409s.
+    /// `performAction` now clears `pendingAction` on every terminal failure, so
+    /// the next attempt calls `reusing(nil, ...)` and picks up the current
+    /// (post-refresh) revision instead.
+    func testActionIdentityReplaysStaleRevisionUnlessPendingActionIsCleared() {
+        let failedAttempt = CreationActionIdentity.reusing(nil, action: "select_format", payload: ["format": .string("montage")], revision: 3)
+
+        // The bug: if `pendingAction` survived the failure, a same-action retry
+        // would still be deduped against it and replay revision 3 even though
+        // the server has since moved on to revision 9.
+        let staleRetry = CreationActionIdentity.reusing(failedAttempt, action: "select_format", payload: ["format": .string("montage")], revision: 9)
+        XCTAssertEqual(staleRetry, failedAttempt)
+        XCTAssertEqual(staleRetry.revision, 3)
+
+        // The fix: performAction clears pendingAction to nil on every terminal
+        // failure, so the next attempt is `reusing(nil, ...)` and picks up the
+        // fresh revision instead of the failed attempt's stale one.
+        let freshRetry = CreationActionIdentity.reusing(nil, action: "select_format", payload: ["format": .string("montage")], revision: 9)
+        XCTAssertNotEqual(freshRetry.id, failedAttempt.id)
+        XCTAssertEqual(freshRetry.revision, 9)
+    }
+
     func testAudioAttachmentUsesAudioKindWithoutChangingClipContract() async throws {
         NativeEditorURLProtocol.handler = { request in
             let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])

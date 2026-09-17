@@ -46,7 +46,63 @@ final class DeviceRenderingContractTests: XCTestCase {
         XCTAssertEqual(status.request, request)
         XCTAssertEqual(status.request.recipe.tracks[0].clips[0].text?.animation, .fadeScale)
         XCTAssertEqual(status.request.recipe.tracks[0].clips[0].timelineStart, 1)
+        XCTAssertNil(status.reasonCode)
     }
+
+    /// KRI-114 P0-2: the server adds `reason_code` alongside `reason` once it
+    /// classifies a `needs_attention` failure. Older/other responses omit the
+    /// key entirely, so decoding must tolerate its absence and its presence.
+    func testStatusDecodingToleratesReasonCodePresentOrMissing() throws {
+        let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "first", recipeRevision: 1, recipeDigest: String(repeating: "a", count: 64))
+        let recipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "a", relativePath: "a")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "a", sourceDuration: 2)])])
+        let raw = try JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(DeviceRenderRequest(identity: identity, recipe: recipe)))
+
+        let withoutCode = try JSONSerialization.data(withJSONObject: ["phase": "needs_attention", "request": raw, "reason": "Device is too hot"])
+        let decodedWithout = try JSONDecoder().decode(DeviceRenderStatusResponse.self, from: withoutCode)
+        XCTAssertEqual(decodedWithout.reason, "Device is too hot")
+        XCTAssertNil(decodedWithout.reasonCode)
+
+        let withCode = try JSONSerialization.data(withJSONObject: [
+            "phase": "needs_attention", "request": raw, "reason": "Device is too hot", "reason_code": "thermal",
+        ])
+        let decodedWith = try JSONDecoder().decode(DeviceRenderStatusResponse.self, from: withCode)
+        XCTAssertEqual(decodedWith.reasonCode, "thermal")
+    }
+
+    func testFailureAndRetryBodiesUseServerExpectedKeys() throws {
+        let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "first", recipeRevision: 1, recipeDigest: String(repeating: "a", count: 64))
+        let failureBody = DeviceRenderFailureBody(identity: identity, reasonCode: "export_failed", detail: "The exporter crashed.")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(failureBody)) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["identity", "reason_code", "detail"])
+        XCTAssertEqual(object["reason_code"] as? String, "export_failed")
+
+        let retryBody = DeviceRenderRetryBody(identity: identity)
+        let retryObject = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(retryBody)) as? [String: Any])
+        XCTAssertEqual(Set(retryObject.keys), ["identity"])
+
+        // The real server (`DeviceRenderIdentity` in app/kria/device_render.py) has
+        // no alias generator: its wire keys are plain snake_case, not the camelCase
+        // `DeviceRenderIdentity.CodingKeys` expects. `DeviceRenderRetryAck`/
+        // `DeviceRenderFailureAck` must re-decode `identity` through
+        // `RecipeJSON.decoder()` (like `DeviceRenderStatusResponse` does) rather
+        // than relying on the outer `request(...)` decoder's plain strategy.
+        let ackData = try JSONSerialization.data(withJSONObject: [
+            "identity": ["job_id": identity.jobID.uuidString, "variant_id": identity.variantID, "recipe_revision": identity.recipeRevision + 1, "recipe_digest": identity.recipeDigest] as [String: Any],
+            "phase": "awaiting_device",
+        ])
+        let ack = try JSONDecoder().decode(DeviceRenderRetryAck.self, from: ackData)
+        XCTAssertEqual(ack.identity.recipeRevision, identity.recipeRevision + 1)
+        XCTAssertEqual(ack.phase, "awaiting_device")
+
+        let failureAckData = try JSONSerialization.data(withJSONObject: [
+            "identity": ["job_id": identity.jobID.uuidString, "variant_id": identity.variantID, "recipe_revision": identity.recipeRevision, "recipe_digest": identity.recipeDigest] as [String: Any],
+            "phase": "needs_attention", "reason_code": "export_failed",
+        ])
+        let failureAck = try JSONDecoder().decode(DeviceRenderFailureAck.self, from: failureAckData)
+        XCTAssertEqual(failureAck.identity, identity)
+        XCTAssertEqual(failureAck.reasonCode, "export_failed")
+    }
+
     @MainActor func testProxyRecoveryKeepsItsOriginalBinding() throws {
         let proxy = AnalysisProxyDescriptor(original: OriginalMediaDescriptor(
             sha256: String(repeating: "a", count: 64), byteCount: 4_000,

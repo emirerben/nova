@@ -13,7 +13,11 @@ struct DeviceRenderPanel: View {
         DeviceRenderStatusCard(
             presentation: sessions.presentations[key] ?? DeviceRenderPresentation(phase: .preparing),
             retry: { Task { await retry() } },
-            stop: { Task { await sessions.cancel(key) } }
+            stop: { Task { await sessions.cancel(key) } },
+            retryNeedsAttention: {
+                let ok = await sessions.retryNeedsAttention(key)
+                if ok { await retry() }
+            }
         )
         if [.needsAttention, .cancelled].contains(sessions.presentations[key]?.phase ?? .preparing) {
             Button("Find original files") { showsSourceRecovery = true }
@@ -107,12 +111,16 @@ struct DeviceRenderStatusCard: View {
     let presentation: DeviceRenderPresentation
     let retry: () -> Void
     let stop: () -> Void
+    /// Calls the server `/device-render/retry` endpoint and re-reconciles.
+    /// Nil in previews/older call sites, which fall back to the plain `retry`.
+    var retryNeedsAttention: (() async -> Void)? = nil
     /// Injectable so the save action doesn't require Photos authorization in
     /// tests/previews — matches `EditorViews`' existing use of the same protocol.
     var photoLibrarySaver: any PhotoLibrarySaving = PhotoLibrarySaver()
     @State private var playback: LocalPlayback?
     @State private var isSaving = false
     @State private var saveMessage: String?
+    @State private var isRetryingFailure = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -121,7 +129,7 @@ struct DeviceRenderStatusCard: View {
             if [.preparing, .rendering, .syncing].contains(presentation.phase) {
                 ProgressView().accessibilityLabel(title)
             }
-            if let message = presentation.message {
+            if let message = needsAttentionAwareMessage {
                 Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
             }
             if let file = presentation.localFile {
@@ -135,8 +143,19 @@ struct DeviceRenderStatusCard: View {
                 }
             }
             if [.needsAttention, .cancelled, .localReady].contains(presentation.phase) {
-                Button(presentation.localFile == nil ? "Try again" : "Retry sync", action: retry)
-                    .buttonStyle(KriaSecondaryButtonStyle())
+                Button(presentation.localFile == nil ? "Try again" : "Retry sync") {
+                    guard presentation.phase == .needsAttention, let retryNeedsAttention else {
+                        retry(); return
+                    }
+                    Task {
+                        isRetryingFailure = true
+                        await retryNeedsAttention()
+                        isRetryingFailure = false
+                    }
+                }
+                .buttonStyle(KriaSecondaryButtonStyle())
+                .disabled(isRetryingFailure)
+                .accessibilityIdentifier("device-render-retry")
             }
             if [.preparing, .rendering].contains(presentation.phase) {
                 Button("Stop rendering", action: stop)
@@ -181,6 +200,24 @@ struct DeviceRenderStatusCard: View {
         } catch {
             saveMessage = error.localizedDescription
         }
+    }
+
+    /// `reason_code`-keyed copy for a `needsAttention` phase. Falls back to a
+    /// short server `reason` string, then a generic line, so an unrecognized
+    /// or missing code never blanks the row.
+    private static let needsAttentionReasonCopy: [String: String] = [
+        "export_failed": "The render couldn’t finish on this iPhone. Your project is saved.",
+        "insufficient_storage": "This iPhone is low on storage. Free up space, then try again.",
+        "thermal": "This iPhone needs to cool down before rendering again.",
+        "unsupported_recipe": "This edit isn’t supported for iPhone rendering yet.",
+        "cancelled_by_user": "Rendering was stopped. Your project is saved.",
+    ]
+
+    private var needsAttentionAwareMessage: String? {
+        guard presentation.phase == .needsAttention else { return presentation.message }
+        if let code = presentation.reasonCode, let mapped = Self.needsAttentionReasonCopy[code] { return mapped }
+        if let reason = presentation.message, reason.count <= 160 { return reason }
+        return "Your project is saved. You can wait and try again."
     }
 
     private var title: String {

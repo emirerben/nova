@@ -20,6 +20,10 @@ struct DeviceRenderPresentation: Equatable, Sendable {
     var phase: DeviceRenderPhase
     var localFile: URL?
     var message: String?
+    /// Server-classified reason for a `needsAttention` phase (e.g. "thermal",
+    /// "insufficient_storage"); nil when the server hasn't reported one yet
+    /// or the failure is still purely local.
+    var reasonCode: String?
 }
 
 /// App-owned so navigating between chat, projects, and the editor does not
@@ -27,9 +31,11 @@ struct DeviceRenderPresentation: Equatable, Sendable {
 @Observable @MainActor final class DeviceRenderSessions {
     typealias Fetch = @Sendable (UUID, String) async throws -> DeviceRenderStatusResponse
     typealias Factory = @MainActor (DeviceRenderKey, DeviceRenderRequest) throws -> DeviceRenderCoordinator
+    typealias RetryFailure = @Sendable (UUID, DeviceRenderIdentity) async throws -> DeviceRenderRetryAck
     private(set) var presentations: [DeviceRenderKey: DeviceRenderPresentation] = [:]
     @ObservationIgnored private let fetch: Fetch
     @ObservationIgnored private let factory: Factory
+    @ObservationIgnored private let retryFailure: RetryFailure
     @ObservationIgnored private let projectDirectory: @MainActor (UUID) -> ProjectDirectory
     @ObservationIgnored private var entries: [DeviceRenderKey: DeviceRenderCoordinator] = [:]
     @ObservationIgnored private var requests: [DeviceRenderKey: DeviceRenderRequest] = [:]
@@ -46,14 +52,16 @@ struct DeviceRenderPresentation: Equatable, Sendable {
                 directory: directory,
                 exporter: AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory)),
                 sources: AuthorizedDeviceSourceResolver(api: api, request: request, originals: SourceAssetStore(project: project), library: library),
-                publisher: DeviceExportPublisher(api: api)
+                publisher: DeviceExportPublisher(api: api),
+                failureReporter: APIDeviceRenderFailureReporter(api: api)
             )
-        })
+        }, retryFailure: { jobID, identity in try await api.retryDeviceRenderFailure(jobID: jobID, identity: identity) })
     }
 
     init(fetch: @escaping Fetch, factory: @escaping Factory,
+         retryFailure: @escaping RetryFailure = { _, _ in throw APIError.unsupported },
          projectDirectory: @escaping @MainActor (UUID) -> ProjectDirectory = { BackgroundUploadCoordinator.projectDirectory($0) }) {
-        self.fetch = fetch; self.factory = factory; self.projectDirectory = projectDirectory
+        self.fetch = fetch; self.factory = factory; self.retryFailure = retryFailure; self.projectDirectory = projectDirectory
     }
 
     func reconcile(_ key: DeviceRenderKey, capabilities: PhoneRenderingCapabilities, retry: Bool = false) async {
@@ -87,7 +95,8 @@ struct DeviceRenderPresentation: Equatable, Sendable {
                 presentations[key] = DeviceRenderPresentation(
                     phase: saved?.outputURL == nil ? .needsAttention : .localReady,
                     localFile: saved?.request == request ? saved?.outputURL : nil,
-                    message: status.reason ?? decision.reason
+                    message: status.reason ?? decision.reason,
+                    reasonCode: status.reasonCode
                 )
                 return
             }
@@ -104,8 +113,35 @@ struct DeviceRenderPresentation: Equatable, Sendable {
         } catch {
             guard tickets[key] == ticket else { return }
             var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
-            presentation.message = "Kria couldn’t prepare this edit on your iPhone. Your project is saved. Try again when you’re connected."
+            presentation.message = RequestFailureCause(error) == .connection
+                ? "Kria couldn’t prepare this edit on your iPhone. Your project is saved. Try again when you’re connected."
+                : "Kria couldn’t prepare this edit on your iPhone. Your project is saved. \(error.localizedDescription)"
             presentations[key] = presentation
+        }
+    }
+
+    /// Calls the server's `/device-render/retry` endpoint for a `needsAttention`
+    /// identity, which mints a fresh identity (incremented recipe revision) and
+    /// moves the server back to `awaiting_device`. Drops the stale local
+    /// coordinator/receipt so the next `reconcile()` starts clean against it.
+    @discardableResult
+    func retryNeedsAttention(_ key: DeviceRenderKey) async -> Bool {
+        guard let request = requests[key] else { return false }
+        do {
+            _ = try await retryFailure(key.jobID, request.identity)
+            observations.removeValue(forKey: key)?.cancel()
+            if let previous = entries[key] { try? await previous.cancel() }
+            entries.removeValue(forKey: key)
+            requests.removeValue(forKey: key)
+            presentations[key] = DeviceRenderPresentation(phase: .preparing)
+            return true
+        } catch {
+            var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
+            presentation.message = RequestFailureCause(error) == .connection
+                ? "Kria couldn’t retry this edit. Check your connection and try again."
+                : "Kria couldn’t retry this edit. \(error.localizedDescription)"
+            presentations[key] = presentation
+            return false
         }
     }
 
@@ -142,10 +178,14 @@ struct DeviceRenderPresentation: Equatable, Sendable {
         }
     }
 
+    /// The only call site wired to a user-facing affordance (`DeviceRenderPanel`'s
+    /// "Stop rendering" button) — reports the cancellation to the server via
+    /// `cancelByUser()`. Every other cancel in this file is housekeeping and
+    /// must keep calling the coordinator's plain `cancel()`.
     func cancel(_ key: DeviceRenderKey) async {
         tickets[key] = nil
         observations.removeValue(forKey: key)?.cancel()
-        try? await entries[key]?.cancel()
+        try? await entries[key]?.cancelByUser()
         if let saved = await entries[key]?.snapshot() { presentations[key] = Self.presentation(saved) }
     }
 

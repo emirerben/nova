@@ -5,17 +5,60 @@ struct DeviceRenderStatusResponse: Decodable, Sendable {
     let phase: String
     let request: DeviceRenderRequest
     let reason: String?
-    private enum CodingKeys: String, CodingKey { case phase, request, reason }
-    init(phase: String, request: DeviceRenderRequest, reason: String? = nil) {
-        self.phase = phase; self.request = request; self.reason = reason
+    /// Added alongside `reason` once the server classifies a `needs_attention`
+    /// failure. Optional so older/unrelated responses that omit the key still decode.
+    let reasonCode: String?
+    private enum CodingKeys: String, CodingKey { case phase, request, reason, reasonCode = "reason_code" }
+    init(phase: String, request: DeviceRenderRequest, reason: String? = nil, reasonCode: String? = nil) {
+        self.phase = phase; self.request = request; self.reason = reason; self.reasonCode = reasonCode
     }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         phase = try container.decode(String.self, forKey: .phase)
         reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        reasonCode = try container.decodeIfPresent(String.self, forKey: .reasonCode)
         let raw = try container.decode(JSONValue.self, forKey: .request)
         request = try RecipeJSON.decoder().decode(DeviceRenderRequest.self, from: JSONEncoder().encode(raw))
         try request.recipe.validate()
+    }
+}
+struct DeviceRenderFailureBody: Encodable, Sendable {
+    let identity: DeviceRenderIdentity
+    let reasonCode: String
+    let detail: String
+    private enum CodingKeys: String, CodingKey { case identity, reasonCode = "reason_code", detail }
+}
+struct DeviceRenderFailureAck: Decodable, Sendable {
+    let identity: DeviceRenderIdentity
+    let phase: String
+    let reasonCode: String?
+    private enum CodingKeys: String, CodingKey { case identity, phase, reasonCode = "reason_code" }
+    // `identity`'s own CodingKeys expect `jobId`/`variantId` (camelCase, meant to be
+    // re-cased by `RecipeJSON`'s snake_case strategy — see its "acronym-normalized
+    // spelling" comment in Models.swift). The outer `request(...)` decoder has no
+    // such strategy, so decode `identity` as raw JSON and re-decode it through
+    // `RecipeJSON.decoder()`, exactly like `DeviceRenderStatusResponse` does.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        phase = try container.decode(String.self, forKey: .phase)
+        reasonCode = try container.decodeIfPresent(String.self, forKey: .reasonCode)
+        let raw = try container.decode(JSONValue.self, forKey: .identity)
+        identity = try RecipeJSON.decoder().decode(DeviceRenderIdentity.self, from: JSONEncoder().encode(raw))
+    }
+}
+struct DeviceRenderRetryBody: Encodable, Sendable {
+    let identity: DeviceRenderIdentity
+}
+struct DeviceRenderRetryAck: Decodable, Sendable {
+    let identity: DeviceRenderIdentity
+    let phase: String
+    private enum CodingKeys: String, CodingKey { case identity, phase }
+    /// See `DeviceRenderFailureAck.init(from:)` for why `identity` needs its own pass.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        phase = try container.decode(String.self, forKey: .phase)
+        let raw = try container.decode(JSONValue.self, forKey: .identity)
+        identity = try RecipeJSON.decoder().decode(DeviceRenderIdentity.self, from: JSONEncoder().encode(raw))
     }
 }
 struct DeviceExportUploadBody: Encodable, Sendable {
@@ -68,6 +111,40 @@ extension KriaAPI {
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws {
         let result = try await request(path: "me/jobs/\(body.identity.jobID.uuidString)/device-render/complete", method: "POST", bodyData: RecipeJSON.encoder().encode(body), decode: DeviceExportCompletion.self)
         guard result.status == "published" else { throw APIError.invalidResponse }
+    }
+    func reportDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity, reasonCode: String, detail: String) async throws -> DeviceRenderFailureAck {
+        try await request(
+            path: "me/jobs/\(jobID.uuidString)/device-render/failures", method: "POST",
+            bodyData: RecipeJSON.encoder().encode(DeviceRenderFailureBody(identity: identity, reasonCode: reasonCode, detail: detail)),
+            decode: DeviceRenderFailureAck.self
+        )
+    }
+    func retryDeviceRenderFailure(jobID: UUID, identity: DeviceRenderIdentity) async throws -> DeviceRenderRetryAck {
+        try await request(
+            path: "me/jobs/\(jobID.uuidString)/device-render/retry", method: "POST",
+            bodyData: RecipeJSON.encoder().encode(DeviceRenderRetryBody(identity: identity)),
+            decode: DeviceRenderRetryAck.self
+        )
+    }
+}
+
+/// Reports on-device render failures the server should learn about (so it
+/// doesn't wait indefinitely for a device that has already given up), without
+/// the media-engine package depending on app networking. Best-effort: a
+/// failure to report never crashes or retry-loops the coordinator.
+struct APIDeviceRenderFailureReporter: DeviceRenderFailureReporter {
+    let api: any KriaAPIClient
+    func report(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async {
+        do {
+            _ = try await api.reportDeviceRenderFailure(
+                jobID: identity.jobID, identity: identity,
+                reasonCode: reasonCode.rawValue, detail: String(detail.prefix(2000))
+            )
+        } catch {
+            #if DEBUG
+            NativePreviewDiagnostics.record("device-render-failure-report-failed", fields: ["reason": reasonCode.rawValue])
+            #endif
+        }
     }
 }
 
