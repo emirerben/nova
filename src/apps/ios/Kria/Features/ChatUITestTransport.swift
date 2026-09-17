@@ -35,9 +35,14 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
         } else { finishLoading() }
     }
     private func finishLoading() {
-        let result = ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] != nil
+        let fixture: (Int, Data)? = ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] != nil
             ? CreationChatFixture.shared.respond(request)
             : (503, Data())
+        // No fixture response means the connection dropped before the server answered.
+        guard let result = fixture else {
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+            return
+        }
         guard let url = request.url,
               let response = HTTPURLResponse(url: url, statusCode: result.0, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
@@ -59,9 +64,11 @@ private final class CreationChatFixture: @unchecked Sendable {
     private var preparations: [String: Int] = [:]
     private var planVersions: [String: Int] = [:]
     private var generateConflicts: [String: Int] = [:]
+    private var failedGenerates: Set<String> = []
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
-    func respond(_ request: URLRequest) -> (Int, Data) {
+    /// Returns nil when the request should fail without any HTTP response.
+    func respond(_ request: URLRequest) -> (Int, Data)? {
         lock.lock(); defer { lock.unlock() }
         let path = request.url?.path ?? ""
         let body = (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: Any] ?? [:]
@@ -101,6 +108,9 @@ private final class CreationChatFixture: @unchecked Sendable {
         if parts.last == "actions" {
             let action = body["action"] as? String ?? ""
             let payload = body["payload"] as? [String: Any] ?? [:]
+            if action == "generate", let failure = generateFailure(threadID: id) {
+                return failure == "offline" ? nil : response(["detail": "Internal Server Error"], status: 500)
+            }
             if action == "generate", let detail = generateConflict(threadID: id) {
                 return response(["detail": detail], status: 409)
             }
@@ -182,6 +192,14 @@ private final class CreationChatFixture: @unchecked Sendable {
         default:
             return nil
         }
+    }
+    /// `KRIA_CHAT_GENERATE_FAILURE` fails the first "generate" of each chat:
+    /// `server_error` answers HTTP 500, and `offline` drops the connection before
+    /// any response. The next attempt succeeds, so recovery can be exercised.
+    private func generateFailure(threadID id: String) -> String? {
+        guard let failure = ProcessInfo.processInfo.environment["KRIA_CHAT_GENERATE_FAILURE"],
+              failedGenerates.insert(id).inserted else { return nil }
+        return failure
     }
     private func bodyData(_ request: URLRequest) -> Data {
         if let data = request.httpBody { return data }
