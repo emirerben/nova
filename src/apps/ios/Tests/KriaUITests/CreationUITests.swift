@@ -152,6 +152,50 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
     }
 
+    func testStaleFootageConflictShowsServerReasonAndRefreshesTheDirection() {
+        let app = launchConfirmationConflictFixture("stale_manifest")
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+
+        let reason = app.staticTexts["Footage or capabilities changed; review the plan again."]
+        XCTAssertTrue(reason.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["This project changed. Review the latest options and try again."].exists)
+        let refresh = app.buttons["Refresh the direction"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 3))
+        XCTAssertTrue(confirm.exists, "The create button stays available next to the server's reason")
+        let conflictScreenshot = XCTAttachment(screenshot: app.screenshot())
+        conflictScreenshot.name = "Confirmation conflict with refresh action"
+        conflictScreenshot.lifetime = .keepAlways
+        add(conflictScreenshot)
+
+        refresh.tap()
+        let refreshMessage = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "You: Keep the same plan with my current footage")).firstMatch
+        XCTAssertTrue(refreshMessage.waitForExistence(timeout: 10))
+        let noticeGone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: refresh)
+        XCTAssertEqual(XCTWaiter.wait(for: [noticeGone], timeout: 10), .completed)
+        XCTAssertFalse(reason.exists)
+
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+    }
+
+    func testWaitForRenderConflictKeepsCreateRetryable() {
+        let app = launchConfirmationConflictFixture("wait_for_render")
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+
+        XCTAssertTrue(app.staticTexts["Wait for the current render before confirming."].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Refresh the direction"].exists)
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: confirm)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 10), .completed)
+        confirm.tap()
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+    }
+
     func testExpiredApprovalCannotStartGeneration() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
@@ -203,6 +247,22 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         card.tap()
         XCTAssertTrue(app.buttons["choose-videos"].waitForExistence(timeout: 5))
+    }
+
+    /// Runtime-v1 chat with one fixture clip, stopped at the confirmation card.
+    private func launchConfirmationConflictFixture(_ conflict: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_GENERATE_CONFLICT"] = conflict
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Continue with 1 clip"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        next.tap()
+        return app
     }
 
     private func createFreshChat(in app: XCUIApplication) {

@@ -49,6 +49,8 @@ import {
   creationSpeechCleanupActionId, creationThreadInProgress, creationThreadNeedsPolling,
   creationThreadPreparing, creationThreadProgressKey,
   creationGenerationArtifactKey,
+  creationConfirmationConflict, creationPlanKey, CREATION_REFRESH_DIRECTION_MESSAGE,
+  type CreationConfirmationConflict,
   isCreationSpeechCleanupStaleConflict,
   isCreationThreadRevisionConflict,
   creationVariantPlayable, latestCreationDirection,
@@ -489,6 +491,10 @@ export default function ChatCreationWorkspace({
   const [thinking, setThinking] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The server's reason the last confirmation was rejected, shown inside the card for that direction. */
+  const [confirmationConflict, setConfirmationConflict] = useState<
+    (CreationConfirmationConflict & { threadId: string; planKey: string }) | null
+  >(null);
   const [offline, setOffline] = useState(false);
   // `load` is a stable useCallback (mount-once, see below) so it must read
   // offline status via ref, not the `offline` state closure, which would
@@ -1370,7 +1376,7 @@ export default function ChatCreationWorkspace({
   }
 
   const submitMessage = useCallback(async (sourceThread: CreationThread, message: string) => {
-    setInput(""); setThinking(true); setError(null);
+    setInput(""); setThinking(true); setError(null); setConfirmationConflict(null);
     try {
       if (workspaceEditorVariant(sourceThread)) {
         if (sourceThread.status !== "active") throw new Error("This project is archived.");
@@ -1476,10 +1482,35 @@ export default function ChatCreationWorkspace({
       return;
     }
     const sourceThread = thread;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setConfirmationConflict(null);
     try { await requestThreadResponse(sourceThread.id, () => applyCreationAction(sourceThread, action, payload)); }
-    catch { setError("I couldn’t start that render. Your project is safe—adjust the direction or try again."); }
+    catch (cause) {
+      const conflict = creationConfirmationConflict(cause);
+      if (!conflict) {
+        setError("I couldn’t start that render. Your project is safe—adjust the direction or try again.");
+        return;
+      }
+      let latest = sourceThread;
+      try {
+        const { next, requestSequence } = await refreshThreadProjection(sourceThread.id);
+        if (acceptThreadResponse(sourceThread.id, next, requestSequence)) latest = next;
+      } catch {
+        // The server's reason stays visible; the next poll or action refreshes the project.
+      }
+      // Only the plain confirmation card renders the notice. Revision, retry,
+      // and variant confirmations keep the reason in the composer status.
+      if (action === "generate" && Object.keys(payload).length === 0) {
+        setConfirmationConflict({ ...conflict, threadId: sourceThread.id, planKey: creationPlanKey(latest) });
+      } else {
+        setError(conflict.message);
+      }
+    }
     finally { setBusy(false); }
+  }
+
+  function refreshDirection() {
+    if (productionPreview || !thread || thinking || offline) return;
+    void submitMessage(thread, CREATION_REFRESH_DIRECTION_MESSAGE);
   }
 
   async function decideRuntimeApproval(
@@ -1831,6 +1862,12 @@ export default function ChatCreationWorkspace({
       onCreateWithoutCleanup={createWithoutSpeechCleanup}
     />
   ) : null;
+  const visibleConfirmationConflict = confirmationConflict
+    && thread
+    && confirmationConflict.threadId === thread.id
+    && confirmationConflict.planKey === creationPlanKey(thread)
+    ? confirmationConflict
+    : null;
   const defaultConfirmationCard = (
     <AgentApprovalCard
       badge={<Badge variant="secondary">Creative direction</Badge>}
@@ -1839,7 +1876,18 @@ export default function ChatCreationWorkspace({
       actions={<Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy || clipCount === 0} onClick={() => void confirm("generate")}>
         <Sparkles />{busy ? "Starting…" : "Create this video"}
       </Button>}
-    />
+    >
+      {visibleConfirmationConflict ? (
+        <div className="space-y-3 rounded-xl bg-muted p-3">
+          <p className="text-sm text-destructive" role="alert">{visibleConfirmationConflict.message}</p>
+          {visibleConfirmationConflict.offersDirectionRefresh ? (
+            <Button type="button" variant="outline" className="min-h-11 w-full" disabled={productionPreview || busy || thinking || offline} onClick={refreshDirection}>
+              <RefreshCw />Refresh the direction
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+    </AgentApprovalCard>
   );
   const liveAnnouncement = speechCleanupAnnouncement(speechCleanup, {
     rendering: Boolean(thread && creationThreadInProgress(thread)),

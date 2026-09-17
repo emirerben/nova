@@ -57,6 +57,8 @@ private final class CreationChatFixture: @unchecked Sendable {
     private var threads: [String: [String: Any]] = [:]
     private var renders: [String: Int] = [:]
     private var preparations: [String: Int] = [:]
+    private var planVersions: [String: Int] = [:]
+    private var generateConflicts: [String: Int] = [:]
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
     func respond(_ request: URLRequest) -> (Int, Data) {
@@ -99,6 +101,9 @@ private final class CreationChatFixture: @unchecked Sendable {
         if parts.last == "actions" {
             let action = body["action"] as? String ?? ""
             let payload = body["payload"] as? [String: Any] ?? [:]
+            if action == "generate", let detail = generateConflict(threadID: id) {
+                return response(["detail": detail], status: 409)
+            }
             if action == "select_format" {
                 state["format"] = payload["format"]
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
@@ -124,7 +129,11 @@ private final class CreationChatFixture: @unchecked Sendable {
             append("user_message", role: "user", text: body["message"] as? String)
             append("assistant_response", text: "Open on the laugh and keep the pacing quick.")
             if runtime == 2 { append("approval_requested", payload: ["approval_id": approvalID]) }
-            else { thread["creator_agent"] = ["status": "awaiting_confirmation", "summary": "Open on the laugh and keep the pacing quick."] }
+            else {
+                let version = planVersions[id, default: 0] + 1
+                planVersions[id] = version
+                thread["creator_agent"] = ["status": "awaiting_confirmation", "summary": "Open on the laugh and keep the pacing quick.", "version": version, "plan_hash": "fixture-plan-\(version)"]
+            }
         } else if parts.contains("approvals") {
             if parts.last == "approve" {
                 append("approval_approved")
@@ -158,6 +167,21 @@ private final class CreationChatFixture: @unchecked Sendable {
         if parts.last == "turns" { return response(["turn_id": id, "thread_revision": revision, "status": "queued"], status: 202) }
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
         return response(thread)
+    }
+    /// `KRIA_CHAT_GENERATE_CONFLICT` makes "generate" answer HTTP 409 like the
+    /// Creator confirmation controller: `stale_manifest` until Kria re-plans once
+    /// more, `wait_for_render` on the first attempt only.
+    private func generateConflict(threadID id: String) -> String? {
+        switch ProcessInfo.processInfo.environment["KRIA_CHAT_GENERATE_CONFLICT"] {
+        case "stale_manifest":
+            return planVersions[id, default: 0] < 2 ? "Footage or capabilities changed; review the plan again" : nil
+        case "wait_for_render":
+            let served = generateConflicts[id, default: 0]
+            generateConflicts[id] = served + 1
+            return served == 0 ? "Wait for the current render before confirming" : nil
+        default:
+            return nil
+        }
     }
     private func bodyData(_ request: URLRequest) -> Data {
         if let data = request.httpBody { return data }

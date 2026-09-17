@@ -17,6 +17,10 @@ import {
   cancelKriaTurn,
   creationGenerationArtifactKey,
   CreationThreadError,
+  CREATION_CONFIRMATION_CHANGED_MESSAGE,
+  CREATION_CONFIRMATION_MISSING_REASON_MESSAGE,
+  creationConfirmationConflict,
+  creationPlanKey,
   decideKriaApproval,
   getKriaDelta,
   getKriaDraft,
@@ -334,6 +338,41 @@ describe("creation thread projection", () => {
   it("recognizes revision conflict responses", () => {
     expect(isCreationThreadRevisionConflict(new CreationThreadError("Creation thread changed", 409))).toBe(true);
     expect(isCreationThreadRevisionConflict(new CreationThreadError("server", 500))).toBe(false);
+  });
+
+  it("keeps the server's confirmation 409 reason and offers a refresh when retrying cannot succeed", () => {
+    for (const detail of [
+      "Footage or capabilities changed; review the plan again",
+      "Kria must prepare a direction in the selected Paper format",
+      "This session has used its render attempts",
+    ]) {
+      expect(creationConfirmationConflict(new CreationThreadError(detail, 409))).toEqual({
+        message: `${detail}.`,
+        offersDirectionRefresh: true,
+      });
+    }
+    expect(creationConfirmationConflict(
+      new CreationThreadError("Wait for the current render before confirming", 409),
+    )).toEqual({ message: "Wait for the current render before confirming.", offersDirectionRefresh: false });
+    for (const detail of ["Creation thread changed", "Creator plan changed", "Idempotency key reused", "speech_cleanup_pending"]) {
+      expect(creationConfirmationConflict(new CreationThreadError(detail, 409))).toEqual({
+        message: CREATION_CONFIRMATION_CHANGED_MESSAGE,
+        offersDirectionRefresh: false,
+      });
+    }
+    expect(creationConfirmationConflict(new CreationThreadError("Request failed (409)", 409))).toEqual({
+      message: CREATION_CONFIRMATION_MISSING_REASON_MESSAGE,
+      offersDirectionRefresh: true,
+    });
+    expect(creationConfirmationConflict(new CreationThreadError("Render queue unavailable", 503))).toBeNull();
+    expect(creationConfirmationConflict(new Error("offline"))).toBeNull();
+  });
+
+  it("keys a confirmation conflict to the current Creator plan", () => {
+    const planned = thread({ creator_agent: { status: "awaiting_confirmation", version: "1", plan_hash: "a" } });
+    expect(creationPlanKey(planned)).toBe("1|a");
+    expect(creationPlanKey(thread({ creator_agent: null, state: { creator_agent: { version: 2, plan_hash: "b" } } }))).toBe("2|b");
+    expect(creationPlanKey(null)).toBe("|");
   });
 
   it("does not mislabel unrelated 409s as a changed speech check", () => {

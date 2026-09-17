@@ -635,6 +635,69 @@ export function isCreationSpeechCleanupStaleConflict(cause: unknown): boolean {
     && cause.message === "speech_cleanup_analysis_changed";
 }
 
+/** Sent by "Refresh the direction" so Kria re-plans against the footage attached now. */
+export const CREATION_REFRESH_DIRECTION_MESSAGE = "Keep the same plan with my current footage";
+export const CREATION_CONFIRMATION_CHANGED_MESSAGE = "This project changed. Review the latest options and try again.";
+export const CREATION_CONFIRMATION_MISSING_REASON_MESSAGE = "This direction is out of date. Refresh it before creating the video.";
+
+/** What the confirmation card shows after a confirmation is rejected with HTTP 409. */
+export interface CreationConfirmationConflict {
+  message: string;
+  /**
+   * True when confirming again cannot succeed until Kria plans a new
+   * direction, for example after footage changed or render attempts ran out.
+   */
+  offersDirectionRefresh: boolean;
+}
+
+/** Revision and idempotency fences. The refresh after every conflict resolves them. */
+const CONFIRMATION_CONFLICTS_RESOLVED_BY_REFRESH = new Set([
+  "Creation thread changed",
+  "Creator plan changed",
+  "Idempotency key reused",
+]);
+/** Reasons that clear on their own, so the same create button works afterwards. */
+const CONFIRMATION_CONFLICTS_RESOLVED_BY_WAITING = new Set([
+  "Wait for the current render before confirming",
+]);
+
+/**
+ * Classifies a confirmation 409 by the server's `detail`. Mirrors
+ * `CreationConfirmationConflict` in the iOS app. Returns null for anything
+ * that is not a 409 so callers keep their generic failure copy.
+ */
+export function creationConfirmationConflict(cause: unknown): CreationConfirmationConflict | null {
+  if (!(cause instanceof CreationThreadError) || cause.status !== 409) return null;
+  const detail = cause.message.trim();
+  if (CONFIRMATION_CONFLICTS_RESOLVED_BY_WAITING.has(detail)) {
+    return { message: asSentence(detail), offersDirectionRefresh: false };
+  }
+  // Machine codes such as speech_cleanup_pending: the refreshed speech-check
+  // card already shows the creator's next step.
+  if (CONFIRMATION_CONFLICTS_RESOLVED_BY_REFRESH.has(detail) || (detail && !/\s/.test(detail))) {
+    return { message: CREATION_CONFIRMATION_CHANGED_MESSAGE, offersDirectionRefresh: false };
+  }
+  // `request` falls back to this text when the 409 body had no usable detail.
+  if (!detail || detail === "Request failed (409)") {
+    return { message: CREATION_CONFIRMATION_MISSING_REASON_MESSAGE, offersDirectionRefresh: true };
+  }
+  // Unknown reasons offer the refresh: a new direction is the one path that
+  // cannot loop on a rejection the client can't classify.
+  return { message: asSentence(detail), offersDirectionRefresh: true };
+}
+
+function asSentence(detail: string): string {
+  return /[.!?]$/.test(detail) ? detail : `${detail}.`;
+}
+
+/** Identifies Kria's current direction. A new plan changes its version or hash. */
+export function creationPlanKey(thread: CreationThread | null): string {
+  const projected = thread?.state.creator_agent;
+  const agent = thread?.creator_agent
+    ?? (projected && typeof projected === "object" ? projected as Record<string, unknown> : null);
+  return `${String(agent?.version ?? "")}|${String(agent?.plan_hash ?? "")}`;
+}
+
 export async function listCreationThreads(): Promise<CreationThread[]> {
   const result = await request<CreationThread[] | { threads: CreationThread[] }>("");
   return Array.isArray(result) ? result : result.threads;
