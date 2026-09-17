@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.59.0] - 2026-09-17
+
+### Changed
+- refactor(api): split montage-family render into decide + process phases (KRI-114 P1-1) (#1071) <!-- release-pr: 1071 -->
+
 ## [0.76.58.0] - 2026-09-17
 
 ### Changed
