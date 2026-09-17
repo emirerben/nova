@@ -46,6 +46,25 @@ def test_edit_proposal_eval(
             if cut["media_id"] in video_ids
         ]
         assert len(used) == len(set(used)), "default plans must not revisit a video"
+    if (
+        fixture.input.get("video_reuse_policy") == "once"
+        and fixture.input.get("direction") != "fast_montage"
+    ):
+        # A story beat may repeat a photo only as a genuine last resort — never
+        # while a distinct source is still sitting unused (KRI-115, plan item
+        # 5016d555: a chapter repeated an already-shown Messi photo instead of
+        # the untouched Camp Nou clip still idle at that point in the draft).
+        media_kind = {row["media_id"]: row["kind"] for row in fixture.input["media"]}
+        available = set(media_kind)
+        seen: set[str] = set()
+        for beat in result.output["story_beats"]:
+            for media_id in beat["media_ids"]:
+                if media_id in seen:
+                    assert media_kind[media_id] != "video", "must not revisit a video"
+                    assert not (available - seen), (
+                        f"{media_id} repeated while an unused source was still available"
+                    )
+                seen.add(media_id)
     shot_labels = fixture.input.get("shot_labels")
     if shot_labels:
         # Exact creator copy is burned verbatim: labeled beats carry exactly the

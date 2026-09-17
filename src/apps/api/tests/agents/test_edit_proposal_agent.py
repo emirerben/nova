@@ -57,8 +57,11 @@ def _raw(media_ids: list[str]) -> str:
 
 def test_requires_seven_distinct_sources_when_available() -> None:
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    # Three distinct sources, none repeated, so this exercises the minimum-
+    # source floor in isolation rather than the (separately tested) reuse
+    # guard.
     with pytest.raises(SchemaError, match="need at least 7"):
-        agent.parse(_raw(["media-1"]), _input())
+        agent.parse(_raw(["media-0", "media-1", "media-2"]), _input())
 
 
 def test_accepts_every_source_for_a_small_upload() -> None:
