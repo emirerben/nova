@@ -947,6 +947,7 @@ struct NativeMiniStrip: View {
     @State private var lastBoundaryFeedbackAt = Date.distantPast
     @State private var cachedClips: [EditorClip] = []
     @State private var didCacheItems = false
+    @State private var isPresentingAddClip = false
 
     private let minimumZoom: CGFloat = 0.5
     private let maximumZoom: CGFloat = 24
@@ -1034,6 +1035,10 @@ struct NativeMiniStrip: View {
         nativeBool(session.document.captionMeta["enabled"]) ?? !session.document.captionCues.isEmpty
     }
     private var pixelsPerSecond: CGFloat { basePixelsPerSecond * zoom }
+    // 20 mirrors the server's `_MAX_CLIPS` pool cap (see
+    // NativeEditorSession.addClip) — disabling here keeps the sheet from ever
+    // reaching a guard clause the user can't see feedback for.
+    private var canAddClip: Bool { session.canEditTimeline && session.draft.clips.count < 20 }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -1056,6 +1061,7 @@ struct NativeMiniStrip: View {
         .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
         .sensoryFeedback(.selection, trigger: boundaryFeedback)
+        .sheet(isPresented: $isPresentingAddClip) { NativeEditorAddClipSheet(session: session) }
     }
 
     private var controls: some View {
@@ -1095,6 +1101,12 @@ struct NativeMiniStrip: View {
                 .accessibilityIdentifier("native-editor-duration")
 
             Spacer(minLength: 8)
+            Button { isPresentingAddClip = true } label: {
+                Image(systemName: "plus").frame(width: 44, height: 44)
+            }
+            .disabled(!canAddClip)
+            .accessibilityLabel("Add clip or photo")
+            .accessibilityIdentifier("native-editor-add-clip")
             Button(action: session.undo) {
                 Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44)
             }

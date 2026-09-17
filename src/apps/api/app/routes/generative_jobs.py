@@ -304,6 +304,32 @@ class TemporaryUploadCancellationResponse(BaseModel):
     status: Literal["cleanup_pending", "deleted"]
 
 
+class AddClipRequest(BaseModel):
+    """One newly-uploaded clip or photo to append to the job's footage pool."""
+
+    gcs_path: str
+
+    @field_validator("gcs_path")
+    @classmethod
+    def validate_gcs_path(cls, v: str) -> str:
+        # Mirrors CreateGenerativeJobRequest.validate_clips for a single path —
+        # the pool this appends to has no other entry point for prefix checks.
+        purpose_paths = tuple(PURPOSE_PREFIXES.values())
+        if direct_clip_owner(v) is None and not v.startswith(purpose_paths):
+            _validate_clip_path_prefixes([v])
+        if v.startswith(LEGACY_DIRECT_CLIP_PREFIX) and direct_clip_owner(v) is None:
+            raise ValueError("Invalid direct-upload clip path")
+        if v.startswith(purpose_paths) and direct_clip_owner(v) is None:
+            raise ValueError("Invalid purpose upload path")
+        return v
+
+
+class AddClipResponse(BaseModel):
+    job_id: str
+    clip_index: int
+    kind: Literal["video", "image"]
+
+
 async def validate_direct_uploads(
     req: CreateGenerativeJobRequest,
     current_user: User,
@@ -11144,6 +11170,103 @@ async def reset_variant_timeline(
     await dispatch_reset_timeline(job, variant_id, db=db)
     log.info("generative_reset_timeline", job_id=str(job.id), variant_id=variant_id)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.post("/{job_id}/clips", response_model=AddClipResponse)
+async def add_clip(
+    job_id: str,
+    req: AddClipRequest,
+    current_user: CurrentUserOrSynthetic,
+    db: AsyncSession = Depends(get_db),
+) -> AddClipResponse:
+    """Append one uploaded clip/photo to the job's shared footage pool.
+
+    `TimelineSlotEdit.clip_index` indexes into `job.all_candidates["clip_paths"]`,
+    and every timeline write path 422s (`TIMELINE_UNKNOWN_CLIP`) any index the pool
+    doesn't yet contain — the pool is otherwise fixed at job creation. Call this
+    after uploading via POST /upload-url to grow the pool and mint the new index,
+    then POST /variants/{id}/timeline with a new slot referencing it to place it.
+    """
+    from app.auth import SYNTHETIC_USER_ID  # noqa: PLC0415
+
+    # `all_candidates["clip_paths"]` is a Job-row field regardless of who owns
+    # the render (a bare generative job or a content-plan item) — both the
+    # legacy /generative-jobs/{id}/variants/{vid}/timeline route and the
+    # unified plan-items/.../editor-commit route resolve clip_index against
+    # it via the same `resolve_timeline_slots_for_edit`, so this pool-growth
+    # step must accept every mode that editor-commit does.
+    job = await _load_generative_job(job_id, db, current_user, allowed_modes=_READABLE_MODES)
+    if getattr(job, "status", None) == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled videos cannot be edited.",
+        )
+
+    path = req.gcs_path
+    user_id = str(current_user.id)
+    if direct_clip_owner(path) is not None:
+        if direct_clip_owner(path) != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
+            )
+    elif path.startswith(tuple(PURPOSE_PREFIXES.values())):
+        if direct_clip_owner(path) != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
+            )
+    elif current_user.id != SYNTHETIC_USER_ID and not path.startswith(f"users/{user_id}/"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch")
+
+    # Same receipt-claiming discipline as job creation (validate_direct_uploads /
+    # _consume_project_upload_reservations): a durable users/ upload isn't
+    # referenced by any Job row until this commits, so it stays swept by the
+    # temp-upload lifecycle unless we claim the reservation here.
+    await db.execute(
+        select(func.pg_advisory_xact_lock(project_media_reference_lock_key(current_user.id)))
+    )
+    await _consume_project_upload_reservations(db, user_id=current_user.id, object_paths=[path])
+
+    try:
+        metadata = await run_in_threadpool(storage.object_metadata, path)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Uploaded file is missing — upload it again",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — storage outage is retryable
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Upload verification unavailable — try again",
+        ) from exc
+    if metadata.size <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Uploaded file is empty"
+        )
+    if metadata.size > _DIRECT_UPLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File too large. Maximum 200 MB.",
+        )
+    kind = classify_slot_kind(Path(path).name, metadata.content_type)
+    if kind not in {"video", "image"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Clip upload must be video or image",
+        )
+
+    clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
+    if len(clip_paths) >= _MAX_CLIPS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Maximum {_MAX_CLIPS} clips allowed",
+        )
+    clip_index = len(clip_paths)
+    clip_paths.append(path)
+    job.all_candidates = {**(job.all_candidates or {}), "clip_paths": clip_paths}
+    await db.commit()
+
+    log.info("generative_add_clip", job_id=str(job.id), clip_index=clip_index, kind=kind)
+    return AddClipResponse(job_id=str(job.id), clip_index=clip_index, kind=kind)
 
 
 @router.post("/{job_id}/variants/{variant_id}/mix", response_model=GenerativeJobResponse)

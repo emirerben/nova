@@ -1279,6 +1279,54 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.lastVariantID, "original_text")
     }
 
+    func testAddClipUploadsReservesAndAppendsTimelineSlot() async throws {
+        let threadID = UUID(); let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditTimeline)
+
+        let tempURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("clip-bytes".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        // The fixture's default `editorVariant` already seeds one timeline
+        // slot at clip_index 0 (see EditorCommitSpy.editorVariant) — the newly
+        // added clip mints the next pool index, 1.
+        fake.reserveUploadResult = UploadReservation(uploadURL: URL(string: "https://storage.example/signed-put")!, gcsPath: "users/u/generative/abc123def456/clip.mp4", kind: "video", contentType: "video/mp4", uploadHeaders: [:], purpose: nil, reservationID: nil, retentionExpiresAt: nil)
+        fake.addClipResult = AddClipResult(jobID: jobID.uuidString, clipIndex: 1, kind: "video")
+
+        await session.addClip(fileURL: tempURL)
+
+        XCTAssertNil(session.addClipError)
+        XCTAssertEqual(fake.uploadFileCalls.count, 1)
+        XCTAssertEqual(fake.uploadFileCalls.first?.reservation.gcsPath, "users/u/generative/abc123def456/clip.mp4")
+        XCTAssertEqual(fake.addClipCalls.map(\.gcsPath), ["users/u/generative/abc123def456/clip.mp4"])
+        XCTAssertEqual(session.document.clips.count, 2)
+        XCTAssertEqual(session.document.clips.last?.clipIndex, 1)
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testAddClipSurfacesUploadFailureWithoutMutatingTimeline() async throws {
+        let threadID = UUID(); let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+
+        let tempURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("clip-bytes".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        // reserveUploadResult left nil — the fake throws .unsupported, matching
+        // a reservation failure (e.g. the network call itself failing).
+
+        await session.addClip(fileURL: tempURL)
+
+        XCTAssertNotNil(session.addClipError)
+        // Only the fixture's pre-existing slot (see EditorCommitSpy.editorVariant)
+        // — the failed upload must not have staged anything new.
+        XCTAssertEqual(session.document.clips.count, 1)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
     func testSaveCallsExplicitEditorCommitOnlyAfterEdit() async {
         let threadID = UUID(); let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 2, trimIn: 0, trimOut: 2)
         let snapshot: [String: JSONValue] = ["schema_version": .number(2), "kind": .string("editor"), "editor_payload": .object(["base_generation": .string("generation-1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string(clip.id.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "removed": .bool(false)])])])])]
@@ -1801,6 +1849,10 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var editorVariantsCallCount = 0
     var sourcePoolCallCount = 0
     var sourcePoolExpectation: XCTestExpectation?
+    var reserveUploadResult: UploadReservation?
+    var addClipResult: AddClipResult?
+    var addClipCalls: [(jobID: UUID, gcsPath: String)] = []
+    var uploadFileCalls: [(reservation: UploadReservation, fileURL: URL)] = []
     init(draftSnapshot: DraftSnapshot, draftError: APIError? = nil, openReceipt: OpenInEditorResponse? = nil, authoritativeVariant: [String: JSONValue]? = nil, editorVariantError: APIError? = nil, commitResponse: EditorCommitResponse? = nil, commitError: APIError? = nil, refreshedThread: CreationThread? = nil, suspendNextCommit: Bool = false) {
         self.draftSnapshot = draftSnapshot
         self.draftError = draftError
@@ -1904,10 +1956,21 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { throw APIError.unsupported }
     func playbackURL(jobID: UUID) async throws -> URL { throw APIError.unsupported }
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { throw APIError.unsupported }
-    func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose) async throws -> UploadReservation { throw APIError.unsupported }
+    func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation {
+        guard let reserveUploadResult else { throw APIError.unsupported }
+        return reserveUploadResult
+    }
     func cancelUpload(reservationID: UUID) async throws { throw APIError.unsupported }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation { throw APIError.unsupported }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
+    func addClip(jobID: UUID, gcsPath: String) async throws -> AddClipResult {
+        addClipCalls.append((jobID, gcsPath))
+        guard let addClipResult else { throw APIError.unsupported }
+        return addClipResult
+    }
+    func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws {
+        uploadFileCalls.append((reservation, fileURL))
+    }
 }
 
 private final class DelayedSeekPlayer: AVPlayer, @unchecked Sendable {

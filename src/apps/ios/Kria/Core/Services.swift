@@ -118,11 +118,22 @@ protocol KriaAPIClient: Sendable {
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws
     func playbackURL(jobID: UUID) async throws -> URL
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe
-    func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose) async throws -> UploadReservation
+    func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation
     func cancelUpload(reservationID: UUID) async throws
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
+    /// Append a newly-uploaded clip/photo to a generative job's shared footage
+    /// pool (`job.all_candidates["clip_paths"]`), minting the `clip_index` the
+    /// editor then references in a new timeline slot. See `reserveUpload` for
+    /// the preceding upload step — pass `purpose: nil` so the object lands in
+    /// durable `users/` storage instead of a 24h-swept purpose prefix.
+    func addClip(jobID: UUID, gcsPath: String) async throws -> AddClipResult
+    /// PUT a locally-picked file's bytes to a reservation's signed upload URL.
+    /// Routed through the API client (rather than a bare `URLSession.shared`
+    /// call) so callers stay testable through the same fake used for every
+    /// other native-editor network call.
+    func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws
 }
 
 /// Existing API test doubles can remain focused on the older protocol. Native
@@ -552,6 +563,12 @@ struct UploadReservation: Codable, Sendable {
     let retentionExpiresAt: Date?
     enum CodingKeys: String, CodingKey { case kind, purpose; case uploadURL = "upload_url"; case gcsPath = "gcs_path"; case contentType = "content_type"; case uploadHeaders = "upload_headers"; case reservationID = "reservation_id"; case retentionExpiresAt = "retention_expires_at" }
 }
+struct AddClipResult: Codable, Sendable {
+    let jobID: String
+    let clipIndex: Int
+    let kind: String
+    enum CodingKeys: String, CodingKey { case kind; case jobID = "job_id"; case clipIndex = "clip_index" }
+}
 struct ProjectUploadReservation: Codable, Sendable {
     let mediaID: String
     let uploadURL: URL
@@ -739,7 +756,20 @@ struct KriaAPI: KriaAPIClient {
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { try await request(path: "me/jobs/\(jobID.uuidString)/edit-recipe", method: "GET", query: variantID.map { [URLQueryItem(name: "variant_id", value: $0)] } ?? [], bodyData: nil, decode: EditRecipe.self) }
-    func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose) async throws -> UploadReservation { try await request(path: "generative-jobs/upload-url", method: "POST", bodyData: try JSONEncoder().encode(UploadReservationRequest(filename: filename, contentType: contentType, fileSizeBytes: size, purpose: purpose)), decode: UploadReservation.self) }
+    func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation { try await request(path: "generative-jobs/upload-url", method: "POST", bodyData: try JSONEncoder().encode(UploadReservationRequest(filename: filename, contentType: contentType, fileSizeBytes: size, purpose: purpose)), decode: UploadReservation.self) }
+    func addClip(jobID: UUID, gcsPath: String) async throws -> AddClipResult {
+        try await request(path: "generative-jobs/\(jobID.uuidString)/clips", method: "POST", bodyData: try JSONEncoder().encode(AddClipRequestBody(gcsPath: gcsPath)), decode: AddClipResult.self)
+    }
+    func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws {
+        var request = URLRequest(url: reservation.uploadURL)
+        request.httpMethod = "PUT"
+        request.setValue(reservation.contentType, forHTTPHeaderField: "Content-Type")
+        for (name, value) in reservation.uploadHeaders { request.setValue(value, forHTTPHeaderField: name) }
+        let (_, response) = try await session.upload(for: request, fromFile: fileURL)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw APIError.invalidResponse
+        }
+    }
     func cancelUpload(reservationID: UUID) async throws { _ = try await request(path: "generative-jobs/uploads/\(reservationID.uuidString)", method: "DELETE", bodyData: nil, decode: UploadCancellation.self) }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation {
         let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID)])
@@ -853,7 +883,8 @@ private struct SubmitTurnRequest: Encodable { let message: String; let clientEve
 private struct CreationActionRequest: Encodable { let action: String; let payload: [String: JSONValue]; let clientActionID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case action, payload; case clientActionID = "client_action_id"; case expectedRevision = "expected_revision" } }
 private struct ApprovalDecisionRequest: Encodable { let expectedThreadRevision: Int; let expectedDraftRevision: Int; let fingerprint: String; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision"; case expectedDraftRevision = "expected_draft_revision"; case fingerprint = "expected_approval_fingerprint" } }
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }
-private struct UploadReservationRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let purpose: UploadPurpose; enum CodingKeys: String, CodingKey { case filename, purpose; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes" } }
+private struct UploadReservationRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let purpose: UploadPurpose?; enum CodingKeys: String, CodingKey { case filename, purpose; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes" } }
+private struct AddClipRequestBody: Encodable { let gcsPath: String; enum CodingKeys: String, CodingKey { case gcsPath = "gcs_path" } }
 private struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
 private struct ProjectUploadFileRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String; var uploadContract: ProjectMediaUploadContract? = nil; enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id" } }
 private struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
