@@ -99,6 +99,7 @@ protocol KriaAPIClient: Sendable {
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession
     func revokeMobileSession(_ refreshToken: String) async throws
+    func currentUser() async throws -> MobileUser
     func requestAccountDeletion() async throws -> AccountDeletionRequest
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted
@@ -142,6 +143,7 @@ protocol KriaAPIClient: Sendable {
 extension KriaAPIClient {
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
+    func currentUser() async throws -> MobileUser { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
 
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse { throw APIError.unsupported }
@@ -183,6 +185,20 @@ extension KriaAPIClient {
 }
 
 struct TurnAccepted: Codable, Sendable { let turnID: String; let threadRevision: Int; let status: String; enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status } }
+/// Mirrors the server's `MobileUserOut` (`GET /auth/mobile/me`) — the account screen's
+/// only source of a real name/email; nothing here is persisted to the Keychain.
+struct MobileUser: Codable, Sendable, Equatable {
+    let id: String
+    let email: String
+    let name: String?
+    let onboardingStatus: String
+    let linkedProviders: [String]
+    enum CodingKeys: String, CodingKey {
+        case id, email, name
+        case onboardingStatus = "onboarding_status"
+        case linkedProviders = "linked_providers"
+    }
+}
 struct CreationFormatCapability: Codable, Equatable, Sendable {
     let id: String
     let editFormat: String
@@ -755,6 +771,7 @@ struct KriaAPI: KriaAPIClient {
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
+    func currentUser() async throws -> MobileUser { try await request(path: "auth/mobile/me", method: "GET", bodyData: nil, decode: MobileUser.self) }
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { try await request(path: "me/jobs/\(jobID.uuidString)/edit-recipe", method: "GET", query: variantID.map { [URLQueryItem(name: "variant_id", value: $0)] } ?? [], bodyData: nil, decode: EditRecipe.self) }
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation { try await request(path: "generative-jobs/upload-url", method: "POST", bodyData: try JSONEncoder().encode(UploadReservationRequest(filename: filename, contentType: contentType, fileSizeBytes: size, purpose: purpose)), decode: UploadReservation.self) }
     func addClip(jobID: UUID, gcsPath: String) async throws -> AddClipResult {

@@ -225,7 +225,7 @@ struct GalleryView: View {
     }
 
     private var initial: String {
-        String((auth.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).first ?? "E")).uppercased()
+        AccountIdentity.initial(name: auth.displayName, email: auth.email)
     }
 
     var body: some View {
@@ -395,31 +395,181 @@ struct AccountView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var showsDeletion = false
+    @State private var showsSignOutConfirmation = false
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: 0) {
                 KriaWordmark()
-                Text("Account").font(KriaFont.display(30))
-                HStack(spacing: 14) {
-                    Image(systemName: "person").frame(width: 44, height: 44).background(KriaColor.butter, in: Circle())
-                    Text(auth.displayName ?? "Creator").font(KriaFont.body(17).weight(.medium))
+                Text("Account")
+                    .font(KriaFont.display(30))
+                    .padding(.top, 14)
+                    .accessibilityAddTraits(.isHeader)
+                identityBlock
+                    .padding(.top, 24)
+                    .padding(.bottom, 20)
+                    .overlay(alignment: .bottom) { Rectangle().fill(KriaColor.line).frame(height: 1) }
+                if auth.profileState == .failed {
+                    profileFailureRow
+                }
+                AccountSection(title: "About") {
+                    AccountLinkRow(title: "Privacy Policy", url: KriaLegal.privacyURL)
+                        .accessibilityIdentifier("kria-privacy-link")
+                    AccountLinkRow(title: "Terms of Service", url: KriaLegal.termsURL)
+                        .accessibilityIdentifier("kria-terms-link")
+                    AccountLinkRow(title: "Contact support", url: KriaLegal.supportURL)
+                        .accessibilityIdentifier("kria-support-link")
+                }
+                #if DEBUG
+                AccountSection(title: "Developer") {
+                    NavigationLink(destination: MediaDiagnosticView()) {
+                        AccountRowLabel(title: "Media diagnostics", trailingSymbol: "chevron.right")
+                    }
+                }
+                #endif
+                AccountSection(title: "Account") {
+                    Button {
+                        showsSignOutConfirmation = true
+                    } label: {
+                        Text("Sign out")
+                            .font(KriaFont.body(15).weight(.semibold))
+                            .foregroundStyle(KriaColor.ink)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("account-sign-out")
+                    Button {
+                        showsDeletion = true
+                    } label: {
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Delete account")
+                                    .font(KriaFont.body(15).weight(.semibold))
+                                    .foregroundStyle(KriaColor.ink)
+                                Text("Removes your account, projects, and uploaded media")
+                                    .font(KriaFont.body(12))
+                                    .foregroundStyle(KriaColor.mutedInk)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13))
+                                .foregroundStyle(KriaColor.mutedInk)
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("account-delete")
                 }
                 Text("Kria · Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")")
-                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                #if DEBUG
-                NavigationLink("Media diagnostics", destination: MediaDiagnosticView()).frame(minHeight: 44)
-                #endif
-                KriaLegalLinks()
-                Button("Delete account", role: .destructive) { showsDeletion = true }
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("account-delete")
-                Button("Sign out", role: .destructive) { auth.signOut() }.buttonStyle(KriaSecondaryButtonStyle())
-            }.padding(24).frame(maxWidth: 560, alignment: .leading).frame(maxWidth: .infinity)
-        }.background(KriaColor.paper).navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .sheet(isPresented: $showsDeletion) {
-                NavigationStack { AccountDeletionView(api: model.api) }
+                    .font(KriaFont.body(12))
+                    .foregroundStyle(KriaColor.mutedInk)
+                    .padding(.top, 40)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
+            .padding(24)
+            .frame(maxWidth: 560, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        .background(KriaColor.paper)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        .task { await auth.refreshProfile() }
+        .alert("Sign out of Kria?", isPresented: $showsSignOutConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Sign out", role: .destructive) { auth.signOut() }
+        } message: {
+            Text("Your projects, creator profile, and saved renders stay on this account. You can sign back in anytime.")
+        }
+        .sheet(isPresented: $showsDeletion) {
+            NavigationStack { AccountDeletionView(api: model.api) }
+        }
+    }
+
+    private var identityBlock: some View {
+        HStack(spacing: 14) {
+            AccountAvatarView(
+                initial: AccountIdentity.initial(name: auth.displayName, email: auth.email),
+                isLoading: auth.profileState == .loading && auth.email == nil
+            )
+            VStack(alignment: .leading, spacing: 3) {
+                if let primary = AccountIdentity.primaryLine(name: auth.displayName, email: auth.email) {
+                    Text(primary).font(KriaFont.body(17).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                } else {
+                    Text("Fetching your account…").font(KriaFont.body(15)).foregroundStyle(KriaColor.mutedInk)
+                }
+                if let detail = AccountIdentity.detailLine(name: auth.displayName, email: auth.email, providers: auth.linkedProviders) {
+                    Text(detail).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var profileFailureRow: some View {
+        HStack {
+            Text("Couldn’t refresh account details").font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+            Spacer()
+            Button("Retry") { Task { await auth.refreshProfile() } }
+                .font(KriaFont.body(13).weight(.semibold))
+                .foregroundStyle(KriaColor.ink)
+        }
+        .padding(.vertical, 14)
+        .overlay(alignment: .bottom) { Rectangle().fill(KriaColor.line).frame(height: 1) }
+    }
+}
+
+/// A labelled group of rows with a `KriaSectionLabel` header. Rows within a
+/// group are separated by whitespace only — the app has no `Divider()`
+/// anywhere, and a hairline per row read as noisier than the house style.
+private struct AccountSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            KriaSectionLabel(title: title)
+                .padding(.top, 20)
+                .padding(.bottom, 4)
+            content()
+        }
+    }
+}
+
+private struct AccountLinkRow: View {
+    let title: String
+    let url: URL
+    var body: some View {
+        Link(destination: url) {
+            AccountRowLabel(title: title, trailingSymbol: "arrow.up.right")
+        }
+    }
+}
+
+private struct AccountRowLabel: View {
+    let title: String
+    let trailingSymbol: String
+    var body: some View {
+        HStack {
+            Text(title).font(KriaFont.body(15)).foregroundStyle(KriaColor.ink)
+            Spacer()
+            Image(systemName: trailingSymbol).font(.system(size: 13)).foregroundStyle(KriaColor.mutedInk)
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct AccountAvatarView: View {
+    let initial: String
+    let isLoading: Bool
+    var body: some View {
+        ZStack {
+            Circle().fill(isLoading ? KriaColor.line : KriaColor.butter)
+            if !isLoading {
+                Text(initial).font(KriaFont.body(17).weight(.semibold)).foregroundStyle(KriaColor.ink)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .accessibilityHidden(true)
     }
 }
 

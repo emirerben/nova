@@ -32,6 +32,8 @@ private final class AccountUITestURLProtocol: URLProtocol, @unchecked Sendable {
         case "/me/account/delete-confirm":
             result = mode == "invalid-code" ? (400, "{}") : (204, "")
         case "/auth/mobile/revoke": result = (204, "")
+        case "/auth/mobile/me":
+            result = (200, "{\"id\":\"1\",\"email\":\"creator@example.com\",\"name\":\"Test creator\",\"onboarding_status\":\"complete\",\"linked_providers\":[\"google\"]}")
         default: result = (503, "{}")
         }
         guard let url = request.url,

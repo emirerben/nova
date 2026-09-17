@@ -11,11 +11,25 @@ enum ProjectCollectionState: Equatable, Sendable {
     case failed(String)
 }
 
+enum ProfileFetchState: Equatable, Sendable {
+    case idle
+    case loading
+    case loaded
+    case failed
+}
+
 @MainActor final class AuthStore: ObservableObject {
     private static let invalidatedSessionKey = "kria.mobile-session.invalidated"
     private static let aiConsentVersion = "current1"
     @Published private(set) var isSignedIn = false
     @Published private(set) var displayName: String?
+    // email/linkedProviders/profileState are in-memory only — refetched from
+    // GET /auth/mobile/me on sign-in and on each AccountView appearance, never
+    // written to the Keychain (avoids persisting PII at rest / migrating
+    // already-stored sessions).
+    @Published private(set) var email: String?
+    @Published private(set) var linkedProviders: [String] = []
+    @Published private(set) var profileState: ProfileFetchState = .idle
     @Published private(set) var hasAIConsent = false
     private let tokenStore: TokenStore
     private let api: KriaAPIClient
@@ -31,6 +45,9 @@ enum ProjectCollectionState: Equatable, Sendable {
         sessionExpiredSubscription = NotificationCenter.default.publisher(for: .kriaSessionExpired)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.expireSession() }
+        if isSignedIn {
+            Task { [weak self] in await self?.refreshProfile() }
+        }
     }
     func acceptAIConsent() {
         guard isSignedIn, let session = try? tokenStore.read() else { return }
@@ -43,6 +60,7 @@ enum ProjectCollectionState: Equatable, Sendable {
         self.displayName = displayName
         isSignedIn = true
         hasAIConsent = defaults.bool(forKey: Self.aiConsentKey(for: session))
+        Task { [weak self] in await self?.refreshProfile() }
     }
     func signOut() {
         let refreshToken = try? tokenStore.read()?.refreshToken
@@ -51,6 +69,9 @@ enum ProjectCollectionState: Equatable, Sendable {
         defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
         displayName = nil
+        email = nil
+        linkedProviders = []
+        profileState = .idle
         isSignedIn = false
         if let refreshToken {
             Task { [api] in try? await api.revokeMobileSession(refreshToken) }
@@ -60,7 +81,26 @@ enum ProjectCollectionState: Equatable, Sendable {
         defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
         displayName = nil
+        email = nil
+        linkedProviders = []
+        profileState = .idle
         isSignedIn = false
+    }
+    /// Fail-open by design: a network error must never sign the user out or
+    /// clear a value already on screen. AccountView retries by calling this
+    /// again (e.g. its "Retry" row, or re-appearing).
+    func refreshProfile() async {
+        guard isSignedIn else { return }
+        profileState = .loading
+        do {
+            let user = try await api.currentUser()
+            email = user.email
+            linkedProviders = user.linkedProviders
+            if let name = user.name, !name.isEmpty { displayName = name }
+            profileState = .loaded
+        } catch {
+            profileState = .failed
+        }
     }
 
     private static func aiConsentKey(for session: MobileSession) -> String {
@@ -78,6 +118,50 @@ enum ProjectCollectionState: Equatable, Sendable {
               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return ["sub", "user_id", "email"].compactMap { payload[$0] as? String }.first
+    }
+}
+
+/// Pure text rules for the Account identity block (KRI-113). Kept out of the
+/// view so the two-line collapse and the Apple-relay caption are each one
+/// unit-testable function, not per-view string-building.
+enum AccountIdentity {
+    static let privateRelaySuffix = "@privaterelay.appleid.com"
+
+    static func isPrivateRelay(email: String) -> Bool {
+        email.lowercased().hasSuffix(privateRelaySuffix)
+    }
+
+    /// Line 1: the name if we have one, else the email.
+    static func primaryLine(name: String?, email: String?) -> String? {
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedName, !trimmedName.isEmpty { return trimmedName }
+        return email
+    }
+
+    /// Line 2: combines email + provider when a name is known ("email · Google");
+    /// otherwise line 1 already holds the email, so this becomes the provider
+    /// line, with an explicit "hidden email" note for an Apple private-relay
+    /// address so it doesn't read as a bug.
+    static func detailLine(name: String?, email: String?, providers: [String]) -> String? {
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let provider = providers.first?.capitalized
+        let signedInWith = provider.map { "Signed in with \($0)" }
+        if let trimmedName, !trimmedName.isEmpty {
+            guard let email, !email.isEmpty else { return signedInWith }
+            guard let provider else { return email }
+            return "\(email) · \(provider)"
+        }
+        guard let signedInWith else { return nil }
+        if let email, isPrivateRelay(email: email) { return "\(signedInWith) · hidden email" }
+        return signedInWith
+    }
+
+    /// Avatar initial: first character of the name, else the email, else "?".
+    static func initial(name: String?, email: String?) -> String {
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = (trimmedName?.isEmpty == false ? trimmedName : nil) ?? email
+        guard let first = source?.first else { return "?" }
+        return String(first).uppercased()
     }
 }
 
