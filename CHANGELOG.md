@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.62.0] - 2026-09-17
+
+### Changed
+- fix(ios): show the real signed-in name/email on the Account screen (KRI-113) (#1065) <!-- release-pr: 1065 -->
+
 ## [0.76.61.0] - 2026-09-17
 
 ### Changed
