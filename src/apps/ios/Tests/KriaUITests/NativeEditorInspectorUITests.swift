@@ -369,7 +369,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertFalse(input.exists)
     }
 
-    func testEditorChromeFitsViewportAndEveryToolRemainsReachable() {
+    func testEditorChromeFitsViewportAndCurrentToolsRemainReachable() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
         app.launch()
@@ -385,10 +385,47 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertLessThanOrEqual(timeline.frame.maxY, toolRail.frame.minY + 1)
         XCTAssertLessThanOrEqual(toolRail.frame.maxY, app.frame.maxY + 1)
 
-        let styles = app.buttons["native-editor-tool-styles"]
-        if !styles.isHittable { toolRail.swipeLeft() }
-        XCTAssertTrue(styles.waitForExistence(timeout: 2))
-        XCTAssertTrue(styles.isHittable)
+        XCTAssertFalse(app.buttons["native-editor-tool-styles"].exists)
+        XCTAssertFalse(app.buttons["native-editor-tool-overlays"].exists)
+        let tools = ["text", "captions", "visuals", "sounds"]
+        let buttons = tools.map { app.buttons["native-editor-tool-\($0)"] }
+        for button in buttons {
+            XCTAssertTrue(button.waitForExistence(timeout: 2), "Every tool must remain in the tool rail")
+            XCTAssertTrue(button.isHittable, "Every tool must remain reachable without horizontal scrolling")
+        }
+        let widths = buttons.map(\.frame.width)
+        for width in widths.dropFirst() { XCTAssertEqual(width, widths[0], accuracy: 2) }
+        XCTAssertEqual(buttons[0].frame.minX, toolRail.frame.minX + 8, accuracy: 2)
+        XCTAssertEqual(buttons[3].frame.maxX, toolRail.frame.maxX - 8, accuracy: 2)
+        for index in 1..<buttons.count {
+            XCTAssertEqual(buttons[index].frame.minX - buttons[index - 1].frame.maxX, 2, accuracy: 2)
+        }
+
+        XCTAssertTrue(app.buttons["native-editor-save"].exists)
+        XCTAssertTrue(app.buttons["native-editor-export"].exists)
+    }
+
+    func testFinishedRenderFallbackRemainsPlayableAndDisablesCanvasManipulation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-failure"]
+        app.launch()
+
+        XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Showing finished render"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].exists)
+        XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Text:")).firstMatch.exists,
+                       "Fallback video is playback-only; canvas objects cannot be selected or manipulated")
+    }
+
+    func testHardSourcePreviewFailureShowsUnavailableStateWithoutFallbackPlayer() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text", "-ui-testing-editor-source-failure"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Preview unavailable"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fallback"].exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Text:")).firstMatch.exists)
     }
 
     func testProjectedCaptionsAppearInCaptionLaneOnly() {

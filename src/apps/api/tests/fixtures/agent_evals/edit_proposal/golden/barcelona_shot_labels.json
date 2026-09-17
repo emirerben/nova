@@ -1,0 +1,74 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.9.0",
+  "input": {
+    "idea": "",
+    "theme": "",
+    "direction": "guided_story",
+    "goal": "Hook: Show '1 CITY. 7 DAYS. 7 VIDEOS.' for exactly 2 seconds.; Body: 6 fast-paced clips cut to the beat at 1.5 seconds each, featuring specific daily text labels.; Outro: Conclude with 'BARCELONA WEEK STARTS MONDAY'.",
+    "creator_request": "13-second trailer. Open with '1 CITY. 7 DAYS. 7 VIDEOS.' for 2 seconds, then 6 shots of 1.5 seconds each with a small day label (MON · 5 LEGENDS, TUE · SAGRADA FAMÍLIA, WED · HIDDEN IN PLAIN SIGHT, THU · HUMAN TOWERS, FRI · MESSI'S NAPKIN, SAT · TOURIST MISTAKES). End on 'BARCELONA WEEK STARTS MONDAY'. Cut on the beat, warm grade.",
+    "pace": "fast",
+    "target_duration_s": 13,
+    "video_reuse_policy": "once",
+    "opening_title": "1 CITY. 7 DAYS. 7 VIDEOS.",
+    "opening_title_duration_s": 2.0,
+    "shot_labels": [
+      "MON · 5 LEGENDS",
+      "TUE · SAGRADA FAMÍLIA",
+      "WED · HIDDEN IN PLAIN SIGHT",
+      "THU · HUMAN TOWERS",
+      "FRI · MESSI'S NAPKIN",
+      "SAT · TOURIST MISTAKES"
+    ],
+    "closing_title": "BARCELONA WEEK STARTS MONDAY",
+    "media": [
+      {
+        "media_id": "square",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 10.05424,
+        "subject": "public square with palm trees and people"
+      },
+      {
+        "media_id": "sagrada-aerial",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 14.326712,
+        "subject": "Sagrada Familia"
+      },
+      {
+        "media_id": "sagrada-interior",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 16.695147,
+        "subject": "interior of Sagrada Familia cathedral"
+      },
+      {
+        "media_id": "castell",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 12.863855,
+        "subject": "human tower (Castell)"
+      },
+      {
+        "media_id": "rambla",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 17.995465,
+        "subject": "crowded street"
+      },
+      {
+        "media_id": "gaudi-portrait",
+        "lane": "asset",
+        "kind": "image",
+        "subject": "Portrait of a bearded man"
+      }
+    ]
+  },
+  "raw_text": "{\"title\": \"Barcelona Week Trailer\", \"duration_s\": 13, \"story_beats\": [{\"topic\": \"Legends\", \"thought\": \"MON · 5 LEGENDS\", \"media_ids\": [\"gaudi-portrait\"], \"layout\": \"fullscreen\", \"duration_s\": 3.5}, {\"topic\": \"Sagrada Familia\", \"thought\": \"TUE · SAGRADA FAMÍLIA\", \"media_ids\": [\"sagrada-aerial\"], \"layout\": \"fullscreen\", \"duration_s\": 1.5}, {\"topic\": \"Interior\", \"thought\": \"WED · HIDDEN IN PLAIN SIGHT\", \"media_ids\": [\"sagrada-interior\"], \"layout\": \"fullscreen\", \"duration_s\": 1.5}, {\"topic\": \"Human towers\", \"thought\": \"THU · HUMAN TOWERS\", \"media_ids\": [\"castell\"], \"layout\": \"fullscreen\", \"duration_s\": 1.5}, {\"topic\": \"Street\", \"thought\": \"FRI · MESSI'S NAPKIN\", \"media_ids\": [\"rambla\"], \"layout\": \"fullscreen\", \"duration_s\": 1.5}, {\"topic\": \"Square\", \"thought\": \"SAT · TOURIST MISTAKES\", \"media_ids\": [\"square\"], \"layout\": \"fullscreen\", \"duration_s\": 3.5}], \"mixed_media_timing\": null, \"montage_text_bindings\": [], \"montage_audio\": null, \"fast_cuts\": null}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "barcelona_shot_labels",
+    "note": "Prod job ac795019: exact creator shot labels must bind verbatim, one per shot."
+  }
+}

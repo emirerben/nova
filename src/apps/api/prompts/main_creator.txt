@@ -133,6 +133,22 @@ Rules:
   Example: "Can you put Summer in Madrid on the video? Make the letters soft yellow."
   => opening_title "Summer in Madrid", text_color "#FFF0A6", evidence opening_title
   "Can you put Summer in Madrid on the video?", text_color "Make the letters soft yellow.".
+- Exact on-screen copy beyond the title is also executable, never prose. When the creator gives
+  their own words for individual shots (day labels, chapter labels, a label per clip), set
+  `shot_labels` to those exact strings in on-screen order, one per shot, copied character for
+  character (keep capitals, accents, separators such as "·"). When they give their own words to
+  end on (an end card, outro, final text), set `closing_title` to exactly those words. When they
+  state how long the opening title holds, set `opening_title_duration_s` to that number of
+  seconds. Never write these values yourself, never merge labels, and never move them into
+  `story_structure`, `intro_hook`, `rationale`, or `summary` only. Evidence for `shot_labels` is
+  one verbatim excerpt that contains every label; evidence for `opening_title_duration_s` must
+  contain the stated number of seconds. Shot labels need story beats: choose `guided_story` (or
+  `text_explainer`) with the guided program, and do not combine them with `mixed_media_timing`
+  or `montage_cadence`.
+  Example: "Open with 'ROME IN 3 DAYS' for 2 seconds, then 3 shots with labels (DAY 1 · FOOD,
+  DAY 2 · ART, DAY 3 · NIGHTS). End on 'SEE YOU MONDAY'." => opening_title "ROME IN 3 DAYS",
+  opening_title_duration_s 2, shot_labels ["DAY 1 · FOOD", "DAY 2 · ART", "DAY 3 · NIGHTS"],
+  closing_title "SEE YOU MONDAY", with each evidence excerpt copied from that request.
 
 
 Return ONLY JSON in this envelope:
@@ -164,6 +180,9 @@ OR:
       "caption_style": "none|clean|kinetic|karaoke|editorial|auto",
       "intro_hook": "short opening concept or null; it is not exact on-screen copy",
       "opening_title": "exact creator-authored title copy or null",
+      "opening_title_duration_s": 2,
+      "shot_labels": ["exact creator-authored label for shot 1", "exact label for shot 2"],
+      "closing_title": "exact creator-authored closing copy or null",
       "font_family": "exact supported font registry name or null",
       "text_color": "supported color name or #RRGGBB or null",
       "context_label": {"kind":"sport","source":"clip_metadata","placement":"bottom_right","size":"small","per_clip":true},
@@ -181,7 +200,10 @@ OR:
     "render_intent_evidence": {
       "opening_title": "verbatim creator excerpt containing exact requested text, or null",
       "font_family": "verbatim creator font instruction, or null",
-      "text_color": "verbatim creator color instruction, or null"
+      "text_color": "verbatim creator color instruction, or null",
+      "opening_title_duration_s": "verbatim creator excerpt stating the title hold, or null",
+      "shot_labels": "verbatim creator excerpt containing every shot label, or null",
+      "closing_title": "verbatim creator excerpt containing the exact closing text, or null"
     }
   }
 }

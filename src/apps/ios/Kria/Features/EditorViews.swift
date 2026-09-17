@@ -238,6 +238,7 @@ struct ResultsView: View {
         }) {
             NativeEditorView(
                 project: project,
+                initialPlaybackURL: playbackURL,
                 libraryJobID: libraryJobID,
                 onBack: { showsEditor = false }
             )
@@ -248,8 +249,7 @@ struct ResultsView: View {
         isRefreshingPlayback = true
         defer { isRefreshingPlayback = false }
         do {
-            let jobID = project.activeJobID ?? project.id
-            let url = try await model.api.playbackURL(jobID: jobID)
+            let url = try await model.api.playbackURL(jobID: playbackJobID)
             player?.pause()
             playbackURL = url
             player = AVPlayer(url: url)
@@ -265,9 +265,8 @@ struct ResultsView: View {
         songReference = NativeSongReference(variant: variant)
     }
     private func saveToPhotos() async {
-        guard let playbackURL else { return }
         do {
-            let localFile = try await downloadVideo(from: playbackURL)
+            let localFile = try await downloadFreshVideo()
             defer { try? FileManager.default.removeItem(at: localFile) }
             try await PhotoLibrarySaver().saveVideo(at: localFile)
             message = "Saved to Photos."
@@ -275,18 +274,112 @@ struct ResultsView: View {
     }
 
     private func prepareShare() async {
-        guard let playbackURL else { return }
         isPreparingShare = true
         defer { isPreparingShare = false }
         do {
             removeShareFile()
-            shareFileURL = try await downloadVideo(from: playbackURL)
+            shareFileURL = try await downloadFreshVideo()
             showShare = true
         } catch { message = error.localizedDescription }
     }
 
-    private func downloadVideo(from remoteURL: URL) async throws -> URL {
-        let (temporary, response) = try await URLSession.shared.download(from: remoteURL)
+    private var playbackJobID: UUID {
+        libraryJobID ?? project.activeJobID ?? project.id
+    }
+
+    private func downloadFreshVideo() async throws -> URL {
+        let result = try await FinishedVideoDownloader().download(
+            api: model.api,
+            jobID: playbackJobID
+        )
+        playbackURL = result.playbackURL
+        return result.fileURL
+    }
+
+    private func removeShareFile() {
+        guard let shareFileURL else { return }
+        try? FileManager.default.removeItem(at: shareFileURL)
+        self.shareFileURL = nil
+    }
+}
+
+struct FinishedVideoDownloader {
+    let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    func download(api: any KriaAPIClient, jobID: UUID) async throws -> (fileURL: URL, playbackURL: URL) {
+        // Signed storage URLs expire. Resolve one at the moment the user acts
+        // instead of reusing the URL that happened to load with the screen.
+        let playbackURL = try await api.playbackURL(jobID: jobID)
+        return (try await VideoFileDownloader(session: session).download(from: playbackURL), playbackURL)
+    }
+}
+
+struct NativeEditorVideoDownloadTarget: Equatable, Sendable {
+    let jobID: UUID
+    let variantID: String
+    let expectedGenerationID: String?
+    let expectedOutputPath: String?
+
+    init(jobID: UUID, variantID: String, expectedGenerationID: String? = nil, expectedOutputPath: String? = nil) {
+        self.jobID = jobID
+        self.variantID = variantID
+        self.expectedGenerationID = expectedGenerationID
+        self.expectedOutputPath = expectedOutputPath
+    }
+}
+
+enum NativeEditorVideoDownloadError: Error, LocalizedError {
+    case unavailable
+    case rendering
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable: "This video isn’t available to download yet."
+        case .rendering: "Save your changes and wait for the updated video before downloading."
+        }
+    }
+}
+
+struct NativeEditorVideoDownloader {
+    let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    func download(api: any KriaAPIClient, target: NativeEditorVideoDownloadTarget) async throws -> URL {
+        // Fetch the selected editor variant at action time. The job-level
+        // playback endpoint may point at a different library-preview variant.
+        let variant = try await api.editorVariant(jobID: target.jobID, variantID: target.variantID)
+        let generation = variant["render_generation_id"]?.stringValue
+            ?? variant["render_finished_at"]?.stringValue
+        if let expected = target.expectedGenerationID, generation != expected {
+            throw NativeEditorVideoDownloadError.rendering
+        }
+        guard let output = variant["output_url"]?.stringValue,
+              let url = URL(string: output) else {
+            let status = variant["render_status"]?.stringValue
+            if status == "pending" || status == "rendering" || status == "awaiting_device" {
+                throw NativeEditorVideoDownloadError.rendering
+            }
+            throw NativeEditorVideoDownloadError.unavailable
+        }
+        if let expected = target.expectedOutputPath, url.path != expected {
+            throw NativeEditorVideoDownloadError.rendering
+        }
+        return try await VideoFileDownloader(session: session).download(from: url)
+    }
+}
+
+private struct VideoFileDownloader {
+    let session: URLSession
+
+    func download(from url: URL) async throws -> URL {
+        let (temporary, response) = try await session.download(from: url)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw APIError.requestFailed
         }
@@ -294,12 +387,6 @@ struct ResultsView: View {
             .appending(path: "kria-\(UUID().uuidString).mp4")
         try FileManager.default.moveItem(at: temporary, to: destination)
         return destination
-    }
-
-    private func removeShareFile() {
-        guard let shareFileURL else { return }
-        try? FileManager.default.removeItem(at: shareFileURL)
-        self.shareFileURL = nil
     }
 }
 
