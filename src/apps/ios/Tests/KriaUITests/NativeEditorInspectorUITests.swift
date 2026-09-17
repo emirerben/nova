@@ -259,7 +259,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(input.waitForExistence(timeout: 3))
         input.tap()
         input.typeText("First\nSecond")
-        XCTAssertEqual(input.value as? String, "First\nSecond")
+        // typeText can return before the last keystroke reaches the text view
+        // on a busy simulator, so wait for the value instead of sampling it.
+        expectation(for: NSPredicate(format: "value == %@", "First\nSecond"), evaluatedWith: input)
+        waitForExpectations(timeout: 5)
         app.buttons["native-editor-text-done"].tap()
         let multiline = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: First\nSecond")).firstMatch
         XCTAssertTrue(multiline.waitForExistence(timeout: 3))

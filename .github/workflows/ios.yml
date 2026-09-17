@@ -37,7 +37,9 @@ jobs:
           - lane: contracts
             runner: ubuntu-latest
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    # Green native runs on main take 37-41 minutes (build, unit tests and the
+    # full UI suite), so 45 left too little room as the UI suite grows.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python for portable contract checks
