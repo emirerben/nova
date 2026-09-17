@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.61.0] - 2026-09-17
+
+### Changed
+- fix(creator): let "Retry generation" re-plan after a guided planner failure (#1075) <!-- release-pr: 1075 -->
+
 ## [0.76.60.0] - 2026-09-17
 
 ### Changed
