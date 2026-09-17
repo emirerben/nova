@@ -16,6 +16,15 @@ PROXY_MEDIA_PREFIX = "analysis-proxy-"
 # see docs/reviews/kri-29/coverage.md.
 MediaSourceKind = Literal["video", "audio"]
 
+# The proxy is measured by server-side ffprobe; the original's duration is
+# measured by the client's AVFoundation on-device. Two independent
+# measurements of conceptually the same file are allowed to disagree by this
+# much — see `AnalysisProxyDescriptor.validate_shape_and_timing` below.
+# Anything downstream that compares a proxy-derived quantity (e.g. a planned
+# source window) against `OriginalMediaDescriptor.duration_s` must tolerate
+# the same slack instead of asserting bit-exact agreement.
+PROXY_ORIGINAL_DURATION_TOLERANCE_S = 0.1
+
 
 class OriginalMediaDescriptor(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -67,12 +76,12 @@ class AnalysisProxyDescriptor(BaseModel):
         else:  # audio
             if self.width is not None or self.height is not None or self.frame_rate is not None:
                 raise ValueError("an audio proxy has no dimensions or frame rate")
-        if abs(self.duration_s - self.original.duration_s) > 0.1:
+        if abs(self.duration_s - self.original.duration_s) > PROXY_ORIGINAL_DURATION_TOLERANCE_S:
             raise ValueError("analysis proxy must preserve the complete original timeline")
         return self
 
     def verify_registered(self, duration_s: float, has_audio: bool) -> None:
-        if abs(duration_s - self.duration_s) > 0.1:
+        if abs(duration_s - self.duration_s) > PROXY_ORIGINAL_DURATION_TOLERANCE_S:
             raise ValueError("uploaded proxy duration differs from its descriptor")
         if has_audio != self.original.has_audio:
             raise ValueError("analysis proxy must preserve source audio for transcription")

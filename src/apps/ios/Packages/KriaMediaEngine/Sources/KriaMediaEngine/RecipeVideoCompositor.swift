@@ -25,6 +25,7 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var visualPlacement: VisualMediaPlacement? = nil
     var visualOrder: Int = 0
     var overlayDissolve: NativeDissolveRenderer? = nil
+    var sourceCrop: NormalizedSourceRect? = nil
 }
 
 struct RecipeTextLayer: @unchecked Sendable {
@@ -182,14 +183,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             source = image
         } else { return frame }
         let alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
-        var paintSource = source
-        if layer.overlayPreserveAlpha == false {
-            paintSource = source.applyingFilter("CIColorMatrix", parameters: [
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
-                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)
-            ]).cropped(to: source.extent)
-        }
-        var positioned = layer.visualPlacement?.position(paintSource, preferred: layer.preferredTransform, canvas: instruction.canvas, time: time, clipStart: layer.start, clipEnd: layer.end) ?? paintSource.transformed(by: layer.transform)
+        var positioned = Self.positionedSource(source, layer: layer, canvas: instruction.canvas, time: time)
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))
             positioned = positioned.transformed(by: CGAffineTransform(translationX: -layer.overlayCenter.x, y: -layer.overlayCenter.y))
@@ -284,6 +278,39 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             frame = opacity(text.image.transformed(by: transform), alpha).composited(over: frame)
         }
         return frame
+    }
+
+    /// Crop coordinates use the editor's top-left origin in decoded source pixels.
+    /// Preserve the existing transform's user zoom, rotation and translation while
+    /// replacing its full-source cover fit with a fit of the selected rectangle.
+    static func positionedSource(_ source: CIImage, layer: RecipeVideoLayer, canvas: CGRect, time: Double) -> CIImage {
+        var image = source
+        var transform = layer.transform
+        if let crop = layer.sourceCrop {
+            let full = source.extent
+            let rectangle = CGRect(x: full.minX + full.width * crop.x,
+                y: full.maxY - full.height * (crop.y + crop.height),
+                width: full.width * crop.width, height: full.height * crop.height)
+            image = source.cropped(to: rectangle)
+            if layer.visualPlacement == nil {
+                let orientedFull = full.applying(layer.preferredTransform)
+                let orientedCrop = rectangle.applying(layer.preferredTransform)
+                let oldCover = max(canvas.width / orientedFull.width, canvas.height / orientedFull.height)
+                let newCover = max(canvas.width / orientedCrop.width, canvas.height / orientedCrop.height)
+                let correction = CGAffineTransform(translationX: -rectangle.midX, y: -rectangle.midY)
+                    .concatenating(CGAffineTransform(scaleX: newCover / oldCover, y: newCover / oldCover))
+                    .concatenating(CGAffineTransform(translationX: full.midX, y: full.midY))
+                transform = correction.concatenating(transform)
+            }
+        }
+        if layer.overlayPreserveAlpha == false {
+            image = image.applyingFilter("CIColorMatrix", parameters: [
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)
+            ]).cropped(to: image.extent)
+        }
+        return layer.visualPlacement?.position(image, preferred: layer.preferredTransform, canvas: canvas,
+            time: time, clipStart: layer.start, clipEnd: layer.end) ?? image.transformed(by: transform)
     }
 
     // Requests are serialized and each finishes exactly once. Draining the queue avoids leaving

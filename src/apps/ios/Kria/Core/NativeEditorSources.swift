@@ -290,7 +290,7 @@ actor NativeEditorSourceResolver {
     func resolveMedia(id: String, url sourceURL: URL, generation: String) async throws -> ResolvedEditorSource {
         guard sourceURL.scheme == "https", !id.isEmpty, !generation.isEmpty else { throw APIError.invalidResponse }
         let key = "media:\(generation):\(id)"
-        if let value = cachedDownload(key: key, id: id) { return value }
+        if let value = cachedDownload(key: key, id: id) { return try await decoderCompatible(value) }
         let (file, response) = try await downloads.download(from: sourceURL)
         defer { try? FileManager.default.removeItem(at: file) }
         guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { throw APIError.requestFailed }
@@ -317,7 +317,7 @@ actor NativeEditorSourceResolver {
               size.width.isFinite, size.height.isFinite else { throw APIError.invalidResponse }
         let resolved = ResolvedEditorSource(clipIndex: -1, mediaID: id, asset: asset, url: url)
         rememberDownload(resolved, key: key)
-        return resolved
+        return try await decoderCompatible(resolved)
     }
 
     private func decoderCompatible(_ source: ResolvedEditorSource) async throws -> ResolvedEditorSource {

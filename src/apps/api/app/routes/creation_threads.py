@@ -2909,11 +2909,16 @@ async def get_thread(
     thread_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
     after_sequence: Annotated[int | None, Query(ge=-1)] = None,
     before_sequence: Annotated[int | None, Query(ge=0)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     projection: str | None = None,
 ) -> CreationThreadOut | ThreadDeltaOut:
+    # `job.variants[].output_url` is a re-signed playback URL and render
+    # state changes underneath it, so a heuristically cached copy can hand
+    # the native editor a stale variant it believes is current (KRI-91).
+    response.headers["Cache-Control"] = "no-store"
     if after_sequence is not None or before_sequence is not None:
         if not settings.kria_runtime_v2_enabled:
             raise RuntimeFailure(

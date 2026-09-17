@@ -32,7 +32,7 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-15-v26"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-16-v27"
 
 
 class MainCreatorInput(BaseModel):
