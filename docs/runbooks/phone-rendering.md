@@ -53,12 +53,24 @@ assembler, not the iPhone renderer. Preserve source audio explicitly in the
 guided strategy. Do not bypass the dispatch guard that requires an approved
 phone edit plan for analysis proxies.
 
+The dispatch gate (`_dispatch_item_render` in `content_plan_build.py`) is
+archetype-agnostic: a guided format (`GUIDED_EDIT_FORMATS`) still requires an
+approved edit proposal; any other format is checked against the positive
+`PHONE_RENDER_SUPPORTED_FORMATS` allowlist in `app/agents/_schemas/
+edit_format.py` (empty today — grown one phase at a time as each archetype
+gets a phone-recipe compiler). Enrollment (`phone_rendering_for`) is checked
+first regardless of format.
+
 When Generate creates no Job, inspect the Creator session's `last_error` and
-the `plan_item_render.invalid_clips` log detail. The detail `analysis proxies
-require an approved phone edit plan` indicates a routing/approval failure,
-not missing footage. A manifest conflict happens earlier and consumes no
-render attempt. After correcting the routing, a new message in the same failed
-project creates a fresh planning session using its existing attachments; the
+the `plan_item_render.invalid_clips` log detail, plus its `phone_gate` field
+(`not_enrolled` | `unapproved_guided` | `unsupported_format`). The detail
+`analysis proxies require an approved phone edit plan` indicates a
+guided-format routing/approval failure; `analysis proxies cannot render
+'<format>' on iPhone yet` indicates the format has no phone compiler yet —
+neither means missing footage. A manifest conflict happens earlier and
+consumes no render attempt. After correcting the routing, a new message in
+the same failed project creates a fresh planning session using its existing
+attachments; the
 creator then confirms the new direction. Repeated Generate taps on the failed
 proposal do not repair it.
 

@@ -1047,7 +1047,10 @@ def _dispatch_item_render(
     no approved guided proposal. Zero registered pool assets is rechecked under
     the item lock; ordinary Generate callers must leave this False.
     """
-    from app.agents._schemas.edit_format import guided_edit_applicable  # noqa: PLC0415
+    from app.agents._schemas.edit_format import (  # noqa: PLC0415
+        coerce_edit_format,
+        guided_edit_applicable,
+    )
     from app.config import settings  # noqa: PLC0415
     from app.schemas.montage_preset import coerce_montage_preset  # noqa: PLC0415
     from app.services.generative_jobs import (  # noqa: PLC0415
@@ -1393,17 +1396,27 @@ def _dispatch_item_render(
         db=session,
     )
     try:
+        from app.agents._schemas.edit_format import (  # noqa: PLC0415
+            PHONE_RENDER_SUPPORTED_FORMATS,
+        )
         from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
         from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
 
         phone_sources = ()
+        phone_gate: str | None = None
         if any(is_analysis_proxy_path(path) for path in clip_paths):
-            if (
-                not settings.phone_rendering_for(plan.user_id)
-                or approved_proposal is None
-                or not guided_applicable
-            ):
-                raise ValueError("analysis proxies require an approved phone edit plan")
+            if not settings.phone_rendering_for(plan.user_id):
+                phone_gate = "not_enrolled"
+                raise ValueError("phone rendering is unavailable for this account")
+            if guided_applicable:
+                if approved_proposal is None:
+                    phone_gate = "unapproved_guided"
+                    raise ValueError("analysis proxies require an approved phone edit plan")
+            else:
+                fmt = coerce_edit_format(item.edit_format)
+                if fmt not in PHONE_RENDER_SUPPORTED_FORMATS:
+                    phone_gate = "unsupported_format"
+                    raise ValueError(f"analysis proxies cannot render '{fmt}' on iPhone yet")
             phone_sources = bind_phone_sources(list(item.clip_assignments or []), clip_paths)
         job = build_generative_job(
             user_id=plan.user_id,
@@ -1492,7 +1505,12 @@ def _dispatch_item_render(
             inherited_snapshot=_item_direction_snapshot(session, item, plan),
         )
     except ValueError as exc:
-        log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
+        log.warning(
+            "plan_item_render.invalid_clips",
+            plan_item_id=str(item.id),
+            error=str(exc),
+            phone_gate=phone_gate,
+        )
         return DispatchResult("invalid_clips")
     if approved_proposal is not None and guided_applicable:
         snapshot = dict(job.assembly_plan or {})

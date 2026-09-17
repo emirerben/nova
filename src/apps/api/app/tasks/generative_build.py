@@ -2156,7 +2156,16 @@ def _run_generative_job_impl(
             # Planning uses its own short transactions. Release the entry locks
             # before invoking it, then recheck the owner/generation at publication.
             db.commit()
-            _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
+            # Archetype-agnostic dispatch: today the only phone compiler is the
+            # guided-story recipe. Phase 1 adds an `elif` here for the montage
+            # phone compiler (`_run_phone_montage_job`) as PHONE_RENDER_SUPPORTED_
+            # FORMATS grows — explicit branches on purpose, so an unrecognized
+            # snapshot shape fails loudly instead of silently entering the wrong
+            # (or a cloud) renderer.
+            if isinstance(phone_snapshot.get("guided_edit"), dict):
+                _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
+            else:
+                raise ValueError("No phone renderer is registered for this edit")
             return
         try:
             require_cloud_source_paths(
