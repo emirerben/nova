@@ -2160,16 +2160,47 @@ def _run_generative_job_impl(
             # Planning uses its own short transactions. Release the entry locks
             # before invoking it, then recheck the owner/generation at publication.
             db.commit()
-            # Archetype-agnostic dispatch: today the only phone compiler is the
-            # guided-story recipe. Phase 1 adds an `elif` here for the montage
-            # phone compiler (`_run_phone_montage_job`) as PHONE_RENDER_SUPPORTED_
-            # FORMATS grows — explicit branches on purpose, so an unrecognized
-            # snapshot shape fails loudly instead of silently entering the wrong
-            # (or a cloud) renderer.
-            if isinstance(phone_snapshot.get("guided_edit"), dict):
-                _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
-            else:
-                raise ValueError("No phone renderer is registered for this edit")
+            try:
+                # Archetype-agnostic dispatch: today the only phone compiler is the
+                # guided-story recipe. Phase 1 adds an `elif` here for the montage
+                # phone compiler (`_run_phone_montage_job`) as PHONE_RENDER_SUPPORTED_
+                # FORMATS grows — explicit branches on purpose, so an unrecognized
+                # snapshot shape fails loudly instead of silently entering the wrong
+                # (or a cloud) renderer.
+                if isinstance(phone_snapshot.get("guided_edit"), dict):
+                    _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
+                else:
+                    raise ValueError("No phone renderer is registered for this edit")
+            except OperationalError:
+                raise  # transient DB -> Celery autoretry, same as the outer fence
+            except Exception as exc:  # noqa: BLE001 — mapped to a stable failure taxonomy below
+                from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+                from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+
+                if isinstance(exc, SoftTimeLimitExceeded):
+                    # Let the outer soft-timeout handler own messaging/failure_reason.
+                    raise
+                # A phone-plan compile/validation failure (no on-device renderer to
+                # fall back to) must persist a failure_reason — without this, the
+                # generic `except Exception` fallback below only set error_detail,
+                # leaving the client with no reason code to render.
+                failure_reason = (
+                    "phone_plan_unsupported"
+                    if isinstance(exc, (UnsupportedPhonePlan, ValueError))
+                    else "phone_plan_failed"
+                )
+                log.error(
+                    "phone_guided_job_failed",
+                    job_id=job_id,
+                    failure_reason=failure_reason,
+                    error=str(exc),
+                    exc_info=True,
+                )
+                mark_failed_phase(job_id)
+                terminalized = _fail_job(job_id, str(exc), failure_reason=failure_reason)
+                if not terminalized:
+                    raise
             return
         try:
             require_cloud_source_paths(

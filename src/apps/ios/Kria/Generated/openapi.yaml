@@ -1242,6 +1242,73 @@
         "title": "DeviceRenderCapabilities",
         "type": "object"
       },
+      "DeviceRenderFailureBody": {
+        "additionalProperties": false,
+        "description": "Phone-reported local failure: the device could not produce an export.",
+        "properties": {
+          "detail": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Detail",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "reason_code": {
+            "enum": [
+              "export_failed",
+              "insufficient_storage",
+              "thermal",
+              "unsupported_recipe",
+              "cancelled_by_user",
+              "unknown"
+            ],
+            "title": "Reason Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "reason_code"
+        ],
+        "title": "DeviceRenderFailureBody",
+        "type": "object"
+      },
+      "DeviceRenderFailureOut": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "phase": {
+            "enum": [
+              "needs_attention"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "reason_code": {
+            "enum": [
+              "export_failed",
+              "insufficient_storage",
+              "thermal",
+              "unsupported_recipe",
+              "cancelled_by_user",
+              "unknown"
+            ],
+            "title": "Reason Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "phase",
+          "reason_code"
+        ],
+        "title": "DeviceRenderFailureOut",
+        "type": "object"
+      },
       "DeviceRenderIdentity": {
         "additionalProperties": false,
         "properties": {
@@ -1327,6 +1394,12 @@
             "title": "Reason",
             "type": "string"
           },
+          "reason_code": {
+            "default": null,
+            "nullable": true,
+            "title": "Reason Code",
+            "type": "string"
+          },
           "request": {
             "$ref": "#/components/schemas/DeviceRenderRequest"
           }
@@ -1336,6 +1409,42 @@
           "request"
         ],
         "title": "DeviceRenderStatus",
+        "type": "object"
+      },
+      "DeviceRetryBody": {
+        "additionalProperties": false,
+        "description": "Identity of the ``needs_attention`` record to re-pin (wrapped like the other bodies).",
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          }
+        },
+        "required": [
+          "identity"
+        ],
+        "title": "DeviceRetryBody",
+        "type": "object"
+      },
+      "DeviceRetryOut": {
+        "additionalProperties": false,
+        "description": "A fresh, re-pinned identity (revision + 1 over the same recipe).",
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/DeviceRenderIdentity"
+          },
+          "phase": {
+            "enum": [
+              "awaiting_device"
+            ],
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "phase"
+        ],
+        "title": "DeviceRetryOut",
         "type": "object"
       },
       "DiscreteRevealContent": {
@@ -8095,6 +8204,110 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeviceExportCompleteOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/me/jobs/{job_id}/device-render/failures": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "reportDeviceRenderFailure",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRenderFailureBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRenderFailureOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "422": {
+            "description": "Invalid request"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/me/jobs/{job_id}/device-render/retry": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "job_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "retryDeviceRender",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRetryBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRetryOut"
                 }
               }
             },

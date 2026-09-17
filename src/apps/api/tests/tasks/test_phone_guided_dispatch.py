@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.services.device_render import device_status
 from app.services.generative_jobs import build_generative_job
 from app.services.phone_sources import PHONE_SOURCES_FIELD
@@ -174,12 +175,58 @@ def test_dispatcher_rejects_phone_snapshot_without_a_registered_renderer(monkeyp
     # is neither a guided-story plan nor (future) another recognized archetype
     # must fail loudly instead of silently entering the guided renderer or a
     # cloud fallback.
+    from contextlib import nullcontext
+
     job, _, session, planner, cloud = setup(monkeypatch)
     del job.assembly_plan["guided_edit"]
     phone_runner = Mock()
     monkeypatch.setattr(gb, "_run_phone_guided_job", phone_runner)
-    with pytest.raises(ValueError, match="No phone renderer is registered"):
-        gb._run_generative_job(str(job.id))
+    monkeypatch.setattr("app.services.pipeline_trace.pipeline_trace_for", lambda _: nullcontext())
+    monkeypatch.setattr(gb, "job_heartbeat", lambda _: nullcontext())
+    monkeypatch.setattr(gb, "mark_finished", Mock())
+    monkeypatch.setattr(gb, "mark_failed_phase", Mock())
+    fail_job = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", fail_job)
+    # The P0-1 failure-reason wrapper terminalizes the job instead of letting
+    # the ValueError escape the task.
+    gb.orchestrate_generative_job.run(str(job.id))
+    fail_job.assert_called_once()
+    args, kwargs = fail_job.call_args
+    assert "No phone renderer is registered" in args[1]
+    assert kwargs.get("failure_reason") == "phone_plan_unsupported"
     phone_runner.assert_not_called()
     planner.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "raised, expected_reason",
+    [
+        pytest.param(
+            lambda: UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources"),
+            "phone_plan_unsupported",
+            id="unsupported_phone_plan",
+        ),
+        pytest.param(
+            lambda: ValueError("Phone rendering requires original source bindings"),
+            "phone_plan_unsupported",
+            id="pilot_validation_value_error",
+        ),
+        pytest.param(lambda: RuntimeError("boom"), "phone_plan_failed", id="unexpected_error"),
+    ],
+)
+def test_phone_plan_failure_persists_failure_reason(monkeypatch, raised, expected_reason):
+    from contextlib import nullcontext
+
+    job, _, _, planner, cloud = setup(monkeypatch)
+    planner.side_effect = raised()
+    monkeypatch.setattr("app.services.pipeline_trace.pipeline_trace_for", lambda _: nullcontext())
+    monkeypatch.setattr(gb, "job_heartbeat", lambda _: nullcontext())
+    monkeypatch.setattr(gb, "mark_finished", Mock())
+    monkeypatch.setattr(gb, "mark_failed_phase", Mock())
+    fail_job = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", fail_job)
+    gb.orchestrate_generative_job.run(str(job.id))
+    fail_job.assert_called_once()
+    _args, kwargs = fail_job.call_args
+    assert kwargs.get("failure_reason") == expected_reason
     cloud.assert_not_called()

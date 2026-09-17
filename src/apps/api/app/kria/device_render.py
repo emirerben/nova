@@ -54,6 +54,10 @@ class DeviceRenderStatus(_DeviceModel):
     phase: Literal["awaiting_device", "syncing", "published", "needs_attention"]
     request: DeviceRenderRequest
     reason: str | None = None
+    # Machine-stable taxonomy for a needs_attention phase — `reason` stays the
+    # human-readable detail string. NULL for every pre-P0-1 record and for any
+    # non-failure phase; see DeviceRenderFailureBody.reason_code for the enum.
+    reason_code: str | None = None
 
 
 class DeviceAssetDownloadBody(_DeviceModel):
@@ -89,6 +93,43 @@ class DeviceExportCompleteBody(_DeviceModel):
 class DeviceExportCompleteOut(_DeviceModel):
     status: Literal["published"] = "published"
     identity: DeviceRenderIdentity
+
+
+DeviceFailureReasonCode = Literal[
+    "export_failed",
+    "insufficient_storage",
+    "thermal",
+    "unsupported_recipe",
+    "cancelled_by_user",
+    "unknown",
+]
+
+
+class DeviceRenderFailureBody(_DeviceModel):
+    """Phone-reported local failure: the device could not produce an export."""
+
+    identity: DeviceRenderIdentity
+    reason_code: DeviceFailureReasonCode
+    detail: str = Field(default="", max_length=2000)
+
+
+class DeviceRenderFailureOut(_DeviceModel):
+    identity: DeviceRenderIdentity
+    phase: Literal["needs_attention"]
+    reason_code: DeviceFailureReasonCode
+
+
+class DeviceRetryBody(_DeviceModel):
+    """Identity of the ``needs_attention`` record to re-pin (wrapped like the other bodies)."""
+
+    identity: DeviceRenderIdentity
+
+
+class DeviceRetryOut(_DeviceModel):
+    """A fresh, re-pinned identity (revision + 1 over the same recipe)."""
+
+    identity: DeviceRenderIdentity
+    phase: Literal["awaiting_device"]
 
 
 def recipe_digest(recipe: DeviceRecipe) -> str:

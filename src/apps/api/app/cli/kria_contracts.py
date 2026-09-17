@@ -30,7 +30,12 @@ from app.kria.device_render import (
     DeviceExportReservationBody,
     DeviceExportReservationOut,
     DeviceRenderCapabilities,
+    DeviceRenderFailureBody,
+    DeviceRenderFailureOut,
+    DeviceRenderIdentity,
     DeviceRenderStatus,
+    DeviceRetryBody,
+    DeviceRetryOut,
 )
 from app.kria.recipes import EditRecipeV1
 from app.kria.registry import KRIA_TOOLS
@@ -104,6 +109,11 @@ MOBILE_API_MODELS = (
     DeviceExportReservationOut,
     DeviceExportCompleteBody,
     DeviceExportCompleteOut,
+    DeviceRenderFailureBody,
+    DeviceRetryBody,
+    DeviceRenderFailureOut,
+    DeviceRenderIdentity,
+    DeviceRetryOut,
     MobileExchangeRequest,
     MobileRefreshRequest,
     MobileSessionOut,
@@ -678,6 +688,24 @@ def mobile_openapi_json() -> str:
                     "security": bearer,
                     "requestBody": _json_request(DeviceExportCompleteBody),
                     "responses": _json_responses(DeviceExportCompleteOut),
+                },
+            },
+            "/me/jobs/{job_id}/device-render/failures": {
+                "parameters": [job_id],
+                "post": {
+                    "operationId": "reportDeviceRenderFailure",
+                    "security": bearer,
+                    "requestBody": _json_request(DeviceRenderFailureBody),
+                    "responses": _json_responses(DeviceRenderFailureOut),
+                },
+            },
+            "/me/jobs/{job_id}/device-render/retry": {
+                "parameters": [job_id],
+                "post": {
+                    "operationId": "retryDeviceRender",
+                    "security": bearer,
+                    "requestBody": _json_request(DeviceRetryBody),
+                    "responses": _json_responses(DeviceRetryOut),
                 },
             },
             "/me/jobs/{job_id}/edit-recipe": {

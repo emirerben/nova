@@ -15,7 +15,12 @@ from app.kria.device_render import make_device_request
 from app.kria.recipes import EditRecipeV1
 from app.main import app
 from app.routes import device_render as routes
-from app.services.device_render import device_record, pin_device_request, save_device_record
+from app.services.device_render import (
+    device_record,
+    device_status,
+    pin_device_request,
+    save_device_record,
+)
 
 
 def scalar(value):
@@ -223,8 +228,26 @@ def test_kill_switch_holds_unstarted_recipes_without_mutating_them(fixture, monk
     response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
     assert response.status_code == 200
     assert response.json()["phase"] == "needs_attention"
+    # The kill-switch override is response-only — the underlying pinned phase
+    # is never overwritten. The poll-touch write (last_polled_at, throttled)
+    # is an orthogonal bookkeeping commit and is expected here.
     assert device_record(fixture.job, "first")["status"]["phase"] == "awaiting_device"
-    fixture.db.commit.assert_not_awaited()
+    assert device_record(fixture.job, "first")["last_polled_at"]
+    fixture.db.commit.assert_awaited_once()
+
+
+def test_get_device_render_touches_last_polled_at_throttled(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
+    assert response.status_code == 200
+    first_poll = device_record(fixture.job, "first")["last_polled_at"]
+    assert first_poll
+    fixture.db.commit.assert_awaited_once()
+    # A second poll within the throttle window does not write again.
+    response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
+    assert response.status_code == 200
+    assert device_record(fixture.job, "first")["last_polled_at"] == first_poll
+    fixture.db.commit.assert_awaited_once()
 
 
 @pytest.mark.parametrize("during_verification", [False, True])
@@ -354,7 +377,6 @@ def test_library_download_rejects_legacy_recipe(fixture, monkeypatch):
 
 def test_published_phone_export_edits_pin_next_device_revision(fixture, monkeypatch):
     from app.routes import generative_jobs as gj
-    from app.services.device_render import device_status
     from tests.routes.test_phone_editor_commit import phone_job, save
 
     fixture.job = phone_job(monkeypatch)
@@ -391,3 +413,100 @@ def test_published_phone_export_edits_pin_next_device_revision(fixture, monkeypa
     )
     gj.enqueue_editor_commit_render(str(fixture.job.id), "guided_story", prep)
     cloud.assert_not_called()
+
+
+def failure_body(fixture, **overrides):
+    return {
+        "identity": fixture.request.identity.model_dump(mode="json"),
+        "reason_code": "export_failed",
+        "detail": "",
+        **overrides,
+    }
+
+
+def test_report_failure_transitions_and_persists_reason(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/failures", json=failure_body(fixture)
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "identity": fixture.request.identity.model_dump(mode="json"),
+        "phase": "needs_attention",
+        "reason_code": "export_failed",
+    }
+    record = device_record(fixture.job, "first")
+    assert record["status"]["phase"] == "needs_attention"
+    assert record["status"]["reason_code"] == "export_failed"
+    assert record["failed_at"]
+    assert record["failure"]["reason_code"] == "export_failed"
+    assert fixture.job.assembly_plan["variants"][0]["render_status"] == "needs_attention"
+    assert fixture.job.assembly_plan["variants"][0]["ok"] is False
+    assert fixture.job.failure_reason == "export_failed"
+    assert fixture.job.error_detail is None
+    fixture.db.commit.assert_awaited_once()
+
+
+def test_report_failure_rejects_when_published(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    record = device_record(fixture.job, "first")
+    record["status"]["phase"] = "published"
+    save_device_record(fixture.job, "first", record)
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/failures", json=failure_body(fixture)
+    )
+    assert response.status_code == 409
+    fixture.db.commit.assert_not_awaited()
+
+
+def test_report_failure_idempotent_repeat(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    first = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/failures", json=failure_body(fixture)
+    )
+    assert first.status_code == 200
+    fixture.db.commit.reset_mock()
+    second = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/failures",
+        json=failure_body(fixture, reason_code="thermal"),
+    )
+    assert second.status_code == 200
+    assert second.json()["reason_code"] == "export_failed"  # original reason preserved
+    fixture.db.commit.assert_not_awaited()
+
+
+def test_retry_issues_new_revision_with_identical_recipe_and_clears_failure(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    failed = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/failures", json=failure_body(fixture)
+    )
+    assert failed.status_code == 200
+    assert fixture.job.failure_reason == "export_failed"
+    old_identity = fixture.request.identity
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/retry",
+        json={"identity": old_identity.model_dump(mode="json")},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["phase"] == "awaiting_device"
+    assert payload["identity"]["recipe_revision"] == old_identity.recipe_revision + 1
+    new_status = device_status(fixture.job, "first")
+    assert new_status.phase == "awaiting_device"
+    assert new_status.request.recipe == fixture.request.recipe
+    assert new_status.reason is None
+    assert new_status.reason_code is None
+    assert fixture.job.assembly_plan["variants"][0]["render_status"] == "awaiting_device"
+    assert fixture.job.assembly_plan["variants"][0]["ok"] is False
+    assert fixture.job.failure_reason is None
+    assert fixture.job.error_detail is None
+
+
+def test_retry_rejected_unless_needs_attention(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/retry",
+        json={"identity": fixture.request.identity.model_dump(mode="json")},
+    )
+    assert response.status_code == 409
+    fixture.db.commit.assert_not_awaited()
