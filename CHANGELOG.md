@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.39.0] - 2026-09-17
+
+### Changed
+- fix(api): tolerate proxy/original duration drift in phone moment windows (#1058) <!-- release-pr: 1058 -->
+
+## [0.76.38.0] - 2026-09-16
+
+### Changed
+- fix(ios): stop drawer/editor UI test flakes blocking main (#1059) <!-- release-pr: 1059 -->
+
+## [0.76.37.0] - 2026-09-16
+
+### Changed
+- fix(api): gallery and editor agree on which variant is "the" video (KRI-91) (#1046) <!-- release-pr: 1046 -->
+
+## [0.76.36.0] - 2026-09-16
+
+### Changed
+- v0.76.32.0 fix(ios): export the visible editor preview (#1043) <!-- release-pr: 1043 -->
+
+## [0.76.35.0] - 2026-09-16
+
+### Changed
+- fix(creator): burn creator-authored shot labels, title hold and end card verbatim (KRI-98) (#1048) <!-- release-pr: 1048 -->
+
 ## [0.76.34.0] - 2026-09-16
 
 ### Changed

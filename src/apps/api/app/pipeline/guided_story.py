@@ -27,13 +27,16 @@ from app.pipeline.duration_contract import (
 )
 from app.pipeline.probe import probe_video
 from app.schemas.edit_proposal import (
+    FAST_MONTAGE_TITLE_HOLD_S,
     GUIDED_STORY_MIN_MOMENT_S,
+    GUIDED_TITLE_HOLD_S,
     EditProposalSnapshot,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
     NarrationTrack,
     canonical_media_digest,
     canonical_narration_duration_s,
+    closing_title_hold_s,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
@@ -47,6 +50,10 @@ _FRAME_S = 1.0 / 30.0
 _ALLOCATION_EPSILON_S = 0.0005
 _FRAME_FLOOR_EPSILON_S = 1e-9
 _DURATION_MATCH_TOLERANCE_S = 0.001
+# Shortest window beat copy is trimmed to when it would otherwise overlap the
+# creator's opening/closing title; below this the full beat window is kept so
+# confirmed copy is never dropped.
+_MIN_CLEAR_TEXT_WINDOW_S = 0.5
 _MEDIA_PREP_MAX_WORKERS = 3
 _DIRECTION_POLICY = {
     "guided_story": {
@@ -1190,7 +1197,69 @@ def _text_elements(
         if snapshot.narration
         else float(snapshot.duration_s)
     )
-    title_end = min(total_s, 3.2 if snapshot.direction != "fast_montage" else 2.2)
+    title_end = min(
+        total_s,
+        float(snapshot.opening_title_duration_s)
+        if snapshot.opening_title_duration_s is not None
+        else GUIDED_TITLE_HOLD_S
+        if snapshot.direction != "fast_montage"
+        else FAST_MONTAGE_TITLE_HOLD_S,
+    )
+    # Confirmed creator copy beyond the title (shot labels, closing title, a
+    # typed title hold). Snapshots without it keep the legacy projection.
+    typed_copy = bool(
+        snapshot.shot_labels
+        or snapshot.closing_title
+        or snapshot.opening_title_duration_s is not None
+    )
+    # A labeled edit shows only confirmed creator copy: no generated title
+    # unless the creator supplied one.
+    show_title = bool(snapshot.opening_title) or not snapshot.shot_labels
+    closing_start = (
+        round(max(0.0, total_s - closing_title_hold_s(total_s)), 3)
+        if snapshot.closing_title
+        else None
+    )
+
+    def clear_window(start_s: float, end_s: float, *, after_title: bool) -> tuple[float, float]:
+        """Keep beat copy clear of the typed title/closing title, never dropping it."""
+
+        if not typed_copy:
+            return start_s, end_s
+        clear_start = max(start_s, title_end) if after_title and show_title else start_s
+        clear_end = min(end_s, closing_start) if closing_start is not None else end_s
+        if clear_end - clear_start >= _MIN_CLEAR_TEXT_WINDOW_S:
+            return round(clear_start, 3), round(clear_end, 3)
+        return start_s, end_s
+
+    def closing_elements(*, fast: bool, effect: str) -> list[dict]:
+        if not snapshot.closing_title or closing_start is None or compiler_version < 3:
+            return []
+        return [
+            TextElement(
+                id="guided-closing-title",
+                text=snapshot.closing_title,
+                start_s=closing_start,
+                end_s=total_s,
+                role="generative_intro",
+                position="custom",
+                x_frac=0.5,
+                y_frac=0.5,
+                font_family=snapshot.font_family or "Fraunces",
+                size_px=92 if fast else 104,
+                color=snapshot.text_color or "#FFF8F0",
+                highlight_color="#D9FF70",
+                stroke_width=0,
+                shadow_enabled=True,
+                shadow_style="standard",
+                effect=effect,
+                alignment="center",
+                letter_spacing=-0.025,
+                line_spacing=1.0,
+                max_width_frac=0.8,
+            ).model_dump(mode="json", exclude_none=True)
+        ]
+
     # Explicit Main Creator copy is immutable. Specialist montage bindings are
     # advisory and must not replace a confirmed title with generated words.
     # Narrated plans use grounded labels and timed captions. Advisory montage
@@ -1207,12 +1276,15 @@ def _text_elements(
             text = text_by_source.get(cut.media_id)
             if not text:
                 continue
+            binding_start_s, binding_end_s = clear_window(
+                float(window["start_s"]), float(window["end_s"]), after_title=False
+            )
             elements.append(
                 TextElement(
                     id=f"montage-text-{cut.cut_id}",
                     text=text,
-                    start_s=float(window["start_s"]),
-                    end_s=float(window["end_s"]),
+                    start_s=binding_start_s,
+                    end_s=binding_end_s,
                     role="generative_intro",
                     position="custom" if compiler_version >= 3 else "bottom",
                     x_frac=0.5 if compiler_version >= 3 else None,
@@ -1231,7 +1303,11 @@ def _text_elements(
                     max_width_frac=0.82,
                 ).model_dump(mode="json", exclude_none=True)
             )
-        return [*elements, *_narration_caption_elements(snapshot)]
+        return [
+            *elements,
+            *closing_elements(fast=True, effect="static"),
+            *_narration_caption_elements(snapshot),
+        ]
     # New fast-montage proposals carry their own dense cut list. Keep only the
     # short hook/title; generated chapter thoughts would turn a music-led cut
     # back into an information card edit. Legacy fast snapshots have no
@@ -1259,7 +1335,10 @@ def _text_elements(
                 alignment="center",
                 max_width_frac=0.8 if compiler_version >= 3 else 0.86,
             ).model_dump(mode="json", exclude_none=True)
-        ] + _narration_caption_elements(snapshot)
+        ] + [
+            *closing_elements(fast=True, effect="static"),
+            *_narration_caption_elements(snapshot),
+        ]
     if compiler_version < 3:
         elements = [
             TextElement(
@@ -1305,41 +1384,48 @@ def _text_elements(
             )
         return [*elements, *_narration_caption_elements(snapshot)]
 
-    elements = [
-        TextElement(
-            id="guided-title",
-            text=snapshot.title,
-            start_s=0.0,
-            end_s=title_end,
-            role="generative_intro",
-            position="custom",
-            x_frac=0.5,
-            y_frac=0.16,
-            font_family=snapshot.font_family or "Fraunces",
-            size_px=92 if snapshot.direction == "fast_montage" else 104,
-            color=snapshot.text_color or "#FFF8F0",
-            highlight_color="#D9FF70",
-            stroke_width=0,
-            shadow_enabled=True,
-            shadow_style="standard",
-            effect=policy["text_effect"],
-            alignment="center",
-            letter_spacing=-0.025,
-            line_spacing=1.0,
-            max_width_frac=0.8,
-        ).model_dump(mode="json", exclude_none=True)
-    ]
+    # A labeled edit shows only confirmed creator copy (see show_title).
+    elements = (
+        [
+            TextElement(
+                id="guided-title",
+                text=snapshot.title,
+                start_s=0.0,
+                end_s=title_end,
+                role="generative_intro",
+                position="custom",
+                x_frac=0.5,
+                y_frac=0.16,
+                font_family=snapshot.font_family or "Fraunces",
+                size_px=92 if snapshot.direction == "fast_montage" else 104,
+                color=snapshot.text_color or "#FFF8F0",
+                highlight_color="#D9FF70",
+                stroke_width=0,
+                shadow_enabled=True,
+                shadow_style="standard",
+                effect=policy["text_effect"],
+                alignment="center",
+                letter_spacing=-0.025,
+                line_spacing=1.0,
+                max_width_frac=0.8,
+            ).model_dump(mode="json", exclude_none=True)
+        ]
+        if show_title
+        else []
+    )
     for beat, window in zip(snapshot.story_beats, beat_windows, strict=True):
         thought = beat.thought.strip()
         if not thought:
             continue
-        start_s = float(window["start_s"])
+        start_s, end_s = clear_window(
+            float(window["start_s"]), float(window["end_s"]), after_title=True
+        )
         elements.append(
             TextElement(
                 id=f"guided-thought-{beat.beat_id}",
                 text=thought,
                 start_s=max(0.0, round(start_s, 3)),
-                end_s=float(window["end_s"]),
+                end_s=end_s,
                 role="generative_intro",
                 position="custom",
                 x_frac=0.5,
@@ -1357,7 +1443,11 @@ def _text_elements(
                 max_width_frac=0.76,
             ).model_dump(mode="json", exclude_none=True)
         )
-    return [*elements, *_narration_caption_elements(snapshot)]
+    return [
+        *elements,
+        *closing_elements(fast=snapshot.direction == "fast_montage", effect=policy["text_effect"]),
+        *_narration_caption_elements(snapshot),
+    ]
 
 
 def _narration_caption_elements(snapshot: EditProposalSnapshot) -> list[dict]:

@@ -68,3 +68,24 @@ def test_main_creator_eval(
         )
         assert validated.opening_title == expected["title"]
         assert validated.text_color == expected["color"]
+
+    exact_copy = fixture.meta.get("exact_copy_intent")
+    if exact_copy:
+        from app.agents._schemas.creator_agent import (
+            CreativeStrategy,
+            CreatorRenderIntentEvidence,
+        )
+        from app.routes.creator_agent import _apply_explicit_render_intent
+
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        evidence = CreatorRenderIntentEvidence.model_validate(action["render_intent_evidence"])
+        grounded = _apply_explicit_render_intent(
+            CreativeStrategy.model_validate(action["strategy"]),
+            fixture.input["creator_request"],
+            render_intent_evidence=evidence,
+        )
+        # Every exact copy field must survive the verbatim-evidence boundary.
+        for field, value in exact_copy.items():
+            assert getattr(grounded, field) == value, field

@@ -74,8 +74,10 @@ final class ProjectsUITests: XCTestCase {
     func testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_LONG_HISTORY"] = "1"
         app.launch()
         createFreshChat(in: app)
+        app.swipeDown()
         let menu = app.buttons["workspace-menu-toggle"]
         let closedX = menu.frame.minX
         let width = min(326, app.frame.width - 76)

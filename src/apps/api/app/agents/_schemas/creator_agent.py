@@ -31,12 +31,18 @@ from app.agents._schemas.sfx_intent import (
     SfxIntent,
 )
 from app.schemas.edit_proposal import (
+    CREATOR_TITLE_MAX_CHARS,
+    MAX_CREATOR_SHOT_LABELS,
+    MAX_OPENING_TITLE_DURATION_S,
+    MIN_OPENING_TITLE_DURATION_S,
     BeatLayout,
     MixedMediaTimingProfile,
     MontageAudioPlan,
     MontageCadenceConstraint,
     ProposalDuration,
     VideoReusePolicy,
+    clean_creator_copy,
+    clean_creator_shot_labels,
 )
 
 CREATOR_AGENT_SCHEMA_VERSION = 1
@@ -296,6 +302,28 @@ class CreativeStrategy(_CreatorModel):
         max_length=280,
         description="Confirmed exact opening title copy; never an LLM-generated suggestion.",
     )
+    opening_title_duration_s: float | None = Field(
+        default=None,
+        ge=MIN_OPENING_TITLE_DURATION_S,
+        le=MAX_OPENING_TITLE_DURATION_S,
+        exclude_if=lambda value: value is None,
+        description="Confirmed seconds the opening title holds, from the creator's words.",
+    )
+    shot_labels: list[str] | None = Field(
+        default=None,
+        max_length=MAX_CREATOR_SHOT_LABELS,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Confirmed exact per-shot label copy in on-screen order; each label is burned "
+            "verbatim on its own shot and never rewritten by a specialist."
+        ),
+    )
+    closing_title: str | None = Field(
+        default=None,
+        max_length=CREATOR_TITLE_MAX_CHARS,
+        exclude_if=lambda value: value is None,
+        description="Confirmed exact closing/end-card copy; never an LLM-generated suggestion.",
+    )
     font_family: str | None = Field(
         default=None,
         validation_alias=AliasChoices("font_family", "intro_font_family"),
@@ -367,6 +395,20 @@ class CreativeStrategy(_CreatorModel):
             raise ValueError("opening_title must not contain control characters")
         return value
 
+    @field_validator("shot_labels", mode="before")
+    @classmethod
+    def _validate_shot_labels(cls, value: object) -> list[str] | None:
+        return clean_creator_shot_labels(value)
+
+    @field_validator("closing_title", mode="before")
+    @classmethod
+    def _validate_closing_title(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return clean_creator_copy(
+            value, field_name="closing_title", max_chars=CREATOR_TITLE_MAX_CHARS
+        )
+
     @field_validator("font_family", mode="before")
     @classmethod
     def _validate_creator_font_family(cls, value: object) -> str | None:
@@ -435,6 +477,15 @@ class CreatorRenderIntentEvidence(_CreatorModel):
     opening_title: str | None = Field(default=None, max_length=1200)
     font_family: str | None = Field(default=None, max_length=1200)
     text_color: str | None = Field(default=None, max_length=1200)
+    opening_title_duration_s: str | None = Field(
+        default=None, max_length=1200, exclude_if=lambda value: value is None
+    )
+    shot_labels: str | None = Field(
+        default=None, max_length=2400, exclude_if=lambda value: value is None
+    )
+    closing_title: str | None = Field(
+        default=None, max_length=1200, exclude_if=lambda value: value is None
+    )
 
 
 class ProposeStrategy(_CreatorModel):

@@ -544,6 +544,35 @@ async def _resolve_explicit_sfx_outside_manifest(
     return manifest.model_copy(update={"catalog": [*manifest.catalog, trusted_ref]})
 
 
+_SECONDS_UNIT = r"(?:s|sec|secs|seconds?|saniye|segundos?|secondes?|sekunden?|secondi|secondo)\b"
+_SECONDS_WORDS = {
+    "half a": 0.5,
+    "one": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "four": 4.0,
+    "five": 5.0,
+    "six": 6.0,
+    "seven": 7.0,
+    "eight": 8.0,
+    "nine": 9.0,
+    "ten": 10.0,
+}
+
+
+def _excerpt_states_seconds(excerpt: str, seconds: float) -> bool:
+    """Whether a verbatim creator excerpt states ``seconds`` as a duration."""
+
+    text = " ".join(excerpt.casefold().split())
+    for match in re.finditer(rf"(?<![\w.])(\d+(?:[.,]\d+)?)\s*-?\s*{_SECONDS_UNIT}", text):
+        if abs(float(match.group(1).replace(",", ".")) - float(seconds)) < 1e-6:
+            return True
+    return any(
+        abs(number - float(seconds)) < 1e-6 and re.search(rf"\b{word}\s*-?\s*{_SECONDS_UNIT}", text)
+        for word, number in _SECONDS_WORDS.items()
+    )
+
+
 def _apply_explicit_render_intent(
     strategy: CreativeStrategy,
     creator_request: str,
@@ -563,15 +592,28 @@ def _apply_explicit_render_intent(
     semantic_updates: dict[str, object] = {}
     creator_sources = (request, " ".join(str(latest_user_message or "").split()))
     if render_intent_evidence is not None:
-        for field in ("opening_title", "font_family", "text_color"):
-            quote = " ".join(str(getattr(render_intent_evidence, field) or "").split())
+        for field in (
+            "opening_title",
+            "font_family",
+            "text_color",
+            "opening_title_duration_s",
+            "shot_labels",
+            "closing_title",
+        ):
+            quote = " ".join(str(getattr(render_intent_evidence, field, None) or "").split())
             if not quote or not any(quote in source for source in creator_sources):
                 continue
             value = getattr(strategy, field)
             # Typography and color are semantic choices from a validated
             # schema. Literal on-screen words must also occur in the excerpt.
-            if field == "opening_title" and value is not None:
+            if field in {"opening_title", "closing_title"} and value is not None:
                 if " ".join(value.split()) not in quote:
+                    continue
+            if field == "shot_labels" and value is not None:
+                if not all(" ".join(label.split()) in quote for label in value):
+                    continue
+            if field == "opening_title_duration_s" and value is not None:
+                if not _excerpt_states_seconds(quote, value):
                     continue
             semantic_updates[field] = value
     # Ungrounded model values cannot become pixels. Only creator excerpts or
@@ -580,6 +622,9 @@ def _apply_explicit_render_intent(
         "opening_title": None,
         "font_family": None,
         "text_color": None,
+        "opening_title_duration_s": None,
+        "shot_labels": None,
+        "closing_title": None,
         # A model-authored label is only retained when the typed companion
         # flag records the same intent.  This keeps an unrelated request from
         # inheriting a stale context label while allowing multilingual or
@@ -2188,6 +2233,9 @@ async def _run_planning_turn(
                             "video_reuse_policy": reuse_policy,
                             "montage_cadence": cadence,
                             "opening_title": strategy.opening_title,
+                            "opening_title_duration_s": strategy.opening_title_duration_s,
+                            "shot_labels": strategy.shot_labels,
+                            "closing_title": strategy.closing_title,
                             "font_family": strategy.font_family,
                             "text_color": strategy.text_color,
                         }
@@ -2605,6 +2653,9 @@ def _seed_guided_specialist_brief(
         "duration_s": plan.strategy.target_duration_s,
         "creator_request": creator_request,
         "opening_title": plan.strategy.opening_title,
+        "opening_title_duration_s": plan.strategy.opening_title_duration_s,
+        "shot_labels": plan.strategy.shot_labels,
+        "closing_title": plan.strategy.closing_title,
         "font_family": plan.strategy.font_family,
         "text_color": plan.strategy.text_color,
         "image_layout": plan.strategy.image_layout,
