@@ -1566,7 +1566,18 @@
                 "alphaOverlay",
                 "hevcDecode",
                 "hdr",
-                "local1080Export"
+                "local1080Export",
+                "captions",
+                "customEffects",
+                "mediaCards",
+                "carouselEffects",
+                "motionPresets",
+                "narrationAudio",
+                "soundEffects",
+                "audioDucking",
+                "slidePosts",
+                "semanticCamera",
+                "musicBed"
               ],
               "type": "string"
             },
@@ -1663,7 +1674,18 @@
                 "alphaOverlay",
                 "hevcDecode",
                 "hdr",
-                "local1080Export"
+                "local1080Export",
+                "captions",
+                "customEffects",
+                "mediaCards",
+                "carouselEffects",
+                "motionPresets",
+                "narrationAudio",
+                "soundEffects",
+                "audioDucking",
+                "slidePosts",
+                "semanticCamera",
+                "musicBed"
               ],
               "type": "string"
             },

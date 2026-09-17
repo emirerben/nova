@@ -25,7 +25,33 @@ from app.services.phone_sources import PhoneSourceBinding, require_bound_moment
 
 
 class UnsupportedPhonePlan(ValueError):
-    """A device recipe cannot yet represent the full approved plan."""
+    """A device recipe cannot yet represent the full approved plan.
+
+    ``capability`` names the ``MediaCapability`` this lane would require once
+    the V2 recipe schema grows fields for it (see
+    docs/reviews/kri-29/capability-matrix.md); it is informational only —
+    fixing this by adding the capability to ``phone_render_verified_features``
+    does nothing, since the underlying plan content never reaches a recipe.
+    """
+
+    def __init__(self, message: str, *, capability: str | None = None) -> None:
+        super().__init__(message)
+        self.capability = capability
+
+
+# Plan lane -> the MediaCapability it would require once the recipe schema
+# carries its content. Kept next to the reject loop so a new plan lane and
+# its capability name are added together.
+_UNSUPPORTED_PHONE_LANE_CAPABILITY: dict[str, str] = {
+    "music": "musicBed",
+    "narration": "narrationAudio",
+    "licensed_sfx_intent": "soundEffects",
+    "editor_sound_effects": "soundEffects",
+    "editor_media_overlays": "mediaCards",
+    "editor_visual_blocks": "visualBlocks",
+    "editor_motion_scenes": "motionScenes",
+    "editor_custom_effects": "customEffects",
+}
 
 
 # `story_timeline` moments persist source/output timestamps independently
@@ -54,18 +80,9 @@ def compile_phone_guided_plan(
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.portable_text_layout import compile_text_overlay
 
-    for lane in (
-        "music",
-        "narration",
-        "licensed_sfx_intent",
-        "editor_sound_effects",
-        "editor_media_overlays",
-        "editor_visual_blocks",
-        "editor_motion_scenes",
-        "editor_custom_effects",
-    ):
+    for lane, capability in _UNSUPPORTED_PHONE_LANE_CAPABILITY.items():
         if getattr(plan, lane):
-            raise UnsupportedPhonePlan(f"unsupported phone lane: {lane}")
+            raise UnsupportedPhonePlan(f"unsupported phone lane: {lane}", capability=capability)
     transition_names = {
         "crossfade": "crossfade",
         "dip_to_black": "fade_black",

@@ -156,6 +156,23 @@ MediaCapability = Literal[
     "hevcDecode",
     "hdr",
     "local1080Export",
+    # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
+    # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
+    # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the
+    # underlying plan lane before a recipe carrying them can exist. Kept in
+    # lockstep with the Swift mirror (KriaMediaEngine.MediaCapability) by
+    # tests/kria/test_capability_matrix.py.
+    "captions",
+    "customEffects",
+    "mediaCards",
+    "carouselEffects",
+    "motionPresets",
+    "narrationAudio",
+    "soundEffects",
+    "audioDucking",
+    "slidePosts",
+    "semanticCamera",
+    "musicBed",
 ]
 
 

@@ -367,7 +367,24 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
     public static let `default` = AudioMixRecipe()
 }
 
-public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable { case visualBlocks, motionScenes, editorMedia, cameraEffects, basicComposition, positionedText, animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix, variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export }
+/// Every case names a creator-accessible lane, whether or not the local
+/// renderer can produce it yet. A case existing here is *vocabulary*, not a
+/// claim of support — support is what `DefaultRendererCapabilities` and the
+/// server's `phone_render_verified_features` separately, explicitly grant.
+/// The 10 cases from `captions` onward name lanes the V2 recipe schema has
+/// no fields for yet (see `docs/reviews/kri-29/capability-matrix.md`): they
+/// cannot be derived from `EditRecipe.effectiveCapabilities` today because
+/// the content that would require them is rejected before it ever reaches a
+/// recipe (`app/pipeline/phone_guided_plan.py`'s per-lane reject list). Kept
+/// in lockstep with the Python mirror (`app/kria/recipes.py::MediaCapability`)
+/// by `tests/kria/test_capability_matrix.py`.
+public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
+    case visualBlocks, motionScenes, editorMedia, cameraEffects, basicComposition, positionedText,
+         animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix,
+         variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
+         captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
+         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed
+}
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
 public struct ThumbnailSample: Codable, Equatable, Sendable { public var time: TimeInterval; public var fileURL: URL; private enum CodingKeys: String, CodingKey { case time, fileURL = "fileUrl" }; public init(time: TimeInterval, fileURL: URL) { self.time = time; self.fileURL = fileURL } }
