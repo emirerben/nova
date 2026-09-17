@@ -1453,11 +1453,20 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             if len(beat.media_ids) != len(set(beat.media_ids)):
                 raise SchemaError("edit_proposal: beat repeats the same media")
             if input.direction != "fast_montage" and input.video_reuse_policy == "once":
-                if any(
-                    media_id in used and media_by_id[media_id].kind == "video"
-                    for media_id in beat.media_ids
-                ):
+                repeated = [media_id for media_id in beat.media_ids if media_id in used]
+                if any(media_by_id[media_id].kind == "video" for media_id in repeated):
                     raise SchemaError("edit_proposal: video source may appear only once")
+                # A photo may repeat only as a genuine last resort, once every
+                # distinct source has already been shown — never while an
+                # unused source could have carried this beat instead (a
+                # confirmed guided story with 11 sources for 7 chapters
+                # otherwise reused an already-shown Messi photo instead of the
+                # untouched Camp Nou clip still sitting idle, plan item
+                # 5016d555).
+                if repeated and (allowed - used):
+                    raise SchemaError(
+                        "edit_proposal: photo repeated while an unused source was available"
+                    )
             used.update(beat.media_ids)
         cuts = output.fast_cuts or []
         if input.direction == "fast_montage" and not cuts:

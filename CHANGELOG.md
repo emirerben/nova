@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.66.0] - 2026-09-17
+
+### Changed
+- fix(creator): stop guided-story chapters repeating a photo while a source sits unused (#1078) <!-- release-pr: 1078 -->
+
 ## [0.76.65.0] - 2026-09-17
 
 ### Changed
