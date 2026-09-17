@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.55.0] - 2026-09-17
+
+### Changed
+- fix(ios): wait for typed text and give the native CI job headroom (KRI-112) (#1070) <!-- release-pr: 1070 -->
+
 ## [0.76.54.0] - 2026-09-17
 
 ### Changed
