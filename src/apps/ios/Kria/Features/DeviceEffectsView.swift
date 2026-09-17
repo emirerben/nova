@@ -161,6 +161,7 @@ private final class DeviceEffectsSession {
         crashFreeLaunch = !FileManager.default.fileExists(atPath: crashMarkerURL.path)
         try? FileManager.default.removeItem(at: crashMarkerURL)
         do {
+            RenderProfiler.enabled = ProcessInfo.processInfo.arguments.contains("-render-profile")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             guard let url = Bundle.main.url(forResource: "device-effects", withExtension: "json") else {
                 throw MediaEngineError.missingAsset("device-effects.json")
@@ -259,12 +260,19 @@ private final class DeviceEffectsSession {
         let destination = directory.appendingPathComponent("\(id)-\(UUID().uuidString).mp4")
         status = "Exporting \(id)…"
         phase = "export"; activeCase = id; exportProgress = 0; saveReport()
+        // Reset before, not after: an earlier case's counters must never leak
+        // into this one's report.
+        RenderProfiler.reset()
         let start = Date()
         _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
             .export(recipe: value.0, assetURLs: value.1, outputURL: destination, progress: { [weak self] value in
                 Task { @MainActor in self?.exportProgress = value; self?.saveReport() }
             })
         let seconds = Date().timeIntervalSince(start)
+        // Snapshot immediately after the encoder returns — before the frame
+        // comparison below, which does its own CI/AVFoundation work and would
+        // otherwise contaminate the "which stage of `draw` dominates" numbers.
+        let profile = RenderProfiler.snapshot()
         let asset = AVURLAsset(url: destination)
         let duration = try await asset.load(.duration).seconds
         guard abs(duration - 6) < 0.1 else { throw MediaEngineError.exportFailed }
@@ -274,6 +282,7 @@ private final class DeviceEffectsSession {
         var entry: [String: Any] = ["effect": id, "export_seconds": seconds, "duration": duration,
                         "status": "exported", "export_frames": exportFrames]
         for (key, value) in sampleDeviceHealth() { entry[key] = value }
+        if RenderProfiler.enabled { entry["profile"] = profile }
         results.append(entry)
     }
 
