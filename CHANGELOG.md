@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.44.0] - 2026-09-17
+
+### Changed
+- feat(ios): record real scrub-to-visible-frame latency in the editor (KRI-95) (#1052) <!-- release-pr: 1052 -->
+
 ## [0.76.43.0] - 2026-09-17
 
 ### Changed
