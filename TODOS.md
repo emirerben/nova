@@ -8,6 +8,30 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## KRI-111 reviewer demo login — deferred follow-ups (2026-09-17)
+
+The Apple Beta App Review demo account shipped as a flag-gated email/password login plus an admin seed of finished videos. These were scoped out of the fix so the resubmission could go out same-day.
+
+### Seed creation threads for the reviewer account
+**Priority:** P2
+**What:** `POST /admin/reviewer-account/seed` clones `Job` rows only (Gallery). The Projects drawer stays empty until the reviewer creates a project.
+**Acceptance:** Seed also clones a couple of finished `creation_threads` (ownership remapped, media paths copied) so Projects is populated on first sign-in.
+
+### Hide "Sign in with email" from real users
+**Priority:** P2
+**What:** The tertiary button on `SignInView` is visible in every build; non-reviewers who tap it get a server 404 message.
+**Acceptance:** An unauthenticated capability endpoint (or remote config) tells the client whether reviewer login is enabled, and the button renders only when it is. Revisit before public App Store submission.
+
+### Per-account lockout on reviewer login
+**Priority:** P3
+**What:** `reviewer-login` is limited to 5/min per client IP (`Fly-Client-IP`). There is no per-email attempt counter.
+**Acceptance:** Bounded failed-attempt counter keyed on the configured email with a cool-down, logged via structlog.
+
+### Move seed storage copies off the event loop
+**Priority:** P3
+**What:** The seed endpoint calls `storage.copy_object` synchronously per output object (~3 per job) inside an async handler.
+**Acceptance:** Run the copies via `asyncio.to_thread` or a Celery task; the admin call returns immediately with a job id.
+
 ## KRI-37 native editor — deferred release qualification (2026-09-12)
 
 The creator explicitly approved shipping the verified subset with existing capability gates closed. These P1 items are deferred from the full KRI-37 realtime-parity plan; this release does not establish universal native rendering coverage.
