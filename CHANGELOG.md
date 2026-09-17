@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.56.0] - 2026-09-17
+
+### Changed
+- fix(ios): recognize guided-story captions in the native Captions tab (KRI-110) (#1057) <!-- release-pr: 1057 -->
+
 ## [0.76.55.0] - 2026-09-17
 
 ### Changed
