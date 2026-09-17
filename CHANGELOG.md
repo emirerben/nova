@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.40.0] - 2026-09-17
+
+### Changed
+- fix(ios): cache settled handwriting shadows in giant-title (KRI-29) (#1047) <!-- release-pr: 1047 -->
+
 ## [0.76.39.0] - 2026-09-17
 
 ### Changed

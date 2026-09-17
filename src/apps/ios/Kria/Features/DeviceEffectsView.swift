@@ -114,6 +114,7 @@ private final class DeviceEffectsSession {
     func load() async {
         guard cases.isEmpty else { return }
         do {
+            RenderProfiler.enabled = ProcessInfo.processInfo.arguments.contains("-render-profile")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             guard let url = Bundle.main.url(forResource: "device-effects", withExtension: "json") else {
                 throw MediaEngineError.missingAsset("device-effects.json")
@@ -212,20 +213,29 @@ private final class DeviceEffectsSession {
         let destination = directory.appendingPathComponent("\(id)-\(UUID().uuidString).mp4")
         status = "Exporting \(id)…"
         phase = "export"; activeCase = id; exportProgress = 0; saveReport()
+        // Reset before, not after: an earlier case's counters must never leak
+        // into this one's report.
+        RenderProfiler.reset()
         let start = Date()
         _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
             .export(recipe: value.0, assetURLs: value.1, outputURL: destination, progress: { [weak self] value in
                 Task { @MainActor in self?.exportProgress = value; self?.saveReport() }
             })
         let seconds = Date().timeIntervalSince(start)
+        // Snapshot immediately after the encoder returns — before the frame
+        // comparison below, which does its own CI/AVFoundation work and would
+        // otherwise contaminate the "which stage of `draw` dominates" numbers.
+        let profile = RenderProfiler.snapshot()
         let asset = AVURLAsset(url: destination)
         let duration = try await asset.load(.duration).seconds
         guard abs(duration - 6) < 0.1 else { throw MediaEngineError.exportFailed }
         let exportFrames = try await saveSampledFrames(asset: asset, caseID: id, kind: "export")
         output = destination
         status = String(format: "%@: exported 6 seconds in %.2f seconds", id, seconds)
-        results.append(["effect": id, "export_seconds": seconds, "duration": duration,
-                        "status": "exported", "export_frames": exportFrames])
+        var result: [String: Any] = ["effect": id, "export_seconds": seconds, "duration": duration,
+                        "status": "exported", "export_frames": exportFrames]
+        if RenderProfiler.enabled { result["profile"] = profile }
+        results.append(result)
     }
 
     func testAll() async {

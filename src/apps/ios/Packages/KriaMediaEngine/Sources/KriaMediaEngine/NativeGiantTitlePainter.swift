@@ -16,12 +16,17 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
     private var lastReveal: TextRevealSample?
     private var lastHighlights: [Bool]?
     private var lastVector: PortableTextVectorPainter?
+    /// Retained across frames (not rebuilt per call) so its settled-path and
+    /// settled-shadow-tile caches survive the whole export/preview session —
+    /// see `NativeGiantHandwritingPainter`'s doc comment.
+    private let handwritingPainter: NativeGiantHandwritingPainter?
     let bitmapBytes: Int
 
     init(layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int) throws {
         guard layer.giantTitle != nil else { throw RecipeError.invalidTimeline }
         self.layer = layer; self.canvas = canvas; self.assetURLs = assetURLs
         vector = try PortableTextVectorPainter(layer: layer, assetURLs: assetURLs, canvas: canvas, outlineGlyphs: true)
+        handwritingPainter = layer.handwriting.map { NativeGiantHandwritingPainter(content: $0, canvas: canvas) }
         if let content = layer.staggered {
             let drawing = PortableTextLayer(id: layer.id, start: layer.start, end: layer.end, anchorX: layer.anchorX,
                 anchorY: layer.anchorY, rotationDegrees: 0, runs: content.glyphs.map(\.run), effect: .fadeIn)
@@ -53,10 +58,13 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
 
     var anchor: CGPoint { vector.anchor }
     func settledImage() throws -> CIImage {
-        if let content = layer.handwriting {
-            return try NativeGiantHandwritingPainter.image(content: content, canvas: canvas,
-                bounds: CGRect(origin: .zero, size: canvas), rotation: vector.rotation, transform: .identity,
-                progress: 1, opacity: 1, maxBitmapBytes: maxBitmapBytes, imageContext: imageContext)
+        if let handwritingPainter {
+            // Same (bounds, transform: .identity, progress: 1, opacity: 1)
+            // signature the entire writing phase below requests, so this call
+            // also warms the settled-tile cache before the first preview/export
+            // frame is drawn.
+            return try handwritingPainter.image(bounds: CGRect(origin: .zero, size: canvas), rotation: vector.rotation,
+                transform: .identity, progress: 1, opacity: 1, maxBitmapBytes: maxBitmapBytes, imageContext: imageContext)
         }
         return try vector.image(bounds: CGRect(origin: .zero, size: canvas), maxBitmapBytes: maxBitmapBytes)
     }
@@ -162,9 +170,8 @@ final class NativeGiantTitlePainter: @unchecked Sendable {
         let padding = blur > 0.01 ? ceil(blur * 3) + 2 : 0
         let drawingBounds = outputBounds.insetBy(dx: -padding, dy: -padding)
         var image: CIImage
-        if let content = layer.handwriting {
-            image = try NativeGiantHandwritingPainter.image(content: content, canvas: canvas,
-                bounds: drawingBounds, rotation: vector.rotation, transform: transform,
+        if let handwritingPainter {
+            image = try handwritingPainter.image(bounds: drawingBounds, rotation: vector.rotation, transform: transform,
                 progress: state.revealProgress, opacity: state.alpha,
                 maxBitmapBytes: maxBitmapBytes, imageContext: imageContext)
         } else {
