@@ -99,6 +99,12 @@ protocol KriaAPIClient: Sendable {
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession
     func revokeMobileSession(_ refreshToken: String) async throws
+    /// Apple Beta App Review's demo-account sign-in (KRI-111): exchanges an
+    /// email/password for a `MobileSession`, same shape as `exchangeMobileToken`.
+    /// Unauthenticated by definition — there is no session yet — so callers
+    /// must NOT route a 401 from this call through the generic silent-refresh
+    /// / session-expiry path. See `request(...)`'s `requiresAuth` parameter.
+    func reviewerSignIn(email: String, password: String) async throws -> MobileSession
     func currentUser() async throws -> MobileUser
     func requestAccountDeletion() async throws -> AccountDeletionRequest
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws
@@ -722,6 +728,11 @@ struct KriaAPI: KriaAPIClient {
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession { try await request(path: "auth/mobile/exchange", method: "POST", bodyData: try JSONEncoder().encode(["id_token": credential.token, "provider": provider, "nonce": credential.nonce]), decode: MobileSession.self) }
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession { try await request(path: "auth/mobile/refresh", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: MobileSession.self) }
     func revokeMobileSession(_ refreshToken: String) async throws { _ = try await request(path: "auth/mobile/revoke", method: "POST", bodyData: try JSONEncoder().encode(["refresh_token": refreshToken]), decode: RevokeResponse.self) }
+    /// `requiresAuth: false` — there is no session yet, so a 401 here must
+    /// surface as `APIError.requestFailed(status: 401)` (distinguishable
+    /// "invalid credentials"), never the generic `.sessionExpired` path that
+    /// clears the Keychain and broadcasts `.kriaSessionExpired`.
+    func reviewerSignIn(email: String, password: String) async throws -> MobileSession { try await request(path: "auth/mobile/reviewer-login", method: "POST", bodyData: try JSONEncoder().encode(["email": email, "password": password]), decode: MobileSession.self, requiresAuth: false) }
     func requestAccountDeletion() async throws -> AccountDeletionRequest {
         try await request(path: "me/account/delete-request", method: "POST", bodyData: nil, decode: AccountDeletionRequest.self)
     }
@@ -807,7 +818,15 @@ struct KriaAPI: KriaAPIClient {
         let body = ProjectMediaAttachmentRequest(media: [media], clientEventID: clientEventID, expectedRevision: expectedRevision)
         return try await request(path: "creation-threads/\(threadID.uuidString)/media", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
-    func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type) async throws -> T {
+    /// `requiresAuth: false` is for unauthenticated endpoints (currently only
+    /// `reviewerSignIn`): it skips attaching a stored bearer token AND skips
+    /// the 401 -> silent-refresh -> `.sessionExpired` machinery below, which
+    /// exists only to recover an *existing* session. Without a session to
+    /// begin with, that path would misreport "invalid credentials" as
+    /// "session expired" and would clear the Keychain / broadcast
+    /// `.kriaSessionExpired` for a signed-out user. Every other call site
+    /// keeps the default and is unaffected.
+    func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true) async throws -> T {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
         // URLComponents preserves `+` in query-item values, while FastAPI
@@ -819,11 +838,11 @@ struct KriaAPI: KriaAPIClient {
         guard let url = components?.url else { throw APIError.invalidResponse }
         var request = URLRequest(url: url); request.httpMethod = method; request.setValue("application/json", forHTTPHeaderField: "Accept")
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
-        let storedSession = try tokenStore.read()
+        let storedSession = requiresAuth ? try tokenStore.read() : nil
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let bodyData { request.httpBody = bodyData; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         var (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode == 401, let storedSession {
+        if requiresAuth, let http = response as? HTTPURLResponse, http.statusCode == 401, let storedSession {
             let refreshed: MobileSession
             do {
                 refreshed = try await refreshCoordinator.refresh(
@@ -840,7 +859,7 @@ struct KriaAPI: KriaAPIClient {
             (data, response) = try await session.data(for: request)
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-        if http.statusCode == 401 { clearExpiredSession(); throw APIError.sessionExpired }
+        if requiresAuth, http.statusCode == 401 { clearExpiredSession(); throw APIError.sessionExpired }
         if path.hasPrefix("me/account/delete-") {
             if http.statusCode == 503 { throw AccountDeletionError.unavailable }
             if http.statusCode == 400 { throw AccountDeletionError.invalidConfirmation }
