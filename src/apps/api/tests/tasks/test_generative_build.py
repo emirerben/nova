@@ -10,6 +10,7 @@ local-render) per CLAUDE.md.
 from __future__ import annotations
 
 import copy
+import subprocess
 import types
 import uuid
 from contextlib import contextmanager
@@ -2742,6 +2743,279 @@ def _patch_render_helpers(monkeypatch, mix_calls: list):
     monkeypatch.setattr(skia_mod, "burn_text_overlays_skia", _fake_burn, raising=False)
 
 
+def test_decide_generative_variant_performs_no_media_processing(monkeypatch, tmp_path):
+    """KRI-114 P1-1: `_decide_generative_variant` must do zero media
+    processing -- no assembly, no audio mix, no Skia burn, no upload, no
+    subprocess call. Monkeypatch every media-processing entry point to raise
+    if called and confirm decide still runs to completion."""
+    import app.pipeline.agents.gemini_analyzer as ga
+    import app.pipeline.template_matcher as tm
+    import app.storage as storage
+    import app.tasks.template_orchestrate as to
+
+    def _boom(*a, **k):
+        raise AssertionError("decide phase must not touch media processing")
+
+    monkeypatch.setattr(
+        ga,
+        "build_recipe",
+        lambda d: types.SimpleNamespace(
+            beat_timestamps_s=d.get("beat_timestamps_s", []), color_grade="none"
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(tm, "consolidate_slots", lambda recipe, metas: recipe, raising=False)
+    monkeypatch.setattr(
+        tm, "match", lambda recipe, metas, **kw: types.SimpleNamespace(steps=[]), raising=False
+    )
+    monkeypatch.setattr(to, "_enrich_slots_with_energy", lambda slots, beats: slots, raising=False)
+    monkeypatch.setattr(to, "_assemble_clips", _boom, raising=False)
+    monkeypatch.setattr(to, "_mix_template_audio", _boom, raising=False)
+    monkeypatch.setattr(to, "_mix_user_voiceover", _boom, raising=False)
+    monkeypatch.setattr(to, "_probe_duration", _boom, raising=False)
+    monkeypatch.setattr(storage, "upload_public_read", _boom, raising=False)
+    monkeypatch.setattr(storage, "download_to_file", lambda *a, **k: None, raising=False)
+    import app.pipeline.text_overlay_skia as skia_mod
+
+    monkeypatch.setattr(skia_mod, "burn_text_overlays_skia", _boom, raising=False)
+    monkeypatch.setattr(subprocess, "run", _boom, raising=False)
+
+    vdir = tmp_path / "v3"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "none", "track": None}
+    decision = gb._decide_generative_variant(
+        job_id="j",
+        rank=3,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+    )
+    assert isinstance(decision, gb.GenerativeVariantDecision)
+    assert decision.variant_id == "original_text"
+    assert decision.orientation == "portrait"
+    assert decision.music_track_id is None
+
+
+def test_process_after_decide_matches_legacy_render(monkeypatch, tmp_path):
+    """KRI-114 P1-1: `_process_generative_variant(_decide_generative_variant(...))`
+    must reproduce the pre-split `_render_generative_variant`'s output exactly.
+    Extends `test_original_audio_variant_skips_mix`'s fixture/assertions rather
+    than duplicating a second render harness, and additionally compares
+    against the composed legacy entry point directly."""
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+    vdir = tmp_path / "v3"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "none", "track": None}
+    kwargs = dict(
+        job_id="j",
+        rank=3,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+    )
+
+    decision = gb._decide_generative_variant(**kwargs)
+    res = gb._process_generative_variant(decision, **kwargs)
+
+    assert res["ok"] is True
+    assert res["music_track_id"] is None
+    assert mix_calls == []
+    assert res["output_url"].startswith("https://signed/")
+    assert res["video_path"].startswith("generative-jobs/")
+
+    # Same inputs through the composed legacy entry point (fresh directory so
+    # the two renders don't fight over the same output files) must match
+    # byte-for-byte.
+    vdir2 = tmp_path / "v3-composed"
+    vdir2.mkdir()
+    composed_res = gb._render_generative_variant(**{**kwargs, "variant_dir": str(vdir2)})
+    assert res == composed_res
+
+
+def test_generative_variant_decision_round_trips_json(monkeypatch, tmp_path):
+    """KRI-114 P1-1: `GenerativeVariantDecision` must survive a JSON
+    round-trip losslessly -- required so a later lane can persist/replay a
+    decision without re-running the matcher."""
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+    vdir = tmp_path / "v3"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "none", "track": None}
+    decision = gb._decide_generative_variant(
+        job_id="j",
+        rank=3,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+    )
+    round_tripped = gb.GenerativeVariantDecision.model_validate(decision.model_dump(mode="json"))
+    assert round_tripped == decision
+
+
+def test_decide_generative_variant_never_requires_cloud_source_paths(monkeypatch, tmp_path):
+    """Proxy-safety (KRI-114 P1-1): `_decide_generative_variant` must work
+    purely off the paths already in `clip_id_to_local` -- which ARE the
+    phone-job proxy paths when `Job.assembly_plan` carries `_phone_sources_v1`
+    (see `services/generative_jobs.py::build_generative_job`'s phone branch) --
+    and must never itself call `require_cloud_source_paths` (unlike
+    `_run_generative_job_impl`'s classic dispatch, which gates on it before
+    reaching this function). Also pins that a step's `source_path` is exactly
+    whatever `clip_id_to_local` was given, proxy or original alike."""
+    import app.kria.media_sources as media_sources
+    import app.pipeline.agents.gemini_analyzer as ga
+    import app.pipeline.template_matcher as tm
+    import app.tasks.template_orchestrate as to
+
+    def _boom(*a, **k):
+        raise AssertionError("_decide_generative_variant must not require original cloud paths")
+
+    monkeypatch.setattr(media_sources, "require_cloud_source_paths", _boom, raising=False)
+    monkeypatch.setattr(
+        ga,
+        "build_recipe",
+        lambda d: types.SimpleNamespace(
+            beat_timestamps_s=d.get("beat_timestamps_s", []), color_grade="none"
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(tm, "consolidate_slots", lambda recipe, metas: recipe, raising=False)
+    proxy_path = "phone-proxies/dev-user/clip1_proxy.mp4"
+    step = ga.AssemblyStep(
+        slot={"target_duration_s": 5.0}, clip_id="c1", moment={"start_s": 0.0, "end_s": 5.0}
+    )
+    monkeypatch.setattr(
+        tm, "match", lambda recipe, metas, **kw: types.SimpleNamespace(steps=[step]), raising=False
+    )
+    monkeypatch.setattr(to, "_enrich_slots_with_energy", lambda slots, beats: slots, raising=False)
+
+    vdir = tmp_path / "v3"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "none", "track": None}
+    decision = gb._decide_generative_variant(
+        job_id="j",
+        rank=3,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": proxy_path},
+        clip_id_to_gcs={"c1": proxy_path},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+    )
+    assert len(decision.assembly_steps) == 1
+    assert decision.assembly_steps[0].source_path == proxy_path
+
+
+def test_decide_generative_variant_raises_day_vlog_renderer_version_mismatch(tmp_path):
+    """KRI-114 P1-1: the day_vlog renderer-version pre-check still raises
+    straight out of the pure decide function (mirrors
+    `test_day_vlog_rerender_rejects_missing_or_mixed_renderer_version`, which
+    pins the SAME check surfacing through the composed
+    `_render_generative_variant`)."""
+    with pytest.raises(gb.DayVlogPolicyError, match="incompatible"):
+        gb._decide_generative_variant(
+            job_id="job-1",
+            rank=1,
+            spec={
+                "variant_id": "day_vlog",
+                "text_mode": "agent_text",
+                "track": None,
+                "day_vlog_renderer_version": gb.DAY_VLOG_RENDERER_VERSION - 1,
+            },
+            clip_metas=[],
+            clip_id_to_local={},
+            clip_id_to_gcs={},
+            probe_map={},
+            available_footage_s=0.0,
+            agent_text=None,
+            agent_form={},
+            variant_dir=str(tmp_path),
+            narrative_order=["clip-1", "clip-2"],
+            strict_day_vlog=True,
+        )
+
+
+def test_decide_generative_variant_raises_single_hero_renderer_version_mismatch(tmp_path):
+    """KRI-114 P1-1: unlike the day_vlog check above, this policy check runs
+    AFTER the pre-split function's `variant_t0 = time.monotonic(); try:` --
+    the composed `_render_generative_variant` swallows it into the legacy
+    failure-record dict (see the paired test below), but the pure decide
+    function must still raise it directly."""
+    with pytest.raises(gb.SingleHeroPolicyError, match="incompatible"):
+        gb._decide_generative_variant(
+            job_id="job-1",
+            rank=1,
+            spec={
+                "variant_id": "single_hero",
+                "text_mode": "agent_text",
+                "track": None,
+                "single_hero_renderer_version": gb.SINGLE_HERO_RENDERER_VERSION - 1,
+            },
+            clip_metas=[_Meta("hero", 5.0)],
+            clip_id_to_local={"hero": "/hero.mp4"},
+            clip_id_to_gcs={"hero": "music-uploads/hero.mp4"},
+            probe_map={},
+            available_footage_s=5.0,
+            agent_text=None,
+            agent_form={},
+            variant_dir=str(tmp_path),
+            strict_single_hero=True,
+        )
+
+
+def test_render_generative_variant_still_swallows_single_hero_renderer_version_mismatch(tmp_path):
+    """KRI-114 P1-1: the composed `_render_generative_variant` must preserve
+    the pre-split function's exact exception boundary -- this LATE policy
+    check (inside the original `try`) is swallowed into the legacy
+    `{"ok": False, ...}` failure record, not raised, even though
+    `_decide_generative_variant` itself now raises it directly (previous
+    test)."""
+    res = gb._render_generative_variant(
+        job_id="job-1",
+        rank=1,
+        spec={
+            "variant_id": "single_hero",
+            "text_mode": "agent_text",
+            "track": None,
+            "single_hero_renderer_version": gb.SINGLE_HERO_RENDERER_VERSION - 1,
+        },
+        clip_metas=[_Meta("hero", 5.0)],
+        clip_id_to_local={"hero": "/hero.mp4"},
+        clip_id_to_gcs={"hero": "music-uploads/hero.mp4"},
+        probe_map={},
+        available_footage_s=5.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(tmp_path),
+        strict_single_hero=True,
+    )
+    assert res["ok"] is False
+    assert res["render_status"] == "failed"
+    assert res["error_class"] == "single_hero_renderer_version_mismatch"
+    assert res["variant_id"] == "single_hero"
+
+
 def test_original_audio_variant_skips_mix(monkeypatch, tmp_path):
     mix_calls: list = []
     _patch_render_helpers(monkeypatch, mix_calls)
@@ -3756,7 +4030,6 @@ def _patch_pretonemap(monkeypatch, *, zscale=True, run_side_effect=None):
 
     Returns the list of recorded subprocess cmd lists.
     """
-    import subprocess
 
     import app.pipeline.reframe as reframe
     import app.tasks.template_orchestrate as tmpl
@@ -3823,7 +4096,6 @@ def test_pretonemap_reuses_exact_tonemap_pipeline_and_keeps_audio(tmp_path, monk
 def test_pretonemap_failure_leaves_hdr_clip_in_place(tmp_path, monkeypatch):
     """Best-effort: a failed tonemap must NOT abort — the HDR clip stays so the
     per-slot path still tonemaps it (slow but correct)."""
-    import subprocess
 
     _patch_pretonemap(
         monkeypatch,
@@ -3842,7 +4114,6 @@ def test_pretonemap_runs_clips_concurrently_and_mutates_after_join(tmp_path, mon
     """The per-clip tonemaps must OVERLAP on a bounded pool (serial 4-8min/clip blew
     the task time budget — prod job d30c61fe), and every converted clip must be
     repointed + reprobed after the join."""
-    import subprocess
     import threading
     import time
 
@@ -3886,7 +4157,6 @@ def test_pretonemap_partial_failure_only_repoints_successes(tmp_path, monkeypatc
     """Concurrency changed the serial mutate-in-loop to collect-then-mutate-after-join.
     A clip that fails tonemap must stay HDR (untouched) while its siblings repoint —
     only the successful (clip_id, sdr_path, probe) tuples get applied."""
-    import subprocess
 
     import app.pipeline.reframe as reframe
     import app.tasks.template_orchestrate as tmpl
