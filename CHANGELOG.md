@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.49.0] - 2026-09-17
+
+### Changed
+- fix(slide-post): route slides-item media through the Visuals pool, not clips (#1061) <!-- release-pr: 1061 -->
+
 ## [0.76.48.0] - 2026-09-17
 
 ### Changed
