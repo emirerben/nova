@@ -425,6 +425,85 @@ final class KriaTests: XCTestCase {
         try await api.revokeMobileSession("refresh")
     }
 
+    func testCurrentUserDecodesSnakeCaseMobileUserResponse() async throws {
+        let store = MemoryTokenStore(MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900))
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/auth/mobile/me")
+            XCTAssertEqual(request.httpMethod, "GET")
+            return (200, Data(#"{"id":"1","email":"creator@example.com","name":"Emir Erben","onboarding_status":"complete","linked_providers":["google"]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: stubSession())
+        let user = try await api.currentUser()
+        XCTAssertEqual(user.email, "creator@example.com")
+        XCTAssertEqual(user.name, "Emir Erben")
+        XCTAssertEqual(user.onboardingStatus, "complete")
+        XCTAssertEqual(user.linkedProviders, ["google"])
+    }
+
+    // AuthStore.init and .signIn each fire an *unawaited* background
+    // refreshProfile() (best-effort — see AppState.swift). Left undrained,
+    // that stray request can still be in flight when this test method
+    // returns and land during whichever test runs next, corrupting its
+    // assertions against the shared `URLProtocolStub.handler`. Every test
+    // below installs a counting handler and drains it via `waitUntilQuiet()`
+    // before finishing so no request outlives its own test.
+    @MainActor func testRefreshProfilePopulatesIdentityFromServer() async throws {
+        let store = MemoryTokenStore(MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900))
+        let hits = RequestHitCounter()
+        URLProtocolStub.handler = { request in
+            hits.increment()
+            guard request.url?.path == "/auth/mobile/me" else { return (404, Data()) }
+            return (200, Data(#"{"id":"1","email":"creator@example.com","name":null,"onboarding_status":"complete","linked_providers":["apple"]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: stubSession())
+        let auth = AuthStore(tokenStore: store, api: api)
+
+        await auth.refreshProfile()
+
+        XCTAssertEqual(auth.email, "creator@example.com")
+        XCTAssertEqual(auth.linkedProviders, ["apple"])
+        XCTAssertNil(auth.displayName, "a null server name must not overwrite the in-memory display name")
+        XCTAssertEqual(auth.profileState, .loaded)
+        await hits.waitUntilQuiet()
+    }
+
+    @MainActor func testRefreshProfileFailureIsFailOpenAndKeepsSessionSignedIn() async throws {
+        let store = MemoryTokenStore(MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900))
+        let hits = RequestHitCounter()
+        URLProtocolStub.handler = { _ in hits.increment(); return (503, Data()) }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: stubSession())
+        let auth = AuthStore(tokenStore: store, api: api)
+
+        await auth.refreshProfile()
+
+        XCTAssertEqual(auth.profileState, .failed)
+        XCTAssertTrue(auth.isSignedIn, "a profile-fetch failure must never sign the user out")
+        XCTAssertNotNil(try store.read(), "a profile-fetch failure must never touch the Keychain session")
+        await hits.waitUntilQuiet()
+    }
+
+    @MainActor func testSignOutClearsFetchedProfileFields() async throws {
+        let store = MemoryTokenStore()
+        let hits = RequestHitCounter()
+        URLProtocolStub.handler = { request in
+            hits.increment()
+            if request.url?.path == "/auth/mobile/revoke" { return (204, Data()) }
+            return (200, Data(#"{"id":"1","email":"creator@example.com","name":"Emir Erben","onboarding_status":"complete","linked_providers":["google"]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: stubSession())
+        let auth = AuthStore(tokenStore: store, api: api)
+        try auth.signIn(with: MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900), displayName: nil)
+        await auth.refreshProfile()
+        XCTAssertEqual(auth.email, "creator@example.com")
+
+        auth.signOut()
+
+        XCTAssertNil(auth.email)
+        XCTAssertEqual(auth.linkedProviders, [])
+        XCTAssertEqual(auth.profileState, .idle)
+        await hits.waitUntilQuiet()
+    }
+
     func testServerDatesAcceptFractionalAndOffsetISO8601() async throws {
         URLProtocolStub.handler = { _ in
             (200, Data(#"""
@@ -723,6 +802,27 @@ final class KriaTests: XCTestCase {
             result.append(buffer, count: count)
         }
         return result
+    }
+}
+
+/// Counts `URLProtocolStub` hits and lets a test wait until they stop
+/// arriving, so an AuthStore-spawned fire-and-forget network Task can't
+/// outlive its own test and corrupt the next one's handler assertions.
+private final class RequestHitCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() { lock.lock(); count += 1; lock.unlock() }
+    private func snapshot() -> Int { lock.lock(); defer { lock.unlock() }; return count }
+    func waitUntilQuiet(pollInterval: UInt64 = 100_000_000, timeout: UInt64 = 2_000_000_000) async {
+        var lastSeen = -1
+        var waited: UInt64 = 0
+        while waited < timeout {
+            let current = snapshot()
+            if current == lastSeen { return }
+            lastSeen = current
+            try? await Task.sleep(nanoseconds: pollInterval)
+            waited += pollInterval
+        }
     }
 }
 
