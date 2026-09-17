@@ -3868,6 +3868,164 @@ async def test_retry_reopens_terminal_render_with_existing_plan(
     confirm.assert_awaited_once()
 
 
+def _planner_failed_retry_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    failure_code: str,
+    retryable: bool,
+    proposal_attempt_id: str = "attempt-1",
+):
+    """A guided plan whose async planner failed before any Job existed.
+
+    Mirrors ``reconcile_render_state``'s exact_failed_creator_attempt branch
+    (prod thread e7598036): session failed with the proposal failure code, no
+    Job, and the PlanItem proposal failed for the session's exact attempt.
+    """
+
+    from app.schemas.edit_proposal import MAIN_CREATOR_FAIL_CLOSED
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    session_id, item_id = uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=2,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+        active_job_id=None,
+        state={"edit_format": "montage", "media_count": 1},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        status="failed",
+        target_job_id=None,
+        last_error={"code": failure_code, "message": "Kria couldn't plan this direction."},
+        revision=4,
+        render_attempts=1,
+        max_render_attempts=2,
+        active_plan={
+            "version": 1,
+            "plan_hash": "x" * 64,
+            "edit_format": "montage",
+            "guided_generation_attempt_id": "attempt-1",
+        },
+    )
+    item = SimpleNamespace(
+        id=item_id,
+        edit_proposal={
+            "proposal_version": 3,
+            "generation_attempt_id": proposal_attempt_id,
+            "status": "failed",
+            "design_fallback": MAIN_CREATOR_FAIL_CLOSED,
+            "failure": {
+                "code": failure_code,
+                "message": "Kria couldn't read one of these clips.",
+                "retryable": retryable,
+            },
+        },
+    )
+    rows = {CreatorAgentSession: session, PlanItem: item}
+    db = Mock()
+    db.get = AsyncMock(side_effect=lambda model, *_args, **_kwargs: rows.get(model))
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "reconcile_render_state", AsyncMock())
+    monkeypatch.setattr(routes, "_sync_agent", AsyncMock())
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    confirm = AsyncMock(
+        return_value=SimpleNamespace(id=str(session_id), current_job_id=None),
+    )
+    monkeypatch.setattr(routes.creator_agent, "confirm_creator_plan_controller", confirm)
+    body = routes.ActionBody(
+        action="retry",
+        payload={},
+        client_action_id="retry-planner-1",
+        expected_revision=2,
+    )
+    return user, thread, session, db, confirm, body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_code", ["proposal_generation_failed", "creator_text_infeasible"])
+async def test_retry_after_planner_failure_redispatches_the_same_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_code: str,
+) -> None:
+    user, thread, session, db, confirm, body = _planner_failed_retry_fixture(
+        monkeypatch, failure_code=failure_code, retryable=True
+    )
+
+    output = await action_thread(_request(), str(thread.id), body, user, db)
+
+    assert output is thread
+    assert session.status == "awaiting_confirmation"
+    confirm.assert_awaited_once()
+    confirmation = confirm.await_args.args[1]
+    assert confirmation.plan_hash == "x" * 64
+    assert confirmation.plan_version == 1
+    assert confirm.await_args.kwargs["retry_target_job_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_retry_after_planner_failure_respects_render_attempt_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, thread, session, db, confirm, body = _planner_failed_retry_fixture(
+        monkeypatch, failure_code="proposal_generation_failed", retryable=True
+    )
+    session.render_attempts = session.max_render_attempts
+
+    with pytest.raises(HTTPException) as exc:
+        await action_thread(_request(), str(thread.id), body, user, db)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "This session has used its render attempts"
+    assert session.status == "failed"
+    confirm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retry_after_non_retryable_planner_failure_explains_the_fix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, thread, session, db, confirm, body = _planner_failed_retry_fixture(
+        monkeypatch, failure_code="media_unreadable", retryable=False
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await action_thread(_request(), str(thread.id), body, user, db)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Kria couldn't read one of these clips."
+    assert session.status == "failed"
+    confirm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retry_ignores_a_planner_failure_from_another_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, thread, session, db, confirm, body = _planner_failed_retry_fixture(
+        monkeypatch,
+        failure_code="proposal_generation_failed",
+        retryable=True,
+        proposal_attempt_id="attempt-from-another-tab",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await action_thread(_request(), str(thread.id), body, user, db)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "There is no terminal render to retry"
+    confirm.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("job_status", "retains_last_good_output"),
