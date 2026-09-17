@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.50.0] - 2026-09-17
+
+### Changed
+- fix(ios-editor): play button icon no longer stalls behind audio-session setup (KRI-41) (#1062) <!-- release-pr: 1062 -->
+
 ## [0.76.49.0] - 2026-09-17
 
 ### Changed
