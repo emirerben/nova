@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.67.0] - 2026-09-17
+
+### Changed
+- fix(guided-story): face-aware placement for title/chapter/closing text (KRI-116) (#1079) <!-- release-pr: 1079 -->
+
 ## [0.76.66.0] - 2026-09-17
 
 ### Changed
