@@ -14,8 +14,6 @@ import hmac
 import os
 from base64 import b64decode, b64encode
 
-from app.config import settings
-
 _ALGORITHM = "scrypt"
 _N = 2**15
 _R = 8
@@ -91,6 +89,10 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def is_configured() -> bool:
     """Whether the reviewer-login route is enabled and has a usable account."""
+    # Imported lazily so `python -m app.cli.reviewer_login hash` works outside
+    # the API environment (Settings() requires STORAGE_BUCKET/DATABASE_URL).
+    from app.config import settings  # noqa: PLC0415
+
     return bool(
         settings.reviewer_login_enabled
         and settings.reviewer_login_email
