@@ -58,15 +58,47 @@ struct UploadRecoveryPolicy: Sendable {
     }
 }
 
+/// `PreparingUpload.state`:
+/// - `.preparing` — `prepare()` (import + proxy transcode) is presumed running,
+///   either in this process right now or in a process that no longer exists.
+/// - `.expired` — a `UIApplication.beginBackgroundTask` assertion covering this
+///   entry's `prepare()`/reservation window ran out before the work finished.
+///   The staged file is deliberately kept: the app is very likely about to be
+///   suspended or killed, and the next launch should resume, not discard.
+/// - `.interrupted` — set transiently by `recoverInterruptedPreparations()` on
+///   an entry it has decided to resume (see below), so a crash mid-resume is
+///   still discoverable as belonging to a previous, now-gone process.
+/// - `.retryLater` — a resume attempt ran and hit a TRANSIENT failure (offline,
+///   a 5xx/429-shaped `APIError.requestFailed`/`.offline`, or any `URLError`) —
+///   see `BackgroundUploadCoordinator.isTransientResumeFailure`. The staged file
+///   is kept and the entry's `launchToken` is rerolled so a later
+///   `recoverInterruptedPreparations()` call (same launch or a future one) sees
+///   it as orphaned again and retries, subject to the `resumeBackoffInterval`
+///   heartbeat gate so repeated `openWorkspace()` calls while offline don't
+///   re-run the transcode every time.
+enum PreparationState: String, Codable, Sendable { case preparing, expired, interrupted, retryLater }
+
 /// A durably-staged upload not yet past `prepare()` (import + proxy transcode for
 /// `.clip`) — the window before any reservation or `UploadRecoveryRecord` exists.
 /// Deliberately NOT part of `BackgroundUploadCoordinator.records`: that array is
 /// `@Published` and observed by retry/cancel/UI, and this placeholder describes
 /// work legitimately still in flight on the calling `Task`, not a completed or
 /// failed attempt those act on. Persisted under its own UserDefaults key so a
-/// crash/force-quit during `prepare()` is discoverable on next launch (see
-/// `BackgroundUploadCoordinator.recoverInterruptedPreparations()`) without ever
-/// risking a concurrent retry on work that's still legitimately running.
+/// crash/force-quit during `prepare()` is discoverable on next launch.
+///
+/// `recoverInterruptedPreparations()` runs at every `openWorkspace()` and must
+/// tell three situations apart: (1) `prepare()` is still genuinely running in
+/// *this* process (e.g. the workspace was reopened while a just-picked file is
+/// still transcoding) — never touch it; (2) the process that wrote this entry
+/// is gone (crash, force-quit, or a background-task expiration that outlived
+/// the app) but the staged source file survives — RESUME by re-running
+/// `prepare()` from that file, silently, no user-visible error unless the
+/// resume itself fails; (3) the staged file is gone too — nothing to resume,
+/// so the entry is dropped and `lastError` asks the user to choose the file
+/// again. Distinguishing (1) from (2) uses a per-launch token: an entry tagged
+/// with the coordinator's current `launchToken` (or whose id is in
+/// `activePreparationIDs`) is presumed live; anything else is presumed to
+/// belong to a process that no longer exists.
 struct PreparingUpload: Codable, Sendable, Equatable {
     let id: UUID
     let projectID: UUID
@@ -76,6 +108,68 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     let purpose: UploadPurpose
     let role: CreationMediaRole
     let itemID: String?
+    var state: PreparationState
+    var lastHeartbeatAt: Date
+    /// Identifies the process that most recently wrote/touched this entry.
+    /// Compared against `BackgroundUploadCoordinator.launchToken` to tell a
+    /// still-running preparation from an orphaned one (see type doc above).
+    var launchToken: UUID
+
+    init(id: UUID, projectID: UUID, localFilePath: String, filename: String, source: UploadSource, purpose: UploadPurpose, role: CreationMediaRole, itemID: String?, state: PreparationState = .preparing, lastHeartbeatAt: Date = Date(), launchToken: UUID) {
+        self.id = id
+        self.projectID = projectID
+        self.localFilePath = localFilePath
+        self.filename = filename
+        self.source = source
+        self.purpose = purpose
+        self.role = role
+        self.itemID = itemID
+        self.state = state
+        self.lastHeartbeatAt = lastHeartbeatAt
+        self.launchToken = launchToken
+    }
+
+    // Custom decoding so an entry persisted by an older build (missing the
+    // state/heartbeat/launchToken fields added for KRI-114 P0-4) still loads
+    // instead of taking down the whole `[PreparingUpload]` array on decode
+    // failure (see `restorePreparingUploads`'s `try?`). A missing launch token
+    // is deliberately randomized rather than defaulted to some fixed value —
+    // it can never accidentally equal a live coordinator's token, so an
+    // old-format leftover is always correctly treated as belonging to a gone
+    // process and becomes a resume (or choose-again) candidate.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        projectID = try container.decode(UUID.self, forKey: .projectID)
+        localFilePath = try container.decode(String.self, forKey: .localFilePath)
+        filename = try container.decode(String.self, forKey: .filename)
+        source = try container.decode(UploadSource.self, forKey: .source)
+        purpose = try container.decode(UploadPurpose.self, forKey: .purpose)
+        role = try container.decode(CreationMediaRole.self, forKey: .role)
+        itemID = try container.decodeIfPresent(String.self, forKey: .itemID)
+        state = try container.decodeIfPresent(PreparationState.self, forKey: .state) ?? .interrupted
+        lastHeartbeatAt = try container.decodeIfPresent(Date.self, forKey: .lastHeartbeatAt) ?? .distantPast
+        launchToken = try container.decodeIfPresent(UUID.self, forKey: .launchToken) ?? UUID()
+    }
+}
+
+/// Thin seam over `UIApplication.beginBackgroundTask`/`endBackgroundTask`
+/// (`BackgroundUploadCoordinator` is the only production conformer) so unit
+/// tests can assert the begin/end balance and trigger expiration
+/// deterministically, without a real `UIApplication` background-task runtime.
+@MainActor protocol BackgroundActivityAssertion: Sendable {
+    func begin(name: String, expirationHandler: @escaping @Sendable () -> Void) -> UIBackgroundTaskIdentifier
+    func end(_ identifier: UIBackgroundTaskIdentifier)
+}
+
+@MainActor struct UIKitBackgroundActivityAssertion: BackgroundActivityAssertion {
+    func begin(name: String, expirationHandler: @escaping @Sendable () -> Void) -> UIBackgroundTaskIdentifier {
+        UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expirationHandler)
+    }
+    func end(_ identifier: UIBackgroundTaskIdentifier) {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+    }
 }
 
 @MainActor final class BackgroundUploadCoordinator: NSObject, ObservableObject, URLSessionTaskDelegate, @unchecked Sendable {
@@ -91,10 +185,23 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private var retryingRecords: Set<UUID> = []
     private var cancellingRecords: Set<UUID> = []
     private var attachmentTasks: [UUID: (token: UUID, task: Task<Void, Never>)] = [:]
+    private let backgroundActivity: any BackgroundActivityAssertion
+    private static let preparationBackgroundTaskName = "com.kria.app.upload-preparation"
+    /// Identifies this process, generated once per coordinator (i.e. once per
+    /// app launch, since the coordinator is a long-lived singleton). See the
+    /// `PreparingUpload` doc comment for how this disambiguates a still-running
+    /// preparation from one left behind by a process that no longer exists.
+    let launchToken = UUID()
+    /// `PreparingUpload.id`s with a `prepare()`/reservation call currently in
+    /// flight on this coordinator instance. Consulted by
+    /// `recoverInterruptedPreparations()` so it never reaps work that is
+    /// legitimately still running just because `openWorkspace()` was re-entered.
+    private var activePreparationIDs: Set<UUID> = []
 
-    init(api: KriaAPIClient, defaultsKey: String = "kria.background-upload-recovery.v1", sessionConfiguration: URLSessionConfiguration? = nil) {
+    init(api: KriaAPIClient, defaultsKey: String = "kria.background-upload-recovery.v1", sessionConfiguration: URLSessionConfiguration? = nil, backgroundActivity: any BackgroundActivityAssertion = UIKitBackgroundActivityAssertion()) {
         self.api = api
         self.defaultsKey = defaultsKey
+        self.backgroundActivity = backgroundActivity
         super.init()
         records = Self.restoreRecords(key: defaultsKey)
         let configuration = sessionConfiguration ?? URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
@@ -103,6 +210,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         configuration.waitsForConnectivity = true
         backgroundSession = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }
+
+    #if DEBUG
+    /// Test-only seam: lets a unit test simulate "`prepare()` is genuinely
+    /// still running in this process" without racing a real transcode.
+    func test_markPreparationActive(_ id: UUID) { activePreparationIDs.insert(id) }
+    func test_clearPreparationActive(_ id: UUID) { activePreparationIDs.remove(id) }
+    #endif
 
     @discardableResult
     func enqueue(fileURL: URL, projectID: UUID, source: UploadSource, consentGiven: Bool, purpose: UploadPurpose, role: CreationMediaRole = .clip, itemID: String? = nil, limit: CreationMediaLimit? = nil) async -> Bool {
@@ -122,6 +236,19 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 if staged { Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true) }
             }
         }
+        // Keeps the `prepare()`/reservation window below alive if the app is
+        // backgrounded mid-transcode, so iOS doesn't suspend the process before
+        // `startTask()` hands off to the (self-sufficient) background
+        // `URLSessionTask`. Balanced on every exit path via `defer`, including
+        // thrown errors. `role == .clip` only: that's the only path with a slow
+        // AVFoundation import/transcode worth protecting.
+        var backgroundTaskID: UIBackgroundTaskIdentifier?
+        defer {
+            if let backgroundTaskID {
+                activePreparationIDs.remove(recordID)
+                backgroundActivity.end(backgroundTaskID)
+            }
+        }
         do {
             try UploadCoordinator().validate(source: source, purpose: purpose, consentGiven: consentGiven)
             // `fileURL` (from PhotosPicker/fileImporter) is transient and may not
@@ -135,10 +262,14 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 let copy = try Self.copyIntoRecoveryDirectory(fileURL)
                 stagedURL = copy
                 Self.persistPreparingUpload(PreparingUpload(id: recordID, projectID: projectID, localFilePath: copy.path,
-                    filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID), key: defaultsKey)
+                    filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID, launchToken: launchToken), key: defaultsKey)
                 staged = true
+                activePreparationIDs.insert(recordID)
+                backgroundTaskID = backgroundActivity.begin(name: Self.preparationBackgroundTaskName) { [weak self] in
+                    Task { @MainActor in self?.markPreparationExpired(recordID: recordID) }
+                }
             }
-            let prepared = role == .clip ? try await prepare(fileURL: stagedURL ?? fileURL, projectID: projectID, purpose: purpose) : (fileURL, nil, nil)
+            let prepared = role == .clip ? try await prepare(fileURL: stagedURL ?? fileURL, projectID: projectID, purpose: purpose, recordID: recordID) : (fileURL, nil, nil)
             try Self.validateProjectUploadPurpose(purpose, contract: prepared.2)
             let preparedURL = prepared.0
             let localURL = try Self.copyIntoRecoveryDirectory(preparedURL)
@@ -197,19 +328,199 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     }
 
     /// Surfaces any `PreparingUpload` still on disk: `enqueue` normally clears its
-    /// entry before returning (success or graceful failure), so anything left is
-    /// exactly the crash/force-quit case its staging comment describes. Never
-    /// attempts to resume `prepare()`/reservation itself — this coordinator has no
-    /// safe way to redo an in-flight transcode — it only makes the interruption
-    /// discoverable instead of silent. Call once at launch, before `restorePendingTasks()`.
-    func recoverInterruptedPreparations() {
+    /// entry before returning (success or graceful failure), so anything left
+    /// belongs either to a preparation genuinely still running in this process,
+    /// or to one whose process is gone (crash, force-quit, or a background-task
+    /// expiration that outlived the app). Entries in the first bucket — this
+    /// launch's own `launchToken`, or an id in `activePreparationIDs` — are left
+    /// completely untouched. Entries in the second bucket are RESUMED from their
+    /// staged file (silently — `prepare()` runs again, no user-visible error
+    /// unless the resume itself fails) when that file still exists; only when
+    /// it's gone too does this fall back to dropping the entry and asking the
+    /// user to choose the file again. Call once at launch, before
+    /// `restorePendingTasks()`. Returns the spawned resume tasks so tests can
+    /// await them deterministically; production callers can ignore the result.
+    /// Minimum time since `lastHeartbeatAt` before an orphaned entry is resumed
+    /// again. `recoverInterruptedPreparations()` runs on every `openWorkspace()`,
+    /// so without this a device that's offline would re-run the full
+    /// import/transcode on every workspace open. Not applied to the
+    /// active-in-this-process / same-launch-token bucket (those are never
+    /// touched at all) or to the missing-staged-file bucket (nothing to retry).
+    private static let resumeBackoffInterval: TimeInterval = 60
+
+    @discardableResult
+    func recoverInterruptedPreparations() -> [Task<Void, Never>] {
         let leftover = Self.restorePreparingUploads(key: defaultsKey)
-        guard !leftover.isEmpty else { return }
-        for entry in leftover {
-            try? FileManager.default.removeItem(atPath: entry.localFilePath)
+        guard !leftover.isEmpty else { return [] }
+        var toKeep: [PreparingUpload] = []
+        var toResume: [PreparingUpload] = []
+        var missingStagedFile = false
+        let now = Date()
+        for var entry in leftover {
+            guard !activePreparationIDs.contains(entry.id), entry.launchToken != launchToken else {
+                // Still legitimately running in this process (or written earlier
+                // this same launch) -- e.g. `openWorkspace()` re-entered while
+                // `prepare()` is still in flight for a just-picked file. Never reap.
+                toKeep.append(entry)
+                continue
+            }
+            guard FileManager.default.fileExists(atPath: entry.localFilePath) else {
+                missingStagedFile = true
+                continue
+            }
+            guard now.timeIntervalSince(entry.lastHeartbeatAt) >= Self.resumeBackoffInterval else {
+                // Too soon since the last attempt/heartbeat -- leave it exactly as
+                // it is; it'll be reconsidered once the backoff elapses.
+                toKeep.append(entry)
+                continue
+            }
+            entry.state = .interrupted
+            entry.launchToken = launchToken
+            toKeep.append(entry)
+            toResume.append(entry)
         }
-        Self.persistPreparingUploads([], key: defaultsKey)
-        lastError = "An upload was interrupted before it could start. Choose the file again."
+        Self.persistPreparingUploads(toKeep, key: defaultsKey)
+        if missingStagedFile {
+            lastError = "An upload was interrupted before it could start. Choose the file again."
+        }
+        return toResume.map { resumePreparation($0) }
+    }
+
+    /// Re-runs `prepare()`/reservation for an entry `recoverInterruptedPreparations()`
+    /// decided belongs to a gone process, from its still-present staged file.
+    /// Mirrors the corresponding window in `enqueue()`: same background-task
+    /// assertion + `activePreparationIDs` tracking, same "fall back to choose-file-
+    /// again" behavior, just entered from a persisted `PreparingUpload` instead of
+    /// a fresh caller. Returns the spawned `Task` for test observability.
+    @discardableResult
+    private func resumePreparation(_ entry: PreparingUpload) -> Task<Void, Never> {
+        let recordID = entry.id
+        activePreparationIDs.insert(recordID)
+        let backgroundTaskID = backgroundActivity.begin(name: Self.preparationBackgroundTaskName) { [weak self] in
+            Task { @MainActor in self?.markPreparationExpired(recordID: recordID) }
+        }
+        return Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.activePreparationIDs.remove(recordID)
+                self.backgroundActivity.end(backgroundTaskID)
+            }
+            await self.performResume(entry)
+        }
+    }
+
+    private func performResume(_ entry: PreparingUpload) async {
+        let recordID = entry.id
+        let stagedURL = URL(fileURLWithPath: entry.localFilePath)
+        // Tracks the fresh (post-import/transcode) copy `copyIntoRecoveryDirectory`
+        // produces below, distinct from `stagedURL`/`entry.localFilePath` -- the
+        // ORIGINAL staged source, which is the thing worth protecting from data
+        // loss. On any failure this fresh copy is discarded either way (a
+        // transient failure will re-run `prepare()` from `stagedURL` again next
+        // attempt, a definitive one drops everything), it just shouldn't leak.
+        var recoveryCopy: URL?
+        do {
+            let prepared = try await prepare(fileURL: stagedURL, projectID: entry.projectID, purpose: entry.purpose, recordID: recordID)
+            try Self.validateProjectUploadPurpose(entry.purpose, contract: prepared.2)
+            let preparedURL = prepared.0
+            let localURL = try Self.copyIntoRecoveryDirectory(preparedURL)
+            recoveryCopy = localURL
+            let values = try localURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+            guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
+            let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
+            guard entry.role.accepts(contentType) else { throw CreationUploadError.unsupportedType }
+            let clientUploadID = "ios-\(recordID.uuidString)"
+            let (reservation, visualReservationID) = try await reserve(
+                projectID: entry.projectID, itemID: entry.itemID, role: entry.role, clientUploadID: clientUploadID,
+                filename: entry.filename, contentType: contentType, size: Int64(size), contract: prepared.2
+            )
+            if let original = prepared.1 {
+                try SourceAssetStore(project: Self.projectDirectory(entry.projectID)).bind(mediaID: reservation.mediaID, original: original)
+            }
+            Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true)
+            try startTask(
+                recordID: recordID,
+                localURL: localURL,
+                filename: entry.filename,
+                projectID: entry.projectID,
+                source: entry.source,
+                purpose: entry.purpose,
+                reservation: reservation,
+                clientUploadID: clientUploadID,
+                retryCount: 0, role: entry.role, itemID: entry.itemID, visualReservationID: visualReservationID, uploadContract: prepared.2
+            )
+        } catch {
+            if let recoveryCopy { try? FileManager.default.removeItem(at: recoveryCopy) }
+            // A TRANSIENT failure (offline, a 5xx/429-shaped server error, or any
+            // transport/timeout) must never destroy the staged original -- that's
+            // exactly the data loss this lane exists to prevent. Only a
+            // DEFINITIVE, non-network rejection (bad file content, consent,
+            // `prepare()`'s own decode/validation guards, a real 4xx like
+            // `.conflict`/`.sessionExpired`) drops the entry for good.
+            if Self.isTransientResumeFailure(error) {
+                markPreparationRetryLater(recordID: recordID)
+                lastError = "Kria couldn't resume an interrupted upload. It will retry when you're back online."
+            } else {
+                lastError = "The original upload could not be resumed. Choose the file again."
+                Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true)
+            }
+        }
+    }
+
+    /// `APIError.requestFailed` is thrown by `Services.swift`'s `request(...)`
+    /// for EVERY non-2xx status it doesn't special-case (401/409/412) -- 5xx,
+    /// 429, and other 4xx all collapse into the same case with no status code
+    /// preserved, so it cannot be split into "retryable" vs "not" from here.
+    /// Given that ambiguity and this lane's job (never lose the user's staged
+    /// footage), anything that isn't a distinguishable, definitively
+    /// client-side rejection is treated as transient/retryable by default.
+    private static func isTransientResumeFailure(_ error: Error) -> Bool {
+        if error is URLError { return true }
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .requestFailed, .offline: return true
+            case .invalidResponse, .sessionExpired, .conflict, .unsupported, .contentPlanUnavailable, .editorNotReady: return false
+            }
+        }
+        // `CreationUploadError`, `UploadConsentError`, `SourceAssetError`, and any
+        // AVFoundation/file-system error from `prepare()` itself are all
+        // definitive: retrying with the same staged bytes would fail identically.
+        return false
+    }
+
+    /// Keeps the entry and its staged file, rolling the `launchToken` so a later
+    /// `recoverInterruptedPreparations()` call (this launch or a future one)
+    /// treats it as orphaned again and retries -- gated by `resumeBackoffInterval`
+    /// via the fresh `lastHeartbeatAt` stamped here.
+    private func markPreparationRetryLater(recordID: UUID) {
+        var uploads = Self.restorePreparingUploads(key: defaultsKey)
+        guard let index = uploads.firstIndex(where: { $0.id == recordID }) else { return }
+        uploads[index].state = .retryLater
+        uploads[index].lastHeartbeatAt = Date()
+        uploads[index].launchToken = UUID()
+        Self.persistPreparingUploads(uploads, key: defaultsKey)
+    }
+
+    /// Background-task expiration handler: the app is very likely about to be
+    /// suspended or killed, so mark the entry `.expired` and leave the staged
+    /// file in place — never delete it here — so the NEXT launch's
+    /// `recoverInterruptedPreparations()` resumes it instead of finding nothing.
+    private func markPreparationExpired(recordID: UUID) {
+        var uploads = Self.restorePreparingUploads(key: defaultsKey)
+        guard let index = uploads.firstIndex(where: { $0.id == recordID }) else { return }
+        uploads[index].state = .expired
+        uploads[index].lastHeartbeatAt = Date()
+        Self.persistPreparingUploads(uploads, key: defaultsKey)
+    }
+
+    /// Updates `lastHeartbeatAt` at `prepare()`'s phase boundaries. Best-effort
+    /// diagnostic signal (does not itself drive any recovery decision); no-ops
+    /// if the entry was already cleared.
+    private func updatePreparationHeartbeat(recordID: UUID) {
+        var uploads = Self.restorePreparingUploads(key: defaultsKey)
+        guard let index = uploads.firstIndex(where: { $0.id == recordID }) else { return }
+        uploads[index].lastHeartbeatAt = Date()
+        Self.persistPreparingUploads(uploads, key: defaultsKey)
     }
 
     func restorePendingTasks() async {
@@ -458,13 +769,16 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         return ProjectDirectory(root: root)
     }
 
-    private func prepare(fileURL: URL, projectID: UUID, purpose: UploadPurpose) async throws -> (URL, MediaAsset?, ProjectMediaUploadContract?) {
+    private func prepare(fileURL: URL, projectID: UUID, purpose: UploadPurpose, recordID: UUID) async throws -> (URL, MediaAsset?, ProjectMediaUploadContract?) {
         let project = Self.projectDirectory(projectID)
         let asset = try await AssetImportCoordinator(project: project).importAsset(from: fileURL)
+        updatePreparationHeartbeat(recordID: recordID) // import done
         let original = project.root.appending(path: asset.relativePath)
         if purpose == .analysisProxy {
+            updatePreparationHeartbeat(recordID: recordID) // transcode started
             let proxy = project.proxies.appendingPathComponent("\(asset.id).mp4")
             let result = try await AVFoundationProxyGenerator(preset: ProxyPreset(width: 640, height: 360)).makeProxy(for: original, destination: proxy)
+            updatePreparationHeartbeat(recordID: recordID) // transcode done
             guard let fingerprint = asset.fingerprint else { throw APIError.invalidResponse }
             let contract = try await ProjectMediaUploadContract.analysisProxy(original: original, proxy: result, fingerprint: fingerprint)
             return (result, asset, contract)
