@@ -153,7 +153,7 @@ final class CreationUITests: XCTestCase {
     }
 
     func testStaleFootageConflictShowsServerReasonAndRefreshesTheDirection() {
-        let app = launchConfirmationConflictFixture("stale_manifest")
+        let app = launchConfirmationFixture(["KRIA_CHAT_GENERATE_CONFLICT": "stale_manifest"])
         let confirm = app.buttons["Create this video"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 10))
         confirm.tap()
@@ -183,7 +183,7 @@ final class CreationUITests: XCTestCase {
     }
 
     func testWaitForRenderConflictKeepsCreateRetryable() {
-        let app = launchConfirmationConflictFixture("wait_for_render")
+        let app = launchConfirmationFixture(["KRIA_CHAT_GENERATE_CONFLICT": "wait_for_render"])
         let confirm = app.buttons["Create this video"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 10))
         confirm.tap()
@@ -194,6 +194,30 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 10), .completed)
         confirm.tap()
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+    }
+
+    /// 2026-09-16 regression: an HTTP 500 from "Create this video" was shown as
+    /// "Connection interrupted" with Reconnect while the connection was fine.
+    func testCreateServerErrorIsNotShownAsAConnectionProblem() {
+        let app = launchConfirmationFixture(["KRIA_CHAT_GENERATE_FAILURE": "server_error"])
+        let message = createVideoFailureMessage(in: app, screenshot: "Create this video after HTTP 500")
+
+        XCTAssertEqual(message.label, "That change wasn’t saved. Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment.")
+        XCTAssertTrue(app.staticTexts["Something went wrong"].exists)
+        XCTAssertFalse(app.staticTexts["Connection interrupted"].exists)
+        XCTAssertFalse(app.buttons["Reconnect"].exists)
+        retryCreateVideo(in: app, using: app.buttons["Refresh"], dismissing: message)
+    }
+
+    func testCreateWithoutAConnectionKeepsConnectionRecovery() {
+        let app = launchConfirmationFixture(["KRIA_CHAT_GENERATE_FAILURE": "offline"])
+        let message = createVideoFailureMessage(in: app, screenshot: "Create this video without a connection")
+
+        XCTAssertEqual(message.label, "That change wasn’t saved. Check your connection and try again.")
+        XCTAssertTrue(app.staticTexts["Connection interrupted"].exists)
+        XCTAssertFalse(app.staticTexts["Something went wrong"].exists)
+        XCTAssertFalse(app.buttons["Refresh"].exists)
+        retryCreateVideo(in: app, using: app.buttons["Reconnect"], dismissing: message)
     }
 
     func testExpiredApprovalCannotStartGeneration() {
@@ -217,9 +241,13 @@ final class CreationUITests: XCTestCase {
         app.launchArguments = ["-ui-testing-chat"]
         app.launch()
         createFreshChat(in: app)
-        XCTAssertTrue(app.staticTexts["Kria couldn’t load creation options. Check your connection and retry."].waitForExistence(timeout: 5))
+        // The unconfigured fixture answers every request with HTTP 503: the
+        // server was reached, so recovery must not blame the connection.
+        XCTAssertTrue(app.staticTexts["Kria couldn’t load creation options. Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment."].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["format-montage"].exists)
-        XCTAssertTrue(app.buttons["Reconnect"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Something went wrong"].exists)
+        XCTAssertTrue(app.buttons["Refresh"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["Reconnect"].exists)
     }
 
     func testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap() {
@@ -249,13 +277,40 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["choose-videos"].waitForExistence(timeout: 5))
     }
 
+    /// Taps "Create this video" and waits for the recovery card's message,
+    /// attaching a screenshot of the card.
+    private func createVideoFailureMessage(in app: XCUIApplication, screenshot name: String) -> XCUIElement {
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        let message = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "That change wasn’t saved.")).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        return message
+    }
+
+    /// The card's button reloads the chat, after which creating again succeeds.
+    private func retryCreateVideo(in app: XCUIApplication, using retry: XCUIElement, dismissing message: XCUIElement) {
+        XCTAssertTrue(retry.exists)
+        retry.tap()
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: message)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed)
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+    }
+
     /// Runtime-v1 chat with one fixture clip, stopped at the confirmation card.
-    private func launchConfirmationConflictFixture(_ conflict: String) -> XCUIApplication {
+    private func launchConfirmationFixture(_ environment: [String: String]) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
-        app.launchEnvironment["KRIA_CHAT_GENERATE_CONFLICT"] = conflict
+        app.launchEnvironment.merge(environment) { _, new in new }
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()

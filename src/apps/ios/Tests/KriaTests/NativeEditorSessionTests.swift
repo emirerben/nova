@@ -263,7 +263,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: UUID())
         let baseline = session.document
-        fake.draftError = .requestFailed
+        fake.draftError = .requestFailed(status: 503)
         await session.synchronizePromptRevision()
         guard case .refreshFailed = session.saveState else { return XCTFail("Expected refresh failure") }
         // Repeated failures must retain the original state, not the last error.
@@ -284,14 +284,14 @@ final class NativeEditorSessionTests: XCTestCase {
         let failures: [NativeEditorSaveState] = [.failed("Save failed"), .renderRetryNeeded("Render failed")]
         for failure in failures {
             session.saveState = failure
-            fake.draftError = .requestFailed
+            fake.draftError = .requestFailed(status: 503)
             await session.synchronizePromptRevision()
             fake.draftError = nil
             await session.synchronizePromptRevision()
             XCTAssertEqual(session.saveState, failure, "Restore the failure that preceded the refresh")
 
             session.saveState = .idle
-            fake.draftError = .requestFailed
+            fake.draftError = .requestFailed(status: 503)
             await session.synchronizePromptRevision()
             session.saveState = failure
             fake.draftError = nil
@@ -1193,7 +1193,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 draftRevision: 0, snapshotHash: "", etag: "", baseJobID: nil,
                 baseGenerationID: nil, snapshot: [:], canUndo: false, createdAt: .now
             ),
-            draftError: .requestFailed
+            draftError: .requestFailed(status: 500)
         )
         let project = ProjectSummary(
             id: threadID, title: "Draft", status: .draft, updatedAt: .now, posterURL: nil
@@ -1204,7 +1204,7 @@ final class NativeEditorSessionTests: XCTestCase {
 
         XCTAssertEqual(
             session.saveState,
-            .loadFailed("Kria couldn’t complete that request. Check your connection and try again.")
+            .loadFailed("Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment.")
         )
     }
 
@@ -1218,7 +1218,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
                 snapshot: ["editor_payload": .object([:])], canUndo: false, createdAt: .now
             ),
-            editorVariantError: .requestFailed
+            editorVariantError: .requestFailed(status: 404)
         )
         let session = NativeEditorSession(project: ProjectSummary(
             id: threadID, title: "Draft", status: .draft, updatedAt: .now, posterURL: nil
@@ -1226,8 +1226,8 @@ final class NativeEditorSessionTests: XCTestCase {
 
         await session.load(api: fake, threadID: threadID)
 
-        XCTAssertEqual(session.loadState, .failed("Kria couldn’t complete that request. Check your connection and try again."))
-        XCTAssertEqual(session.saveState, .loadFailed("Kria couldn’t complete that request. Check your connection and try again."))
+        XCTAssertEqual(session.loadState, .failed("Kria couldn’t complete that request."))
+        XCTAssertEqual(session.saveState, .loadFailed("Kria couldn’t complete that request."))
     }
 
     func testHydratedProjectRetainsFinishedOutputWhenSourcePreviewFails() async throws {
@@ -1345,7 +1345,7 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertEqual(job, jobID)
             XCTAssertEqual(variant, "variant")
             fake.deviceFetchCount += 1
-            throw APIError.requestFailed
+            throw APIError.requestFailed(status: 503)
         }, factory: { _, _ in throw APIError.unsupported })
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
         session.useDeviceRendering(renderSessions)

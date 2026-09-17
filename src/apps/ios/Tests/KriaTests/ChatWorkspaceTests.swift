@@ -83,49 +83,59 @@ final class ChatWorkspaceTests: XCTestCase {
     }
 
     func testAcceptedMutationRefreshFailureDoesNotReportTheMutationAsRejected() async throws {
-        let message = await acceptedMutationRefreshError(
+        let failure = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",
-            refresh: { throw APIError.requestFailed }
+            refresh: { throw APIError.requestFailed(status: 503) }
         )
 
         XCTAssertEqual(
-            message,
-            "Your message was sent, but the conversation couldn’t refresh. \(APIError.requestFailed.localizedDescription)"
+            failure?.message,
+            "Your message was sent, but the conversation couldn’t refresh. \(APIError.requestFailed(status: 503).localizedDescription)"
         )
-        XCTAssertFalse(try XCTUnwrap(message).contains("wasn’t sent"))
+        XCTAssertEqual(failure?.cause, .server)
+        XCTAssertFalse(try XCTUnwrap(failure?.message).contains("wasn’t sent"))
     }
 
     func testAcceptedMutationRefreshSuccessNeedsNoRecoveryMessage() async {
-        let message = await acceptedMutationRefreshError(
+        let failure = await acceptedMutationRefreshError(
             "The mutation succeeded.",
             refresh: { true }
         )
 
-        XCTAssertNil(message)
+        XCTAssertNil(failure)
     }
 
     func testSuccessfulUnchangedPollClearsStaleRecoveryMessage() {
-        var message: String? = "Kria lost the live connection. Your conversation is safe."
+        var failure: ChatFailure? = ChatFailure("Kria lost the live connection. Your conversation is safe.", cause: .connection)
 
-        clearChatRefreshRecoveryMessage(&message)
+        clearChatRefreshRecoveryMessage(&failure)
 
-        XCTAssertNil(message)
+        XCTAssertNil(failure)
+    }
+
+    func testSuccessfulPollClearsServerErrorRefreshMessage() {
+        var failure: ChatFailure? = ChatFailure("Kria couldn’t refresh this conversation.", error: APIError.requestFailed(status: 502))
+
+        clearChatRefreshRecoveryMessage(&failure)
+
+        XCTAssertNil(failure)
     }
 
     func testSuccessfulUnchangedPollPreservesNonRecoveryMessage() {
-        var message: String? = "Your message wasn’t sent. The request timed out."
+        let unsent = ChatFailure("Your message wasn’t sent.", error: URLError(.timedOut))
+        var failure: ChatFailure? = unsent
 
-        clearChatRefreshRecoveryMessage(&message)
+        clearChatRefreshRecoveryMessage(&failure)
 
-        XCTAssertEqual(message, "Your message wasn’t sent. The request timed out.")
+        XCTAssertEqual(failure, unsent)
     }
 
     func testSuccessfulPollClearsUnconfirmedSendRecoveryMessage() {
-        var message: String? = "Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely."
+        var failure: ChatFailure? = ChatFailure("Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely.")
 
-        clearChatRefreshRecoveryMessage(&message)
+        clearChatRefreshRecoveryMessage(&failure)
 
-        XCTAssertNil(message)
+        XCTAssertNil(failure)
     }
 
     func testAssistantQuestionExposesTappableOptionsAndRecommendation() throws {

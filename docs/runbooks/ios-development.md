@@ -180,9 +180,18 @@ For deterministic UI verification, launch Debug with `-ui-testing-chat` and
 `KRIA_CHAT_CREATION_FLOW=v1` or `v2`. `KRIA_CHAT_FIXTURE_MEDIA=1` starts format
 selection with a fixture clip already attached so confirmation/render polling can
 be tested without an account. These fixtures intercept HTTP and do not prove a
-live render. Without the flow variable, the transport remains unavailable to
-exercise connection recovery. `CreationFlowTests` covers the native wire
+live render. Without the flow variable, every request returns HTTP 503 to
+exercise server-error recovery. `CreationFlowTests` covers the native wire
 contracts, built-app posters, and recovery-record compatibility.
+
+Chat recovery cards name the cause of a failed request (`RequestFailureCause`).
+Only transport failures (offline, timed out, connection lost) show "Connection
+interrupted" with Reconnect. An HTTP 5xx means Kria was reached and shows
+"Something went wrong" with the server-side explanation; other statuses use
+neutral copy. `RequestFailureTests` covers the mapping. In the chat fixture,
+`KRIA_CHAT_GENERATE_FAILURE=server_error` or `offline` fails the first "Create
+this video" with an HTTP 500 or a dropped connection, and `CreationUITests`
+checks both recovery cards.
 
 Native projections must treat `creator_agent.status` and `state.generation` as
 authoritative before `active_job_id` exists: `executing` stays in preparation

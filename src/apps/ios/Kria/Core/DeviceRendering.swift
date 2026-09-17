@@ -101,7 +101,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         // A create-only PUT can return 412 after a lost success response. The server validates
         // the generation and checksum before attaching it, so this is safe to reconcile.
-        guard (200..<300).contains(response.statusCode) || response.statusCode == 412 else { throw APIError.requestFailed }
+        guard (200..<300).contains(response.statusCode) || response.statusCode == 412 else { throw APIError.requestFailed(status: response.statusCode) }
         try Task.checkCancellation()
         do { try await api.completeDeviceExport(complete); return .published }
         catch APIError.conflict {
@@ -143,7 +143,8 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
             }
             let (file, response) = try await downloadSession.download(from: grant.downloadURL)
             defer { try? FileManager.default.removeItem(at: file) }
-            guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { throw APIError.requestFailed }
+            guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard response.statusCode == 200 else { throw APIError.requestFailed(status: response.statusCode) }
             try Task.checkCancellation()
             _ = try await library.install(downloadedFile: file, for: asset)
         }

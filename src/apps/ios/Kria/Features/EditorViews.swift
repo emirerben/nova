@@ -380,9 +380,8 @@ private struct VideoFileDownloader {
 
     func download(from url: URL) async throws -> URL {
         let (temporary, response) = try await session.download(from: url)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw APIError.requestFailed
-        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw APIError.requestFailed(status: http.statusCode) }
         let destination = FileManager.default.temporaryDirectory
             .appending(path: "kria-\(UUID().uuidString).mp4")
         try FileManager.default.moveItem(at: temporary, to: destination)

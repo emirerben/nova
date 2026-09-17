@@ -272,7 +272,7 @@ private struct CreationWorkspaceView: View {
     @State private var selectedFormat: CreationFormat?
     @State private var availableFormats: [CreationFormat] = []
     @State private var capabilities: CreationCapabilities?
-    @State private var capabilitiesError: String?
+    @State private var capabilitiesFailure: ChatFailure?
     @State private var fullThread: CreationThread?
     @State private var pendingAction: CreationActionIdentity?
     @State private var uploadRecords: [UploadRecoveryRecord] = []
@@ -287,7 +287,7 @@ private struct CreationWorkspaceView: View {
     @State private var isSending = false
     @State private var isActing = false
     @State private var isThinking = false
-    @State private var errorMessage: String?
+    @State private var failure: ChatFailure?
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
@@ -375,8 +375,8 @@ private struct CreationWorkspaceView: View {
 
                         if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
 
-                        if let errorMessage {
-                            RecoveryCard(message: errorMessage) { Task { await refreshCapabilities(); await refreshNow() } }
+                        if let failure {
+                            RecoveryCard(failure: failure) { Task { await refreshCapabilities(); await refreshNow() } }
                                 .id("recovery")
                         }
 
@@ -473,8 +473,8 @@ private struct CreationWorkspaceView: View {
                         if approval != nil { stageContent }
                         if isThinking || isSending { ThinkingRow() }
                         if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
-                        if let errorMessage {
-                            Text(errorMessage).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
+                        if let failure {
+                            Text(failure.message).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
                         }
                         Color.clear.frame(height: 1).id("conversation-end")
                     }.padding(16)
@@ -499,8 +499,8 @@ private struct CreationWorkspaceView: View {
         switch workspaceStage {
         case .format:
             FormatStage(formats: availableFormats, isBusy: isActing || !capabilitiesAreAuthoritative, select: selectFormat).id("format-picker")
-            if let capabilitiesError {
-                RecoveryCard(message: capabilitiesError) { Task { await refreshCapabilities() } }
+            if let capabilitiesFailure {
+                RecoveryCard(failure: capabilitiesFailure) { Task { await refreshCapabilities() } }
             } else if !capabilitiesAreAuthoritative {
                 ProgressView("Loading formats…")
             }
@@ -622,13 +622,13 @@ private struct CreationWorkspaceView: View {
         let message = (submittedMessage ?? prompt).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
         isSending = true
-        errorMessage = nil
+        failure = nil
         confirmationConflict = nil
         defer { isSending = false }
         if editorSession.hasUnsavedChanges {
             await editorSession.save()
             guard !editorSession.hasUnsavedChanges else {
-                errorMessage = "Your message is still here. Save or resolve your editor changes before sending it."
+                failure = ChatFailure("Your message is still here. Save or resolve your editor changes before sending it.")
                 return
             }
             await refreshNow()
@@ -653,11 +653,14 @@ private struct CreationWorkspaceView: View {
                 prompt = message
                 pendingTurnSubmission = nil
                 await refreshNow()
-                errorMessage = "This conversation changed. Your message is still here; review the latest direction and send again."
+                failure = ChatFailure("This conversation changed. Your message is still here; review the latest direction and send again.")
             } catch {
                 pendingMessages.removeAll { $0.id == optimistic.id }
                 prompt = message
-                errorMessage = "Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely."
+                failure = ChatFailure(
+                    "Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely.",
+                    cause: RequestFailureCause(error)
+                )
             }
             return
         }
@@ -674,10 +677,10 @@ private struct CreationWorkspaceView: View {
             if let thread = try? await model.api.project(threadID: project.id) {
                 apply(thread)
             }
-            errorMessage = "This conversation changed while you were sending. Review it and try again."
+            failure = ChatFailure("This conversation changed while you were sending. Review it and try again.")
             return
         } catch {
-            errorMessage = "Your message wasn’t sent. \(error.localizedDescription)"
+            failure = ChatFailure("Your message wasn’t sent.", error: error)
             return
         }
         pendingTurnSubmission = nil
@@ -686,7 +689,7 @@ private struct CreationWorkspaceView: View {
         prompt = ""
         conversationAcceptedID = UUID()
         isThinking = true
-        errorMessage = await acceptedMutationRefreshError(
+        failure = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",
             refresh: { try await refreshDelta() }
         )
@@ -696,7 +699,7 @@ private struct CreationWorkspaceView: View {
         guard capabilitiesAreAuthoritative, availableFormats.contains(format) else { return }
         let pendingClips = model.uploads.records.filter { $0.projectID == project.id && $0.role == .clip }.count
         if let capacityError = formatClipCapacityError(format: format, clipLimit: maximumClipsByFormat[format] ?? format.fallbackMaximumClipCount, occupiedClipCount: attachedClipCount + pendingClips) {
-            errorMessage = capacityError
+            failure = ChatFailure(capacityError)
             return
         }
         performAction("select_format", payload: ["format": .string(format.serverValue)])
@@ -705,7 +708,7 @@ private struct CreationWorkspaceView: View {
     private func performAction(_ action: String, payload: [String: JSONValue] = [:]) {
         guard !isActing, !isSending else { return }
         isActing = true
-        errorMessage = nil
+        failure = nil
         confirmationConflict = nil
         let identity = CreationActionIdentity.reusing(pendingAction, action: action, payload: payload, revision: threadRevision)
         pendingAction = identity
@@ -717,13 +720,13 @@ private struct CreationWorkspaceView: View {
                 pendingAction = nil
                 apply(thread, requestSequence: requestSequence)
                 if action == "select_format" { isChoosingFormat = false }
-                errorMessage = await acceptedMutationRefreshError("Saved, but the conversation couldn’t refresh.", refresh: { try await refreshDelta() })
+                failure = await acceptedMutationRefreshError("Saved, but the conversation couldn’t refresh.", refresh: { try await refreshDelta() })
             } catch let error as APIError where error == .conflict {
                 pendingAction = nil
                 await refreshCapabilities()
                 await refreshNow()
                 guard CreationConfirmationConflict.confirmationActions.contains(action), payload["variant_id"] == nil else {
-                    errorMessage = CreationConfirmationConflict.changedMessage
+                    failure = ChatFailure(CreationConfirmationConflict.changedMessage)
                     return
                 }
                 let conflict = CreationConfirmationConflict(
@@ -731,8 +734,8 @@ private struct CreationWorkspaceView: View {
                     planIdentity: fullThread?.creatorPlanIdentity ?? ""
                 )
                 if showsCreationConfirmation { confirmationConflict = conflict }
-                else { errorMessage = conflict.message }
-            } catch { errorMessage = "That change wasn’t saved. \(error.localizedDescription)" }
+                else { failure = ChatFailure(conflict.message) }
+            } catch { failure = ChatFailure("That change wasn’t saved.", error: error) }
         }
     }
 
@@ -747,7 +750,7 @@ private struct CreationWorkspaceView: View {
             }
             availableFormats = formats
             capabilities = response
-            capabilitiesError = formats.isEmpty ? "No creation formats are currently available. Try again in a moment." : nil
+            capabilitiesFailure = formats.isEmpty ? ChatFailure("No creation formats are currently available. Try again in a moment.") : nil
             maximumClipsByFormat = limits
             capabilitiesAreAuthoritative = true
             // Initial history and capabilities load independently. Reconcile
@@ -758,7 +761,7 @@ private struct CreationWorkspaceView: View {
             capabilitiesAreAuthoritative = false
             capabilities = nil
             availableFormats = []
-            capabilitiesError = "Kria couldn’t load creation options. Check your connection and retry."
+            capabilitiesFailure = ChatFailure("Kria couldn’t load creation options.", error: error)
         }
     }
 
@@ -776,7 +779,9 @@ private struct CreationWorkspaceView: View {
                 return
             } catch {
                 if !isUITesting {
-                    errorMessage = "Kria lost the live connection. Your conversation is safe."
+                    failure = RequestFailureCause(error) == .connection
+                        ? ChatFailure("Kria lost the live connection. Your conversation is safe.", cause: .connection)
+                        : ChatFailure("Kria couldn’t refresh this conversation.", error: error)
                 }
                 delay = min(delay * 2, 15_000_000_000)
             }
@@ -803,7 +808,7 @@ private struct CreationWorkspaceView: View {
         defer {
             if !Task.isCancelled { initialConversationLoaded = true }
         }
-        errorMessage = nil
+        failure = nil
         do {
             let requestSequence = projectionOrder.begin()
             let thread = try await model.api.project(threadID: project.id)
@@ -819,7 +824,7 @@ private struct CreationWorkspaceView: View {
             }
         } catch {
             if !isUITesting {
-                errorMessage = "Kria couldn’t refresh this conversation. Check your connection and try again."
+                failure = ChatFailure("Kria couldn’t refresh this conversation.", error: error)
             }
         }
     }
@@ -858,7 +863,7 @@ private struct CreationWorkspaceView: View {
             apply(thread, requestSequence: requestSequence)
             reconcilePendingMessages()
             let changed = threadRevision != previousRevision || events.map(\.id) != previousEventIDs
-            clearChatRefreshRecoveryMessage(&errorMessage)
+            clearChatRefreshRecoveryMessage(&failure)
             return changed
         }
         let delta = try await model.api.threadDelta(threadID: project.id, afterSequence: afterSequence)
@@ -887,9 +892,9 @@ private struct CreationWorkspaceView: View {
         // The delta fetch and merge above already succeeded, so the banner is
         // stale regardless of what happens next — clear it here rather than
         // after `synchronizeApproval()`, whose own failure would otherwise
-        // re-arm "Connection interrupted" underneath messages that just
-        // landed successfully.
-        clearChatRefreshRecoveryMessage(&errorMessage)
+        // re-arm the recovery card underneath messages that just landed
+        // successfully.
+        clearChatRefreshRecoveryMessage(&failure)
         try await synchronizeApproval()
         if !fresh.isEmpty || currentProject.status == .rendering {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
@@ -945,7 +950,7 @@ private struct CreationWorkspaceView: View {
         else { return }
         isActing = true
         Task {
-            errorMessage = nil
+            failure = nil
             defer { isActing = false }
             do {
                 try await model.api.decideApproval(
@@ -958,12 +963,12 @@ private struct CreationWorkspaceView: View {
                 )
             } catch {
                 await refreshNow()
-                errorMessage = "Kria couldn’t record that decision. \(error.localizedDescription)"
+                failure = ChatFailure("Kria couldn’t record that decision.", error: error)
                 return
             }
             self.approval = nil
             isThinking = decision == "approve"
-            errorMessage = await acceptedMutationRefreshError(
+            failure = await acceptedMutationRefreshError(
                 "Kria recorded that decision, but the conversation couldn’t refresh.",
                 refresh: { try await refreshDelta() }
             )
@@ -1157,19 +1162,19 @@ enum CreationFormat: String, CaseIterable, Identifiable {
 func acceptedMutationRefreshError(
     _ failurePrefix: String,
     refresh: () async throws -> Bool
-) async -> String? {
+) async -> ChatFailure? {
     do {
         _ = try await refresh()
         return nil
     } catch {
-        return "\(failurePrefix) \(error.localizedDescription)"
+        return ChatFailure(failurePrefix, error: error)
     }
 }
 
 /// A completed full or delta response is authoritative even when it contains
-/// no new events, so it clears a stale transport-recovery banner.
-func clearChatRefreshRecoveryMessage(_ message: inout String?) {
-    guard let current = message else { return }
+/// no new events, so it clears a stale refresh-recovery banner.
+func clearChatRefreshRecoveryMessage(_ failure: inout ChatFailure?) {
+    guard let current = failure?.message else { return }
     let recoveryPrefixes = [
         "Kria lost the live connection.",
         "Kria couldn’t refresh this conversation.",
@@ -1179,7 +1184,7 @@ func clearChatRefreshRecoveryMessage(_ message: inout String?) {
         "Kria couldn’t confirm that message."
     ]
     if recoveryPrefixes.contains(where: current.hasPrefix) {
-        message = nil
+        failure = nil
     }
 }
 

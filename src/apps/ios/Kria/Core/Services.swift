@@ -853,7 +853,7 @@ struct KriaAPI: KriaAPIClient {
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
-            throw APIError.requestFailed
+            throw APIError.requestFailed(status: http.statusCode)
         }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
@@ -893,7 +893,9 @@ private struct CreateThreadRequest: Encodable { let message: String?; let client
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
 private struct DraftUndoRequest: Encodable { let expectedRevision: Int; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision" } }
 enum APIError: Error, LocalizedError, Equatable {
-    case requestFailed, offline, invalidResponse, sessionExpired, unsupported, contentPlanUnavailable, editorNotReady
+    /// The server answered with a status the request doesn't accept.
+    case requestFailed(status: Int)
+    case offline, invalidResponse, sessionExpired, unsupported, contentPlanUnavailable, editorNotReady
     /// A 409/412. `detail` carries the server's `detail` string when it sent one.
     case conflict(detail: ConflictDetail)
     /// Detail-free conflict. Keeps `throw APIError.conflict`, `== .conflict`,
@@ -901,7 +903,19 @@ enum APIError: Error, LocalizedError, Equatable {
     static let conflict = APIError.conflict(detail: ConflictDetail(nil))
     /// The server's human-readable reason for a conflict, if it sent one.
     var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
-    var errorDescription: String? { switch self { case .sessionExpired: "Your session expired. Please sign in again."; case .conflict: "This edit changed elsewhere. Review your local changes before saving again."; case .contentPlanUnavailable: "This video’s content plan is unavailable. Its editor cannot be opened."; case .editorNotReady: "This video has no ready edit to open."; case .unsupported: "This API client does not support native editor saves."; default: "Kria couldn’t complete that request. Check your connection and try again." } }
+    var errorDescription: String? {
+        switch self {
+        case .sessionExpired: "Your session expired. Please sign in again."
+        case .conflict: "This edit changed elsewhere. Review your local changes before saving again."
+        case .contentPlanUnavailable: "This video’s content plan is unavailable. Its editor cannot be opened."
+        case .editorNotReady: "This video has no ready edit to open."
+        case .unsupported: "This API client does not support native editor saves."
+        case .offline: "Kria couldn’t complete that request. Check your connection and try again."
+        case let .requestFailed(status) where RequestFailureCause(status: status) == .server:
+            "Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment."
+        case .requestFailed, .invalidResponse: "Kria couldn’t complete that request."
+        }
+    }
 }
 
 /// Server text attached to `APIError.conflict`. Every detail compares equal, so
@@ -915,6 +929,34 @@ struct ConflictDetail: Equatable, Sendable, CustomStringConvertible {
     static func == (_: ConflictDetail, _: ConflictDetail) -> Bool { true }
     /// Diagnostics print errors with `String(describing:)`; keep server text out of them.
     var description: String { message == nil ? "none" : "present" }
+}
+
+/// Where a failed request broke. Copy may blame the connection only when no
+/// response arrived; an HTTP error means the server was reached.
+enum RequestFailureCause: Equatable, Sendable {
+    /// Offline, timed out, or the connection dropped before a response arrived.
+    case connection
+    /// Kria's server answered with a 5xx.
+    case server
+    /// Anything else, such as a 4xx or a response the app couldn't use.
+    case other
+
+    init(status: Int) { self = (500...599).contains(status) ? .server : .other }
+
+    init(_ error: Error) {
+        switch error {
+        case APIError.offline: self = .connection
+        case let APIError.requestFailed(status): self = Self(status: status)
+        case let error as URLError where Self.transportCodes.contains(error.code): self = .connection
+        default: self = .other
+        }
+    }
+
+    /// URLSession throws these when the request never got a response.
+    private static let transportCodes: Set<URLError.Code> = [
+        .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost,
+        .cannotFindHost, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff, .callIsActive,
+    ]
 }
 
 protocol AuthProvider { func signIn() async throws -> AuthCredential }

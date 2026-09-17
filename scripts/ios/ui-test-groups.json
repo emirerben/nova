@@ -8,6 +8,8 @@
       "KriaUITests/CreationUITests/testSlowDirectionAndPreJobFailureNeverReturnToUploading",
       "KriaUITests/CreationUITests/testStaleFootageConflictShowsServerReasonAndRefreshesTheDirection",
       "KriaUITests/CreationUITests/testWaitForRenderConflictKeepsCreateRetryable",
+      "KriaUITests/CreationUITests/testCreateServerErrorIsNotShownAsAConnectionProblem",
+      "KriaUITests/CreationUITests/testCreateWithoutAConnectionKeepsConnectionRecovery",
       "KriaUITests/CreationUITests/testExpiredApprovalCannotStartGeneration",
       "KriaUITests/CreationUITests/testUnavailableCapabilitiesShowRetryInsteadOfDeadFormatCards",
       "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap"
