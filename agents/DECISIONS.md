@@ -2273,3 +2273,41 @@ the same drop-not-discard treatment — extend `_load_authorized_projection_rows
 never bolt on a parallel ad hoc check. If `_sync_agent` or `_render_projection` grow a new
 caller, re-verify neither the ownership fence nor the never-re-adopt-a-rejected-id rule can
 be bypassed from that call site.
+
+## [2026-09-16] Creator manifest membership must not depend on a Visual's analysis state (prod thread 168b17ec)
+
+`resolve_item_creator_context` used to include pool assets (Visuals) only once
+`PlanItemAsset.status == "ready"`, which the `autoplace` worker sets after Gemini image
+analysis. Nothing on the chat planning path waits for that. A user who added six photos and
+sent the prompt 105 s later got a direction whose `manifest_hash` covered only the five video
+clips (the stored strategy's `selected_media_ids` had no `asset-…` entry); by the time they
+tapped "Create this video" the photos were ready, the live manifest had eleven media, and
+`confirm_creator_plan_controller` answered 409 "Footage or capabilities changed; review the
+plan again" on every attempt. iOS renders that as "Connection interrupted / This project
+changed. Review the latest options and try again." and re-shows the same proposal; the web
+shows a generic "I couldn't start that render". Neither client can re-plan from that state,
+so the proposal was permanently unconfirmable. Confirmed by recomputing the manifest hash in
+the prod API container (stored `8fb408e4…` vs live `f6431961…`, plan format montage on both
+sides).
+
+Fix: the manifest now admits every registered state (`CREATOR_VISIBLE_ASSET_STATES` =
+uploaded/queued/analyzing/ready) and keeps reservations, cleanup claims and failed rows out.
+Analysis evidence is still handed to the planner only for ready rows; pending rows carry
+`"analysis_status": "pending"` in `media_context` so the model knows the file exists. This
+follows the rule already encoded in `canonical_manifest_hash` ("hash confirmation identity
+without asynchronous analysis observations"): readiness is such an observation. The
+proposal build already tolerates queued/analyzing assets (`edit_proposal_build` retries every
+15 s), so dispatching a plan that references a not-yet-analyzed Visual is safe.
+
+**Why:** the alternative fixes were worse. Blocking the chat turn until analysis finishes
+turns a normal upload race into a user-visible 409 that neither client explains; auto
+re-planning inside the confirm route when only newly-ready assets differ adds a second
+planning state machine to the most fence-heavy route in the API. Changing what the hash
+covers is one predicate and one test.
+
+**Revisit if:** a Visual can legitimately change identity after registration (kind is fixed
+at registration from content type today; `deduplicated_to_asset_id` is decided at
+registration too). If either becomes post-registration, the same drift returns through a
+different field. Also revisit the client dead-end: iOS and web should surface the 409 detail
+and offer "refresh the direction" instead of re-showing a proposal the server will never
+accept (tracked as a follow-up, not part of this change).
