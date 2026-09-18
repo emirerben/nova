@@ -13,9 +13,10 @@ from app.kria.media_sources import (
     OriginalMediaDescriptor,
     is_analysis_proxy_path,
 )
-from app.kria.render_assets import OriginalRenderAsset, RenderFingerprint
+from app.kria.render_assets import OriginalRenderAsset, RenderFingerprint, VisualRenderAsset
 
 PHONE_SOURCES_FIELD = "_phone_sources_v1"
+PHONE_VISUALS_FIELD = "_phone_visuals_v1"
 
 
 class PhoneSourceBinding(BaseModel):
@@ -102,4 +103,44 @@ def require_bound_moment(
     ]
     if len(matches) != 1:
         raise ValueError("approved moment does not match its immutable phone source")
+    return matches[0]
+
+
+class PhoneVisualBinding(BaseModel):
+    """One approved Visuals-pool photo hashed at its pinned generation (KRI-121).
+
+    Visuals always upload their full original to the plan item's pool, so the
+    phone renders them from those bytes rather than from a device original.
+    Private job state like ``PhoneSourceBinding``: recipes expose only the
+    ``VisualRenderAsset`` identity, and the device-render grant re-checks the
+    ``PlanItemAsset`` row before signing the exact generation.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    media_id: str = Field(min_length=1, max_length=150, pattern=r"^\S+$")
+    gcs_path: str = Field(min_length=1)
+    generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    byte_count: int = Field(gt=0, le=16 * 1024**3)
+
+    def render_asset(self) -> VisualRenderAsset:
+        return VisualRenderAsset(
+            id=f"visual-{self.media_id}",
+            visual_id=self.media_id,
+            generation=self.generation,
+            fingerprint=RenderFingerprint(sha256=self.sha256, byte_count=self.byte_count),
+        )
+
+
+def require_bound_visual(
+    visuals: tuple[PhoneVisualBinding, ...], *, media_id: str, path: str, generation: str
+) -> PhoneVisualBinding:
+    matches = [
+        visual
+        for visual in visuals
+        if (visual.media_id, visual.gcs_path, visual.generation) == (media_id, path, generation)
+    ]
+    if len(matches) != 1:
+        raise ValueError("approved photo does not match its pinned visual")
     return matches[0]

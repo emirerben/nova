@@ -12,19 +12,23 @@ from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.routes import generative_jobs as gj
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_editor import prepare_phone_editor_commit
-from app.services.phone_sources import PHONE_SOURCES_FIELD
+from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD
 from tests.pipeline.test_phone_guided_plan import fixture
+from tests.services import test_phone_visuals as photos
 
 
-def phone_job(monkeypatch):
+def phone_job(monkeypatch, *, photo=False):
+    """``photo`` appends a Visuals-pool still whose receipt the worker pinned."""
     monkeypatch.setattr(gj.settings, "phone_rendering_enabled", True)
     monkeypatch.setattr(
         gj.settings,
         "phone_render_verified_features",
-        ["basicComposition", "local1080Export", "positionedText", "animatedText", "audioMix"],
+        ["basicComposition", "local1080Export", "positionedText", "animatedText", "audioMix"]
+        + (["stillImages"] if photo else []),
     )
     monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", False)
-    plan, bindings = fixture()
+    plan, bindings = photos.photo_plan() if photo else fixture()
+    visuals = (photos.photo_visual(),) if photo else ()
     plan.text_elements = [
         TextElement(
             id="title",
@@ -45,6 +49,9 @@ def phone_job(monkeypatch):
         assembly_plan={
             "guided_story_execution_plan": raw,
             PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
+            **(
+                {PHONE_VISUALS_FIELD: [v.model_dump(mode="json") for v in visuals]} if photo else {}
+            ),
             "variants": [
                 {
                     "variant_id": "guided_story",
@@ -52,7 +59,7 @@ def phone_job(monkeypatch):
                     "render_destination": "device",
                     "render_status": "awaiting_device",
                     "render_generation_id": "first",
-                    "duration_s": 3,
+                    "duration_s": raw["resolved_duration_s"],
                     "text_mode": "agent_text",
                     "intro_mode": "linear",
                     "intro_layout": "linear",
@@ -67,7 +74,7 @@ def phone_job(monkeypatch):
             job_id=job.id,
             variant_id="guided_story",
             revision=1,
-            recipe=compile_phone_guided_plan(plan, bindings),
+            recipe=compile_phone_guided_plan(plan, bindings, visuals=visuals),
         ),
         base_generation="first",
     )
@@ -318,3 +325,150 @@ def test_unsupported_phone_edit_names_its_reason(monkeypatch):
     assert error.value.status_code == 422
     assert error.value.detail["code"] == "unsupported_phone_edit"
     assert error.value.detail["reason"] == "ValueError: re-clocked timeline"
+
+
+def visual_assets(request):
+    return [asset for asset in request.recipe.asset_manifest.assets if asset.kind == "visual"]
+
+
+def test_phone_resave_keeps_the_pinned_still(monkeypatch):
+    job = phone_job(monkeypatch, photo=True)
+    old = device_status(job, "guided_story").request
+    save(job)
+    new = device_status(job, "guided_story").request
+    assert new.identity.recipe_revision == 2
+    assert "After" in new.model_dump_json()
+    assert visual_assets(new) == visual_assets(old) == [photos.photo_visual().render_asset()]
+    still = new.recipe.tracks[0].clips[-1]
+    assert (still.source_asset_id, still.source_start, still.timeline_start) == (
+        f"visual-{photos.PHOTO_ID}",
+        0,
+        3,
+    )
+    assert job.assembly_plan[PHONE_VISUALS_FIELD] == [photos.photo_visual().model_dump(mode="json")]
+
+
+@pytest.mark.parametrize("receipt", ["missing", "stale"])
+def test_phone_resave_without_the_photo_receipt_fails_closed(monkeypatch, receipt):
+    job = phone_job(monkeypatch, photo=True)
+    if receipt == "missing":
+        del job.assembly_plan[PHONE_VISUALS_FIELD]
+    else:
+        job.assembly_plan[PHONE_VISUALS_FIELD][0]["generation"] = "78"
+    before = copy.deepcopy(vars(job))
+    with pytest.raises(HTTPException) as error:
+        save(job)
+    assert error.value.status_code == 422
+    assert error.value.detail["code"] == "unsupported_phone_edit"
+    cause = "unsupported phone photo" if receipt == "missing" else "does not match its pinned"
+    assert cause in str(error.value.__cause__)
+    assert cause in error.value.detail["reason"]
+    assert vars(job) == before
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_phone_editor_cannot_place_an_unbound_approved_photo(monkeypatch, bound):
+    """An approved-but-unused photo has no worker receipt, and the editor never
+    hashes, so placing it fails closed. The bound control proves the 422 comes
+    from the missing receipt, not from placing a photo at all."""
+    from app.pipeline.guided_story import compile_execution_plan
+    from app.schemas.edit_proposal import (
+        EditProposalSnapshot,
+        FastMontageCut,
+        MediaRef,
+        StoryBeat,
+        canonical_media_digest,
+    )
+
+    job = phone_job(monkeypatch)
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        [*gj.settings.phone_render_verified_features, "stillImages"],
+    )
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    binding = job.assembly_plan[PHONE_SOURCES_FIELD][0]
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id="source",
+            gcs_path=binding["proxy_path"],
+            generation="123",
+            kind="video",
+            duration_s=10,
+        ),
+        MediaRef(
+            lane="asset",
+            media_id=photos.PHOTO_ID,
+            gcs_path=photos.PHOTO_PATH,
+            generation=photos.PHOTO_GENERATION,
+            kind="image",
+        ),
+    ]
+    snapshot = EditProposalSnapshot(
+        direction="fast_montage",
+        duration_s=3,
+        title="A short scene",
+        media=media,
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"cut-{index}",
+                media_id="source",
+                source_start_s=2 + index,
+                source_end_s=3 + index,
+                output_duration_s=1,
+                role="hook",
+            )
+            for index in range(3)
+        ],
+        story_beats=[StoryBeat(beat_id="story", topic="Scene", media_ids=["source"], duration_s=3)],
+    )
+    guided = {
+        "proposal_version": 1,
+        "media_digest": canonical_media_digest(media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                key: getattr(ref, key)
+                for key in ("lane", "media_id", "gcs_path", "generation", "kind")
+            }
+            for ref in media
+        ],
+    }
+    plan = compile_execution_plan(guided, track=None)
+    assert photos.PHOTO_ID not in plan["selected_media_ids"]
+    job.assembly_plan.update(guided_edit=guided, guided_story_execution_plan=plan)
+    if bound:
+        job.assembly_plan[PHONE_VISUALS_FIELD] = [photos.photo_visual().model_dump(mode="json")]
+    variant = job.assembly_plan["variants"][0]
+    variant["text_elements"] = plan["text_elements"]
+    revision = gj._guided_v2_revision(job, variant)
+    assert revision is not None
+    photo_index = next(
+        index
+        for index, source in enumerate(revision["sources"])
+        if source["media_id"] == photos.PHOTO_ID
+    )
+    commit = gj.EditorCommitRequest(
+        base_generation="first",
+        guided_revision_number=revision["revision_number"],
+        timeline_slots=[
+            gj.TimelineSlotEdit(
+                slot_id=revision["segments"][0]["segment_id"], clip_index=0, in_s=2, duration_s=1
+            ),
+            gj.TimelineSlotEdit(slot_id=None, clip_index=photo_index, in_s=0, duration_s=1),
+        ],
+    )
+    if not bound:
+        before = copy.deepcopy(vars(job))
+        with pytest.raises(HTTPException) as error:
+            gj.prepare_editor_commit(job, "guided_story", commit)
+        assert error.value.status_code == 422
+        assert error.value.detail["code"] == "unsupported_phone_edit"
+        assert "unsupported phone photo" in str(error.value.__cause__)
+        assert vars(job) == before
+        return
+    gj.prepare_editor_commit(job, "guided_story", commit)
+    request = device_status(job, "guided_story").request
+    assert visual_assets(request) == [photos.photo_visual().render_asset()]
+    assert request.recipe.tracks[0].clips[-1].source_asset_id == f"visual-{photos.PHOTO_ID}"

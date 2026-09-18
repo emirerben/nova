@@ -18,6 +18,7 @@ from celery.exceptions import MaxRetriesExceededError, Retry
 from sqlalchemy import func, select
 
 from app.agents._schemas.creator_agent import CreatorEditPlan
+from app.config import settings
 from app.database import sync_session
 from app.models import (
     ContentPlan,
@@ -31,6 +32,7 @@ from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     MAIN_CREATOR_FAIL_CLOSED,
     MAX_PROPOSAL_DURATION_S,
+    BeatLayout,
     EditProposal,
     EditProposalSnapshot,
     FastMontageCut,
@@ -53,7 +55,12 @@ from app.services.edit_proposal_limits import (
     EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
     EDIT_PROPOSAL_TASK_SOFT_TIME_LIMIT_S,
 )
-from app.services.edit_proposals import media_generations_match_sync, save_proposal_draft
+from app.services.edit_proposals import (
+    media_generations_match_sync,
+    phone_renderable_media,
+    renders_on_phone,
+    save_proposal_draft,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -458,6 +465,28 @@ def _fast_story_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
     if not beats:
         raise ValueError("fast montage requires at least one cut")
     return beats
+
+
+def _snapshot_image_layout(
+    image_layout: BeatLayout | None,
+    media: list[MediaRef],
+    owner_id: object,
+) -> BeatLayout | None:
+    """Pin photos fullscreen when this plan will render on the creator's iPhone.
+
+    The device renderer only draws cover-cropped fullscreen stills, and
+    compile_phone_guided_plan fails the whole job on any other photo layout. A
+    null snapshot layout would let the specialist's per-beat ``supporting_card``
+    reach photos, so phone items pin it on the snapshot, which outranks beat
+    layout for every image moment. This also outranks a creator's recorded
+    "don't crop my photos" brief: a failed render is worse than a crop.
+    """
+
+    if "stillImages" in settings.phone_render_verified_features and renders_on_phone(
+        media, owner_id
+    ):
+        return "fullscreen"
+    return image_layout
 
 
 def feasible_guided_duration_s(media: list[MediaRef]) -> float:
@@ -1411,7 +1440,9 @@ def _run_draft_attempt(
         # De-duplicate pool assets promoted into the clip lane: they remain
         # stored separately, but one object must not count twice in the story.
         clip_paths = {ref.gcs_path for ref in clip_refs}
-        media = clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths]
+        media = phone_renderable_media(
+            clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths], owner_id
+        )
         if not media:
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
@@ -1573,7 +1604,9 @@ def _run_draft_attempt(
                 return
             assert owner_id is not None
             fresh_pool = _pool_refs(db, item, owner_id)
-            fresh_media = clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths]
+            fresh_media = phone_renderable_media(
+                clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths], owner_id
+            )
             if canonical_media_digest(fresh_media, narration) != digest:
                 _fail(
                     item,
@@ -1874,7 +1907,7 @@ def _run_draft_attempt(
             closing_title=brief.closing_title,
             font_family=brief.font_family,
             text_color=brief.text_color,
-            image_layout=brief.image_layout,
+            image_layout=_snapshot_image_layout(brief.image_layout, media, owner_id),
             licensed_sfx=brief.licensed_sfx,
             media=media,
             story_beats=(

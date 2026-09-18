@@ -210,6 +210,27 @@ def test_unadvertised_capability_cannot_issue_a_device_recipe(monkeypatch):
     validate_phone_pilot_recipe(recipe)
 
 
+def test_pool_photo_recipe_needs_still_images_verified(monkeypatch):
+    # PHONE_RENDER_VERIFIED_FEATURES is the only per-deploy switch for pool
+    # stills; a device must never receive a photo it has not qualified.
+    from tests.pipeline.test_phone_guided_plan import photo_fixture
+
+    plan, sources, visuals = photo_fixture()
+    recipe = compile_phone_guided_plan(plan, sources, visuals)
+    assert "stillImages" in recipe.required_capabilities
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(recipe.required_capabilities - {"stillImages"}),
+    )
+    with pytest.raises(ValueError, match="capability"):
+        validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+
+
 def test_slow_giant_handwriting_stays_blocked_with_animated_text_enabled(monkeypatch):
     plan, sources = fixture()
     recipe = compile_phone_guided_plan(plan, sources)

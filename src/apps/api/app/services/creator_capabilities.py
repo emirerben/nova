@@ -30,6 +30,7 @@ from app.agents._schemas.creator_policy import (
     CAPABILITY_DRAFT_GUIDED_PROPOSAL,
     CAPABILITY_GUIDED_VOICEOVER,
     CAPABILITY_PHONE_SOURCE_AUDIO,
+    CAPABILITY_PHONE_STILL_IMAGES,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
@@ -339,6 +340,10 @@ def resolve_creator_manifest(
         else:
             phone = _available()
         capabilities[CAPABILITY_PHONE_SOURCE_AUDIO] = phone
+        # Visuals photos render on the device only once its engine is verified
+        # for stills. Omitted otherwise so flag-off manifests keep their hashes.
+        if "stillImages" in settings.phone_render_verified_features:
+            capabilities[CAPABILITY_PHONE_STILL_IMAGES] = phone
         if not phone.available:
             for capability_name in (
                 CAPABILITY_DRAFT_GUIDED_PROPOSAL,

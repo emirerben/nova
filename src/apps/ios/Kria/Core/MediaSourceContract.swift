@@ -2,8 +2,10 @@ import Foundation
 import AVFoundation
 import KriaMediaEngine
 
-/// Mirrors `app.kria.media_sources.MediaSourceKind`. "image" (visual-pool stills) is
-/// deliberately not a case yet — see the matching note server-side.
+/// Mirrors `app.kria.media_sources.MediaSourceKind`. "image" is deliberately not a
+/// case: Visuals-pool photos upload in full to the pool and render on the phone from
+/// those pinned pool bytes through the manifest's "visual" kind (KRI-121), so no
+/// photo ever needs an analysis proxy bound to a device original.
 enum MediaSourceKind: String, Codable, Sendable, Equatable {
     case video, audio
 }
@@ -138,7 +140,7 @@ struct ProjectMediaUploadContract: Codable, Sendable, Equatable {
     /// narration/voiceover with no track is not a usable source).
     ///
     /// Not yet called from any production path: `ProjectUploadDestination.resolve`
-    /// still routes `.voiceover` attachments to `.cloud`/`.unsupportedRole` regardless
+    /// still routes `.voiceover` attachments to `.cloud`/`.voiceoverNeedsCloud` regardless
     /// of phone-rendering availability, because no recipe schema field can carry a
     /// narration track yet (see `MediaCapability.narrationAudio`,
     /// docs/reviews/kri-29/capability-matrix.md). This exists so that gate is a single,

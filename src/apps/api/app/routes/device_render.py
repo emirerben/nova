@@ -36,9 +36,9 @@ from app.kria.device_render import (
     DeviceRetryOut,
     require_current_request,
 )
-from app.kria.render_assets import LibraryRenderAsset
+from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset
 from app.limiter import limiter
-from app.models import ContentPlan, Job, PlanItem, TemporaryMediaUpload
+from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, TemporaryMediaUpload
 from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
 from app.services.device_render import (
@@ -185,6 +185,13 @@ async def download_device_asset(
     _, status = _record(job, body.identity)
     manifest = getattr(status.request.recipe, "asset_manifest", None)
     asset = next((a for a in manifest.assets if a.id == body.asset_id), None) if manifest else None
+    if isinstance(asset, VisualRenderAsset):
+        url = await _visual_download_url(db, job, user_id, asset)
+        return DeviceAssetDownloadOut(
+            asset_id=asset.id,
+            download_url=url,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+        )
     if not isinstance(asset, LibraryRenderAsset):
         raise HTTPException(404, "Library asset unavailable")
     try:
@@ -217,6 +224,47 @@ async def download_device_asset(
         download_url=url,
         expires_at=datetime.now(UTC) + timedelta(minutes=15),
     )
+
+
+async def _visual_download_url(
+    db: AsyncSession, job: Job, user_id: uuid.UUID, asset: VisualRenderAsset
+) -> str:
+    """Grant the job owner's own Visuals-pool photo, never another item's bytes.
+
+    The recipe pinned one immutable generation; the device verifies the SHA-256.
+    Here the row must still be this job's plan item's ready image at that exact
+    generation under its owner's pool prefix, so a removed or replaced visual
+    fails closed instead of rendering different bytes.
+    """
+    try:
+        visual_id = uuid.UUID(asset.visual_id)
+    except ValueError as exc:
+        raise HTTPException(404, "Visual unavailable") from exc
+    row = await db.get(PlanItemAsset, visual_id, populate_existing=True)
+    if (
+        row is None
+        or row.user_id != user_id
+        or job.content_plan_item_id is None
+        or row.plan_item_id != job.content_plan_item_id
+    ):
+        raise HTTPException(404, "Visual unavailable")
+    prefix = f"users/{user_id}/plan/{row.plan_item_id}/pool/"
+    if (
+        row.status != "ready"
+        or row.kind != "image"
+        or str(row.gcs_generation or "") != asset.generation
+        or not row.gcs_path.startswith(prefix)
+        or any(part in {"", ".", ".."} for part in row.gcs_path[len(prefix) :].split("/"))
+    ):
+        raise HTTPException(409, "Visual changed; refresh the recipe")
+    path = row.gcs_path
+    await db.rollback()
+    try:
+        return await asyncio.to_thread(
+            storage.signed_get_url_for_generation, path, generation=asset.generation
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(409, "Visual changed; refresh the recipe") from exc
 
 
 @router.post("/jobs/{job_id}/device-render/uploads", response_model=DeviceExportReservationOut)

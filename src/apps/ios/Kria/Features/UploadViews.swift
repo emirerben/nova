@@ -65,7 +65,7 @@ struct FootagePickerView: View {
                 isPresented: $showingPhotosPicker,
                 selection: $photoItems,
                 maxSelectionCount: max(1, selectionCapacity.remaining),
-                matching: role == .visual ? .any(of: [.videos, .images]) : .videos
+                matching: role == .visual ? (destination == .phonePhotos ? .images : .any(of: [.videos, .images])) : .videos
             )
             .onChange(of: photoItems) { _, items in Task { await importPhotoItems(items) } }
             }
@@ -76,13 +76,15 @@ struct FootagePickerView: View {
             .disabled(selectionCapacity.remaining == 0 || !destination.canUpload || reservedClipCount > 0)
             .fileImporter(
                 isPresented: $showingFileImporter,
-                allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? [.movie, .image] : [.movie],
+                allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? (destination == .phonePhotos ? [.image] : [.movie, .image]) : [.movie],
                 allowsMultipleSelection: selectionCapacity.remaining > 1,
                 onCompletion: importFiles
             )
             .sheet(item: $consentSelection) { selection in
                 if selection.purpose == .analysisProxy {
                     AnalysisUploadConsentView { beginImport(selection) }
+                } else if selection.rendersOnPhone {
+                    CloudUploadConsentView(detail: CloudUploadConsentView.phonePhotosDetail) { beginImport(selection) }
                 } else {
                     CloudUploadConsentView { beginImport(selection) }
                 }
@@ -120,7 +122,8 @@ struct FootagePickerView: View {
     }
     private func requestConsent(source: UploadSource) {
         guard destination.canUpload else { return }
-        consentSelection = UploadConsentSelection(source: source, purpose: destination == .phone ? .analysisProxy : .cloudRenderSource)
+        consentSelection = UploadConsentSelection(source: source, purpose: destination == .phone ? .analysisProxy : .cloudRenderSource,
+                                                  rendersOnPhone: destination == .phonePhotos)
     }
     private func beginImport(_ selection: UploadConsentSelection) {
         consentedPurpose = selection.purpose
@@ -168,6 +171,7 @@ private struct UploadConsentSelection: Identifiable {
     let id = UUID()
     let source: UploadSource
     let purpose: UploadPurpose
+    var rendersOnPhone = false
 }
 
 struct ClipSelectionCapacity: Equatable, Sendable {

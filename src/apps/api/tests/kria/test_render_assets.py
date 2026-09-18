@@ -1,7 +1,9 @@
 import pytest
 from pydantic import ValidationError
 
-from app.kria.render_assets import RenderAssetManifest
+from app.kria.render_assets import RenderAssetManifest, VisualRenderAsset
+
+VISUAL_ID = "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10"
 
 
 def original(**changes):
@@ -22,6 +24,16 @@ def library():
         "catalog_id": "track-1",
         "generation": "123456",
         "fingerprint": {"sha256": "b" * 64, "byte_count": 1024},
+    }
+
+
+def visual():
+    return {
+        "kind": "visual",
+        "id": f"visual-{VISUAL_ID}",
+        "visual_id": VISUAL_ID,
+        "generation": "777",
+        "fingerprint": {"sha256": "c" * 64, "byte_count": 2048},
     }
 
 
@@ -83,3 +95,83 @@ def test_aliases_for_same_bytes_and_new_generations_are_valid():
         ]
     )
     assert len(manifest.assets) == 3
+
+
+def test_visual_round_trips_by_discriminator_beside_other_kinds():
+    document = {"version": 1, "assets": [original(), library(), visual()]}
+    manifest = RenderAssetManifest.model_validate(document)
+    assert manifest.model_dump(mode="json") == document
+    assert [type(asset).__name__ for asset in manifest.assets] == [
+        "OriginalRenderAsset",
+        "LibraryRenderAsset",
+        "VisualRenderAsset",
+    ]
+    manifest.require_references({"clip-1", "music-1", f"visual-{VISUAL_ID}"})
+
+
+@pytest.mark.parametrize("field", ["url", "gcs_path", "relative_path", "download_url"])
+def test_visual_cannot_carry_storage_locations(field):
+    # The pool path stays private job state; only the grant resolves it.
+    with pytest.raises(ValidationError):
+        RenderAssetManifest(assets=[visual() | {field: "users/u/plan/i/pool/photo.jpg"}])
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"id": ""},
+        {"id": "visual 1"},
+        {"visual_id": ""},
+        {"visual_id": f" {VISUAL_ID}"},
+        {"generation": ""},
+        {"generation": "77 7"},
+        {"catalog": "music"},
+        {"media_id": VISUAL_ID},
+        {"kind": "library"},
+        {"fingerprint": {"sha256": "C" * 64, "byte_count": 2048}},
+        {"fingerprint": {"sha256": "c" * 64, "byte_count": 0}},
+    ],
+)
+def test_invalid_visual_identity_fails_closed(patch):
+    with pytest.raises(ValidationError):
+        RenderAssetManifest(assets=[visual() | patch])
+
+
+def test_visual_without_a_pinned_generation_is_rejected():
+    document = visual()
+    del document["generation"]
+    with pytest.raises(ValidationError):
+        RenderAssetManifest(assets=[document])
+
+
+def test_duplicate_visual_ids_and_conflicting_visual_bytes_are_rejected():
+    with pytest.raises(ValidationError, match="unique"):
+        RenderAssetManifest(assets=[visual(), visual()])
+    with pytest.raises(ValidationError, match="different bytes"):
+        RenderAssetManifest(
+            assets=[
+                visual(),
+                visual() | {"id": "alias", "fingerprint": {"sha256": "d" * 64, "byte_count": 2048}},
+            ]
+        )
+
+
+def test_visual_aliases_generations_and_namespaces_stay_distinct():
+    manifest = RenderAssetManifest(
+        assets=[
+            visual(),
+            visual() | {"id": "alias"},
+            # A replaced pool photo is a new generation, so new bytes are valid.
+            visual()
+            | {
+                "id": "replaced",
+                "generation": "778",
+                "fingerprint": {"sha256": "d" * 64, "byte_count": 4096},
+            },
+            # Identity keys are namespaced by kind: the same id string as an
+            # original or a library item never collides with a visual.
+            original() | {"id": "original", "media_id": VISUAL_ID},
+            library() | {"id": "library", "catalog_id": VISUAL_ID, "generation": "777"},
+        ]
+    )
+    assert sum(isinstance(asset, VisualRenderAsset) for asset in manifest.assets) == 3

@@ -1679,6 +1679,7 @@
                 "hevcDecode",
                 "hdr",
                 "local1080Export",
+                "stillImages",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -1787,6 +1788,7 @@
                 "hevcDecode",
                 "hdr",
                 "local1080Export",
+                "stillImages",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -5058,7 +5060,8 @@
               "discriminator": {
                 "mapping": {
                   "library": "#/components/schemas/LibraryRenderAsset",
-                  "original": "#/components/schemas/OriginalRenderAsset"
+                  "original": "#/components/schemas/OriginalRenderAsset",
+                  "visual": "#/components/schemas/VisualRenderAsset"
                 },
                 "propertyName": "kind"
               },
@@ -5068,6 +5071,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/LibraryRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/VisualRenderAsset"
                 }
               ]
             },
@@ -6924,6 +6930,52 @@
           "window_end"
         ],
         "title": "VisualMediaPlacement",
+        "type": "object"
+      },
+      "VisualRenderAsset": {
+        "additionalProperties": false,
+        "description": "A photo from the job owner's Visuals pool (``PlanItemAsset``), pinned to\none storage generation. The grant re-checks ownership and the generation;\nthe device re-hashes the downloaded bytes against ``fingerprint``.",
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "visual",
+            "enum": [
+              "visual"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "visual_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Visual Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "visual_id",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "VisualRenderAsset",
         "type": "object"
       },
       "VisualShot": {

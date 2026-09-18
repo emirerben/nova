@@ -1,8 +1,9 @@
 """Immutable assets for portable render programs.
 
 Recipes carry identities, never download URLs or storage paths. Original bytes
-resolve on the owning device. Library bytes require a separately authorized,
-short-lived download grant for the exact catalog generation and fingerprint.
+resolve on the owning device. Library bytes and creator Visuals-pool photos
+require a separately authorized, short-lived download grant for the exact
+generation and fingerprint.
 """
 
 from __future__ import annotations
@@ -37,7 +38,21 @@ class LibraryRenderAsset(_AssetModel):
     fingerprint: RenderFingerprint
 
 
-RenderAsset = Annotated[OriginalRenderAsset | LibraryRenderAsset, Field(discriminator="kind")]
+class VisualRenderAsset(_AssetModel):
+    """A photo from the job owner's Visuals pool (``PlanItemAsset``), pinned to
+    one storage generation. The grant re-checks ownership and the generation;
+    the device re-hashes the downloaded bytes against ``fingerprint``."""
+
+    kind: Literal["visual"] = "visual"
+    id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    visual_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    fingerprint: RenderFingerprint
+
+
+RenderAsset = Annotated[
+    OriginalRenderAsset | LibraryRenderAsset | VisualRenderAsset, Field(discriminator="kind")
+]
 
 
 class RenderAssetManifest(_AssetModel):
@@ -50,11 +65,12 @@ class RenderAssetManifest(_AssetModel):
             raise ValueError("render asset IDs must be unique")
         sources: dict[tuple[str, ...], RenderFingerprint] = {}
         for asset in self.assets:
-            key = (
-                ("original", asset.media_id)
-                if isinstance(asset, OriginalRenderAsset)
-                else ("library", asset.catalog, asset.catalog_id, asset.generation)
-            )
+            if isinstance(asset, OriginalRenderAsset):
+                key = ("original", asset.media_id)
+            elif isinstance(asset, VisualRenderAsset):
+                key = ("visual", asset.visual_id, asset.generation)
+            else:
+                key = ("library", asset.catalog, asset.catalog_id, asset.generation)
             if key in sources and sources[key] != asset.fingerprint:
                 raise ValueError("one asset identity cannot describe different bytes")
             sources[key] = asset.fingerprint

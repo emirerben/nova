@@ -22,6 +22,7 @@ from app.schemas.edit_proposal import (
     EditConversationTurn,
     EditProposal,
     EditProposalSnapshot,
+    MediaRef,
     ProposalBrief,
     ProposalFailure,
     ProposalGuidance,
@@ -371,6 +372,32 @@ def expire_proposal_attempt(item: PlanItem, *, generation_attempt_id: str) -> bo
     )
     item.edit_proposal = expired.model_dump(mode="json")
     return True
+
+
+def renders_on_phone(media: list[MediaRef], owner_id: object) -> bool:
+    """Proxy sources mark a phone item exactly as the render dispatch gate does."""
+
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+    return bool(settings.phone_rendering_for(owner_id)) and any(
+        is_analysis_proxy_path(ref.gcs_path) for ref in media
+    )
+
+
+def phone_renderable_media(media: list[MediaRef], owner_id: object) -> list[MediaRef]:
+    """Keep a phone item's plan to media the iPhone can draw (KRI-121).
+
+    Pool videos have no on-device path, and pool photos need ``stillImages``.
+    Planning around them would only fail the device render, so leave them out
+    of the plan; a creator who explicitly asks for them is still told why at the
+    policy boundary (``PhoneMediaUnavailableError``). Every digest over a
+    phone item's media applies this same filter so approvals stay consistent.
+    """
+
+    if not renders_on_phone(media, owner_id):
+        return media
+    stills = "stillImages" in settings.phone_render_verified_features
+    return [ref for ref in media if ref.lane != "asset" or (stills and ref.kind == "image")]
 
 
 def direction_guidance_fingerprint(item: PlanItem, media_digest: str) -> str:

@@ -22,7 +22,12 @@ from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
 from app.pipeline.guided_story import _FRAME_S, GuidedStoryExecutionPlan, _story_canvas
 from app.schemas.guided_edit_revision import GUIDED_EDITOR_FPS
-from app.services.phone_sources import PhoneSourceBinding, require_bound_moment
+from app.services.phone_sources import (
+    PhoneSourceBinding,
+    PhoneVisualBinding,
+    require_bound_moment,
+    require_bound_visual,
+)
 
 
 class UnsupportedPhonePlan(ValueError):
@@ -88,8 +93,13 @@ def _clock_aligned(value: float) -> bool:
 
 
 def compile_phone_guided_plan(
-    plan: GuidedStoryExecutionPlan, bindings: tuple[PhoneSourceBinding, ...]
+    plan: GuidedStoryExecutionPlan,
+    bindings: tuple[PhoneSourceBinding, ...],
+    visuals: tuple[PhoneVisualBinding, ...] = (),
 ) -> EditRecipeV2:
+    """``visuals`` pins approved Visuals-pool photos (KRI-121). Callers pass them
+    only while ``stillImages`` is verified; without one, a photo moment fails
+    closed exactly as before."""
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.portable_text_layout import compile_text_overlay
 
@@ -120,26 +130,53 @@ def compile_phone_guided_plan(
     clips = []
     cursor = 0.0
     canvas = _story_canvas(plan.output_orientation)
+    if len({visual.media_id for visual in visuals}) != len(visuals):
+        raise ValueError("phone visuals must have unique media identities")
     for index, moment in enumerate(plan.story_timeline):
-        binding = require_bound_moment(
-            bindings,
-            media_id=moment.media_id,
-            path=moment.gcs_path,
-            generation=moment.generation,
-        )
-        if (
-            moment.kind != "video"
-            or moment.layout != "fullscreen"
-            or moment.image_motion is not None
-            or moment.look_preset not in {"none", "golden_hour"}
-            or moment.look_adjustments
-        ):
-            raise UnsupportedPhonePlan("unsupported phone moment treatment")
-        if moment.look_preset == "golden_hour" and (
-            (binding.original.width, binding.original.height) != (canvas.width, canvas.height)
-            or binding.original.orientation_degrees != 0
-        ):
-            raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
+        # A Visuals-pool photo renders as a fullscreen still from its pinned
+        # pool bytes. The native compositor throws on a look over a still and
+        # has no card/zoom treatment, so anything else keeps failing closed.
+        still = moment.lane == "asset" and moment.kind == "image"
+        visual = None
+        binding = None
+        if still:
+            if not visuals:
+                raise UnsupportedPhonePlan("unsupported phone photo", capability="stillImages")
+            visual = require_bound_visual(
+                visuals,
+                media_id=moment.media_id,
+                path=moment.gcs_path,
+                generation=moment.generation,
+            )
+            if (
+                moment.layout != "fullscreen"
+                or moment.image_motion is not None
+                or moment.look_preset != "none"
+                or moment.look_adjustments
+                or moment.source_crop is not None
+                or moment.playback_rate not in {None, 1}
+            ):
+                raise UnsupportedPhonePlan("unsupported phone photo treatment")
+        else:
+            binding = require_bound_moment(
+                bindings,
+                media_id=moment.media_id,
+                path=moment.gcs_path,
+                generation=moment.generation,
+            )
+            if (
+                moment.kind != "video"
+                or moment.layout != "fullscreen"
+                or moment.image_motion is not None
+                or moment.look_preset not in {"none", "golden_hour"}
+                or moment.look_adjustments
+            ):
+                raise UnsupportedPhonePlan("unsupported phone moment treatment")
+            if moment.look_preset == "golden_hour" and (
+                (binding.original.width, binding.original.height) != (canvas.width, canvas.height)
+                or binding.original.orientation_degrees != 0
+            ):
+                raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
         source_duration = moment.source_end_s - moment.source_start_s
         incoming = None
         expected_start = cursor
@@ -175,12 +212,20 @@ def compile_phone_guided_plan(
             expected_start -= duration
             if not _clock_aligned(expected_start):
                 raise UnsupportedPhonePlan("phone transition offset must match cloud milliseconds")
+        # A still has no source window: beat-snapped fast cuts keep the photo's
+        # nominal source_end_s while duration_s moves, and cloud renders the
+        # still for duration_s regardless.
         if (
             not math.isclose(
                 moment.output_start_s, expected_start, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
             )
-            or not math.isclose(
-                source_duration, moment.duration_s, abs_tol=_FRAME_S + _TIMING_ROUNDING_TOLERANCE_S
+            or (
+                not still
+                and not math.isclose(
+                    source_duration,
+                    moment.duration_s,
+                    abs_tol=_FRAME_S + _TIMING_ROUNDING_TOLERANCE_S,
+                )
             )
             or not math.isclose(
                 moment.output_end_s - moment.output_start_s,
@@ -189,6 +234,28 @@ def compile_phone_guided_plan(
             )
         ):
             raise UnsupportedPhonePlan("phone moment timing must preserve its exact source window")
+        if visual is not None:
+            asset = visual.render_asset()
+            manifest[asset.id] = asset
+            assets[asset.id] = MediaAsset(
+                id=asset.id,
+                relative_path=asset.id,
+                fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
+            )
+            clips.append(
+                TimelineClip(
+                    id=moment.moment_id,
+                    source_asset_id=asset.id,
+                    source_start=0,
+                    source_duration=moment.duration_s,
+                    timeline_start=moment.output_start_s,
+                    rate=1,
+                    transition=incoming,
+                )
+            )
+            cursor = moment.output_end_s
+            continue
+        assert binding is not None
         if not math.isclose(
             source_duration, moment.duration_s, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
         ):

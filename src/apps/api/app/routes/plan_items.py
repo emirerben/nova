@@ -2781,7 +2781,9 @@ async def _current_direction_media_refs(
                 content_hash=asset.content_hash,
             )
         )
-    return refs
+    from app.services.edit_proposals import phone_renderable_media  # noqa: PLC0415
+
+    return phone_renderable_media(refs, user_id)
 
 
 def _proposal_http_conflict(code: str, message: str) -> HTTPException:

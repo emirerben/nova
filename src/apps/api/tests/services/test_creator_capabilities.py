@@ -8,6 +8,7 @@ from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditSnaps
 from app.agents._schemas.creator_policy import (
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
+    PhoneMediaUnavailableError,
 )
 from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageCadenceConstraint
 from app.services import creator_capabilities as capabilities
@@ -201,35 +202,133 @@ def test_phone_only_strategy_rejects_audio_led_format_even_when_enabled(monkeypa
         )
 
 
-@pytest.mark.parametrize("pool_kind", ["image", "video"])
-def test_unused_pool_media_does_not_disable_phone_clips_but_cannot_be_selected(
-    monkeypatch, pool_kind
-) -> None:
+def _phone_manifest_with_pool(monkeypatch, pool, *, verified_features=(), allowed=True):
     _enable_guided(monkeypatch)
-    manifest = capabilities.resolve_creator_manifest(
+    monkeypatch.setattr(
+        capabilities.settings, "phone_render_verified_features", list(verified_features)
+    )
+    return capabilities.resolve_creator_manifest(
         item_id="item-phone",
         edit_format="montage",
-        media=[
-            {"media_id": "phone-a", "kind": "video"},
-            {"media_id": "asset-photo", "kind": pool_kind},
-        ],
+        media=[{"media_id": "phone-a", "kind": "video"}, *pool],
         phone_source_media_ids=["phone-a"],
-        phone_rendering_allowed=True,
+        phone_rendering_allowed=allowed,
     )
-    assert manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO].available
-    for strategy in (
-        CreativeStrategy(media_scope="all"),
-        CreativeStrategy(selected_media_ids=["asset-photo"]),
-        CreativeStrategy(montage_audio={"source_media_ids": ["asset-photo"]}),
-        CreativeStrategy(
+
+
+def _pool_strategies(pool_id: str) -> dict[str, CreativeStrategy]:
+    return {
+        "all": CreativeStrategy(media_scope="all"),
+        "selected": CreativeStrategy(selected_media_ids=[pool_id]),
+        "audio": CreativeStrategy(montage_audio={"source_media_ids": [pool_id]}),
+        "cadence": CreativeStrategy(
             montage_cadence=MontageCadenceConstraint(
-                source_media_ids=["phone-a", "asset-photo"],
+                source_media_ids=["phone-a", pool_id],
                 cut_duration_s=1,
             )
         ),
-    ):
-        with pytest.raises(MixedMediaTimingUnavailableError, match="bound video sources"):
+    }
+
+
+@pytest.mark.parametrize(
+    ("pool_kind", "verified_features"),
+    [("image", []), ("video", []), ("video", ["stillImages"])],
+)
+def test_unused_pool_media_does_not_disable_phone_clips_but_cannot_be_selected(
+    monkeypatch, pool_kind, verified_features
+) -> None:
+    manifest = _phone_manifest_with_pool(
+        monkeypatch,
+        [{"media_id": "asset-photo", "kind": pool_kind}],
+        verified_features=verified_features,
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO].available
+    for strategy in _pool_strategies("asset-photo").values():
+        # The phone subtype keeps every mixed-media handler working unchanged.
+        with pytest.raises(MixedMediaTimingUnavailableError, match="bound video sources") as exc:
             capabilities.compile_strategy_to_plan(manifest, strategy)
+        assert isinstance(exc.value, PhoneMediaUnavailableError)
+        assert exc.value.still_images_available is bool(verified_features)
+
+
+def test_phone_still_images_capability_requires_verified_device_stills(monkeypatch) -> None:
+    pool = [{"media_id": "asset-photo", "kind": "image"}]
+    unverified = _phone_manifest_with_pool(monkeypatch, pool, verified_features=["looks"])
+    # Absent, not merely unavailable, so flag-off manifests and their
+    # confirmation hashes are exactly what they were before stills existed.
+    assert capabilities.CAPABILITY_PHONE_STILL_IMAGES not in unverified.capabilities
+    assert unverified.manifest_hash == _phone_manifest_with_pool(monkeypatch, pool).manifest_hash
+
+    verified = _phone_manifest_with_pool(
+        monkeypatch, pool, verified_features=["looks", "stillImages"]
+    )
+    assert verified.capabilities[capabilities.CAPABILITY_PHONE_STILL_IMAGES].available
+    assert verified.manifest_hash != unverified.manifest_hash
+
+    disabled = _phone_manifest_with_pool(
+        monkeypatch, pool, verified_features=["stillImages"], allowed=False
+    )
+    stills = disabled.capabilities[capabilities.CAPABILITY_PHONE_STILL_IMAGES]
+    assert not stills.available
+    assert stills.reason_code == "disabled_by_setting"
+
+    cloud = capabilities.resolve_creator_manifest(
+        item_id="item-cloud",
+        edit_format="montage",
+        media=[{"media_id": "clip-a", "kind": "video"}, *pool],
+    )
+    assert capabilities.CAPABILITY_PHONE_STILL_IMAGES not in cloud.capabilities
+
+
+@pytest.mark.parametrize("scope", ["all", "selected"])
+def test_verified_phone_stills_allow_pool_photos(monkeypatch, scope) -> None:
+    manifest = _phone_manifest_with_pool(
+        monkeypatch,
+        [{"media_id": "asset-photo", "kind": "image"}],
+        verified_features=["stillImages"],
+    )
+    plan = capabilities.compile_strategy_to_plan(manifest, _pool_strategies("asset-photo")[scope])
+    assert plan.strategy.render_program == "guided"
+    assert [command.command for command in plan.commands] == [
+        "set_item_intent",
+        "draft_guided_proposal",
+        "dispatch_render",
+    ]
+    if scope == "all":
+        assert plan.strategy.selected_media_ids == ["phone-a", "asset-photo"]
+
+
+def test_verified_phone_stills_still_reject_pool_video_and_photo_sources(monkeypatch) -> None:
+    manifest = _phone_manifest_with_pool(
+        monkeypatch,
+        [
+            {"media_id": "asset-photo", "kind": "image"},
+            {"media_id": "asset-video", "kind": "video"},
+        ],
+        verified_features=["stillImages"],
+    )
+    # An unused pool video does not block a selected photo.
+    plan = capabilities.compile_strategy_to_plan(
+        manifest, CreativeStrategy(selected_media_ids=["asset-photo"])
+    )
+    assert plan.strategy.render_program == "guided"
+
+    photo_strategies = _pool_strategies("asset-photo")
+    for strategy in (
+        # Scope "all" pulls in the pool video.
+        photo_strategies["all"],
+        CreativeStrategy(selected_media_ids=["asset-photo", "asset-video"]),
+        # A still has no sound or source cuts to drive the montage.
+        photo_strategies["audio"],
+        photo_strategies["cadence"],
+        CreativeStrategy(
+            selected_media_ids=["asset-photo"],
+            montage_audio={"source_media_ids": ["phone-a", "asset-photo"]},
+        ),
+    ):
+        with pytest.raises(PhoneMediaUnavailableError, match="bound video sources") as exc:
+            capabilities.compile_strategy_to_plan(manifest, strategy)
+        assert exc.value.still_images_available is True
 
 
 def test_phone_original_audio_preserves_explicit_audio_policy(monkeypatch) -> None:

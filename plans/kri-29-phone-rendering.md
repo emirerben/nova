@@ -25,8 +25,10 @@ not pixel-identical encoding. Do not introduce new generated-media features.
 - [ ] Shared analysis/planning split that stops before cloud effect generation.
 - [ ] Visual-pool/narration local sources and licensed asset downloads
       (KRI-93 added the narration/voiceover `kind`-aware proxy contract; not yet
-      wired to `ProjectUploadDestination.resolve` or consumable by any recipe;
-      visual-pool stills still need their own upload-route investigation).
+      wired to `ProjectUploadDestination.resolve` or consumable by any recipe.
+      KRI-121 renders fullscreen Visuals-pool photos from their pinned pool
+      bytes behind the `stillImages` verified feature; pool videos and other
+      photo treatments still fail closed).
 - [ ] Chat creation and editor-save coordinator integration and local playback.
 - [ ] Explicit cloud consent, relinking, retry, and interruption user flows
       (KRI-94 closed one real gap: `enqueue` staged nothing durable until *after*

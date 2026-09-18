@@ -48,7 +48,7 @@ struct AttachmentSheet: View {
     private var uploadDestination: ProjectUploadDestination {
         ProjectUploadDestination.resolve(
             capabilities: capabilities?.phoneRendering,
-            sourcePurposes: media.map(\.uploadPurpose) + pendingRecords.filter { $0.projectID == projectID }.map { $0.purpose.rawValue },
+            sourcePurposes: ProjectUploadDestination.sourcePurposes(media: media, records: pendingRecords, projectID: projectID),
             role: role
         )
     }
@@ -65,11 +65,15 @@ struct AttachmentSheet: View {
                         }
                     }.pickerStyle(.segmented)
                     if role == .visual {
-                        Text("Photos, screenshots, or short supporting videos.").font(KriaFont.body(14))
+                        Text(uploadDestination == .cloud ? "Photos, screenshots, or short supporting videos." : "Photos and screenshots.").font(KriaFont.body(14))
                         if pool == nil, error == nil { ProgressView("Loading visuals…") }
                     }
-                    FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
-                        .id(role)
+                    // Until the pool loads, its limit is unknown; don't show a
+                    // disabled picker claiming the limit was reached.
+                    if role != .visual || pool != nil {
+                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
+                            .id(role)
+                    }
                     if role == .voiceover && uploadDestination == .cloud {
                         if recorder.isRecording {
                             Button("Stop recording") { Task { await finishRecording() } }.buttonStyle(CanonicalPrimaryButtonStyle())

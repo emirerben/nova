@@ -162,3 +162,34 @@ def test_mute_window_roundtrip_capability_and_timeline_boundary():
     document["audio"]["mute_windows"] = [window | {"end": recipe.duration + 1}]
     with pytest.raises(ValidationError, match="mute window exceeds the timeline"):
         EditRecipeV2.model_validate(document)
+
+
+def visual_document():
+    document = json.loads(FIXTURE.read_text())
+    original = document["asset_manifest"]["assets"][0]
+    document["asset_manifest"]["assets"][0] = {
+        "kind": "visual",
+        "id": original["id"],
+        "visual_id": "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10",
+        "generation": "777",
+        "fingerprint": original["fingerprint"],
+    }
+    return document
+
+
+def test_visual_asset_derives_still_images_capability():
+    # A client-declared capability list cannot omit it: an app that never
+    # verified pool-photo downloads must refuse the recipe, not drop the photo.
+    document = visual_document()
+    assert document["required_capabilities"] == []
+    recipe = EditRecipeV2.model_validate(document)
+    assert "stillImages" in recipe.required_capabilities
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+    assert recipe_digest(recipe) != recipe_digest(
+        EditRecipeV2.model_validate(json.loads(FIXTURE.read_text()))
+    )
+
+
+def test_original_only_recipe_does_not_require_still_images():
+    recipe = EditRecipeV2.model_validate(json.loads(FIXTURE.read_text()))
+    assert "stillImages" not in recipe.required_capabilities

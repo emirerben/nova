@@ -169,6 +169,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if motionScenes != nil { result.insert(.motionScenes) }
         if !audio.muteWindows.isEmpty || !visualFills.isEmpty || clips.contains(where: { $0.visualPlacement != nil }) { result.insert(.visualBlocks) }
         if !cameraPulses.isEmpty { result.insert(.cameraEffects) }
+        if assetManifest?.assets.contains(where: { if case .visual = $0.source { true } else { false } }) == true { result.insert(.stillImages) }
         if textLayers.contains(where: { $0.runs.contains(where: { !$0.fontVariations.isEmpty }) || $0.animationPhases != nil || $0.background != nil || $0.effect == .captionPop || $0.karaoke?.activeOnly != nil }) { result.insert(.authoredText) }
         if textLayers.contains(where: { $0.effect != .static && $0.effect != .none }) { result.insert(.animatedText) }
         if clips.contains(where: { $0.text != nil }) { result.insert(.animatedText) }
@@ -383,7 +384,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix,
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
-         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed
+         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, stillImages
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

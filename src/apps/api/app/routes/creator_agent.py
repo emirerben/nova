@@ -50,6 +50,7 @@ from app.agents._schemas.creator_policy import (
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
+    PhoneMediaUnavailableError,
     normalize_creator_strategy_media,
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
@@ -2356,6 +2357,33 @@ async def _run_planning_turn(
                 return await _response(db, locked)
             if isinstance(exc, MontageCadenceUnavailableError):
                 await _record_cadence_unavailable(db, locked, exc)
+                return await _response(db, locked)
+            if isinstance(exc, PhoneMediaUnavailableError):
+                # Checked before its mixed-media parent: a phone project
+                # rejecting Visuals media is not a photo/video timing outage.
+                locked.status = "failed"
+                locked.last_error = {
+                    "code": "phone_media_unavailable",
+                    "message": str(exc)[:300],
+                }
+                await append_event(
+                    db,
+                    locked,
+                    event_type="assistant_error",
+                    payload={
+                        "message": (
+                            "This edit renders on your phone. It can show Visuals photos "
+                            "as full-screen stills, but it can't use videos from Visuals "
+                            "or take sound or cut timing from a photo. "
+                            "No fallback edit was rendered."
+                            if exc.still_images_available
+                            else "This edit renders on your phone, which can only use the "
+                            "videos attached to this project, not photos or videos from "
+                            "Visuals. No fallback edit was rendered."
+                        ),
+                        "code": "phone_media_unavailable",
+                    },
+                )
                 return await _response(db, locked)
             if isinstance(exc, MixedMediaTimingUnavailableError):
                 locked.status = "failed"

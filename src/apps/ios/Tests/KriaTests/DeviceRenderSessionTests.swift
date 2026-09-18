@@ -147,11 +147,82 @@ private actor SessionRequest {
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [], role: .clip), .phone)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: nil, sourcePurposes: [phone], role: .clip), .paused)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: .disabled, sourcePurposes: [phone], role: .clip), .paused)
-        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .voiceover), .unsupportedRole)
-        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .visual), .unsupportedRole)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .voiceover), .voiceoverNeedsCloud)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .visual), .phonePhotos)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [cloud], role: .clip), .cloud)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone, cloud], role: .clip), .mixed)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: ["future"], role: .clip), .mixed)
+    }
+
+    /// KRI-121: accounts that render on iPhone keep every project on iPhone.
+    /// Visuals take photos for the iPhone to draw once the server verifies
+    /// `stillImages`; before that the sheet says so without greying the
+    /// buttons silently or sending the project to the cloud.
+    func testPhoneAccountsKeepVisualsOnTheIPhone() {
+        let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
+        let withoutStills = PhoneRenderingCapabilities(enabled: true, recipeVersions: [2],
+            verifiedFeatures: ["basicComposition", "positionedText", "audioMix", "local1080Export"])
+        for sources in [[], [phone]] {
+            XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: sources, role: .visual), .phonePhotos)
+            XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: withoutStills, sourcePurposes: sources, role: .visual), .photosUnavailableOnPhone)
+        }
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: .disabled, sourcePurposes: [phone], role: .visual), .paused)
+        XCTAssertTrue(ProjectUploadDestination.phonePhotos.canUpload)
+        XCTAssertFalse(ProjectUploadDestination.photosUnavailableOnPhone.canUpload)
+        XCTAssertFalse(ProjectUploadDestination.photosUnavailableOnPhone.message?.contains("cloud") ?? true)
+        // Accounts without iPhone rendering and existing cloud projects keep every Visuals kind.
+        for capabilities in [nil, PhoneRenderingCapabilities.disabled, enabled] {
+            XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: capabilities, sourcePurposes: [cloud], role: .visual), .cloud)
+        }
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: nil, sourcePurposes: [], role: .visual), .cloud)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: .disabled, sourcePurposes: [], role: .visual), .cloud)
+    }
+
+    func testFootageOnPhoneAccountsAlwaysRendersOnTheIPhone() {
+        let withoutStills = PhoneRenderingCapabilities(enabled: true, recipeVersions: [2],
+            verifiedFeatures: ["basicComposition", "positionedText", "audioMix", "local1080Export"])
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [], role: .clip), .phone)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: withoutStills, sourcePurposes: [], role: .clip), .phone)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [UploadPurpose.analysisProxy.rawValue], role: .clip), .phone)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: nil, sourcePurposes: [], role: .clip), .cloud)
+    }
+
+    /// Voiceover has no on-device path yet; it keeps its cloud route and says how to use it.
+    func testVoiceoverKeepsItsCloudRoute() {
+        let phone = UploadPurpose.analysisProxy.rawValue
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [], role: .voiceover), .cloud)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .voiceover), .voiceoverNeedsCloud)
+        XCTAssertFalse(ProjectUploadDestination.voiceoverNeedsCloud.canUpload)
+        XCTAssertTrue(ProjectUploadDestination.voiceoverNeedsCloud.message?.contains("remove this project’s footage") == true)
+    }
+
+    func testPendingUploadsDecideTheDestinationByRole() throws {
+        let project = UUID()
+        func record(_ purpose: UploadPurpose, _ role: CreationMediaRole, project: UUID = project) throws -> UploadRecoveryRecord {
+            let json = #"{"id":"\#(UUID().uuidString)","projectID":"\#(project.uuidString)","localFilePath":"/tmp/file","filename":"file","source":"photos","purpose":"\#(purpose.rawValue)","taskIdentifier":1,"retryCount":0}"#
+            var value = try JSONDecoder().decode(UploadRecoveryRecord.self, from: Data(json.utf8))
+            value.mediaRole = role
+            return value
+        }
+        let proxyClip = try record(.analysisProxy, .clip)
+        let pendingPhoto = try record(.cloudRenderSource, .visual)
+        let otherProject = try record(.analysisProxy, .clip, project: UUID())
+
+        // A lingering proxy upload (failed or awaiting attach) makes the project a
+        // phone project before any media is attached.
+        let lingering = ProjectUploadDestination.sourcePurposes(media: [], records: [proxyClip, otherProject], projectID: project)
+        XCTAssertEqual(lingering, [UploadPurpose.analysisProxy.rawValue])
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: lingering, role: .visual), .phonePhotos)
+
+        // A pending Visuals upload is not project media: it can't make a phone
+        // project mixed, and it can't pull an empty project to the cloud.
+        let attachedProxy = CreationAttachedMedia.parse(["media": .array([.object(["media_id": .string("analysis-proxy-1")])])])
+        let withPendingPhoto = ProjectUploadDestination.sourcePurposes(media: attachedProxy, records: [pendingPhoto], projectID: project)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: withPendingPhoto, role: .clip), .phone)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: withPendingPhoto, role: .visual), .phonePhotos)
+        let photoFirst = ProjectUploadDestination.sourcePurposes(media: [], records: [pendingPhoto], projectID: project)
+        XCTAssertEqual(photoFirst, [])
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: photoFirst, role: .clip), .phone)
     }
 
     func testAttachedProxyIdentityKeepsDestinationWhenContractIsOmitted() {

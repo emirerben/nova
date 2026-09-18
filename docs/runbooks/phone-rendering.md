@@ -118,7 +118,8 @@ proposal do not repair it.
   traversal paths, and escaping symlinks cannot resolve as originals.
 - `app/kria/render_assets.py` and `KriaMediaEngine/RenderAssets.swift` define the
   portable asset manifest: local media IDs plus exact fingerprints, or library
-  catalog IDs plus generations and fingerprints. The native resolver checks the
+  catalog IDs plus generations and fingerprints, or Visuals-pool photo IDs plus
+  generations and fingerprints (KRI-121, below). The native resolver checks the
   recipe identity against the local original binding. The library cache verifies
   copied bytes before installation, detects corruption, and rejects original
   sources. Neither manifest contains download URLs or storage paths. V2 device
@@ -229,22 +230,23 @@ proposal do not repair it.
   video/audio uploads for analysis and finished exports sync after rendering.
   Existing phone sources lock the destination: rollback pauses attachment,
   never converts it to original upload. Existing cloud projects retain their
-  original-upload consent. Mixed/unknown sources and unsupported attachment
-  roles are blocked. KRI-93 added a `kind` (`video`/`audio`) discriminator to
+  original-upload consent. Mixed/unknown sources are blocked, and so are
+  attachments a phone project can't render (see KRI-121 below). KRI-93 added
+  a `kind` (`video`/`audio`) discriminator to
   `OriginalMediaDescriptor`/`AnalysisProxyDescriptor` (both mirrors) so a
   narration/voiceover analysis-proxy contract can be constructed and
   registered — `MediaSourceContract.swift`'s `audioAnalysisProxy(...)`, the
   registration route's existing audio probe path
   (`creation_threads._probe_registered_media`), and a `media.kind`-vs-
   `proxy.original.kind` consistency check. `ProjectUploadDestination.resolve`
-  still routes `.voiceover` (and `.visual`) attachments to
-  `.cloud`/`.unsupportedRole` regardless — no recipe schema field exists yet
+  still routes `.voiceover` attachments to `.cloud`, or to
+  `.voiceoverNeedsCloud` on a phone project — no recipe schema field exists yet
   to carry a narration track (`MediaCapability.narrationAudio` is
   local-later), so flipping that gate before KRI-94+ lands would strand a
-  proxy-only original with nothing able to render it. "image" (visual-pool
-  stills) is intentionally not covered: the registration route has no
-  still-image probe path, and visual-pool attachments use an entirely
-  separate upload route (`plan_items/{id}/assets`) that needs its own look.
+  proxy-only original with nothing able to render it. "image" is still not a
+  proxy kind: Visuals-pool photos upload in full through their own route
+  (`plan_items/{id}/assets`) and render from those pool bytes through the
+  `visual` manifest kind (KRI-121), never from a device original.
 - `services/phone_sources.py` resolves selected server-owned upload receipts
   into immutable original bindings, rejects mixed/missing/conflicting sources,
   and requires each approved moment's media ID, path, and generation to match.
@@ -254,6 +256,85 @@ proposal do not repair it.
   text layers. Unsupported media treatments, transitions, and editor lanes
   reject instead of disappearing. Supported plans enter `awaiting_device`
   instead of a cloud-render state; the chat status card consumes this state.
+
+## Visuals-pool photos on the phone (KRI-121)
+
+Photos added through Visuals (`PlanItemAsset` rows, full originals under
+`users/{uid}/plan/{item}/pool/`) render on the iPhone as fullscreen stills
+once `stillImages` is in `PHONE_RENDER_VERIFIED_FEATURES`. Without it every
+path below behaves as before: the creator can't select pool media for a phone
+item, and a photo moment fails the job with `UnsupportedPhonePlan`
+(`phone_plan_unsupported`).
+
+- **Planning.** Phone manifests gain `phone_still_images`, so the creator can
+  put pool photos in scope. Pool videos, and photos named as montage audio or
+  cadence sources, still raise. The guided planner pins phone-item photos
+  fullscreen, overriding a "don't crop my photos" brief, because the device
+  draws no other photo layout. It also never offers a phone item pool media the
+  iPhone can't draw (`services/edit_proposals.phone_renderable_media`): pool
+  videos always, pool photos while `stillImages` is off. Every media digest over
+  a phone item applies the same filter, so the render stays on the phone instead
+  of failing on a video added from the web.
+- **Compile.** The worker hashes each photo the approved timeline shows, at
+  its pinned generation, into private `_phone_visuals_v1` job state
+  (`services/phone_visuals.py`, 25 MiB cap). `compile_phone_guided_plan`
+  turns each into a `visual` manifest asset (`visual_id`, `generation` and
+  SHA-256, never a path or URL) and a plain timeline clip: source start 0,
+  rate 1, no hold. The recipe then requires `stillImages`, which the pilot
+  gate checks against the verified list.
+- **Grant.** `POST /me/jobs/{id}/device-render/assets` signs the pinned
+  generation only while the row is still the job's plan-item image, ready, at
+  that generation, under its owner's pool prefix. Otherwise it returns 404
+  `Visual unavailable` or 409 `Visual changed; refresh the recipe`. Each photo
+  needs its own grant under the route's 30/minute limit, so the device waits
+  out a 429 (up to three 20s retries) instead of failing a photo-heavy render.
+- **Device.** `AuthorizedDeviceSourceResolver` downloads through the same
+  ephemeral session as library assets and installs into the content-addressed
+  `RenderLibraryCache`, which rejects bytes that don't match the SHA-256 and
+  byte count. `StillImageDerivative` then writes one orientation-applied,
+  cover-sized copy per source hash and size (`still-derivatives/`), because the
+  compositor keeps every still decoded for the whole render. Photos no larger
+  than the cover size render from the verified bytes, and the compositor
+  applies their EXIF orientation.
+
+**Still fails closed:** pool videos in a phone project, supporting cards,
+image motion, looks, source crops and speed changes on a photo, and
+voiceover/narration. An editor save that introduces one of these, or a photo
+the worker never bound, returns 422 `unsupported_phone_edit` instead of
+rendering something different.
+
+**iOS Add media.** Accounts with iPhone rendering keep every project on the
+iPhone: footage always uploads as analysis proxies, and Visuals accepts photos
+only (uploaded in full to the pool), whether or not footage is attached yet.
+Without `stillImages` the Visuals tab says photos aren't available yet for
+iPhone renders and to continue with footage; it never routes the project to
+the cloud. Voiceover keeps its existing cloud route: on a project that already
+has phone footage the sheet explains that adding a voiceover first (before
+footage) makes a cloud project. A pending Visuals upload never counts as
+project media, so it can't make a phone project `mixed` or pull a new project
+to the cloud.
+
+**Device check.** `scripts/ios/phone-photo-render-e2e.py` (run with the API
+venv; needs ffmpeg) compiles footage, a crossfade and a Visuals photo with the
+real `compile_phone_guided_plan` and prints the simulator command for
+`DevicePhotoRenderE2ETests`. That test renders the recipe through
+`AuthorizedDeviceSourceResolver` and `AVFoundationLocalExporter`, asserts the
+local route needs `stillImages`, and checks exported frames for the footage,
+the crossfade and the cover-cropped photo. It skips unless `KRIA_E2E_DIR` is set.
+
+**Rollout.** Old app builds strictly decode recipe manifests and required
+capabilities, so a `visual` asset or `stillImages` fails on them. Flip the
+feature only after pilot devices update:
+
+1. Merge the server change with `stillImages` absent; behavior is unchanged.
+2. Ship the iOS build to TestFlight and install it on every pilot device.
+3. Add `stillImages` to `PHONE_RENDER_VERIFIED_FEATURES` on API and worker.
+4. Verify a footage-plus-photos montage renders on a pilot device, photos
+   upright and filling the frame, and syncs.
+
+Rollback: remove `stillImages` from the secret. New phone jobs stop selecting
+or binding photos, and devices stop starting already-pinned recipes that need
+it; published outputs are unaffected.
 
 ## Device failure reporting and retry (KRI-114 P0-1/P0-3)
 
@@ -317,8 +398,11 @@ device performance and full preview/export visual parity remain release gates.
 
 ## Remaining implementation gates
 
-1. Extend local bindings to creator visual-pool and narration
-   assets, with separately consented cloud recovery and source relinking.
+1. Extend local bindings to narration assets and the rest of the visual pool
+   (pool videos, and photos as cards, with motion or with looks), with
+   separately consented cloud recovery and source relinking. Fullscreen pool
+   photos render on the phone behind `stillImages` (KRI-121); compare their
+   cover framing, silent audio and still/video crossfades against cloud.
 2. Separate shared cloud analysis/planning from media processing for every
    creator style. Phone jobs must persist a portable recipe and stop before any
    cloud effect generation or final encode. Preserve approval/revision fences

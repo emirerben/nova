@@ -55,6 +55,7 @@ and `KriaMediaEngine/PortableTextDrawing.swift`.
 | Custom filters | `boxblur`, `chromashift`, `colorbalance`, `colorchannelmixer`, `crop`, `curves`, `eq`, `fade`, `gblur`, `hflip`, `hue`, `noise`, `rotate`, `scale`, `setpts`, `tblend`, `unsharp`, `vflip`, `vignette`, `zoompan` (`pipeline/custom_effects.py`) | Not ported; combinations of up to six and timeline semantics required |
 | Media cards | Image/video, pip/fullscreen, `pop_in`, `dissolve-out`, rotation/position/scale (`agents/_schemas/media_overlay.py`) | Not compiled; text dissolve does not implement card dissolve |
 | Visual blocks | `montage`, `text_card`, `media`; cut/fade; solid/gradient/blur_previous/asset backgrounds; zoom/pan (`agents/_schemas/visual_block.py`) | Not compiled |
+| Visuals-pool media in guided timelines | Asset-lane image/video moments; `fullscreen`/`supporting_card` layout, `subtle_zoom_in` motion, looks (`pipeline/guided_story.py`) | Fullscreen photos compiled behind `stillImages` (KRI-121): pinned pool generation, on-device SHA-256, cover-sized upright derivative. Pool videos, supporting cards, image motion, and looks/crops/speed on photos fail closed. Cloud framing, audio and still/video crossfade parity unmeasured |
 | Carousel | `cards_stack`, `cover_flow`, `flipbook`, `scale_sweep` (`pipeline/carousel/effects.py`) | Not ported |
 | Motion presets | `card_stack`, `cloud_break`, `donut_text`, `evolving_type`, `film_strip`, `flow_field`, `kinetic_word`, `offer_swap`, `tag_stack` (`src/packages/motion-runtime/creator-blocks.catalog.json`) | Not ported; current and compatible persisted versions need coverage |
 | Speech/captions | Subtitled, recorded narration, self-narration/talking head; caption styles and corrections (`pipeline/captions.py`, `services/smart_captions.py`) | Analysis/planning split and native caption compiler outstanding |
@@ -68,10 +69,11 @@ and `KriaMediaEngine/PortableTextDrawing.swift`.
 - Visual blocks + embedded/grouped text + media/audio policies.
 - Looks + transitions + variable speed + source audio; portrait/landscape and phone orientation.
 - Motion scenes/carousels + user media + all exposed controls and persisted versions.
-- Local original bindings for footage, visual pool, overlays, and recorded narration
-  (KRI-93 added the `kind`-aware proxy contract for narration/voiceover — see
-  [runbook](../../runbooks/phone-rendering.md) — but no recipe field consumes it yet,
-  and visual-pool stills remain unaddressed pending their own upload-route audit);
+- Local original bindings for footage, overlays, and recorded narration, plus the
+  visual pool (KRI-93 added the `kind`-aware proxy contract for narration/voiceover —
+  see [runbook](../../runbooks/phone-rendering.md) — but no recipe field consumes it
+  yet; KRI-121 renders fullscreen pool photos from their pinned pool bytes rather
+  than device originals, while pool videos still fail closed);
   explicit cloud-recovery consent and relinking after missing files or another device.
 - Final poster/publication side effects, retention/account deletion, upload renewal,
   Gallery/cross-device viewing, and revision-fenced retry/recovery.

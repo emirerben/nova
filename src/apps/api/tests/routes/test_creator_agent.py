@@ -2911,6 +2911,111 @@ async def test_planning_fails_closed_when_mixed_media_specialist_is_unavailable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pool_kind", "verified_features", "message"),
+    [
+        (
+            "image",
+            [],
+            "This edit renders on your phone, which can only use the videos attached "
+            "to this project, not photos or videos from Visuals. "
+            "No fallback edit was rendered.",
+        ),
+        (
+            "video",
+            ["stillImages"],
+            "This edit renders on your phone. It can show Visuals photos as full-screen "
+            "stills, but it can't use videos from Visuals or take sound or cut timing "
+            "from a photo. No fallback edit was rendered.",
+        ),
+    ],
+)
+async def test_planning_names_phone_media_rejection_honestly(
+    monkeypatch, pool_kind, verified_features, message
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(
+        creator_capabilities.settings, "phone_render_verified_features", verified_features
+    )
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-pool-1", "kind": pool_kind},
+        ],
+        phone_source_media_ids=["clip-1"],
+        phone_rendering_allowed=True,
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=1,
+        active_plan=None,
+        last_error=None,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(edit_format="montage", media_scope="all"),
+        summary="Use everything.",
+    )
+    append_event = AsyncMock()
+    response = SimpleNamespace(status="failed")
+
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Use all of my footage",
+    )
+
+    assert result is response
+    assert session.status == "failed"
+    assert session.active_plan is None
+    assert session.last_error == {
+        "code": "phone_media_unavailable",
+        "message": "phone rendering requires bound video sources",
+    }
+    assert append_event.await_args.kwargs["event_type"] == "assistant_error"
+    assert append_event.await_args.kwargs["payload"] == {
+        "message": message,
+        "code": "phone_media_unavailable",
+    }
+
+
+@pytest.mark.asyncio
 async def test_planning_repairs_missing_model_media_ids_from_authoritative_manifest(
     monkeypatch,
 ) -> None:

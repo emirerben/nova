@@ -2,7 +2,11 @@ import copy
 
 import pytest
 
-from app.services.phone_sources import bind_phone_sources, require_bound_moment
+from app.services.phone_sources import (
+    PHONE_VISUALS_FIELD,
+    bind_phone_sources,
+    require_bound_moment,
+)
 from app.services.public_assembly_plan import _strip_private_state
 
 
@@ -90,3 +94,20 @@ def test_private_bindings_removed_at_every_public_nesting_level():
     assert _strip_private_state(
         {"_phone_sources_v1": [receipt()], "variants": [{"_phone_sources_v1": [receipt()]}]}
     ) == {"variants": [{}]}
+
+
+def test_private_photo_receipts_removed_at_every_public_nesting_level():
+    # Photo receipts hold pool storage paths; only the recipe identity is public.
+    photo = {
+        "media_id": "5b3f6a1e-8f1c-4c55-9a8e-2f7d1c9b0a11",
+        "gcs_path": "users/u/plan/i/pool/photo.jpg",
+        "generation": "77",
+        "sha256": "c" * 64,
+        "byte_count": 10,
+    }
+    assert _strip_private_state(
+        {
+            PHONE_VISUALS_FIELD: [photo],
+            "variants": [{PHONE_VISUALS_FIELD: [photo], "variant_id": "guided_story"}],
+        }
+    ) == {"variants": [{"variant_id": "guided_story"}]}
