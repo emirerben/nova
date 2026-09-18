@@ -16,6 +16,21 @@ class Settings(BaseSettings):
     phone_rendering_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
     phone_render_user_ids: list[UUID] = Field(default_factory=list)
+    # Kill switch for the 2026-09-18 font/effect qualification relaxation in
+    # `app/services/phone_rollout.py`. False (default): any bundled-registry
+    # font (assets/fonts/font-registry.json) with correct variation
+    # coordinates, on any of the 17 native-supported text effects, qualifies —
+    # this is what makes an ordinary guided story (static Fraunces title +
+    # Inter-Bold static context labels) actually compile for the pilot. True
+    # restores the original narrow per-instance gate (only the exact
+    # Fraunces-Bold.ttf/DMSans-Bold.ttf byte/coordinate match on plain
+    # `fade-in`, no giant title) byte-identically. Rollback:
+    # `fly secrets set PHONE_FONT_QUALIFICATION_STRICT=true --app nova-video`
+    # + `fly machine restart <id>` (api + worker). See
+    # docs/runbooks/phone-rendering.md and
+    # docs/reviews/kri-29/capability-matrix.md ("Font/authored-text
+    # qualification is per-instance").
+    phone_font_qualification_strict: bool = False
     # A device recipe with no delivery (no poll, no upload) for this long is
     # presumed abandoned (app crashed, app deleted, notification never seen).
     # The reaper (app/tasks/device_render_reaper.py) flips it to

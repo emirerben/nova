@@ -159,6 +159,80 @@ def test_source_window_truncates_only_when_shifting_cannot_fit_it():
     assert clip.source_duration == pytest.approx(2.45)
 
 
+def test_ordinary_plan_leaves_a_title_holding_to_the_end_untouched():
+    # No clip needs a refit here, so the compiled timeline matches
+    # `plan.resolved_duration_s` exactly (modulo the ordinary millisecond
+    # rounding noise this module already tolerates elsewhere) and a title
+    # that legitimately holds to the very end of the story must compile
+    # byte-identically -- the shrink clamp below must never fire here.
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id="title",
+            text="Title",
+            start_s=0,
+            end_s=plan.resolved_duration_s,
+            font_family="Inter",
+            effect="static",
+        )
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert recipe.duration == pytest.approx(plan.resolved_duration_s)
+    assert recipe.text_layers[0].end == pytest.approx(plan.resolved_duration_s)
+    assert recipe.text_layers[0].start == 0
+
+
+def test_shrunk_refit_timeline_clamps_text_layers_instead_of_failing_validation():
+    # `bindings[0].original.duration_s = 2.5` shrinks the compiled clip to
+    # 2.45s (see test_source_window_truncates_only_when_shifting_cannot_fit_it)
+    # while `moment.output_end_s`/`plan.resolved_duration_s` -- and therefore
+    # `cursor`'s own consistency check just above -- still say 3s. A title
+    # compiled to hold to that nominal 3s end used to make
+    # `EditRecipeV2.validate_asset_manifest` raise "text layer exceeds the
+    # timeline" (prod job 71d4b358-b927-4a57-ba37-f87f5e232085). It must now
+    # compile by clamping the title to the recipe's real, shrunk duration.
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 2.5  # shorter than the requested 3s duration itself
+    plan.text_elements = [
+        TextElement(
+            id="title",
+            text="Title",
+            start_s=0,
+            end_s=plan.resolved_duration_s,  # hold to the (nominal) end of the story
+            font_family="Inter",
+            effect="static",
+        )
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)  # must not raise
+    assert recipe.duration == pytest.approx(2.45)
+    assert recipe.text_layers[0].end <= recipe.duration
+    assert recipe.text_layers[0].end == pytest.approx(2.4)  # 2.45 - the 0.05s safety margin
+    assert recipe.text_layers[0].start == 0
+
+
+def test_shrunk_refit_timeline_shrinks_a_layer_start_too_when_it_would_go_negative_length():
+    # A layer whose window sits entirely inside the clipped-off tail must
+    # have its `start` pulled back too, not just its `end`, so it keeps at
+    # least one frame of duration instead of becoming inverted/degenerate.
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = 2.5  # shrinks the compiled timeline to 2.45s
+    plan.text_elements = [
+        TextElement(
+            id="late-label",
+            text="Late",
+            start_s=2.9,
+            end_s=3.0,
+            font_family="Inter",
+            effect="static",
+        )
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)  # must not raise
+    layer = recipe.text_layers[0]
+    assert layer.end == pytest.approx(2.4)
+    assert layer.end - layer.start == pytest.approx(1.0 / 30.0)
+    assert layer.start < layer.end
+
+
 def test_source_window_never_fits_exactly_to_the_device_boundary():
     # Reading a track to its precise reported duration is a classic
     # AVFoundation edge case -- the on-device export failed even after the

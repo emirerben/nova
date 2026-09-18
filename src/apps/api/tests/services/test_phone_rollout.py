@@ -40,6 +40,12 @@ def _default_font_recipe(family, *, giant=False):
 
 
 def test_qualified_font_does_not_qualify_giant_title(monkeypatch):
+    # Strict-mode pin: the narrow per-instance gate never qualified a giant
+    # title (any effect combined with `giant_title` was unqualified). In
+    # default mode `giant-title-wipe` has native support for every effect but
+    # handwriting, so this exact combination is no longer rejected there --
+    # see test_default_mode_allows_giant_title_on_non_handwriting_effects.
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", True)
     recipe = _default_font_recipe("Fraunces", giant=True)
     assert recipe.text_layers[0].giant_title is not None
     monkeypatch.setattr(
@@ -51,6 +57,7 @@ def test_qualified_font_does_not_qualify_giant_title(monkeypatch):
 
 @pytest.mark.parametrize("family", ["Fraunces", "DM Sans"])
 def test_default_variable_fonts_require_exact_qualification_and_capability(family, monkeypatch):
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", True)
     recipe = _default_font_recipe(family)
     monkeypatch.setattr(
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
@@ -80,6 +87,12 @@ def test_default_variable_fonts_require_exact_qualification_and_capability(famil
     ],
 )
 def test_default_font_qualification_cannot_expand_by_alias_or_coordinates(change, monkeypatch):
+    # Strict-mode pin: exact byte/coordinate qualification. In default mode
+    # most of these mutations (e.g. a different opsz, or a differently-cased
+    # bundled font) would qualify instead -- that's the point of the
+    # relaxation. See test_default_mode_rejects_* for the default-mode
+    # equivalents that still must fail.
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", True)
     recipe = _default_font_recipe("Fraunces")
     monkeypatch.setattr(
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
@@ -128,6 +141,7 @@ def test_default_font_qualification_cannot_expand_by_alias_or_coordinates(change
 def test_qualified_font_does_not_qualify_authored_phases(monkeypatch):
     from app.agents._schemas.text_animation_phases import TextAnimationPhases
 
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", True)
     recipe = _default_font_recipe("DM Sans")
     recipe.text_layers[0].animation_phases = TextAnimationPhases(loop="float")
     monkeypatch.setattr(
@@ -145,6 +159,11 @@ def test_guided_default_title_and_body_compile_through_phone_pilot(monkeypatch):
     from app.schemas.edit_proposal import EditProposalSnapshot
     from tests.pipeline.test_guided_story import _guided_snapshot
 
+    # Strict-mode pin: this is the exact 2026-09-14 default-variable-font
+    # fade-in scenario the narrow per-instance gate was written to allow.
+    # Default mode's broader test is
+    # test_default_mode_qualifies_static_title_and_context_labels below.
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", True)
     snapshot = EditProposalSnapshot.model_validate(_guided_snapshot()["approved_proposal"])
     snapshot.duration_s = 3
     snapshot.story_beats = snapshot.story_beats[:1]
@@ -223,6 +242,7 @@ def test_authored_phases_stay_blocked_until_device_parity_is_verified(monkeypatc
     from app.kria.recipes_v2 import EditRecipeV2
     from tests.kria.test_portable_text import text_document
 
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", True)
     recipe = EditRecipeV2.model_validate(text_document())
     recipe.text_layers[0].animation_phases = TextAnimationPhases(loop="float")
     monkeypatch.setattr(
@@ -242,4 +262,125 @@ def test_camera_program_cannot_bypass_device_qualification(monkeypatch):
         settings, "phone_render_verified_features", ["cameraEffects", *recipe.required_capabilities]
     )
     with pytest.raises(ValueError, match="Camera effects"):
+        validate_phone_pilot_recipe(recipe)
+
+
+# -- Default (non-strict) font/effect qualification (2026-09-18) -----------
+#
+# PHONE_FONT_QUALIFICATION_STRICT defaults to False. These pin the relaxed
+# gate: any bundled-registry font (assets/fonts/font-registry.json) with
+# correct variation coordinates, on any of the 17 native-supported text
+# effects, qualifies -- reproducing prod job b33e1c88-a8eb-4d51-81b6-
+# 388f7a32aebf (static Fraunces title + Inter-Bold static context labels).
+
+
+def test_default_mode_qualifies_static_title_and_context_labels(monkeypatch):
+    import sys
+
+    from app.agents._schemas.text_element import TextElement
+
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", False)
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id="title",
+            text="This view",
+            start_s=0.5,
+            end_s=2.5,
+            font_family="Fraunces",
+            effect="static",
+            size_px=64,
+        )
+    ]
+    plan.context_label_text_elements = [
+        TextElement(
+            id="context",
+            text="Context",
+            start_s=0,
+            end_s=3,
+            font_family="Inter",
+            effect="static",
+        )
+    ]
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert {
+        asset.catalog_id for asset in recipe.asset_manifest.assets if asset.kind == "library"
+    } == {"Fraunces-Bold.ttf", "Inter-Bold.ttf"}
+    if sys.platform != "linux":
+        for layer in recipe.text_layers:
+            for run in layer.runs:
+                if run.font_variations:
+                    run.font_variations["opsz"] = 9
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+
+
+def test_default_mode_allows_giant_title_on_non_handwriting_effects(monkeypatch):
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", False)
+    recipe = _default_font_recipe("Fraunces", giant=True)
+    assert recipe.text_layers[0].giant_title is not None
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+
+
+def test_default_mode_rejects_font_outside_the_bundled_registry(monkeypatch):
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", False)
+    recipe = _default_font_recipe("Fraunces")
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    run = recipe.text_layers[0].runs[0]
+    asset = next(a for a in recipe.asset_manifest.assets if a.id == run.font_asset_id)
+    replacement = asset.model_copy(update={"catalog_id": "NotBundled.ttf"})
+    recipe.asset_manifest = recipe.asset_manifest.model_copy(
+        update={
+            "assets": tuple(
+                replacement if a.id == asset.id else a for a in recipe.asset_manifest.assets
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="font instance"):
+        validate_phone_pilot_recipe(recipe)
+
+
+def test_default_mode_rejects_variable_font_missing_variations(monkeypatch):
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", False)
+    recipe = _default_font_recipe("Fraunces")
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    recipe.text_layers[0].runs[0].font_variations.clear()
+    with pytest.raises(ValueError, match="font instance"):
+        validate_phone_pilot_recipe(recipe)
+
+
+def test_default_mode_still_blocks_giant_title_handwriting(monkeypatch):
+    plan, sources = fixture()
+    recipe = compile_phone_guided_plan(plan, sources)
+    layer, _ = compile_text_overlay(
+        dict(
+            text="GO",
+            effect="handwriting",
+            start_s=0,
+            end_s=3,
+            font_family="Inter",
+            text_size_px=62,
+            preserve_font_size=True,
+            theme_transition={"type": "giant-title-wipe"},
+        ),
+        layer_id="slow",
+        canvas=PORTRAIT,
+    )
+    recipe.text_layers = [layer]
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", False)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        list(recipe.required_capabilities) + ["animatedText", "positionedText"],
+    )
+    with pytest.raises(ValueError, match="Giant-title handwriting"):
         validate_phone_pilot_recipe(recipe)
