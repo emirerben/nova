@@ -556,6 +556,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(text.waitForExistence(timeout: 8))
         let second = app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000101"].firstMatch
         XCTAssertEqual(text.frame.midY, second.frame.midY, accuracy: 1)
+        let originalTiming = text.value as? String ?? ""
         let start = text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.6, thenDragTo: start.withOffset(CGVector(dx: 35, dy: 0)))
         waitForStableRowRelation(text, second) { abs($0) > 30 }
@@ -574,13 +575,17 @@ final class NativeEditorInspectorUITests: XCTestCase {
         reverse.press(forDuration: 0.05, thenDragTo: reverse.withOffset(CGVector(dx: 70, dy: 0)))
         XCTAssertEqual(time.value as? String, beforeSwipe)
         let moveBack = text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        moveBack.press(forDuration: 0.6, thenDragTo: moveBack.withOffset(CGVector(dx: -40, dy: 0)))
-        // The async lane repack's tail latency is longer than it first looks:
-        // local looping saw occasional stalls past 10s and 15s (still landing
-        // on the pre-fix 651 vs 701 one-row-off reading), but 20/20 passed at
-        // 25s. Match that observed budget rather than the file's usual 15s.
-        waitForStableRowRelation(text, second, timeout: 25) { abs($0) <= 1 }
-        XCTAssertEqual(text.frame.midY, second.frame.midY, accuracy: 1)
+        // Synthetic drags lose part of their translation on a busy simulator.
+        // A -40pt reverse once left the text at 0.09s, still overlapping its
+        // neighbour, so two rows were correct. Overshoot: the move clamps at 0.
+        moveBack.press(forDuration: 0.6, thenDragTo: moveBack.withOffset(CGVector(dx: -120, dy: 0)))
+        waitForStableRowRelation(text, second) { abs($0) <= 1 }
+        XCTAssertEqual(
+            text.frame.midY, second.frame.midY, accuracy: 1,
+            "text.value=\(text.value ?? "nil") second.value=\(second.value ?? "nil")"
+        )
+        // The value now carries a ", selected" suffix; compare the timing prefix.
+        XCTAssertEqual((text.value as? String)?.hasPrefix(originalTiming), true, "text.value=\(text.value ?? "nil") originalTiming=\(originalTiming)")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
     }
 
@@ -751,11 +756,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         element.tap()
     }
 
-    /// Lane repacking after a timing-drag gesture is suppressed during the
-    /// gesture itself and lands on a later async refresh, not synchronously
-    /// with its completion. Wait for the vertical relation between the two
-    /// rows to both satisfy `holds` and hold steady across two consecutive
-    /// polls before trusting a frame snapshot of them.
+    /// Lanes repack synchronously when a timing drag ends, so this only gives
+    /// XCUITest time to observe the new layout: the row relation must satisfy
+    /// `holds` on two consecutive polls. A timeout means the items really do
+    /// still overlap in time (test geometry), not a stale layout.
     private func waitForStableRowRelation(_ text: XCUIElement, _ second: XCUIElement, timeout: TimeInterval = 5, holds: @escaping (CGFloat) -> Bool) {
         var previousDelta: CGFloat?
         let stable = NSPredicate { _, _ in
