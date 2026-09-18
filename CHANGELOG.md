@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.77.0] - 2026-09-18
+
+### Changed
+- fix(ios): show a new plan's confirmation stage even when a cut is already ready (#1088) <!-- release-pr: 1088 -->
+
 ## [0.76.76.0] - 2026-09-18
 
 ### Changed
