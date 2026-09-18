@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.74.0] - 2026-09-18
+
+### Changed
+- fix(creator): keep the accepted direction on retry re-plans and fill default project titles (#1085) <!-- release-pr: 1085 -->
+
 ## [0.76.73.0] - 2026-09-18
 
 ### Changed
