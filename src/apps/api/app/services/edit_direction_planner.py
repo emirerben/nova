@@ -1005,9 +1005,10 @@ def deterministic_labeled_beats(
         raw.append((label[:80], label, beat_refs, seconds, True))
     if outro_ref is not None:
         raw.append(("Closing", "", [outro_ref], closing_hold_s, False))
-    # StoryBeat.duration_s is a 1-12 weight the compiler scales to the target;
-    # keep the ratios while respecting the schema bounds.
-    scale = min(1.0, 12.0 / max(item[3] for item in raw))
+    # StoryBeat.duration_s is a weight the compiler scales to the target;
+    # keep the ratios while respecting the schema bounds (clips may now run
+    # their full length, so only the schema's overall ceiling applies here).
+    scale = min(1.0, MAX_PROPOSAL_DURATION_S / max(item[3] for item in raw))
     return [
         StoryBeat(
             beat_id=f"creator-label-beat-{index + 1}",
@@ -1022,6 +1023,34 @@ def deterministic_labeled_beats(
     ]
 
 
+def _guided_capacities_s(
+    selected: Sequence[MediaRef],
+    *,
+    transition_type: str,
+    transition_duration_s: float,
+) -> list[float]:
+    """Per-moment usable capacity across `selected` in flat fallback order.
+
+    Mirrors `_allocate_beat_windows`'s per-moment overlap accounting: every
+    moment pays one transition overlap into the next moment except the
+    sequence's globally last one. `selected` order therefore only affects
+    *which* moment is treated as last -- since every video pays the same
+    overlap, the total is order-independent; only the presence of an image
+    (an unbounded hold) changes the result, whose capacity is ``math.inf``.
+    """
+
+    from app.pipeline.guided_story import guided_moment_capacity_s  # noqa: PLC0415
+
+    if not selected:
+        return []
+    overlap_s = transition_duration_s if transition_type != "none" else 0.0
+    last_index = len(selected) - 1
+    return [
+        guided_moment_capacity_s(ref, overlap_s=0.0 if index == last_index else overlap_s)
+        for index, ref in enumerate(selected)
+    ]
+
+
 def _guided_capacity_s(
     selected: Sequence[MediaRef],
     *,
@@ -1030,30 +1059,17 @@ def _guided_capacity_s(
 ) -> float:
     """Total achievable story duration across `selected` in flat fallback order.
 
-    Mirrors `_allocate_beat_windows`'s per-moment overlap accounting: every
-    moment pays one transition overlap into the next moment except the
-    sequence's globally last one. `selected` order therefore only affects
-    *which* moment is treated as last -- since every video pays the same
-    overlap, the total is order-independent; only the presence of an image
-    (an unbounded hold) changes the result, in which case this returns
-    ``math.inf``.
+    See `_guided_capacities_s` for the per-moment accounting this sums.
     """
 
-    from app.pipeline.guided_story import guided_moment_capacity_s  # noqa: PLC0415
-
-    if not selected:
+    capacities = _guided_capacities_s(
+        selected, transition_type=transition_type, transition_duration_s=transition_duration_s
+    )
+    if not capacities:
         return 0.0
-    overlap_s = transition_duration_s if transition_type != "none" else 0.0
-    total = 0.0
-    last_index = len(selected) - 1
-    for index, ref in enumerate(selected):
-        capacity = guided_moment_capacity_s(
-            ref, overlap_s=0.0 if index == last_index else overlap_s
-        )
-        if math.isinf(capacity):
-            return math.inf
-        total += capacity
-    return total
+    if any(math.isinf(capacity) for capacity in capacities):
+        return math.inf
+    return sum(capacities)
 
 
 def _select_capacity_aware_sources(
@@ -1208,14 +1224,28 @@ def deterministic_guided_beats(
     for index, ref in enumerate(selected):
         groups[index % beat_count].append(ref)
 
+    # Each beat's ceiling is its own clips' real (crossfade-overlap-adjusted)
+    # capacity -- not a flat per-beat schema number -- so a single long clip
+    # can hold for its full usable length instead of being scaled down to
+    # match its shorter beat-mates (job b2242487 follow-up: StoryBeat.duration_s
+    # is a schema-bound weight, but the weight this fallback hands the compiler
+    # must never claim more than the beat can structurally deliver).
+    per_ref_capacity_s = _guided_capacities_s(
+        selected, transition_type=transition_type, transition_duration_s=transition_duration_s
+    )
+    beat_capacity_s = [0.0] * beat_count
+    for index, capacity in enumerate(per_ref_capacity_s):
+        beat_capacity_s[index % beat_count] += capacity
+
     durations = [round(GUIDED_STORY_MIN_MOMENT_S * len(group), 3) for group in groups]
     remaining = round(target_s - sum(durations), 3)
     index = 0
     while remaining > 0.001:
-        capacity = round(12.0 - durations[index % beat_count], 3)
+        beat_index = index % beat_count
+        capacity = round(beat_capacity_s[beat_index] - durations[beat_index], 3)
         if capacity > 0:
             addition = min(remaining, capacity)
-            durations[index % beat_count] = round(durations[index % beat_count] + addition, 3)
+            durations[beat_index] = round(durations[beat_index] + addition, 3)
             remaining = round(remaining - addition, 3)
         index += 1
         if index > beat_count * 2 and remaining > 0.001:
@@ -1262,7 +1292,9 @@ def _compatibility_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
                 thought_source="ai_draft",
                 media_ids=media_ids,
                 layout="fullscreen",
-                duration_s=max(1.0, min(12.0, sum(cut.output_duration_s for cut in group))),
+                duration_s=max(
+                    1.0, min(MAX_PROPOSAL_DURATION_S, sum(cut.output_duration_s for cut in group))
+                ),
             )
         )
     return beats

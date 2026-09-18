@@ -1012,6 +1012,121 @@ def test_mixed_media_timing_allocator_keeps_photos_quick_and_videos_longer() -> 
     assert sum(durations) == pytest.approx(3.6, abs=0.001)
 
 
+def test_allocate_beat_durations_lets_a_long_clip_absorb_the_remainder() -> None:
+    """Product decision 2026-09-18: clips run any length. Within a beat, a
+    short clip gets exactly its own usable capacity and a long clip sharing
+    that beat absorbs the remainder -- not an equal split regardless of each
+    clip's length.
+    """
+
+    refs = [
+        SimpleNamespace(kind="video", duration_s=2.0),
+        SimpleNamespace(kind="video", duration_s=20.0),
+    ]
+
+    durations = _allocate_beat_durations(
+        refs,
+        beat_duration_s=15.0,
+        min_moment_s=1.4,
+        overlaps_s=[0.0, 0.0],
+        beat_topic="capacity",
+        mixed_media_timing=None,
+    )
+
+    assert durations[0] == pytest.approx(2.0, abs=0.001)
+    assert durations[1] == pytest.approx(13.0, abs=0.001)
+    assert sum(durations) == pytest.approx(15.0, abs=0.001)
+
+
+def test_allocate_beat_durations_splits_evenly_when_every_clip_has_ample_capacity() -> None:
+    """Byte-identical pin: when every clip in a beat can comfortably cover an
+    equal share, the water-fill split is a plain equal split, unchanged by
+    letting clips run any length (job b2242487 follow-up, 2026-09-18).
+    """
+
+    refs = [
+        SimpleNamespace(kind="video", duration_s=10.0),
+        SimpleNamespace(kind="video", duration_s=10.0),
+        SimpleNamespace(kind="video", duration_s=10.0),
+    ]
+
+    durations = _allocate_beat_durations(
+        refs,
+        beat_duration_s=9.0,
+        min_moment_s=1.4,
+        overlaps_s=[0.0, 0.0, 0.0],
+        beat_topic="even",
+        mixed_media_timing=None,
+    )
+
+    assert durations == [pytest.approx(3.0), pytest.approx(3.0), pytest.approx(3.0)]
+
+
+def test_guided_story_compiles_a_short_and_long_clip_sharing_one_beat() -> None:
+    """End-to-end: the strict compiler must accept a beat mixing a short and
+    a long clip and give the long clip most of the beat's screen time.
+    """
+
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id="short-clip",
+            gcs_path="users/u/short.mp4",
+            generation="1",
+            kind="video",
+            duration_s=2.0,
+        ),
+        MediaRef(
+            lane="clip",
+            media_id="long-clip",
+            gcs_path="users/u/long.mp4",
+            generation="1",
+            kind="video",
+            duration_s=20.0,
+        ),
+    ]
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        pace="balanced",
+        duration_s=15,
+        title="Short and long together",
+        media=media,
+        story_beats=[
+            StoryBeat(
+                beat_id="beat-1",
+                topic="Together",
+                thought="Two different lengths share one chapter.",
+                media_ids=["short-clip", "long-clip"],
+                duration_s=15,
+            ),
+        ],
+    )
+
+    validate_proposal_timing(snapshot)
+    plan = compile_execution_plan(
+        {
+            "proposal_version": 1,
+            "media_digest": canonical_media_digest(media),
+            "approved_proposal": snapshot.model_dump(mode="json"),
+            "media_identities": [
+                {
+                    "lane": ref.lane,
+                    "media_id": ref.media_id,
+                    "gcs_path": ref.gcs_path,
+                    "generation": ref.generation,
+                    "kind": ref.kind,
+                }
+                for ref in media
+            ],
+        },
+        track=None,
+    )
+
+    moments = {moment["media_id"]: moment for moment in plan["story_timeline"]}
+    assert moments["short-clip"]["duration_s"] == pytest.approx(2.0, abs=0.05)
+    assert moments["long-clip"]["duration_s"] > 12.5
+
+
 def test_mixed_media_profile_compiles_to_hard_cut_execution_plan() -> None:
     raw = _guided_snapshot()
     snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])

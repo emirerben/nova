@@ -21,6 +21,7 @@ from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     EDIT_CONVERSATION_MAX_TURNS,
     MAX_EDIT_PROPOSAL_MEDIA,
+    MAX_PROPOSAL_DURATION_S,
     EditConversationTurn,
     ProposalBrief,
     ProposalDuration,
@@ -52,7 +53,9 @@ class EditGuideRevisionBeat(BaseModel):
     topic: str = Field(min_length=1, max_length=80)
     thought: str = Field(default="", max_length=280)
     layout: Literal["fullscreen", "supporting_card"] = "fullscreen"
-    duration_s: float = Field(ge=1.0, le=12.0)
+    # Mirrors app.schemas.edit_proposal.StoryBeat.duration_s -- render-time
+    # capacity, not this schema bound, is the real per-chapter ceiling.
+    duration_s: float = Field(ge=1.0, le=MAX_PROPOSAL_DURATION_S)
     media_refs: list[str] = Field(default_factory=list, max_length=4)
 
 

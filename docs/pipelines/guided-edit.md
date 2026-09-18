@@ -369,6 +369,22 @@ fails before FFmpeg only when the complete selected set cannot fill the requeste
 version 1 and 2 plans keep their original portrait canvas, typography, and timing rules on
 redelivery, so a rolling deploy cannot reinterpret queued or already-rendered work.
 
+**Moment length is capacity-driven, not a flat per-clip ceiling (2026-09-18).** A chapter's
+`duration_s` is a schema-bound weight (`StoryBeat`/`DraftStoryBeat`, `ge=1.0,
+le=MAX_PROPOSAL_DURATION_S`) the compiler scales against the story's approved total -- it is no
+longer capped at 12s, so one strong clip may claim nearly the whole story instead of every chapter
+being trimmed to a uniform few seconds. Two places turn that weight into actual screen time, both
+already capacity-aware and unchanged by the cap increase: `_allocate_beat_windows` water-fills each
+beat's share of the total duration against that beat's own clips' combined capacity
+(`guided_moment_capacity_s` -- source duration minus transition overlap; a still image is
+unbounded), and `_allocate_beat_durations` then water-fills a multi-clip beat's resolved duration
+across its own moments the same way -- an equal ideal share per moment, capped at each moment's own
+capacity, with the unfillable remainder redistributed to moments that still have headroom (both in
+`app/pipeline/guided_story.py`). The deterministic fallback (`deterministic_guided_beats` in
+`app/services/edit_direction_planner.py`) mirrors this: its per-beat allocation loop caps each
+beat's declared weight at that beat's real (not flat 12s) capacity, so a single long clip in the
+fallback can also hold for its full usable length.
+
 New fast-montage proposals use `fast_cuts` as their authoritative planning contract rather than
 story chapters. Each cut pins the analyzed source window, output duration, hook/build/payoff role,
 and a hard-cut transition. The planner defaults to the strongest visual first, roughly 0.8–1.2

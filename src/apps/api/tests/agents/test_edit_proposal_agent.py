@@ -1323,6 +1323,25 @@ def test_neutralizes_context_free_sensory_modifier() -> None:
     assert output.story_beats[0].thought == "An ice cream sits beside a pastry."
 
 
+def test_accepts_a_chapter_up_to_the_full_story_length() -> None:
+    """Product decision 2026-09-18: clips may run any length. A single strong
+    chapter may claim nearly the whole story instead of being trimmed to a
+    uniform few seconds -- the schema cap is now the story length, not 12s.
+    """
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    agent_input = _input(3)
+    agent_input.target_duration_s = 45
+    payload = json.loads(_raw(["media-0", "media-1", "media-2"]))
+    payload["duration_s"] = 45
+    payload["story_beats"][0]["duration_s"] = 40
+    payload["story_beats"][1]["duration_s"] = 2.5
+    payload["story_beats"][2]["duration_s"] = 2.5
+
+    output = agent.parse(json.dumps(payload), agent_input)
+
+    assert output.story_beats[0].duration_s == 40
+
+
 def test_creator_context_can_authorize_a_personal_draft() -> None:
     agent_input = _input()
     for media in agent_input.media:

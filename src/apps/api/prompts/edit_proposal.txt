@@ -74,8 +74,11 @@ Editorial rules:
   "Market stalls show fresh produce." Never start it with an action such as "Exploring...".
 - Write one shared observation per chapter, not one sentence per file. Every thought must contain
   at most 18 words.
-- Give every chapter 1-12 seconds. Chapter durations must fit inside duration_s; reserve no more
-  than 6 seconds outside the chapters for the visible intro.
+- Chapters may run as long as their footage supports, up to the full story length — do not cap
+  every chapter at a few seconds. Prefer a clip's full best moment over trimming every clip down to
+  match its neighbors; fewer, longer moments are fine when the footage is strong. Chapter durations
+  must still fit inside duration_s; reserve no more than 6 seconds outside the chapters for the
+  visible intro.
 - TARGET LENGTH is already adapted to available footage and VIDEO REUSE POLICY. Never stretch
   or slow a clip to fill time. Looping source windows is permitted only with allow_repeat.
   Otherwise a short clip means a short edit; do not manufacture more footage.
