@@ -272,7 +272,8 @@ struct CreationThread: Codable, Identifiable, Sendable {
             runtimeVersion: runtimeVersion,
             serverRevision: revision,
             activeJobID: activeJobID.flatMap(UUID.init(uuidString:)),
-            activePlanItemID: activePlanItemID
+            activePlanItemID: activePlanItemID,
+            awaitsConfirmation: awaitsNewPlanConfirmation
         )
     }
 

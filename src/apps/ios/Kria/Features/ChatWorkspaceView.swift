@@ -332,24 +332,30 @@ private struct CreationWorkspaceView: View {
         #endif
     }
 
+    /// A new Creator plan is proposed and not yet confirmed or declined,
+    /// across both the runtime-v1 (`creatorAgent.status`) and runtime-v2
+    /// (live `approval`, synchronized with expiry checked) mechanisms.
+    private var awaitsNewPlanConfirmation: Bool {
+        approval != nil || fullThread?.awaitsCreationConfirmation == true
+    }
+
     private var workspaceStage: WorkspaceStage {
-        switch currentProject.status {
-        case .ready: return .ready
-        case .rendering: return .rendering
-        case .failed: return .failed
-        case .draft:
-            if approval != nil || fullThread?.awaitsCreationConfirmation == true { return .direction }
-            if isChoosingFormat { return .format }
-            if selectedFormat != nil { return .footage }
-            return .format
-        }
+        WorkspaceStage.resolve(
+            status: currentProject.status,
+            awaitsNewPlanConfirmation: awaitsNewPlanConfirmation,
+            isChoosingFormat: isChoosingFormat,
+            hasFormat: selectedFormat != nil
+        )
     }
 
     var body: some View {
         VStack(spacing: 0) {
             WorkspaceHeader(
                 project: currentProject,
-                showsEditorSwitch: workspaceStage == .ready,
+                // `currentProject.status` (not `workspaceStage`) so the switch
+                // to the existing cut stays available even while a new plan's
+                // confirmation card is showing on top of it.
+                showsEditorSwitch: currentProject.status == .ready,
                 openProjects: openProjects,
                 openEditor: { showsResult = true },
                 openAccount: openAccount
@@ -543,6 +549,15 @@ private struct CreationWorkspaceView: View {
                     refreshDirection: refreshDirection,
                     action: performAction
                 )
+            }
+            // A new plan's confirmation card can appear over an already-ready
+            // cut (see `WorkspaceStage.resolve`); confirming it is a choice,
+            // not something the old cut's reachability should be sacrificed for.
+            if currentProject.status == .ready {
+                Button("Open current cut", action: { showsResult = true })
+                    .buttonStyle(CanonicalSecondaryButtonStyle())
+                    .disabled(isActing)
+                    .accessibilityIdentifier("open-current-cut")
             }
         case .rendering:
             if let deviceRenderKey {
@@ -992,7 +1007,37 @@ private struct CreationWorkspaceView: View {
     }
 }
 
-enum WorkspaceStage { case format, footage, direction, rendering, ready, failed }
+enum WorkspaceStage {
+    case format, footage, direction, rendering, ready, failed
+
+    /// Pure decision table behind `CreationWorkspaceView.workspaceStage`, split
+    /// out so the precedence rules (a pending plan vs. the last job's status)
+    /// are unit-testable without standing up the view. See
+    /// `ChatWorkspaceTests` for the full resolution table.
+    static func resolve(
+        status: ProjectStatus,
+        awaitsNewPlanConfirmation: Bool,
+        isChoosingFormat: Bool,
+        hasFormat: Bool
+    ) -> WorkspaceStage {
+        switch status {
+        case .rendering:
+            // A render already in flight wins even over a freshly proposed
+            // plan: the old job's progress must stay visible and reachable.
+            return .rendering
+        case .ready:
+            return awaitsNewPlanConfirmation ? .direction : .ready
+        case .failed:
+            return awaitsNewPlanConfirmation ? .direction : .failed
+        case .draft:
+            if awaitsNewPlanConfirmation { return .direction }
+            if isChoosingFormat { return .format }
+            if hasFormat { return .footage }
+            return .format
+        }
+    }
+}
+
 enum ChatMessageRole: Equatable { case user, assistant }
 
 /// Keeps append-only history stable while full projections and forward deltas
@@ -1231,11 +1276,14 @@ extension ProjectSummary {
     }
 
     var workspaceStatusLabel: String {
+        // Mirrors `WorkspaceStage.resolve`: a pending plan outranks a stale
+        // `.ready`/`.failed` label left over from the last job, but never a
+        // render actually in flight.
         switch status {
         case .draft: "Shaping direction"
         case .rendering: "Rendering"
-        case .ready: "Ready"
-        case .failed: "Needs attention"
+        case .ready: awaitsConfirmation ? "Shaping direction" : "Ready"
+        case .failed: awaitsConfirmation ? "Shaping direction" : "Needs attention"
         }
     }
 }
