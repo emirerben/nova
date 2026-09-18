@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.76.0] - 2026-09-18
+
+### Changed
+- fix(ios-chat): long-press Copy on chat prompts and Kria replies (KRI-120) (#1087) <!-- release-pr: 1087 -->
+
 ## [0.76.75.0] - 2026-09-18
 
 ### Changed
