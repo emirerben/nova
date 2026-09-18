@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.73.0] - 2026-09-18
+
+### Changed
+- fix(phone): give device exports a playback-TTL signed URL; phase-aware editor render button (#1084) <!-- release-pr: 1084 -->
+
 ## [0.76.72.0] - 2026-09-18
 
 ### Changed
