@@ -106,10 +106,12 @@ final class EditorUITests: XCTestCase {
         XCTAssertEqual(clock.value as? String, "0:04.7")
 
         play.tap()
+        // Same AVAudioSession.setActive latency as the sibling fixture test
+        // above; mirror its 5s / 4s waits rather than the tighter 2s here.
         expectation(for: NSPredicate(format: "label == %@", "Pause preview"), evaluatedWith: play)
-        waitForExpectations(timeout: 2)
+        waitForExpectations(timeout: 5)
         expectation(for: NSPredicate(format: "value != %@", "0:04.7"), evaluatedWith: clock)
-        waitForExpectations(timeout: 2)
+        waitForExpectations(timeout: 4)
     }
 
     func testNativeEditorLongTextEditPreservesDurationAndClipGeometry() {

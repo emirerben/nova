@@ -121,6 +121,16 @@ final class ProjectsUITests: XCTestCase {
         XCTAssertTrue(newChat.waitForExistence(timeout: 3))
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
+        if !newChat.exists || !newChat.isHittable {
+            // CI once saw "No matches found" here despite the exists+enabled
+            // waits above. No-op on the happy path; only captures when the
+            // element is unexpectedly gone or unhittable at tap time, so the
+            // next occurrence is diagnosable.
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "drawer-new-chat missing at tap time"; screenshot.lifetime = .keepAlways; add(screenshot)
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "App hierarchy at tap time"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        }
         newChat.tap()
         XCTAssertTrue(app.staticTexts["What kind of video are we making?"].waitForExistence(timeout: 20))
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["drawer-new-chat"])
