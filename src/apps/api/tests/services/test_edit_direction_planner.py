@@ -240,6 +240,34 @@ def test_deterministic_guided_beats_shrinks_target_when_capacity_is_short() -> N
     validate_proposal_timing(snapshot)
 
 
+def test_deterministic_guided_beats_lets_a_long_clip_hold_its_full_capacity() -> None:
+    """Product decision 2026-09-18: clips may run any length. A single long
+    clip sharing a fallback pass with two short clips must claim (almost) its
+    full usable capacity instead of being scaled down to a flat 12s ceiling.
+    """
+
+    media = _guided_snapshot_media([30.0, 2.0, 2.0])
+
+    beats = edit_direction_planner.deterministic_guided_beats(media, 34, pace="balanced")
+
+    assert beats[0].media_ids == ["clip-0"]
+    # 30s minus one 0.12s crossfade overlap, minus the fallback's own
+    # frame-quantization safety margin -- see the shrink test above.
+    assert beats[0].duration_s == pytest.approx(29.88, abs=0.05)
+    assert beats[0].duration_s > 25
+    for beat in beats[1:]:
+        assert beat.duration_s < 2.5
+
+    snapshot = EditProposalSnapshot(
+        title="Long clip holds",
+        duration_s=sum(beat.duration_s for beat in beats),
+        pace="balanced",
+        media=media,
+        story_beats=beats,
+    )
+    validate_proposal_timing(snapshot)
+
+
 def test_guided_story_capacity_s_uses_every_eligible_source_and_clamps_when_short() -> None:
     # The incident footage's structural capacity (all 8 eligible >=1.4s clips,
     # 7 crossfade overlaps of 0.12s) comfortably covers the 45s brief -- the

@@ -452,7 +452,7 @@ def _fast_story_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
                 thought_source="ai_draft",
                 media_ids=media_ids,
                 layout="fullscreen",
-                duration_s=max(1.0, min(12.0, group_duration)),
+                duration_s=max(1.0, min(MAX_PROPOSAL_DURATION_S, group_duration)),
             )
         )
     if not beats:
