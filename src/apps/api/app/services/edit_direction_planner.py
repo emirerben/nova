@@ -49,6 +49,14 @@ GUIDED_STORY_MAX_BEATS = 10
 GUIDED_STORY_MAX_MEDIA_PER_BEAT = 4
 GUIDED_STORY_MAX_MEDIA = GUIDED_STORY_MAX_BEATS * GUIDED_STORY_MAX_MEDIA_PER_BEAT
 FAST_MONTAGE_NORMAL_MIN_CUT_FRAMES = int(round(0.8 * 30))
+# Render timelines are CFR at 30fps (guided_story.py's _FRAME_S). A capacity
+# estimate computed here must leave at least one frame of slack per selected
+# source so the strict compiler's own frame-quantized per-beat caps
+# (_allocate_beat_windows' `_round_frame` / floor-to-frame clipping) can
+# never re-derive a target the real per-beat windows can't reach after
+# rounding.
+_RENDER_FRAME_S = 1.0 / 30.0
+_CAPACITY_EPSILON_S = 1e-6
 
 
 @dataclass(frozen=True)
@@ -1014,13 +1022,144 @@ def deterministic_labeled_beats(
     ]
 
 
+def _guided_capacity_s(
+    selected: Sequence[MediaRef],
+    *,
+    transition_type: str,
+    transition_duration_s: float,
+) -> float:
+    """Total achievable story duration across `selected` in flat fallback order.
+
+    Mirrors `_allocate_beat_windows`'s per-moment overlap accounting: every
+    moment pays one transition overlap into the next moment except the
+    sequence's globally last one. `selected` order therefore only affects
+    *which* moment is treated as last -- since every video pays the same
+    overlap, the total is order-independent; only the presence of an image
+    (an unbounded hold) changes the result, in which case this returns
+    ``math.inf``.
+    """
+
+    from app.pipeline.guided_story import guided_moment_capacity_s  # noqa: PLC0415
+
+    if not selected:
+        return 0.0
+    overlap_s = transition_duration_s if transition_type != "none" else 0.0
+    total = 0.0
+    last_index = len(selected) - 1
+    for index, ref in enumerate(selected):
+        capacity = guided_moment_capacity_s(
+            ref, overlap_s=0.0 if index == last_index else overlap_s
+        )
+        if math.isinf(capacity):
+            return math.inf
+        total += capacity
+    return total
+
+
+def _select_capacity_aware_sources(
+    ordered: list[MediaRef],
+    *,
+    target_s: float,
+    transition_type: str,
+    transition_duration_s: float,
+) -> list[MediaRef]:
+    """Grow the standard fallback order until it can structurally cover target_s.
+
+    Starts from the same "up to 7, up to floor(target/min_moment)" story-shape
+    heuristic the fallback has always used (fine whenever that subset already
+    has enough real capacity), then keeps adding the next source in
+    `_guided_fallback_order` (longest-video-first, interleaved with photos)
+    while real capacity still falls short. If that order runs out before the
+    target is reachable, switch the tie-break to the single longest
+    remaining eligible clip first -- once the standard order has already
+    proven insufficient, maximizing capacity gained per extra source beats
+    preserving its story-shape interleave.
+    """
+
+    max_media = min(GUIDED_STORY_MAX_MEDIA, len(ordered))
+    base_count = max(1, min(7, len(ordered), math.floor(target_s / GUIDED_STORY_MIN_MOMENT_S)))
+    selected = list(ordered[:base_count])
+    selected_ids = {ref.media_id for ref in selected}
+
+    def capacity_s() -> float:
+        return _guided_capacity_s(
+            selected, transition_type=transition_type, transition_duration_s=transition_duration_s
+        )
+
+    for ref in ordered[base_count:]:
+        if len(selected) >= max_media or capacity_s() + _CAPACITY_EPSILON_S >= target_s:
+            break
+        selected.append(ref)
+        selected_ids.add(ref.media_id)
+
+    if capacity_s() + _CAPACITY_EPSILON_S < target_s:
+        leftovers = sorted(
+            (ref for ref in ordered if ref.media_id not in selected_ids),
+            key=lambda ref: -(float(ref.duration_s or 0.0)),
+        )
+        for ref in leftovers:
+            if len(selected) >= max_media or capacity_s() + _CAPACITY_EPSILON_S >= target_s:
+                break
+            selected.append(ref)
+            selected_ids.add(ref.media_id)
+
+    return selected
+
+
+def guided_story_capacity_s(
+    media: Sequence[CadenceCapacityMedia],
+    *,
+    pace: str = "balanced",
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
+) -> float:
+    """Best-case guided-story duration this footage can structurally support.
+
+    Uses every eligible source (`_guided_fallback_order`, capped at
+    `GUIDED_STORY_MAX_MEDIA`) with the exact crossfade-overlap accounting
+    `_allocate_beat_windows` applies at render time, so the specialist LLM is
+    never handed a target neither it nor the deterministic fallback could
+    ever actually deliver -- the same capacity model `deterministic_guided_beats`
+    selects against. Returns ``math.inf`` when any eligible source is a still
+    image (an image hold has no length limit); callers still clamp against
+    `MAX_PROPOSAL_DURATION_S`.
+    """
+
+    from app.pipeline.guided_story import guided_transition_params  # noqa: PLC0415
+
+    ordered = _guided_fallback_order(list(media))[:GUIDED_STORY_MAX_MEDIA]
+    if not ordered:
+        return 0.0
+    transition_type, transition_duration_s = guided_transition_params(
+        "guided_story", pace, mixed_media_timing
+    )
+    return _guided_capacity_s(
+        ordered, transition_type=transition_type, transition_duration_s=transition_duration_s
+    )
+
+
 def deterministic_guided_beats(
     media: list[MediaRef],
     duration_s: int | float,
     *,
     required_media_ids: Sequence[str] | None = None,
+    pace: str = "balanced",
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
 ) -> list[StoryBeat]:
-    """Build conservative, metadata-free story structure from renderable owned media."""
+    """Build conservative, metadata-free story structure from renderable owned media.
+
+    Capacity-aware (job b2242487): source selection and the final target
+    duration are both checked against each selected clip's real screen-time
+    capacity (source duration minus the crossfade overlap
+    `_allocate_beat_windows` charges at render time -- see
+    `guided_story.guided_moment_capacity_s`), not just the flat 12s/beat
+    schema cap. When even every eligible source can't reach the requested
+    duration, the target is SHRUNK to the best achievable total instead of
+    raising -- this fallback's whole job is to always yield a story
+    `_allocate_beat_windows` can compile. Raising is reserved for the case
+    where even the per-source minimum-moment floor can't be met.
+    """
+
+    from app.pipeline.guided_story import guided_transition_params  # noqa: PLC0415
 
     ordered = _guided_fallback_order(media)
     required_ids = set(required_media_ids or ())
@@ -1031,19 +1170,39 @@ def deterministic_guided_beats(
     if not ordered:
         raise ValueError("guided story fallback found no usable media")
 
-    target_s = max(3, min(MAX_PROPOSAL_DURATION_S, duration_s))
+    target_s = float(max(3, min(MAX_PROPOSAL_DURATION_S, duration_s)))
+    transition_type, transition_duration_s = guided_transition_params(
+        "guided_story", pace, mixed_media_timing
+    )
     if required_ids:
         selected = [ref for ref in ordered if ref.media_id in required_ids]
     else:
-        source_count = max(
-            1,
-            min(7, len(ordered), math.floor(target_s / GUIDED_STORY_MIN_MOMENT_S)),
+        selected = _select_capacity_aware_sources(
+            ordered,
+            target_s=target_s,
+            transition_type=transition_type,
+            transition_duration_s=transition_duration_s,
         )
-        selected = ordered[:source_count]
     if len(selected) > GUIDED_STORY_MAX_MEDIA:
         raise ValueError("guided story fallback exceeds specialist media capacity")
-    if target_s + 0.001 < len(selected) * GUIDED_STORY_MIN_MOMENT_S:
+    floor_s = GUIDED_STORY_MIN_MOMENT_S * len(selected)
+    if target_s + 0.001 < floor_s:
         raise ValueError("guided story fallback cannot fit every required source")
+
+    capacity_s = _guided_capacity_s(
+        selected, transition_type=transition_type, transition_duration_s=transition_duration_s
+    )
+    if capacity_s + 0.001 < target_s:
+        if capacity_s + 0.001 < floor_s:
+            raise ValueError("guided story fallback found no achievable duration for this footage")
+        # Never hard-fail a recovery: shrink to what the selected sources can
+        # actually deliver, leaving a one-frame-per-source safety margin so
+        # `_allocate_beat_windows`'s own frame-quantized per-beat caps can
+        # never re-derive a target the real windows can't reach after
+        # rounding.
+        safety_margin_s = _RENDER_FRAME_S * len(selected)
+        target_s = max(floor_s, min(target_s, capacity_s - safety_margin_s))
+
     beat_count = min(GUIDED_STORY_MAX_BEATS, len(selected))
     groups: list[list[MediaRef]] = [[] for _ in range(beat_count)]
     for index, ref in enumerate(selected):
@@ -1267,6 +1426,8 @@ def plan_direction_snapshot(
                 if source.media_scope == "selected"
                 else None
             ),
+            pace=pace,
+            mixed_media_timing=mixed_media_timing,
         )
     else:
         creator_labels = set(source.shot_labels or [])

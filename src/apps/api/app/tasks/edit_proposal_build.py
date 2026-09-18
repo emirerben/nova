@@ -46,6 +46,7 @@ from app.services.content_plan_persona import load_owned_plan_persona_sync
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.edit_direction_planner import (
     clamp_fast_montage_target_duration_s,
+    guided_story_capacity_s,
     round_robin_capacity_s,
 )
 from app.services.edit_proposal_limits import (
@@ -1481,6 +1482,24 @@ def _run_draft_attempt(
                 allow_source_reuse=allow_cadence_reuse,
             )
         )
+        if brief.direction == "guided_story" and narration is None and cadence_target_s is None:
+            # `feasible_duration_s` only sums raw footage; it doesn't know the
+            # beat-limit-bound compiler will also charge a transition overlap
+            # per moment. Clamp to what a real story-beat structure could
+            # deliver so the specialist agent is never asked for more seconds
+            # than either it or the deterministic fallback could ever produce
+            # (job b2242487 -- `guided_story_duration_impossible` after two
+            # schema failures because the target was structurally infeasible
+            # from the start).
+            target_duration_s = max(
+                MIN_GUIDED_DURATION_S,
+                min(
+                    target_duration_s,
+                    guided_story_capacity_s(
+                        media, pace=brief.pace, mixed_media_timing=brief.mixed_media_timing
+                    ),
+                ),
+            )
         if brief.direction == "fast_montage":
             try:
                 target_duration_s = clamp_fast_montage_target_duration_s(
@@ -1835,6 +1854,8 @@ def _run_draft_attempt(
                         if brief.media_scope == "selected"
                         else None
                     ),
+                    pace=brief.pace,
+                    mixed_media_timing=brief.mixed_media_timing,
                 )
                 if output is None
                 else None
