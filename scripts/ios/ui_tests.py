@@ -2,6 +2,7 @@
 """Conservative UI grouping and verification of actual XCTest result coverage."""
 
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -93,8 +94,8 @@ def expected_tests(value, root=ROOT):
     return set().union(*(set(data["groups"][g]) for g in value.split(",")))
 
 
-def result_tests(report):
-    found = {}
+def _iter_test_cases(report):
+    """Yield (identifier, node) for every Test Case, bundle-qualified like result_tests."""
 
     def visit(node, bundle=""):
         if node.get("nodeType") in ("UI test bundle", "Unit test bundle"):
@@ -103,13 +104,99 @@ def result_tests(report):
             identifier = node.get("nodeIdentifier", "").removesuffix("()")
             if not identifier.startswith(bundle + "/"):
                 identifier = bundle + "/" + identifier
-            found[identifier] = node.get("result")
+            yield identifier, node
         for child in node.get("children", []):
-            visit(child, bundle)
+            yield from visit(child, bundle)
 
     for node in report["testNodes"]:
-        visit(node)
-    return found
+        yield from visit(node)
+
+
+def result_tests(report):
+    return {
+        identifier: node.get("result") for identifier, node in _iter_test_cases(report)
+    }
+
+
+def flaky_tests(report):
+    """Test Cases whose rollup passed but needed at least one retry.
+
+    With -retry-tests-on-failure, a Test Case that eventually passed still
+    rolls up to "Passed"; retries are otherwise invisible to verify_results.
+    Attempts appear as ordered "Repetition" children ("First Run", "Retry N"),
+    each with its own result; a first-try pass has no Repetition children.
+    """
+    flaky = []
+    for identifier, node in _iter_test_cases(report):
+        if node.get("result") != "Passed":
+            continue
+        repetitions = [
+            child
+            for child in node.get("children", [])
+            if child.get("nodeType") == "Repetition"
+        ]
+        if len(repetitions) <= 1 and all(
+            rep.get("result") == "Passed" for rep in repetitions
+        ):
+            continue
+        messages = [
+            message.get("name")
+            for rep in repetitions
+            if rep.get("result") != "Passed"
+            for message in rep.get("children", [])
+            if message.get("nodeType") == "Failure Message"
+        ]
+        flaky.append(
+            {
+                "identifier": identifier,
+                "attempts": len(repetitions) or 1,
+                "failure_messages": messages,
+            }
+        )
+    return flaky
+
+
+def report_flaky(flaky, bundle_path):
+    """Surface pass-on-retry tests without ever turning a green verify red.
+
+    Writes flaky-tests.json next to the xcresult bundle (always, even when
+    empty), prints a warning line plus a GitHub annotation per flaky test, and
+    appends a job-summary section when GITHUB_STEP_SUMMARY is set. Report I/O
+    failures are swallowed: they must never fail an otherwise passing verify.
+    """
+    try:
+        report_path = bundle_path.parent / "flaky-tests.json"
+        report_path.write_text(json.dumps(flaky, indent=2) + "\n")
+        for test in flaky:
+            print(
+                f"Flaky (passed on retry): {test['identifier']} "
+                f"(passed after {test['attempts']} attempts)"
+            )
+            print(
+                f"::warning title=Flaky UI test::{test['identifier']} passed "
+                f"only after {test['attempts']} attempts"
+            )
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if flaky and summary_path:
+            with open(summary_path, "a") as summary:
+                summary.write("## Flaky UI tests (passed on retry)\n\n")
+                for test in flaky:
+                    message = (
+                        test["failure_messages"][0]
+                        if test["failure_messages"]
+                        else "(no failure message captured)"
+                    )
+                    summary.write(
+                        f"- `{test['identifier']}`: passed after "
+                        f"{test['attempts']} attempts. First failure: {message}\n"
+                    )
+                summary.write(
+                    "\nRetries keep main green, but each entry above still "
+                    "needs its own Linear issue. See "
+                    "docs/runbooks/ios-development.md.\n"
+                )
+    except OSError as error:
+        print(f"Note: failed to write flaky-test report: {error}")
 
 
 def verify_results(report, expected):
@@ -136,6 +223,7 @@ def main():
         else:
             print("\n".join(f"-only-testing:{test}" for test in sorted(expected)))
     elif command == "verify":
+        bundle_path = Path(sys.argv[3])
         result = subprocess.check_output(
             [
                 "xcrun",
@@ -152,6 +240,9 @@ def main():
         Path(sys.argv[3] + ".tests.json").write_text(
             json.dumps(report, indent=2) + "\n"
         )
+        # Compute and report flaky tests before verify_results can raise on a
+        # coverage mismatch, so the report exists on red runs too.
+        report_flaky(flaky_tests(report), bundle_path)
         print(verify_results(report, expected))
     else:
         raise ValueError("Expected args or verify")

@@ -319,9 +319,10 @@ UI tests remain serial. The preparation builds both test bundles, executes all
 non-UI tests, and writes the existing one-use receipt. Main and manual UI runs
 reuse that build and reject changed native inputs. Selection is validated before
 invoking Xcode, and the actual result bundle must contain every expected UI test
-with a passing outcome. Zero executed tests, skipped selected tests, or
-unexpected UI tests fail the gate. `make ios-verify` runs the complete unit and
-UI phases with separate result bundles.
+with a passing outcome; a test that fails and then passes on retry still counts
+as passing (see "Flaky UI tests" below). Zero executed tests, skipped selected
+tests, or unexpected UI tests fail the gate. `make ios-verify` runs the complete
+unit and UI phases with separate result bundles.
 
 ```sh
 KRIA_SIMULATOR_ID=<dedicated-iphone-uuid> KRIA_IOS_TEST_MODE=prepare-ui bash scripts/ios/verify.sh
@@ -339,6 +340,50 @@ bundles under `test-results/ios/`. GitHub uploads these artifacts on success or
 failure with seven-day retention. The selection job explains its decision; the
 iOS job reports cache restoration and phase durations. Simulator boot overlaps
 compilation, so those durations must not be added together.
+
+### Flaky UI tests
+
+The nine red `main` runs investigated in KRI-117 were all timing flakes in the
+serial UI suite, not regressions from the merged PRs, so the UI phase in
+`run_ui` (`verify.sh`) passes `-retry-tests-on-failure -test-iterations 3`
+to `xcodebuild`: a failing test gets up to two more attempts in the same
+invocation before it counts as failed. Only the UI phase retries; the unit
+phase and the `build-for-testing`/`prepare-ui` compile step never do, so a real
+build break still fails fast. A test still failing after all 3 attempts fails
+the gate exactly as before.
+
+`run_ui` captures the `xcodebuild` pipeline's exit status without tripping
+`set -euo pipefail`, then always runs `ui_tests.py verify` when a result bundle
+exists, and only reports success when both `xcodebuild` and `verify` were
+green. This is a deliberate control-flow fix: without it, a red `xcodebuild`
+exited the script before `verify` ran, so the coverage line and the flaky
+report below were never produced on exactly the runs where they mattered.
+
+`ui_tests.py verify` reads the `.xcresult` rollup per test (Passed once a
+retry passes; Xcode stops retrying at the first pass) and separately flags any test whose rollup passed but needed
+more than one attempt as flaky, via `flaky_tests()`. Each flaky test surfaces
+in three places: a `::warning` GitHub annotation on the run, a
+`## Flaky UI tests (passed on retry)` section in the job summary, and
+`flaky-tests.json` (a JSON list, empty when nothing was flaky) written next to
+`ui.xcresult` inside the `ios-native-test-diagnostics` artifact. Retries keep
+`main` green; they are a safety net, not the fix. Every flaky warning still
+needs its own Linear issue to find and fix the underlying flake.
+
+Local repro, at a much higher iteration count than CI so the failure actually
+reproduces:
+
+```sh
+xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+  -derivedDataPath src/apps/ios/.derived-data CODE_SIGNING_ALLOWED=NO \
+  -destination "platform=iOS Simulator,id=<simulator-udid>" \
+  -only-testing:KriaUITests/<Class>/<method> \
+  -test-iterations 20 -run-tests-until-failure test-without-building
+```
+
+`cancelled` iOS runs on `main` are concurrency coalescing, not failures: the
+workflow's `ios-${{ github.ref }}` concurrency group keeps one run going plus
+one pending per ref, so a burst of pushes to `main` cancels the queued (not
+yet started) runs in between and only the newest tip actually executes.
 
 #### Baseline and interpretation
 

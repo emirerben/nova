@@ -28,11 +28,12 @@ final class NativeEditorInspectorUITests: XCTestCase {
             context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
             let label = app.descendants(matching: .any)["native-editor-current-time"].firstMatch.value as? String ?? ""
             let time = Double(label.split(separator: ":").last ?? "0") ?? 0
+            let previewDiagnostic = app.descendants(matching: .any)["native-editor-preview"].firstMatch.value as? String ?? ""
             // The accessibility time rounds to a tenth; skip the ambiguous
             // sample exactly on the cut and verify the frames on either side.
             if abs(time - 2) > 0.1 {
-                XCTAssertGreaterThan(rgba[time < 2 ? 0 : 2], 220, "Wrong clip displayed at \(label): \(rgba)")
-                XCTAssertLessThan(rgba[time < 2 ? 2 : 0], 40, "Stale clip displayed at \(label): \(rgba)")
+                XCTAssertGreaterThan(rgba[time < 2 ? 0 : 2], 220, "Wrong clip displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
+                XCTAssertLessThan(rgba[time < 2 ? 2 : 0], 40, "Stale clip displayed at \(label): \(rgba), preview: \(previewDiagnostic)")
             }
         }
         for index in 0..<8 {
@@ -300,6 +301,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let input = app.descendants(matching: .any)["native-editor-new-text-input"].firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 3))
         input.tap(); input.typeText("Live text")
+        // typeText can return before the last keystroke reaches the text view
+        // on a busy simulator, so wait for the value instead of sampling it.
+        expectation(for: NSPredicate(format: "value == %@", "Live text"), evaluatedWith: input)
+        waitForExpectations(timeout: 5)
         XCTAssertGreaterThan(preview.frame.height, 100)
         XCTAssertLessThan(preview.frame.maxY, app.keyboards.firstMatch.frame.minY)
         let keyboard = XCTAttachment(screenshot: app.screenshot())
@@ -551,8 +556,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(text.waitForExistence(timeout: 8))
         let second = app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000101"].firstMatch
         XCTAssertEqual(text.frame.midY, second.frame.midY, accuracy: 1)
+        let originalTiming = text.value as? String ?? ""
         let start = text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.6, thenDragTo: start.withOffset(CGVector(dx: 35, dy: 0)))
+        waitForStableRowRelation(text, second) { abs($0) > 30 }
         XCTAssertGreaterThan(abs(text.frame.midY - second.frame.midY), 30)
         let timing = text.value as? String ?? ""
         XCTAssertFalse(timing.hasPrefix("00:00.0 to"), timing)
@@ -568,8 +575,17 @@ final class NativeEditorInspectorUITests: XCTestCase {
         reverse.press(forDuration: 0.05, thenDragTo: reverse.withOffset(CGVector(dx: 70, dy: 0)))
         XCTAssertEqual(time.value as? String, beforeSwipe)
         let moveBack = text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        moveBack.press(forDuration: 0.6, thenDragTo: moveBack.withOffset(CGVector(dx: -40, dy: 0)))
-        XCTAssertEqual(text.frame.midY, second.frame.midY, accuracy: 1)
+        // Synthetic drags lose part of their translation on a busy simulator.
+        // A -40pt reverse once left the text at 0.09s, still overlapping its
+        // neighbour, so two rows were correct. Overshoot: the move clamps at 0.
+        moveBack.press(forDuration: 0.6, thenDragTo: moveBack.withOffset(CGVector(dx: -120, dy: 0)))
+        waitForStableRowRelation(text, second) { abs($0) <= 1 }
+        XCTAssertEqual(
+            text.frame.midY, second.frame.midY, accuracy: 1,
+            "text.value=\(text.value ?? "nil") second.value=\(second.value ?? "nil")"
+        )
+        // The value now carries a ", selected" suffix; compare the timing prefix.
+        XCTAssertEqual((text.value as? String)?.hasPrefix(originalTiming), true, "text.value=\(text.value ?? "nil") originalTiming=\(originalTiming)")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
     }
 
@@ -738,5 +754,19 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // as part of tap(). The inspector assertion at the call site verifies
         // that the auto-scroll reached the intended item.
         element.tap()
+    }
+
+    /// Lanes repack synchronously when a timing drag ends, so this only gives
+    /// XCUITest time to observe the new layout: the row relation must satisfy
+    /// `holds` on two consecutive polls. A timeout means the items really do
+    /// still overlap in time (test geometry), not a stale layout.
+    private func waitForStableRowRelation(_ text: XCUIElement, _ second: XCUIElement, timeout: TimeInterval = 5, holds: @escaping (CGFloat) -> Bool) {
+        var previousDelta: CGFloat?
+        let stable = NSPredicate { _, _ in
+            let delta = text.frame.midY - second.frame.midY
+            defer { previousDelta = delta }
+            return holds(delta) && previousDelta == delta
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: stable, object: text)], timeout: timeout), .completed)
     }
 }

@@ -51,6 +51,11 @@ import XCTest
         toggle.tap()
         let proceed = app.buttons["ai-consent-continue"]
         reveal(proceed, app: app)
+        // reveal() only waits for hittable, and a disabled button is still
+        // hittable, so on a slow runner the switch's state may not have
+        // committed yet. Wait for enabled before tapping.
+        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: proceed)
+        waitForExpectations(timeout: 5)
         XCTAssertTrue(proceed.isEnabled)
         proceed.tap()
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 5))
