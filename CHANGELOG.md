@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.78.0] - 2026-09-18
+
+### Changed
+- chore(ios-chat): make suggestion chips' capsule an explicit tap target (#1089) <!-- release-pr: 1089 -->
+
 ## [0.76.77.0] - 2026-09-18
 
 ### Changed
