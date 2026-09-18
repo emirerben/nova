@@ -719,7 +719,13 @@ class StoryBeat(BaseModel):
     thought_source: ThoughtSource = "ai_draft"
     media_ids: list[str] = Field(min_length=1, max_length=4)
     layout: BeatLayout = "fullscreen"
-    duration_s: float = Field(ge=1.0, le=12.0)
+    # Chapters may run as long as their footage supports -- the actual
+    # per-source ceiling is enforced at render time by
+    # `guided_story._allocate_beat_windows` / `_allocate_beat_durations`
+    # against each clip's real (crossfade-overlap-adjusted) capacity, never
+    # this schema bound. This bound only needs to allow a single-chapter
+    # story to claim the whole approved duration.
+    duration_s: float = Field(ge=1.0, le=MAX_PROPOSAL_DURATION_S)
 
 
 class FastMontageCut(BaseModel):

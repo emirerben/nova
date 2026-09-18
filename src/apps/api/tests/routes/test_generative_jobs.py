@@ -1259,6 +1259,54 @@ def test_variants_for_response_resigns_ready_variant(monkeypatch):
     assert failed["output_url"] is None
 
 
+def test_variants_for_response_resigns_device_variant(monkeypatch):
+    """A phone-rendered variant re-signs from `video_path` exactly like a
+    cloud-rendered one — `device_render.py::complete_device_export` mints its
+    own signature at write time (previously a 5-minute default, sized for
+    ffprobe preflight), but every read path must still be authoritative and
+    never hand the client that stale/expired signature back verbatim.
+    """
+    import types
+    import uuid
+
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "first",
+                    "render_status": "ready",
+                    "render_destination": "device",
+                    "video_path": "u1/j1/device/attempt-1.mp4",
+                    "output_url": "https://storage.example/u1/j1/device/attempt-1.mp4?X-Goog-Expires=300",
+                    "ok": True,
+                }
+            ]
+        },
+    )
+
+    import app.routes.generative_jobs as gj
+
+    calls: list = []
+
+    def fake_sign(path, ttl):
+        calls.append((path, ttl))
+        return f"https://fresh.example/{path}?sig=new"
+
+    monkeypatch.setattr(gj, "signed_get_url", fake_sign)
+    monkeypatch.setattr(
+        gj.storage,
+        "signed_download_url",
+        lambda path, filename, expiration_minutes: f"https://download.example/{filename}",
+    )
+
+    out = gj._variants_for_response(job)
+
+    variant = next(v for v in out if v["variant_id"] == "first")
+    assert variant["output_url"] == "https://fresh.example/u1/j1/device/attempt-1.mp4?sig=new"
+    assert calls == [("u1/j1/device/attempt-1.mp4", gj.PLAYBACK_URL_TTL_MIN)]
+
+
 def test_variants_for_response_resigns_masked_last_good_not_provisional(monkeypatch):
     import app.routes.generative_jobs as gj
 

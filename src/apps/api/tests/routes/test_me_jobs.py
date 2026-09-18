@@ -2246,6 +2246,42 @@ def test_list_resigns_playback_url_from_video_path(monkeypatch) -> None:
     assert job.assembly_plan["variants"][0]["output_url"] == stale_variant["output_url"]
 
 
+def test_list_resigns_device_rendered_variant_playback_url(monkeypatch) -> None:
+    """A phone-rendered variant (`render_destination == "device"`) re-signs
+    from `video_path` exactly like a cloud-rendered one. `device_render.py`'s
+    `complete_device_export` mints its own signature at write time (previously
+    a bare 5-minute default sized for ffprobe preflight); the gallery must
+    never serve that stored signature verbatim past its TTL."""
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "first",
+                    "render_status": "ready",
+                    "render_destination": "device",
+                    "output_url": "https://storage.example/device.mp4?X-Goog-Expires=300",
+                    "video_path": "PLACEHOLDER/device/attempt-1.mp4",
+                }
+            ]
+        },
+    )
+    job.assembly_plan["variants"][0]["video_path"] = f"{user.id}/{job.id}/device/attempt-1.mp4"
+    resign = MagicMock(return_value="https://fresh.example/resigned-device.mp4")
+    monkeypatch.setattr("app.routes.me.signed_get_url", resign)
+    db = _db([_scalars([job]), _rows([]), _rows([]), _scalars([]), _scalars([])])
+    _override(user, db)
+
+    resp = client.get("/me/jobs")
+
+    assert resp.status_code == 200
+    item = resp.json()["jobs"][0]
+    assert item["output_url"] == "https://fresh.example/resigned-device.mp4"
+    resign.assert_called_once_with(f"{user.id}/{job.id}/device/attempt-1.mp4", 360)
+
+
 def test_list_resigns_template_job_playback_url_from_output_path(monkeypatch) -> None:
     """Same re-sign contract for the single-output (template/music) job shape."""
     user = _user()

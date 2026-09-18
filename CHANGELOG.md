@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.74.0] - 2026-09-18
+
+### Changed
+- fix(creator): keep the accepted direction on retry re-plans and fill default project titles (#1085) <!-- release-pr: 1085 -->
+
+## [0.76.73.0] - 2026-09-18
+
+### Changed
+- fix(phone): give device exports a playback-TTL signed URL; phase-aware editor render button (#1084) <!-- release-pr: 1084 -->
+
+## [0.76.72.0] - 2026-09-18
+
+### Changed
+- fix(phone): accept bundled fonts and native effects in pilot recipes; clamp text layers to the refit timeline (#1083) <!-- release-pr: 1083 -->
+
+## [0.76.71.0] - 2026-09-18
+
+### Changed
+- feat(planner): let guided-story clips run their full length (capacity-driven beats and in-beat split) (#1082) <!-- release-pr: 1082 -->
+
 ## [0.76.70.0] - 2026-09-18
 
 ### Changed

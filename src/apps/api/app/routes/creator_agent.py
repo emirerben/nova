@@ -411,6 +411,160 @@ def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message:
     return "\n".join(messages)[:CREATOR_REQUEST_MAX_CHARS]
 
 
+# Sent verbatim by the iOS confirmation card's "refresh direction" affordance
+# (`CreationConfirmationConflict.refreshDirectionMessage` in
+# CreationConfirmationStage.swift) when the server rejects a stale/failed plan
+# as unconfirmable and the creator taps Retry. Recognized here so a re-plan
+# triggered by this canned message is treated as a refresh of the existing
+# direction, never as a brand-new creative instruction — the Main Creator
+# model is not trusted to infer that on its own from the message text alone.
+REFRESH_DIRECTION_MESSAGE = "Keep the same plan with my current footage"
+
+# Fields carried over from the creator's last ACCEPTED strategy when a re-plan
+# is triggered by the refresh/retry affordance, rather than re-derived by the
+# model. `render_program` is included alongside `direction` even though it is
+# not creator-facing: the two are 1:1 coupled (a direction is only meaningful
+# through the render program that executes it), so pinning `direction` alone
+# while leaving `render_program` to the model would restore the label without
+# restoring the actual behavior. `edit_format` is deliberately NOT pinned here
+# — it is independently fenced by the Paper format the creator already
+# selected (`planned_format != state.get("edit_format")` in
+# creation_threads.py's action_thread), so the Main Creator is expected to
+# keep proposing that same edit_format regardless of direction.
+_PINNED_STRATEGY_FIELDS_ON_REFRESH: tuple[str, ...] = (
+    "direction",
+    "render_program",
+    "pacing",
+    "target_duration_s",
+    "opening_title",
+    "closing_title",
+    "shot_labels",
+    "audio_strategy",
+    "video_reuse_policy",
+    "montage_cadence",
+    "mixed_media_timing",
+)
+
+
+def _is_refresh_retry_message(user_message: str) -> bool:
+    """True when this turn's message is the canned refresh/retry affordance."""
+
+    return user_message.strip() == REFRESH_DIRECTION_MESSAGE
+
+
+def _previous_accepted_strategy(
+    previous_active_plan: dict[str, Any] | None,
+) -> CreativeStrategy | None:
+    """Extract the last confirmed strategy from a session's prior active_plan.
+
+    ``previous_active_plan`` must be captured by the caller BEFORE
+    ``_reset_render_target`` clears ``session.active_plan`` for the new turn.
+    """
+
+    if not isinstance(previous_active_plan, dict):
+        return None
+    raw_edit_plan = previous_active_plan.get("edit_plan")
+    if not isinstance(raw_edit_plan, dict):
+        return None
+    raw_strategy = raw_edit_plan.get("strategy")
+    if not isinstance(raw_strategy, dict):
+        return None
+    try:
+        return CreativeStrategy.model_validate(raw_strategy)
+    except ValueError:
+        return None
+
+
+def _original_creator_request_for_refresh(
+    previous_active_plan: dict[str, Any] | None,
+    events: list[CreatorAgentEvent],
+) -> str:
+    """The creator's real, previously-stated request — never the canned text.
+
+    A refresh/retry turn's ``user_message`` is the throwaway confirmation-
+    screen affordance, not creative intent. Feeding it to the Main Creator (or
+    persisting it as the specialist's ``creator_request``/``goal`` source) can
+    bias the re-plan away from what the creator actually asked for. Prefer the
+    request already pinned to the prior accepted plan; fall back to every past
+    user turn that is not itself the canned message.
+    """
+
+    if isinstance(previous_active_plan, dict):
+        prior = str(previous_active_plan.get("creator_request") or "").strip()
+        if prior:
+            return prior
+    messages = [
+        str((event.payload or {}).get("message") or "").strip()
+        for event in sorted(events, key=lambda value: value.sequence)
+        if event.role == "user" and str((event.payload or {}).get("message") or "").strip()
+    ]
+    messages = [message for message in messages if message != REFRESH_DIRECTION_MESSAGE]
+    return "\n".join(messages)[:CREATOR_REQUEST_MAX_CHARS]
+
+
+def _pin_strategy_fields_on_refresh(
+    strategy: CreativeStrategy,
+    previous: CreativeStrategy,
+) -> tuple[CreativeStrategy, list[str]]:
+    """Overlay the creator's previously accepted pinned fields onto `strategy`.
+
+    Deterministic and prompt-independent by design: the Main Creator model is
+    not trusted to preserve direction/pace/duration/titles on its own when the
+    triggering message is the canned refresh/retry text rather than a genuine
+    new instruction. Returns the (possibly unchanged) strategy plus the list
+    of field names actually restored, for structured logging.
+    """
+
+    updates: dict[str, Any] = {}
+    restored: list[str] = []
+    for field in _PINNED_STRATEGY_FIELDS_ON_REFRESH:
+        previous_value = getattr(previous, field, None)
+        current_value = getattr(strategy, field, None)
+        if previous_value != current_value:
+            updates[field] = previous_value
+            restored.append(field)
+    if not updates:
+        return strategy, restored
+    return strategy.model_copy(update=updates), restored
+
+
+def _apply_refresh_pin_if_needed(
+    strategy: CreativeStrategy,
+    *,
+    previous_strategy: CreativeStrategy | None,
+    manifest: Any,
+    session_id: uuid.UUID,
+    item_id: str,
+) -> CreativeStrategy:
+    """Restore the pinned fields, then re-normalize so render_program and any
+    other derived fields stay consistent with the restored direction.
+
+    Called as the last step before a strategy is compiled into
+    ``active_plan``, so nothing downstream can clobber the pin again.
+    """
+
+    if previous_strategy is None:
+        return strategy
+    pinned, restored_fields = _pin_strategy_fields_on_refresh(strategy, previous_strategy)
+    if not restored_fields:
+        return strategy
+    try:
+        pinned = normalize_creator_strategy_media(manifest, pinned, repair_model_output=True)
+    except (MixedMediaTimingUnavailableError, MontageCadenceUnavailableError, ValueError):
+        # The deterministic guardrail against a re-plan silently swapping the
+        # creator's accepted direction takes priority over a defensive
+        # re-derivation failing against the current manifest; keep the pinned
+        # fields even if this particular re-normalization could not be proven.
+        pass
+    log.info(
+        "creator_strategy_pinned_on_refresh",
+        session_id=str(session_id),
+        item_id=str(item_id),
+        restored_fields=restored_fields,
+    )
+    return pinned
+
+
 def _explicit_media_scope(request: str) -> Literal["all", "selected"]:
     """Resolve only an explicit all-media request; preserve the legacy default."""
 
@@ -1599,6 +1753,7 @@ async def _run_planning_turn(
     estimated_max_cost_usd: float | None = None,
     reservation_approved: bool = False,
     release_canary_id: str | None = None,
+    previous_active_plan: dict[str, Any] | None = None,
 ) -> CreatorSessionResponse:
     item, plan, persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, session_id, user.id, item.id)
@@ -1642,6 +1797,19 @@ async def _run_planning_turn(
         effective_direction = private_snapshot_from(thread_row) or thread_row
         direction_prompt = str((effective_direction or {}).get("prompt_block") or "")[:4000]
     creator_request = _confirmed_creator_request(session.events, user_message)
+    is_refresh_retry = _is_refresh_retry_message(user_message)
+    previous_strategy = (
+        _previous_accepted_strategy(previous_active_plan) if is_refresh_retry else None
+    )
+    if is_refresh_retry:
+        # Never let the canned "keep the same plan" affordance itself read as
+        # the creator's intent — to the model, to the specialist brief, or to
+        # any duration/cadence recognizer downstream that reads
+        # `creator_request`.
+        creator_request = (
+            _original_creator_request_for_refresh(previous_active_plan, session.events)
+            or creator_request
+        )
     explicit_guided_voiceover = _explicit_guided_voiceover_request(creator_request, manifest)
     if explicit_guided_voiceover:
         guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
@@ -2106,6 +2274,13 @@ async def _run_planning_turn(
                     ),
                     repair_model_output=True,
                 )
+            strategy = _apply_refresh_pin_if_needed(
+                strategy,
+                previous_strategy=previous_strategy,
+                manifest=planning_manifest,
+                session_id=locked.id,
+                item_id=item.id,
+            )
             locked.active_plan = compile_active_plan(
                 locked,
                 manifest=planning_manifest,
@@ -2250,6 +2425,13 @@ async def _run_planning_turn(
                     ),
                 ),
                 repair_model_output=True,
+            )
+            strategy = _apply_refresh_pin_if_needed(
+                strategy,
+                previous_strategy=previous_strategy,
+                manifest=manifest,
+                session_id=locked.id,
+                item_id=item.id,
             )
             locked.active_plan = compile_active_plan(
                 locked,
@@ -2444,6 +2626,7 @@ async def start_creator_session_controller(
     if session.status not in {"briefing", "awaiting_confirmation", "awaiting_feedback"}:
         raise HTTPException(status_code=409, detail="Creator session is busy")
     session.status = "planning" if session.status != "awaiting_feedback" else "revising"
+    previous_active_plan = session.active_plan if isinstance(session.active_plan, dict) else None
     _reset_render_target(session)
     await append_event(
         db,
@@ -2463,6 +2646,7 @@ async def start_creator_session_controller(
         expected_revision=expected_revision,
         user_message=body.message.strip(),
         allow_chat=allow_chat,
+        previous_active_plan=previous_active_plan,
         **cost_headers.as_kwargs(),
     )
 
@@ -2509,6 +2693,7 @@ async def creator_session_turn_controller(
     if session.status not in {"briefing", "awaiting_confirmation", "awaiting_feedback"}:
         raise HTTPException(status_code=409, detail="Creator session is not accepting feedback")
     session.status = "revising" if session.render_attempts else "planning"
+    previous_active_plan = session.active_plan if isinstance(session.active_plan, dict) else None
     _reset_render_target(session)
     await append_event(
         db,
@@ -2528,6 +2713,7 @@ async def creator_session_turn_controller(
         expected_revision=expected_revision,
         user_message=body.message.strip(),
         allow_chat=allow_chat,
+        previous_active_plan=previous_active_plan,
         **cost_headers.as_kwargs(),
     )
 

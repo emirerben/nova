@@ -7,6 +7,7 @@ from app.agents.edit_guide import EditGuideInput, EditGuideMediaSummary
 from app.agents.edit_proposal import EditProposalAgentInput, EditProposalMedia
 from app.schemas.edit_proposal import (
     MAX_EDIT_PROPOSAL_MEDIA,
+    MAX_PROPOSAL_DURATION_S,
     EditProposalSnapshot,
     EditProposalSnapshotResponse,
     MediaRef,
@@ -142,4 +143,27 @@ def test_guided_edit_contract_accepts_all_item_media_and_rejects_more() -> None:
                     }
                 ]
             },
+        )
+
+
+def test_story_beat_accepts_a_chapter_up_to_the_full_story_length() -> None:
+    """Product decision 2026-09-18: clips may run any length -- a chapter is no
+    longer schema-capped at 12s. The real per-clip ceiling is enforced at
+    render time by guided_story's capacity-aware allocators, not this bound.
+    """
+
+    beat = StoryBeat(
+        beat_id="beat-1",
+        topic="Start",
+        media_ids=["clip-0"],
+        duration_s=40,
+    )
+    assert beat.duration_s == 40
+
+    with pytest.raises(ValidationError):
+        StoryBeat(
+            beat_id="beat-1",
+            topic="Start",
+            media_ids=["clip-0"],
+            duration_s=MAX_PROPOSAL_DURATION_S + 1,
         )

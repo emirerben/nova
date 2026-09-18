@@ -101,6 +101,10 @@ _DELETION_BLOCKING_AGENT_STATUSES = frozenset(
 _MAX_EVENTS = 200
 _MAX_TITLE_LENGTH = 120
 _DEFAULT_TITLE = "Untitled video"
+# draft_edit_proposal's internal placeholder when neither the creator nor the
+# copy-writer produced a title (edit_proposal_build.py). It is a fine draft
+# placeholder but must never surface as a project's actual name.
+_PLACEHOLDER_PROPOSAL_TITLE = "A few moments"
 _UPLOAD_URL_TTL = timedelta(minutes=15)
 _ACTIVE_AGENT_STATUSES = frozenset(
     {
@@ -2242,11 +2246,84 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
     thread.state = projection
 
 
+def _resolve_default_title_fill(
+    *,
+    active_plan: dict[str, Any] | None,
+    proposal: EditProposal | None,
+) -> str | None:
+    """Resolve a real title for a thread still stuck on the default.
+
+    Prefers the creator's own confirmed opening title (from the Main
+    Creator's accepted strategy) over anything specialist/copy-writer
+    authored, and never surfaces the specialist's internal "A few moments"
+    draft placeholder (see edit_proposal_build.py) as a project's name.
+    Returns None when nothing fillable exists yet -- callers must leave the
+    default title untouched in that case.
+    """
+
+    if isinstance(active_plan, dict):
+        opening_title = active_plan.get("opening_title")
+        if isinstance(opening_title, str) and opening_title.strip():
+            return opening_title.strip()[:_MAX_TITLE_LENGTH]
+    if proposal is not None and proposal.status == "approved":
+        snapshot = (
+            proposal.last_approved.snapshot
+            if proposal.last_approved is not None
+            else proposal.draft
+        )
+        if snapshot is not None:
+            candidate = (snapshot.title or "").strip()
+            if candidate and candidate != _PLACEHOLDER_PROPOSAL_TITLE:
+                return candidate[:_MAX_TITLE_LENGTH]
+    return None
+
+
+async def _fill_default_title_if_needed(
+    db: AsyncSession,
+    thread: CreationThread,
+    *,
+    item: PlanItem | None,
+    session: CreatorAgentSession | None,
+) -> None:
+    """Backfill `_DEFAULT_TITLE` from the accepted strategy or proposal.
+
+    Covers threads that never route through `_agent_message`'s first-message
+    title rule at all -- e.g. a bare `POST /creation-threads` with no
+    `message`, or a one-click auto-design Generate that never sends a chat
+    turn. Never overwrites a user-set title (`title_source == "user"`) or a
+    title that already moved off the default.
+    """
+
+    if (getattr(thread, "title", None) or _DEFAULT_TITLE) != _DEFAULT_TITLE:
+        return
+    state = dict(thread.state or {})
+    if state.get("title_source") == "user":
+        return
+    active_plan = (
+        session.active_plan
+        if session is not None and isinstance(session.active_plan, dict)
+        else None
+    )
+    proposal = (
+        parse_edit_proposal(getattr(item, "edit_proposal", None)) if item is not None else None
+    )
+    new_title = _resolve_default_title_fill(active_plan=active_plan, proposal=proposal)
+    if not new_title:
+        return
+    thread.title = new_title
+    state["title_source"] = "auto_filled"
+    thread.state = state
+    await db.commit()
+    await db.refresh(thread)
+
+
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
     # Degraded: an incoherent render-graph edge is dropped, never 404ed, so
     # the thread's own row and its full chat transcript stay reachable. See
     # KRI-26 / agents/DECISIONS.md.
     item, session, job, integrity = await _load_authorized_projection_rows(db, thread, degrade=True)
+    if isinstance(db, AsyncSession):
+        await _fill_default_title_if_needed(db, thread, item=item, session=session)
     if integrity.codes:
         log.warning(
             "creation_thread.projection_degraded",

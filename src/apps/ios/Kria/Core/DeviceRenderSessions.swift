@@ -26,6 +26,26 @@ struct DeviceRenderPresentation: Equatable, Sendable {
     var reasonCode: String?
 }
 
+/// Short label for the editor's top-of-preview device-render affordance
+/// (`NativeEditorView`'s "native-editor-device-render" button). Kept distinct
+/// from `DeviceRenderStatusCard`'s longer per-phase title/detail copy, which
+/// explains the state inside the opened sheet rather than labeling the
+/// button that opens it. A finished, synced render must stop reading
+/// "Rendering on iPhone" — see the KRI job 9c7a1f4f report where the phone's
+/// own receipt was already `phase: synced` but the button never updated.
+enum DeviceRenderButtonTitle {
+    static func `for`(phase: DeviceRenderPhase) -> String {
+        switch phase {
+        case .preparing, .rendering: "Rendering on iPhone…"
+        case .syncing: "Syncing…"
+        case .localReady, .synced: "Rendered on iPhone"
+        case .needsAttention: "Needs attention"
+        case .cancelled: "Render stopped"
+        case .superseded: "Newer edit available"
+        }
+    }
+}
+
 /// App-owned so navigating between chat, projects, and the editor does not
 /// interrupt an export. Each server revision still owns its own coordinator.
 @Observable @MainActor final class DeviceRenderSessions {

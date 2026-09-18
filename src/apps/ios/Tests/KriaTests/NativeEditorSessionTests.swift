@@ -1120,6 +1120,43 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.deviceRenderKey, DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "initial"))
     }
 
+    /// `NativeEditorView.loadEditor()` calls `showDeviceOutput` with the
+    /// device coordinator's local receipt right after a device-rendered
+    /// variant loads. That local file must win over whatever
+    /// server-signed `output_url` the load installed first — the remote
+    /// signature is sized for a short-lived playback window (see
+    /// `PLAYBACK_URL_TTL_MIN`), while the on-device export is immediate,
+    /// free, and available offline. Only once the local receipt is gone
+    /// (cleaned up, reinstalled app, other device) should playback fall
+    /// back to the remote URL.
+    func testDeviceLocalExportPreferredOverRemoteOutputURL() async {
+        let jobID = UUID(), threadID = UUID()
+        let emptySnapshot = DraftSnapshot(
+            draftID: "unused", itemID: "unused", variantKey: "initial", draftRevision: 0,
+            snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
+            snapshot: [:], canUndo: false, createdAt: .now
+        )
+        var variant = Self.variant(duration: 2, generation: "generation-1")
+        variant["render_destination"] = .string("device")
+        let fake = EditorCommitSpy(
+            draftSnapshot: emptySnapshot,
+            openReceipt: OpenInEditorResponse(planItemID: "item-gallery", variantID: "initial", creationThreadID: threadID),
+            authoritativeVariant: variant
+        )
+        let project = ProjectSummary(id: jobID, title: "Gallery cut", status: .ready, updatedAt: .now, posterURL: nil)
+        let session = NativeEditorSession(project: project)
+
+        await session.load(libraryJobID: jobID, api: fake)
+        let remoteAsset = try! XCTUnwrap(session.player?.currentItem?.asset as? AVURLAsset)
+        XCTAssertEqual(remoteAsset.url, URL(string: "file:///tmp/kria-editor-test.mp4"))
+
+        let localFile = try! XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        session.showDeviceOutput(localFile)
+
+        let localAsset = try! XCTUnwrap(session.player?.currentItem?.asset as? AVURLAsset)
+        XCTAssertEqual(localAsset.url, localFile, "The on-device export must win over the remote signed URL when both are available")
+    }
+
     func testReadyCreationProjectHydratesListProjectionAndLoadsItsExistingPlanItem() async throws {
         let threadID = UUID()
         let jobID = UUID()

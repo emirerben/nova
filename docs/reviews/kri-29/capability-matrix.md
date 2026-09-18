@@ -88,3 +88,30 @@ duplication of the capability check — the capability enum's granularity is coa
 actually been device-qualified (e.g. `cameraEffects` may be verified for one exact configuration
 while `phone_rollout.py` still blocks the general `CameraPulse` primitive pending broader parity).
 **Do not remove them** when a capability's bit gets added to `phone_render_verified_features`.
+
+The font-instance check specifically (`_has_unqualified_font_instance`) has two modes, selected by
+`Settings.phone_font_qualification_strict` (env `PHONE_FONT_QUALIFICATION_STRICT`, default
+`false`). **Strict** (`true`) is the original 2026-09-14 gate: only the two exact, byte/coordinate-
+pinned `Fraunces-Bold.ttf`/`DMSans-Bold.ttf` instances qualify, and only on a plain `fade-in` layer
+with no giant title — see `docs/runbooks/phone-rendering.md`'s "Default variable-font fade-in
+qualification" section. **Default** (`false`, since 2026-09-18) relaxes this to: any font asset that
+is a bundled `library`/`catalog == "font"` asset listed in `assets/fonts/font-registry.json` (i.e.
+whatever `bundled_font_asset` in `render_library.py` can serve — the same file the iOS app ships
+with its license), with non-empty `font_variations` when-and-only-when that bundled font file itself
+carries variation axes (a non-variable face like `Inter-Bold.ttf` has nothing for CoreText to pick
+differently, so empty coordinates are fine for it), on any of the 17 native-supported text effects
+(`app.services.phone_rollout._NATIVE_TEXT_EFFECTS`, derived from `PortableTextLayer.effect`'s
+Literal minus `lyric-line`/`caption-pop` — see `docs/reviews/kri-29/coverage.md`'s "## Text"
+section). Giant-title combinations are allowed in default mode too, since `giant-title-wipe` has
+native support for every effect except handwriting; the unconditional
+`layer.giant_title is not None and layer.effect == "handwriting"` reject a few lines below the font
+check is untouched by either mode. This is the pilot's kill switch: flip `true` to restore the
+narrow per-instance gate byte-identically if the broader font/effect set ever needs pulling back
+without a redeploy. Tests: `tests/services/test_phone_rollout.py`'s
+`test_default_mode_qualifies_static_title_and_context_labels` (reproduces prod job
+`b33e1c88-a8eb-4d51-81b6-388f7a32aebf`'s static Fraunces title + Inter-Bold static context labels),
+`test_default_mode_rejects_font_outside_the_bundled_registry`,
+`test_default_mode_rejects_variable_font_missing_variations`,
+`test_default_mode_allows_giant_title_on_non_handwriting_effects`, and
+`test_default_mode_still_blocks_giant_title_handwriting`; the original narrow-gate tests are kept
+verbatim with `phone_font_qualification_strict` monkeypatched `true` as defense-in-depth pins.

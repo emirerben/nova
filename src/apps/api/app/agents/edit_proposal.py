@@ -718,7 +718,10 @@ class DraftStoryBeat(BaseModel):
     thought: str = Field(default="", max_length=280)
     media_ids: list[str] = Field(min_length=1, max_length=4)
     layout: Literal["fullscreen", "supporting_card"] = "fullscreen"
-    duration_s: float = Field(ge=1.0, le=12.0)
+    # Mirrors app.schemas.edit_proposal.StoryBeat.duration_s -- chapters may
+    # run as long as their footage supports; render-time capacity (not this
+    # schema bound) is the real ceiling. Keep these two bounds identical.
+    duration_s: float = Field(ge=1.0, le=MAX_PROPOSAL_DURATION_S)
 
 
 LEGACY_GUIDED_DRAFT_BEATS = 5
@@ -1162,7 +1165,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.9.0",
+        prompt_version="1.10.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
