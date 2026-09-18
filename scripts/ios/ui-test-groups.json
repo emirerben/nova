@@ -13,7 +13,8 @@
       "KriaUITests/CreationUITests/testCreateWithoutAConnectionKeepsConnectionRecovery",
       "KriaUITests/CreationUITests/testExpiredApprovalCannotStartGeneration",
       "KriaUITests/CreationUITests/testUnavailableCapabilitiesShowRetryInsteadOfDeadFormatCards",
-      "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap"
+      "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap",
+      "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testPartialDrawerDragsAlwaysSettleAtTheNearestEndpoint",
