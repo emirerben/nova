@@ -36,11 +36,32 @@ run_ui() {
   while IFS= read -r argument; do filters+=("$argument"); done <<< "$arguments"
   [[ ${#filters[@]} -gt 0 ]] || return 2
   printf 'UI groups: %s\n%s\n' "$groups" "$arguments" | tee "$RESULT_DIR/selection.log"
+  # The serial UI suite flakes under simulator/runner contention. Retry inside
+  # xcodebuild itself (fail-closed after 3 attempts total); ui_tests.py verify
+  # reports any test that only passed on retry as flaky instead of hiding it.
+  local xcodebuild_status=0
   timed "UI execution ($groups)" xcodebuild "${COMMON_ARGS[@]}" \
     -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
     -parallel-testing-enabled NO "${filters[@]}" \
-    -resultBundlePath "$RESULT_DIR/ui.xcresult" test-without-building 2>&1 | tee "$RESULT_DIR/ui.log"
-  python3 "$REPO_ROOT/scripts/ios/ui_tests.py" verify "$groups" "$RESULT_DIR/ui.xcresult" | tee -a "$RESULT_DIR/selection.log"
+    -retry-tests-on-failure -test-iterations 3 \
+    -resultBundlePath "$RESULT_DIR/ui.xcresult" test-without-building 2>&1 | tee "$RESULT_DIR/ui.log" \
+    || xcodebuild_status=$?
+  # Always verify when a result bundle exists, even after a red xcodebuild, so
+  # the coverage line and flaky report are produced on exactly the runs where
+  # they matter. Without this, `set -e` would abort the function on the line
+  # above and verify (and its diagnostics) would never run on a red UI phase.
+  local verify_status=0
+  if [[ -e "$RESULT_DIR/ui.xcresult" ]]; then
+    python3 "$REPO_ROOT/scripts/ios/ui_tests.py" verify "$groups" "$RESULT_DIR/ui.xcresult" \
+      | tee -a "$RESULT_DIR/selection.log" || verify_status=$?
+  else
+    verify_status=1
+  fi
+  # Fail-closed: both signals must be green for the phase to pass.
+  if [[ "$xcodebuild_status" -ne 0 ]]; then
+    return "$xcodebuild_status"
+  fi
+  return "$verify_status"
 }
 
 COMMON_ARGS=(

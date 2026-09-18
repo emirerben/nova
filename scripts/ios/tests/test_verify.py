@@ -292,6 +292,37 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
         self.assertEqual(self.run_verify("test_failure", suite="ui").returncode, 25)
 
+    def test_only_the_ui_phase_retries_on_failure(self):
+        result = self.run_verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        build = next(call for call in self.calls if call[-1] == "build-for-testing")
+        tests = [call for call in self.calls if call[-1] == "test-without-building"]
+        unit_call = next(
+            c
+            for c in tests
+            if Path(c[c.index("-resultBundlePath") + 1]).name == "unit.xcresult"
+        )
+        ui_call = next(
+            c
+            for c in tests
+            if Path(c[c.index("-resultBundlePath") + 1]).name == "ui.xcresult"
+        )
+        self.assertNotIn("-retry-tests-on-failure", build)
+        self.assertNotIn("-test-iterations", build)
+        self.assertNotIn("-retry-tests-on-failure", unit_call)
+        self.assertNotIn("-test-iterations", unit_call)
+        self.assertIn("-retry-tests-on-failure", ui_call)
+        self.assertEqual(ui_call[ui_call.index("-test-iterations") + 1], "3")
+
+    def test_ui_failure_still_runs_verify_and_writes_diagnostics(self):
+        self.assertEqual(self.run_verify(suite="prepare-ui").returncode, 0)
+        result = self.run_verify("test_failure", suite="ui")
+        self.assertEqual(result.returncode, 25, result.stderr)
+        result_dir = next((self.root / "test-results/ios").glob("ui.*"))
+        self.assertTrue((result_dir / "ui.xcresult.tests.json").exists())
+        self.assertTrue((result_dir / "flaky-tests.json").exists())
+        self.assertIn("Verified", result.stdout)
+
     def test_explicit_simulator_is_used_and_invalid_override_fails(self):
         result = self.run_verify(suite="unit", simulator_id="old")
         self.assertEqual(result.returncode, 0, result.stderr)

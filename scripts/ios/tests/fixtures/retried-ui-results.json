@@ -1,0 +1,125 @@
+{
+  "_source": "Real 'xcrun xcresulttool get test-results tests --compact' output (Xcode 26.6) for a UI run with -retry-tests-on-failure -test-iterations 3. KRI-117 probe: one permanent failure, one pass-on-retry, one first-try pass. Device info stripped.",
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "name": "KRI117RetryProbeUITests.swift:21: failed - KRI-117 probe: deliberate permanent failure",
+                          "nodeType": "Failure Message"
+                        }
+                      ],
+                      "duration": "0.51s",
+                      "durationInSeconds": 0.5139429569244385,
+                      "name": "First Run",
+                      "nodeIdentifier": "1",
+                      "nodeType": "Repetition",
+                      "result": "Failed"
+                    },
+                    {
+                      "children": [
+                        {
+                          "name": "KRI117RetryProbeUITests.swift:21: failed - KRI-117 probe: deliberate permanent failure",
+                          "nodeType": "Failure Message"
+                        }
+                      ],
+                      "duration": "0.037s",
+                      "durationInSeconds": 0.03699994087219238,
+                      "name": "Retry 1",
+                      "nodeIdentifier": "2",
+                      "nodeType": "Repetition",
+                      "result": "Failed"
+                    },
+                    {
+                      "children": [
+                        {
+                          "name": "KRI117RetryProbeUITests.swift:21: failed - KRI-117 probe: deliberate permanent failure",
+                          "nodeType": "Failure Message"
+                        }
+                      ],
+                      "duration": "0.036s",
+                      "durationInSeconds": 0.035717010498046875,
+                      "name": "Retry 2",
+                      "nodeIdentifier": "3",
+                      "nodeType": "Repetition",
+                      "result": "Failed"
+                    }
+                  ],
+                  "details": "Failed after 3 retries",
+                  "duration": "0.2s",
+                  "durationInSeconds": 0.19544963041941324,
+                  "name": "testAlwaysFails()",
+                  "nodeIdentifier": "KRI117RetryProbeUITests/testAlwaysFails()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/KRI117RetryProbeUITests/testAlwaysFails",
+                  "nodeType": "Test Case",
+                  "result": "Failed"
+                },
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "name": "KRI117RetryProbeUITests.swift:17: failed - KRI-117 probe: deliberate first-attempt failure",
+                          "nodeType": "Failure Message"
+                        }
+                      ],
+                      "duration": "0.036s",
+                      "durationInSeconds": 0.03568601608276367,
+                      "name": "First Run",
+                      "nodeIdentifier": "1",
+                      "nodeType": "Repetition",
+                      "result": "Failed"
+                    },
+                    {
+                      "duration": "0.037s",
+                      "durationInSeconds": 0.036546945571899414,
+                      "name": "Retry 1",
+                      "nodeIdentifier": "2",
+                      "nodeType": "Repetition",
+                      "result": "Passed"
+                    }
+                  ],
+                  "details": "\u26a0\ufe0f Passed after 1 retry",
+                  "duration": "0.036s",
+                  "durationInSeconds": 0.03611648082733154,
+                  "name": "testFailsOnceThenPasses()",
+                  "nodeIdentifier": "KRI117RetryProbeUITests/testFailsOnceThenPasses()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/KRI117RetryProbeUITests/testFailsOnceThenPasses",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0.037s",
+                  "durationInSeconds": 0.037022948265075684,
+                  "name": "testPassesFirstTry()",
+                  "nodeIdentifier": "KRI117RetryProbeUITests/testPassesFirstTry()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/KRI117RetryProbeUITests/testPassesFirstTry",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "KRI117RetryProbeUITests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests/KRI117RetryProbeUITests",
+              "nodeType": "Test Suite",
+              "result": "Failed"
+            }
+          ],
+          "name": "KriaUITests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Kria/KriaUITests",
+          "nodeType": "UI test bundle",
+          "result": "Failed"
+        }
+      ],
+      "name": "Kria",
+      "nodeType": "Test Plan",
+      "result": "Failed"
+    }
+  ]
+}
