@@ -2,6 +2,7 @@
   "groups": {
     "creation": [
       "KriaUITests/CreationUITests/testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize",
+      "KriaUITests/CreationUITests/testLongPressCopiesPromptsAndRepliesWithoutBlockingOptionTaps",
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
       "KriaUITests/CreationUITests/testEveryCreationFormatOpensTheAttachmentFlow",
       "KriaUITests/CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",

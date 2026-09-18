@@ -24,6 +24,41 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(longBubble.label.contains("ends on the wide sunset shot."))
     }
 
+    /// KRI-120: chat text is plain SwiftUI `Text`, which can't be selected, so a
+    /// long press on a prompt or a Kria reply offers Copy of the exact text.
+    func testLongPressCopiesPromptsAndRepliesWithoutBlockingOptionTaps() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat-bubbles"]
+        app.launch()
+
+        let prompt = app.descendants(matching: .any)["chat-message-long"].firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 8))
+        copy(
+            prompt,
+            expecting: "Make this a warm, energetic montage that starts with the arrival, keeps the candid reactions, and ends on the wide sunset shot.",
+            in: app
+        )
+        copy(
+            app.descendants(matching: .any)["chat-message-pending"].firstMatch,
+            expecting: "Keep the laughter at the table.",
+            in: app
+        )
+        let reply = app.staticTexts
+            .matching(NSPredicate(format: "label == %@", "Kria: Should the edit end on the sunset or the arrival?")).firstMatch
+        copy(reply, expecting: "Should the edit end on the sunset or the arrival?", in: app)
+
+        // Tap the chip's blank trailing side, not its text: after a copy, the
+        // whole outlined chip must still select.
+        let option = app.buttons["End on the arrival"]
+        XCTAssertTrue(option.isHittable)
+        option.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let selected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Selected: End on the arrival"),
+            object: app.staticTexts["chat-bubbles-selected-option"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 3), .completed)
+    }
+
     func testLaunchEntersChatFirstWorkspace() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
@@ -275,6 +310,25 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         card.tap()
         XCTAssertTrue(app.buttons["choose-videos"].waitForExistence(timeout: 5))
+    }
+
+    /// Long-presses a chat message, taps Copy, and pastes into the bubble
+    /// fixture's paste control to check the exact copied text.
+    private func copy(_ message: XCUIElement, expecting text: String, in app: XCUIApplication) {
+        XCTAssertTrue(message.waitForExistence(timeout: 3))
+        message.press(forDuration: 1)
+        let copy = app.buttons["Copy"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        copy.tap()
+        let menuGone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: copy)
+        XCTAssertEqual(XCTWaiter.wait(for: [menuGone], timeout: 3), .completed)
+
+        app.buttons["Paste"].tap()
+        let pasted = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Pasted: \(text)"),
+            object: app.staticTexts["chat-bubbles-pasted"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [pasted], timeout: 3), .completed)
     }
 
     /// Taps "Create this video" and waits for the recovery card's message,
