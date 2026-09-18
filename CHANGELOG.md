@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.72.0] - 2026-09-18
+
+### Changed
+- fix(phone): accept bundled fonts and native effects in pilot recipes; clamp text layers to the refit timeline (#1083) <!-- release-pr: 1083 -->
+
 ## [0.76.71.0] - 2026-09-18
 
 ### Changed
