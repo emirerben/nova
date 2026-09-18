@@ -39,6 +39,7 @@ from app.kria.device_render import (
 from app.kria.render_assets import LibraryRenderAsset
 from app.limiter import limiter
 from app.models import ContentPlan, Job, PlanItem, TemporaryMediaUpload
+from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
 from app.services.device_render import (
     apply_device_failure_variant_update,
@@ -459,7 +460,10 @@ async def complete_device_export(
         raise HTTPException(409, "Export upload has not finished") from exc
     except (ValueError, KeyError, subprocess.SubprocessError) as exc:
         raise HTTPException(422, "Export does not match the approved recipe") from exc
-    url = await asyncio.to_thread(storage.signed_get_url, attempt["path"])
+    # A short-lived (5-min) default TTL here would expire long before playback:
+    # match the playback TTL every other read path re-signs against (see
+    # PLAYBACK_URL_TTL_MIN docstring in generative_jobs.py).
+    url = await asyncio.to_thread(storage.signed_get_url, attempt["path"], PLAYBACK_URL_TTL_MIN)
     job = await _owned_job(db, user_id, job_id)
     record, status = _record(job, body.identity)
     if status.phase == "published":
