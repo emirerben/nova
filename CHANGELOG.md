@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.69.0] - 2026-09-18
+
+### Changed
+- feat(ios): register Google iOS OAuth client for com.kria.app.dev dev builds (#1080) <!-- release-pr: 1080 -->
+
 ## [0.76.68.0] - 2026-09-18
 
 ### Changed
