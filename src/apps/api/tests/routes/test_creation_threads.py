@@ -18,6 +18,8 @@ from app.main import app
 from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem
 from app.models import Persona as PersonaRow
 from app.routes.creation_threads import (
+    _DEFAULT_TITLE,
+    _PLACEHOLDER_PROPOSAL_TITLE,
     ActionBody,
     ArchiveBody,
     AttachBody,
@@ -31,6 +33,7 @@ from app.routes.creation_threads import (
     _client_id,
     _creator_agent_projection,
     _exclude_referenced_project_storage,
+    _fill_default_title_if_needed,
     _format_clip_limit,
     _is_status_only_message,
     _load,
@@ -41,6 +44,7 @@ from app.routes.creation_threads import (
     _record_partial_variant_retry_enqueue_failure,
     _render_projection,
     _require_runtime_v1_mutation,
+    _resolve_default_title_fill,
     _response,
     _status_message,
     action_thread,
@@ -2383,6 +2387,182 @@ async def test_detail_poll_is_read_only_and_revision_stable() -> None:
     assert first.revision == second.revision == 4
     assert first.events == second.events == []
     db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_thread_with_initial_message_uses_it_as_title(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A thread created with `CreateBody.message` gets that message as its
+    title (never left at `_DEFAULT_TITLE`), whether or not any later chat
+    turn ever runs `_agent_message`'s own first-message title rule."""
+
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=0)
+    item = SimpleNamespace(id=uuid.uuid4())
+    db = Mock()
+    db.get = AsyncMock(return_value=user)
+    db.add = Mock()
+    db.flush = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    monkeypatch.setattr(routes, "_project", AsyncMock(return_value=(plan, item)))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(
+        routes, "_response", AsyncMock(return_value=SimpleNamespace(title="stubbed"))
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.resolve_snapshot_for_dispatch",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_snapshot.serialize_private_snapshot",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.creator_direction_receipts.stamp_private_receipt",
+        lambda *args, **kwargs: {},
+    )
+
+    await routes.create_thread(
+        request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+        body=CreateBody(message="Weekend trip recap"),
+        user=user,
+        db=db,
+    )
+
+    thread = db.add.call_args.args[0]
+    assert thread.title == "Weekend trip recap"
+    assert thread.state["title_source"] == "first_prompt"
+
+
+def test_resolve_default_title_fill_prefers_accepted_opening_title() -> None:
+    assert (
+        _resolve_default_title_fill(
+            active_plan={"opening_title": "  Golden hour kickoff  "},
+            proposal=None,
+        )
+        == "Golden hour kickoff"
+    )
+
+
+def test_resolve_default_title_fill_uses_approved_proposal_title() -> None:
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    from app.schemas.edit_proposal import (
+        ApprovedProposalSnapshot,
+        EditProposal,
+        EditProposalSnapshot,
+    )
+
+    approved = EditProposal.model_construct(
+        schema_version=1,
+        proposal_version=1,
+        generation_attempt_id="attempt-1",
+        status="approved",
+        draft=None,
+        last_approved=ApprovedProposalSnapshot.model_construct(
+            proposal_version=1,
+            media_digest="d" * 64,
+            approved_at=_datetime.now(_UTC),
+            snapshot=EditProposalSnapshot.model_construct(title="A Sunday in the mountains"),
+            approval_mode="user",
+        ),
+    )
+    assert (
+        _resolve_default_title_fill(active_plan=None, proposal=approved)
+        == "A Sunday in the mountains"
+    )
+
+
+def test_resolve_default_title_fill_never_uses_placeholder_proposal_title() -> None:
+    from app.schemas.edit_proposal import EditProposal, EditProposalSnapshot
+
+    approved = EditProposal.model_construct(
+        schema_version=1,
+        proposal_version=1,
+        generation_attempt_id="attempt-1",
+        status="approved",
+        draft=EditProposalSnapshot.model_construct(title=_PLACEHOLDER_PROPOSAL_TITLE),
+        last_approved=None,
+    )
+    assert _resolve_default_title_fill(active_plan=None, proposal=approved) is None
+
+
+def test_resolve_default_title_fill_ignores_unapproved_proposal() -> None:
+    from app.schemas.edit_proposal import EditProposal, EditProposalSnapshot
+
+    drafting = EditProposal.model_construct(
+        schema_version=1,
+        proposal_version=1,
+        generation_attempt_id="attempt-1",
+        status="drafting",
+        draft=EditProposalSnapshot.model_construct(title="A real title"),
+        last_approved=None,
+    )
+    assert _resolve_default_title_fill(active_plan=None, proposal=drafting) is None
+
+
+def test_resolve_default_title_fill_returns_none_with_no_signal() -> None:
+    assert _resolve_default_title_fill(active_plan=None, proposal=None) is None
+    assert _resolve_default_title_fill(active_plan={}, proposal=None) is None
+
+
+@pytest.mark.asyncio
+async def test_fill_default_title_backfills_from_accepted_strategy_opening_title() -> None:
+    thread = SimpleNamespace(title=_DEFAULT_TITLE, state={})
+    session = SimpleNamespace(active_plan={"opening_title": "Golden hour kickoff"})
+    item = SimpleNamespace(edit_proposal=None)
+    db = AsyncMock(spec=AsyncSession)
+
+    await _fill_default_title_if_needed(db, thread, item=item, session=session)
+
+    assert thread.title == "Golden hour kickoff"
+    assert thread.state["title_source"] == "auto_filled"
+    db.commit.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(thread)
+
+
+@pytest.mark.asyncio
+async def test_fill_default_title_never_overwrites_a_user_set_title() -> None:
+    thread = SimpleNamespace(title=_DEFAULT_TITLE, state={"title_source": "user"})
+    session = SimpleNamespace(active_plan={"opening_title": "Golden hour kickoff"})
+    item = SimpleNamespace(edit_proposal=None)
+    db = AsyncMock(spec=AsyncSession)
+
+    await _fill_default_title_if_needed(db, thread, item=item, session=session)
+
+    assert thread.title == _DEFAULT_TITLE
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fill_default_title_leaves_an_already_titled_thread_alone() -> None:
+    thread = SimpleNamespace(title="Weekend trip recap", state={"title_source": "first_prompt"})
+    session = SimpleNamespace(active_plan={"opening_title": "Golden hour kickoff"})
+    item = SimpleNamespace(edit_proposal=None)
+    db = AsyncMock(spec=AsyncSession)
+
+    await _fill_default_title_if_needed(db, thread, item=item, session=session)
+
+    assert thread.title == "Weekend trip recap"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fill_default_title_is_a_noop_with_no_fillable_signal() -> None:
+    thread = SimpleNamespace(title=_DEFAULT_TITLE, state={})
+    session = SimpleNamespace(active_plan=None)
+    item = SimpleNamespace(edit_proposal=None)
+    db = AsyncMock(spec=AsyncSession)
+
+    await _fill_default_title_if_needed(db, thread, item=item, session=session)
+
+    assert thread.title == _DEFAULT_TITLE
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

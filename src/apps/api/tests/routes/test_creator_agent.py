@@ -4,6 +4,7 @@ import copy
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -34,6 +35,7 @@ from app.models import CreatorAgentExecution, CreatorAgentSession, Job
 from app.routes import creator_agent as creator_routes
 from app.routes import plan_items as plan_item_routes
 from app.routes.creator_agent import (
+    REFRESH_DIRECTION_MESSAGE,
     AutoIterationBody,
     ConfirmBody,
     StartBody,
@@ -47,8 +49,12 @@ from app.routes.creator_agent import (
     _explicit_media_scope,
     _fallback_strategy,
     _has_explicit_media_scope,
+    _is_refresh_retry_message,
     _next_balanced_duration_s,
+    _original_creator_request_for_refresh,
+    _pin_strategy_fields_on_refresh,
     _pinned_narration_target_duration_s,
+    _previous_accepted_strategy,
     _previous_creator_clip_order,
     _requests_preserved_clip_order,
     _require_feature,
@@ -301,6 +307,326 @@ async def test_route_uses_content_aware_duration_and_rationale_when_user_omits_i
     assert session.active_plan["target_duration_s"] == 56
     assert "action sequences need longer holds" in session.active_plan["summary"]
     assert append_event.await_args.kwargs["event_type"] == "assistant_strategy"
+
+
+def _refresh_retry_fixture() -> tuple[dict[str, Any], str, list]:
+    """A previously accepted guided_story plan plus its original request text.
+
+    Mirrors prod thread A9604B72-47C2-48C6-B0D3-2AE5D67F27E8 / plan item
+    b2242487-5e22-4b5c-9489-4e65a0896b7e: a three-part story direction that a
+    failed planner attempt must not lose on Retry.
+    """
+
+    original_request = (
+        "Dynamic opening to establish the scene; fast-paced rhythmic sequence using the "
+        "shorter clips; strong closing hold on one of the longer moments"
+    )
+    previous_strategy = CreativeStrategy(
+        direction="guided_story",
+        edit_format="montage",
+        render_program="guided",
+        pacing="relaxed",
+        target_duration_s=45,
+        opening_title="Golden hour kickoff",
+        closing_title="See you next weekend",
+        shot_labels=["Warm-up", "Match point"],
+        audio_strategy="licensed_music",
+        story_structure=[
+            "Dynamic opening to establish the scene",
+            "Fast-paced rhythmic sequence using the shorter clips",
+            "Strong closing hold on one of the longer moments",
+        ],
+        rationale="A three-part story arc.",
+    )
+    previous_active_plan = {
+        "edit_plan": {"strategy": previous_strategy.model_dump(mode="json", exclude_none=True)},
+        "creator_request": original_request,
+        "opening_title": "Golden hour kickoff",
+    }
+    events: list = []
+    return previous_active_plan, original_request, events
+
+
+@pytest.mark.asyncio
+async def test_refresh_retry_keeps_prior_accepted_direction_and_logs_pin_event(monkeypatch) -> None:
+    """Retry after a failed guided_story plan must not adopt the model's
+    fast_montage re-proposal: direction/pace/duration/titles are restored
+    from the last accepted strategy, and creator_request/goal reach the
+    specialist as the creator's ORIGINAL text, never the canned retry
+    message. See CLAUDE.md-referenced prod thread A9604B72-... / defect 1.
+    """
+
+    previous_active_plan, original_request, events = _refresh_retry_fixture()
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(6)
+        ],
+        guided_capability_enabled=True,
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=2,
+        status="planning",
+        events=events,
+        agent_call_count=0,
+        agent_call_budget=8,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,  # already cleared by _reset_render_target before retry
+        last_error={"code": "execution_failed"},
+        manifest_hash=None,
+    )
+    response = SimpleNamespace(status="awaiting_confirmation")
+    log_mock = MagicMock()
+    captured: dict[str, Any] = {}
+
+    async def fake_to_thread(_func, agent_input, ctx=None):  # noqa: ARG001
+        captured["agent_input"] = agent_input
+        return SimpleNamespace(
+            action=ProposeStrategy(
+                kind="propose_strategy",
+                strategy=CreativeStrategy(
+                    direction="fast_montage",
+                    edit_format="montage",
+                    render_program="native",
+                    pacing="fast",
+                    target_duration_s=15,
+                    audio_strategy="licensed_music",
+                    selected_media_ids=[f"clip-{index}" for index in range(6)],
+                ),
+                summary="A fast highlight reel.",
+            )
+        )
+
+    monkeypatch.setattr(creator_routes, "log", log_mock)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=2,
+        user_message=REFRESH_DIRECTION_MESSAGE,
+        previous_active_plan=previous_active_plan,
+    )
+
+    assert result is response
+    strategy = session.active_plan["edit_plan"]["strategy"]
+    assert strategy["direction"] == "guided_story"
+    assert strategy["render_program"] == "guided"
+    assert strategy["pacing"] == "relaxed"
+    assert strategy["target_duration_s"] == 45
+    assert strategy["opening_title"] == "Golden hour kickoff"
+    assert strategy["closing_title"] == "See you next weekend"
+    assert strategy["shot_labels"] == ["Warm-up", "Match point"]
+
+    # creator_request/goal consistency: the model AND the persisted plan (the
+    # source _seed_guided_specialist_brief reads at confirmation) both see the
+    # creator's original request, never the canned "Keep the same plan..."
+    # confirmation-screen text.
+    assert session.active_plan["creator_request"] == original_request
+    assert captured["agent_input"].creator_request == original_request
+    assert REFRESH_DIRECTION_MESSAGE not in session.active_plan["creator_request"]
+
+    pinned_calls = [
+        call
+        for call in log_mock.info.call_args_list
+        if call.args and call.args[0] == "creator_strategy_pinned_on_refresh"
+    ]
+    assert len(pinned_calls) == 1
+    restored = pinned_calls[0].kwargs["restored_fields"]
+    assert {
+        "direction",
+        "render_program",
+        "pacing",
+        "target_duration_s",
+        "opening_title",
+        "closing_title",
+    }.issubset(set(restored))
+
+
+@pytest.mark.asyncio
+async def test_normal_new_message_after_failed_plan_is_not_pinned(monkeypatch) -> None:
+    """A genuine new instruction (not the canned refresh message) must be
+    free to change direction -- only the refresh/retry affordance pins the
+    prior accepted strategy.
+    """
+
+    previous_active_plan, _original_request, events = _refresh_retry_fixture()
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": f"clip-{index}", "kind": "video", "duration_s": 4.0} for index in range(6)
+        ],
+        guided_capability_enabled=True,
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=2,
+        status="planning",
+        events=events,
+        agent_call_count=0,
+        agent_call_budget=8,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    response = SimpleNamespace(status="awaiting_confirmation")
+
+    async def fake_to_thread(_func, _agent_input, ctx=None):  # noqa: ARG001
+        return SimpleNamespace(
+            action=ProposeStrategy(
+                kind="propose_strategy",
+                strategy=CreativeStrategy(
+                    direction="fast_montage",
+                    edit_format="montage",
+                    render_program="native",
+                    pacing="fast",
+                    target_duration_s=15,
+                    audio_strategy="licensed_music",
+                    selected_media_ids=[f"clip-{index}" for index in range(6)],
+                ),
+                summary="A fast highlight reel.",
+            )
+        )
+
+    monkeypatch.setattr(creator_routes, "log", MagicMock())
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=2,
+        user_message="Make it a fast montage",
+        previous_active_plan=previous_active_plan,
+    )
+
+    assert result is response
+    strategy = session.active_plan["edit_plan"]["strategy"]
+    assert strategy["direction"] == "fast_montage"
+    assert strategy["render_program"] == "native"
+    assert strategy["pacing"] == "fast"
+    assert strategy["target_duration_s"] == 15
+
+
+def test_is_refresh_retry_message_exact_match_only() -> None:
+    assert _is_refresh_retry_message(REFRESH_DIRECTION_MESSAGE) is True
+    assert _is_refresh_retry_message(f"  {REFRESH_DIRECTION_MESSAGE}  ") is True
+    assert _is_refresh_retry_message("Keep the same plan") is False
+    assert _is_refresh_retry_message("Make it a fast montage") is False
+
+
+def test_previous_accepted_strategy_reads_prior_edit_plan_strategy() -> None:
+    previous_active_plan, _original_request, _events = _refresh_retry_fixture()
+    strategy = _previous_accepted_strategy(previous_active_plan)
+    assert strategy is not None
+    assert strategy.direction == "guided_story"
+    assert strategy.render_program == "guided"
+    assert _previous_accepted_strategy(None) is None
+    assert _previous_accepted_strategy({"edit_plan": {}}) is None
+
+
+def test_pin_strategy_fields_on_refresh_only_restores_divergent_fields() -> None:
+    _previous_active_plan, _original_request, _events = _refresh_retry_fixture()
+    previous = CreativeStrategy(
+        direction="guided_story",
+        pacing="relaxed",
+        target_duration_s=45,
+        opening_title="Golden hour kickoff",
+        audio_strategy="licensed_music",
+    )
+    # Only `direction` and `target_duration_s` diverge; the rest already match.
+    proposed = CreativeStrategy(
+        direction="fast_montage",
+        pacing="relaxed",
+        target_duration_s=15,
+        opening_title="Golden hour kickoff",
+        audio_strategy="licensed_music",
+    )
+    pinned, restored = _pin_strategy_fields_on_refresh(proposed, previous)
+    assert pinned.direction == "guided_story"
+    assert pinned.target_duration_s == 45
+    assert set(restored) == {"direction", "target_duration_s"}
+
+    identical, restored_none = _pin_strategy_fields_on_refresh(previous, previous)
+    assert identical is previous
+    assert restored_none == []
+
+
+def test_original_creator_request_for_refresh_prefers_previous_plan() -> None:
+    previous_active_plan, original_request, _events = _refresh_retry_fixture()
+    result = _original_creator_request_for_refresh(previous_active_plan, [])
+    assert result == original_request
+
+
+def test_original_creator_request_for_refresh_falls_back_to_events_excluding_canned_message() -> (
+    None
+):
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="user",
+            event_type="user_message",
+            payload={"message": "Make a fast highlight reel from my clips"},
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="assistant",
+            event_type="assistant_strategy",
+            payload={"message": "Proposed a plan"},
+        ),
+        SimpleNamespace(
+            sequence=3,
+            role="user",
+            event_type="user_message",
+            payload={"message": REFRESH_DIRECTION_MESSAGE},
+        ),
+    ]
+    result = _original_creator_request_for_refresh(None, events)
+    assert result == "Make a fast highlight reel from my clips"
+    assert REFRESH_DIRECTION_MESSAGE not in result
 
 
 @pytest.mark.asyncio
