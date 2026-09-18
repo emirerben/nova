@@ -290,6 +290,86 @@ final class ChatWorkspaceTests: XCTestCase {
         )
     }
 
+    // MARK: - WorkspaceStage.resolve
+
+    /// A pending plan (from either runtime's confirmation mechanism) always
+    /// wins over a stale `.ready` status left by the last job — this is the
+    /// A9604B72 bug: a ready cut plus a new proposed plan must show the
+    /// confirmation card, not "Your first cut is ready".
+    func testReadyWithPendingPlanShowsDirectionNotReady() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .ready, awaitsNewPlanConfirmation: true, isChoosingFormat: false, hasFormat: true),
+            .direction
+        )
+    }
+
+    func testReadyWithoutPendingPlanStaysReady() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .ready, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true),
+            .ready
+        )
+    }
+
+    /// Documented decision: an in-flight render always wins, even over a plan
+    /// proposed while it was still rendering — the old job's progress must
+    /// stay visible rather than being buried by a new confirmation card.
+    func testRenderingWithPendingPlanStaysRendering() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .rendering, awaitsNewPlanConfirmation: true, isChoosingFormat: false, hasFormat: true),
+            .rendering
+        )
+    }
+
+    func testFailedWithPendingPlanShowsDirectionNotFailed() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .failed, awaitsNewPlanConfirmation: true, isChoosingFormat: false, hasFormat: true),
+            .direction
+        )
+    }
+
+    func testFailedWithoutPendingPlanStaysFailed() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .failed, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true),
+            .failed
+        )
+    }
+
+    func testDraftCasesAreUnchangedByPendingPlanPrecedence() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: true, isChoosingFormat: false, hasFormat: false),
+            .direction
+        )
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: false, isChoosingFormat: true, hasFormat: true),
+            .format
+        )
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true),
+            .footage
+        )
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: false),
+            .format
+        )
+    }
+
+    // MARK: - workspaceStatusLabel
+
+    func testWorkspaceStatusLabelPrefersPendingPlanOverStaleReadyOrFailed() {
+        var summary = ProjectSummary(id: UUID(), title: "Test", status: .ready, updatedAt: .now, posterURL: nil, awaitsConfirmation: true)
+        XCTAssertEqual(summary.workspaceStatusLabel, "Shaping direction")
+
+        summary.status = .failed
+        XCTAssertEqual(summary.workspaceStatusLabel, "Shaping direction")
+
+        summary.awaitsConfirmation = false
+        XCTAssertEqual(summary.workspaceStatusLabel, "Needs attention")
+
+        summary.status = .rendering
+        summary.awaitsConfirmation = true
+        XCTAssertEqual(summary.workspaceStatusLabel, "Rendering")
+    }
+
     private func event(id: String, sequence: Int, content: String? = nil) -> ThreadEvent {
         ThreadEvent(
             id: id,

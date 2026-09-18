@@ -148,6 +148,48 @@ import UIKit
         }
     }
 
+    /// A9604B72: a ready cut's job status must not hide a freshly proposed
+    /// plan. `awaitsNewPlanConfirmation` (and the `ProjectSummary` it feeds)
+    /// must stay true across both confirmation mechanisms, independent of
+    /// `summary.status`.
+    func testAwaitsNewPlanConfirmationCoversBothRuntimeConfirmationMechanisms() throws {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+
+        // Runtime v1: creatorAgent.status drives it directly.
+        var v1Object = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.thread(runtime: 1)) as? [String: Any])
+        v1Object["creator_agent"] = ["status": "awaiting_confirmation", "summary": "New direction"]
+        let v1Thread = try decoder.decode(CreationThread.self, from: JSONSerialization.data(withJSONObject: v1Object))
+        XCTAssertTrue(v1Thread.awaitsCreationConfirmation)
+        XCTAssertFalse(v1Thread.hasPendingApprovalRequest)
+        XCTAssertTrue(v1Thread.awaitsNewPlanConfirmation)
+        XCTAssertTrue(v1Thread.summary.awaitsConfirmation)
+
+        // Runtime v2 with an unresolved approval_requested event.
+        var v2Object = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.thread(runtime: 2)) as? [String: Any])
+        v2Object["events"] = [
+            ["id": "e1", "sequence": 1, "revision": 1, "role": "assistant", "event_type": "approval_requested",
+             "content": "New direction", "created_at": "2026-09-18T14:56:00Z"]
+        ]
+        let v2Pending = try decoder.decode(CreationThread.self, from: JSONSerialization.data(withJSONObject: v2Object))
+        XCTAssertFalse(v2Pending.awaitsCreationConfirmation)
+        XCTAssertTrue(v2Pending.hasPendingApprovalRequest)
+        XCTAssertTrue(v2Pending.awaitsNewPlanConfirmation)
+        XCTAssertTrue(v2Pending.summary.awaitsConfirmation)
+
+        // Runtime v2 where the approval was already decided: no longer pending.
+        var v2Resolved = v2Object
+        v2Resolved["events"] = [
+            ["id": "e1", "sequence": 1, "revision": 1, "role": "assistant", "event_type": "approval_requested",
+             "content": "New direction", "created_at": "2026-09-18T14:56:00Z"],
+            ["id": "e2", "sequence": 2, "revision": 2, "role": "assistant", "event_type": "approval_approved",
+             "created_at": "2026-09-18T14:57:00Z"],
+        ]
+        let v2Done = try decoder.decode(CreationThread.self, from: JSONSerialization.data(withJSONObject: v2Resolved))
+        XCTAssertFalse(v2Done.hasPendingApprovalRequest)
+        XCTAssertFalse(v2Done.awaitsNewPlanConfirmation)
+        XCTAssertFalse(v2Done.summary.awaitsConfirmation)
+    }
+
     func testOlderPollCannotReplaceEqualRevisionMutationProjection() {
         var order = ThreadProjectionOrder()
         let oldPoll = order.begin()

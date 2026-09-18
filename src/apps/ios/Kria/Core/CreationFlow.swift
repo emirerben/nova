@@ -211,6 +211,27 @@ extension CreationThread {
     var awaitsCreationConfirmation: Bool {
         runtimeVersion == 1 && creatorAgent?["status"]?.stringValue == "awaiting_confirmation"
     }
+
+    /// Runtime-v2 equivalent of `awaitsCreationConfirmation`: an approval was
+    /// requested and nothing terminal (approved/denied/cancelled/expired) has
+    /// followed it yet. Computed straight from the event log so it's available
+    /// synchronously wherever a full `CreationThread` projection is in hand —
+    /// unlike the view's `synchronizeApproval()`, it doesn't confirm the
+    /// approval hasn't since expired, so it's a good-enough signal for status
+    /// labels, not a substitute for the authoritative live check.
+    var hasPendingApprovalRequest: Bool {
+        guard runtimeVersion == 2 else { return false }
+        let terminalTypes: Set<String> = ["approval_approved", "approval_denied", "approval_cancelled", "approval_expired"]
+        guard let lastRequest = events.last(where: { $0.eventType == "approval_requested" }) else { return false }
+        return !events.contains(where: { $0.sequence > lastRequest.sequence && terminalTypes.contains($0.eventType) })
+    }
+
+    /// True while a newly proposed plan hasn't been confirmed or declined yet,
+    /// across both the runtime-v1 (`creatorAgent.status`) and runtime-v2
+    /// (`approval_requested` events) mechanisms. This can be true even when
+    /// ``ProjectSummary/status`` still reports `.ready`/`.failed` from the last
+    /// minted job — the two are independent axes.
+    var awaitsNewPlanConfirmation: Bool { awaitsCreationConfirmation || hasPendingApprovalRequest }
 }
 
 extension JSONValue {

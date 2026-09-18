@@ -28,6 +28,12 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
     /// identity lets the editor load its authoritative job directly without
     /// trying to promote the same video through the Gallery route.
     var activePlanItemID: String?
+    /// A new Creator plan is awaiting the creator's confirmation, independent
+    /// of ``status`` (which still reflects the last minted job — e.g. a
+    /// finished `.ready` cut stays `.ready` while a fresh direction is
+    /// proposed on top of it). Drives `workspaceStage`/`workspaceStatusLabel`
+    /// precedence so a pending plan is never hidden behind an old cut.
+    var awaitsConfirmation: Bool = false
 
     init(
         id: UUID,
@@ -40,7 +46,8 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
         runtimeVersion: Int = 2,
         serverRevision: Int = 0,
         activeJobID: UUID? = nil,
-        activePlanItemID: String? = nil
+        activePlanItemID: String? = nil,
+        awaitsConfirmation: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -53,6 +60,7 @@ struct ProjectSummary: Codable, Identifiable, Hashable, Sendable {
         self.serverRevision = serverRevision
         self.activeJobID = activeJobID
         self.activePlanItemID = activePlanItemID
+        self.awaitsConfirmation = awaitsConfirmation
     }
 }
 
