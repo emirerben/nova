@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.68.0] - 2026-09-18
+
+### Changed
+- feat(ios,api): reviewer demo login for TestFlight Beta App Review (KRI-111) (#1077) <!-- release-pr: 1077 -->
+
 ## [0.76.67.0] - 2026-09-17
 
 ### Changed
