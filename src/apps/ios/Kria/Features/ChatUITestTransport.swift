@@ -130,6 +130,12 @@ private final class CreationChatFixture: @unchecked Sendable {
                 preparations[id] = 0
                 append("agent_assistant_execution", text: "I started the confirmed edit.")
             } else if action == "generate" {
+                // The server moves a confirmed plan awaiting_confirmation ->
+                // executing. Without this the fixture keeps a pending plan on
+                // top of the finished cut and the ready stage never shows.
+                if thread["creator_agent"] != nil {
+                    thread["creator_agent"] = ["status": "executing", "summary": "Open on the laugh and keep the pacing quick."]
+                }
                 thread["active_job_id"] = id
                 thread["job"] = ["id": id, "status": "processing", "variants": []]
                 renders[id] = 0
