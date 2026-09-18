@@ -108,6 +108,9 @@ struct RootView: View {
 
 #if DEBUG
 private struct ChatBubbleUITestHost: View {
+    @State private var pasted = ""
+    @State private var selectedOption = ""
+
     private var dynamicTypeSize: DynamicTypeSize {
         switch ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] {
         case "accessibility5": return .accessibility5
@@ -135,6 +138,28 @@ private struct ChatBubbleUITestHost: View {
                         content: "Make this a warm, energetic montage that starts with the arrival, keeps the candid reactions, and ends on the wide sunset shot."
                     )
                 )
+                ChatMessageRow(
+                    message: ChatTranscriptMessage(
+                        id: "reply",
+                        role: .assistant,
+                        content: "Should the edit end on the sunset or the arrival?",
+                        options: ["End on the sunset", "End on the arrival"]
+                    ),
+                    onSelectOption: { selectedOption = $0 }
+                )
+                ChatMessageRow(
+                    message: ChatTranscriptMessage(
+                        id: "pending",
+                        role: .user,
+                        content: "Keep the laughter at the table.",
+                        isPending: true
+                    )
+                )
+                // Reads what a message's Copy wrote, through the system paste
+                // control, so the test needs no paste permission prompt.
+                PasteButton(payloadType: String.self) { strings in pasted = strings.first ?? "" }
+                Text("Pasted: \(pasted)").accessibilityIdentifier("chat-bubbles-pasted")
+                Text("Selected: \(selectedOption)").accessibilityIdentifier("chat-bubbles-selected-option")
             }
             .frame(maxWidth: 620, alignment: .leading)
             .padding(16)

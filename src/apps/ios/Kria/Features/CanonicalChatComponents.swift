@@ -168,6 +168,14 @@ struct ChatMessageRow: View {
     let message: ChatTranscriptMessage
     var onSelectOption: ((String) -> Void)? = nil
 
+    private static let userBubbleShape = UnevenRoundedRectangle(
+        topLeadingRadius: 18,
+        bottomLeadingRadius: 18,
+        bottomTrailingRadius: 6,
+        topTrailingRadius: 18,
+        style: .continuous
+    )
+
     var body: some View {
         if message.role == .user {
             HStack {
@@ -180,27 +188,25 @@ struct ChatMessageRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background {
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: 18,
-                            bottomLeadingRadius: 18,
-                            bottomTrailingRadius: 6,
-                            topTrailingRadius: 18,
-                            style: .continuous
-                        )
-                        .fill(KriaColor.ink)
-                    }
+                    .background { Self.userBubbleShape.fill(KriaColor.ink) }
                     .opacity(message.isPending ? 0.68 : 1)
+                    .copyableMessage(message.content, previewShape: Self.userBubbleShape)
                     .accessibilityLabel("You: \(message.content)")
                     .accessibilityIdentifier("chat-message-\(message.id)")
             }
             .frame(maxWidth: .infinity)
         } else {
             VStack(alignment: .leading, spacing: 7) {
+                // Only the reply text is long-pressable, so the option chips
+                // below keep their plain taps.
                 Text(message.content)
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)
                     .lineSpacing(4)
+                    .copyableMessage(message.content, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    // On the text, not the stack: a stack's label is applied to
+                    // every child, which read each option chip as the question.
+                    .accessibilityLabel("Kria: \(message.content)")
                 if !message.options.isEmpty, let onSelectOption {
                     QuestionOptionsRow(
                         options: message.options,
@@ -210,8 +216,35 @@ struct ChatMessageRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel("Kria: \(message.content)")
         }
+    }
+}
+
+private extension View {
+    /// Long-press Copy for chat text, which plain SwiftUI `Text` can't select.
+    /// (`.textSelection(.enabled)` would also copy only the whole message on
+    /// iOS.) VoiceOver gets the same Copy as an action, since the menu alone
+    /// exposes none.
+    func copyableMessage(_ text: String, previewShape: some Shape) -> some View {
+        modifier(CopyableMessage(text: text, previewShape: previewShape))
+    }
+}
+
+private struct CopyableMessage<PreviewShape: Shape>: ViewModifier {
+    let text: String
+    let previewShape: PreviewShape
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(.contextMenuPreview, previewShape)
+            .contextMenu {
+                Button("Copy", systemImage: "doc.on.doc", action: copy)
+            }
+            .accessibilityAction(named: "Copy", copy)
+    }
+
+    private func copy() {
+        UIPasteboard.general.string = text
     }
 }
 
@@ -721,6 +754,9 @@ private struct QuestionOptionButton: View {
             .padding(.vertical, 10)
             .frame(minHeight: 44)
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(KriaColor.border, lineWidth: 1))
+            // A plain-style button only takes taps on drawn pixels, which left
+            // the chip's blank interior dead; the whole outlined chip is the target.
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(isRecommended ? "\(text) (recommended)" : text)
