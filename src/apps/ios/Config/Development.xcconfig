@@ -2,9 +2,9 @@
 API_BASE_URL = http:/$()/localhost:8000
 AUTH_MODE = dev
 KRIA_MEDIA_ENGINE = local
-KRIA_PRODUCT_BUNDLE_IDENTIFIER = com.emirerben.kria.dev
-KRIA_GOOGLE_CLIENT_ID =
-KRIA_GOOGLE_REDIRECT_SCHEME = kria-dev-google
+KRIA_PRODUCT_BUNDLE_IDENTIFIER = com.kria.app.dev
+KRIA_GOOGLE_CLIENT_ID = 600393007296-ed1km1cdcteq54iui01rkv7tuuiu3g9m.apps.googleusercontent.com
+KRIA_GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.600393007296-ed1km1cdcteq54iui01rkv7tuuiu3g9m
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DEBUG DEV_AUTH
 
 // Optional developer-specific API/OAuth values. This file is git-ignored.

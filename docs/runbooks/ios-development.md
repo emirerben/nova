@@ -12,6 +12,16 @@ No Apple team or production bundle identifier is required for simulator builds.
 Development defaults come from `Config/Development.xcconfig`; production signing
 values belong in an untracked local override or CI secrets.
 
+`Config/Development.xcconfig`'s default bundle identifier is `com.kria.app.dev`,
+registered with its own Google iOS OAuth client
+(`600393007296-ed1km1cdcteq54iui01rkv7tuuiu3g9m.apps.googleusercontent.com`,
+GCP project `TravelX`), so "Continue with Google" works out of the box in plain
+Debug/simulator builds. This is separate from the `Kria Live Development` scheme
+below, which uses its own dedicated client bound to Yasin's personal bundle
+identifier. The API allowlists mobile client IDs via `MOBILE_GOOGLE_CLIENT_IDS`
+(`src/apps/api/app/config.py`); both iOS clients must be present in that list for
+sign-in to work end to end.
+
 ## Real-account build for a collaborator
 
 Use the `Kria Live Development` scheme to run the current source on an iPhone
