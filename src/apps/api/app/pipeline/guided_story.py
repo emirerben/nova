@@ -850,6 +850,47 @@ def _source_window(ref, duration_s: float) -> tuple[float, float]:  # noqa: ANN0
     return round(start, 3), round(start + duration_s, 3)
 
 
+def guided_transition_params(
+    direction: str,
+    pace: str,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
+) -> tuple[str, float]:
+    """Crossfade policy for a guided/text_explainer/fast_montage direction+pace.
+
+    Single source of truth for the boundary transition
+    `_compile_execution_plan_version` applies at render time, so pre-render
+    capacity estimates (`edit_direction_planner.deterministic_guided_beats`,
+    `guided_story_capacity_s`) charge the exact same overlap the strict
+    compiler (`_allocate_beat_windows`) will -- keeping the two capacity
+    models from drifting apart the way job b2242487 exposed.
+    """
+
+    quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
+    policy = _DIRECTION_POLICY[direction]
+    transition_type = (
+        "none" if quick_mixed_timing else policy["transition"] if pace != "fast" else "none"
+    )
+    transition_duration_s = 0.0 if quick_mixed_timing else 0.2 if pace == "relaxed" else 0.12
+    return transition_type, transition_duration_s
+
+
+def guided_moment_capacity_s(ref: Any, *, overlap_s: float) -> float:
+    """Usable duration a single beat moment (one media source) can supply.
+
+    A video's capacity is its source duration minus the transition overlap it
+    pays into the next moment (pass ``0.0`` for a moment that pays none, e.g.
+    the story's globally last moment); a still image is an unbounded hold.
+    This is the plain (non quick-mixed-timing) capacity model
+    `_allocate_beat_windows` uses per moment -- factored out so the
+    deterministic guided-story fallback selects sources against the exact
+    same capacity the strict compiler will enforce.
+    """
+
+    if ref.kind == "image":
+        return math.inf
+    return max(0.0, float(ref.duration_s or 0.0) - overlap_s)
+
+
 def _allocate_beat_windows(
     snapshot,
     *,
@@ -892,9 +933,7 @@ def _allocate_beat_windows(
             if quick_mixed_timing and ref.kind == "image"
             else min(3.0, max(0.0, float(ref.duration_s or 0.0) - overlap))
             if quick_mixed_timing
-            else math.inf
-            if ref.kind == "image"
-            else max(0.0, float(ref.duration_s or 0.0) - overlap)
+            else guided_moment_capacity_s(ref, overlap_s=overlap)
             for ref, overlap in zip(beat_refs, overlaps_s, strict=True)
         ]
         if not quick_mixed_timing:
@@ -1528,15 +1567,8 @@ def _compile_execution_plan_version(
         # legacy renderer instead of enforcing a false mixed-media receipt.
         mixed_timing = None
         quick_mixed_timing = False
-    transition_type = (
-        "none"
-        if quick_mixed_timing
-        else policy["transition"]
-        if snapshot.pace != "fast"
-        else "none"
-    )
-    transition_duration_s = (
-        0.0 if quick_mixed_timing else 0.2 if snapshot.pace == "relaxed" else 0.12
+    transition_type, transition_duration_s = guided_transition_params(
+        snapshot.direction, snapshot.pace, mixed_timing
     )
     if not selected_ids:
         raise GuidedStoryError("guided_story_snapshot_invalid", "The approved edit has no media.")

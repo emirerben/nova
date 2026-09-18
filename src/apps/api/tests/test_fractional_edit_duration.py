@@ -31,8 +31,9 @@ from app.services.edit_direction_planner import (
     clamp_fast_montage_target_duration_s,
     deterministic_fast_cuts,
     deterministic_guided_beats,
+    guided_story_capacity_s,
 )
-from app.tasks.edit_proposal_build import adapt_target_duration_s
+from app.tasks.edit_proposal_build import MIN_GUIDED_DURATION_S, adapt_target_duration_s
 
 
 def _media() -> list[MediaRef]:
@@ -180,6 +181,64 @@ def test_footage_clamps_preserve_fractional_seconds() -> None:
     assert target == pytest.approx(12.7)
     cuts = deterministic_fast_cuts(_media(), target)
     assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(12.7, abs=1 / 30)
+
+
+def test_guided_story_target_clamp_matches_structural_capacity() -> None:
+    """The composed clamp `edit_proposal_build.py` applies at ~1474 for guided_story.
+
+    ``target = max(MIN_GUIDED_DURATION_S, min(adapt_target_duration_s(...),
+    guided_story_capacity_s(...)))``. For the exact incident footage (job
+    b2242487) the structural capacity (all 8 eligible >=1.4s clips, minus 7
+    crossfade overlaps) comfortably covers the 45s brief, so the clamp is a
+    no-op there -- the incident's root cause was fallback *selection*, not a
+    genuine capacity shortfall (see the b2242487 regression test). For
+    footage whose real capacity IS short of the brief, the clamp must pull
+    the pre-LLM target down to at most that capacity and never below
+    MIN_GUIDED_DURATION_S. For ample footage the brief's own duration is
+    preserved untouched.
+    """
+
+    incident_media = [
+        ref.model_copy(update={"duration_s": duration, "media_id": f"clip-{index}"})
+        for index, (ref, duration) in enumerate(
+            zip(
+                _media() * 4,
+                [1.27, 2.57, 2.0, 6.3, 10.27, 5.07, 11.2, 6.7, 1.2, 2.83],
+                strict=False,
+            )
+        )
+    ]
+    brief_duration_s = 45
+    feasible_s = sum(
+        duration for duration in [1.27, 2.57, 2.0, 6.3, 10.27, 5.07, 11.2, 6.7, 1.2, 2.83]
+    )
+    target = adapt_target_duration_s(brief_duration_s, feasible_s)
+    capacity = guided_story_capacity_s(incident_media, pace="balanced")
+    target = max(MIN_GUIDED_DURATION_S, min(target, capacity))
+
+    assert target <= capacity
+    assert target >= MIN_GUIDED_DURATION_S
+    assert target == pytest.approx(brief_duration_s)  # already structurally feasible
+
+    ample_media = [
+        ref.model_copy(update={"duration_s": 20.0, "media_id": f"ample-{index}"})
+        for index, ref in enumerate(_media() * 2)
+    ]
+    ample_target = adapt_target_duration_s(brief_duration_s, sum(20.0 for _ in ample_media))
+    ample_capacity = guided_story_capacity_s(ample_media, pace="balanced")
+    ample_target = max(MIN_GUIDED_DURATION_S, min(ample_target, ample_capacity))
+    assert ample_target == pytest.approx(brief_duration_s)
+
+    short_media = [
+        ref.model_copy(update={"duration_s": 2.0, "media_id": f"short-{index}"})
+        for index, ref in enumerate(_media())
+    ]
+    short_target = adapt_target_duration_s(brief_duration_s, sum(2.0 for _ in short_media))
+    short_capacity = guided_story_capacity_s(short_media, pace="balanced")
+    short_target = max(MIN_GUIDED_DURATION_S, min(short_target, short_capacity))
+    assert short_target < brief_duration_s
+    assert short_target == pytest.approx(short_capacity)
+    assert short_target >= MIN_GUIDED_DURATION_S
 
 
 def test_guided_fallback_all_media_compiles_in_story_order() -> None:

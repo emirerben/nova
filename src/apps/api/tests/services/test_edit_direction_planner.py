@@ -1,4 +1,5 @@
 import json
+import random
 
 import pytest
 
@@ -9,6 +10,11 @@ from app.agents.edit_proposal import (
     EditProposalAgentOutput,
     EditProposalMedia,
 )
+from app.pipeline.guided_story import (
+    GuidedStoryError,
+    compile_execution_plan,
+    validate_proposal_timing,
+)
 from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
@@ -18,6 +24,7 @@ from app.schemas.edit_proposal import (
     NarrationTrack,
     NarrationWord,
     StoryBeat,
+    canonical_media_digest,
     media_context_group,
 )
 from app.services import edit_direction_planner
@@ -135,6 +142,157 @@ def test_deterministic_guided_beats_covers_required_media_up_to_schema_limit() -
     assert {media_id for beat in beats for media_id in beat.media_ids} == {
         ref.media_id for ref in media
     }
+
+
+def _guided_snapshot_media(durations: list[float]) -> list[MediaRef]:
+    return [
+        MediaRef(
+            lane="clip",
+            media_id=f"clip-{index}",
+            gcs_path=f"users/test/clip-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=duration,
+        )
+        for index, duration in enumerate(durations)
+    ]
+
+
+def _compile_guided_snapshot(snapshot: EditProposalSnapshot) -> dict:
+    return compile_execution_plan(
+        {
+            "proposal_version": 1,
+            "media_digest": canonical_media_digest(snapshot.media, snapshot.narration),
+            "approved_proposal": snapshot.model_dump(mode="json"),
+            "media_identities": [
+                {
+                    key: getattr(ref, key)
+                    for key in ("lane", "media_id", "gcs_path", "generation", "kind")
+                }
+                for ref in snapshot.media
+            ],
+        },
+        track=None,
+    )
+
+
+def test_deterministic_guided_beats_incident_b2242487_compiles_without_raising() -> None:
+    """Regression for job b2242487-5e22-4b5c-9489-4e65a0896b7e (2026-09-18 prod incident).
+
+    Exact incident fixture: guided_story/45s/balanced, 10 video clips, no
+    narration/cadence/selected_media_ids. The old duration-blind fallback
+    picked only 7 of the 8 eligible (>=1.4s) sources and allocated per-beat
+    weights against a flat 12s cap -- ignoring that those 7 sources' real
+    (overlap-adjusted) capacity was ~44.2s, just under the 45s target -- so
+    `_allocate_beat_windows` raised `guided_story_duration_impossible`.
+    """
+
+    media = _guided_snapshot_media([1.27, 2.57, 2.0, 6.3, 10.27, 5.07, 11.2, 6.7, 1.2, 2.83])
+
+    beats = edit_direction_planner.deterministic_guided_beats(media, 45, pace="balanced")
+
+    snapshot = EditProposalSnapshot(
+        title="Incident b2242487",
+        duration_s=sum(beat.duration_s for beat in beats),
+        pace="balanced",
+        media=media,
+        story_beats=beats,
+    )
+    # Must not raise GuidedStoryError("guided_story_duration_impossible", ...).
+    validate_proposal_timing(snapshot)
+    plan = _compile_guided_snapshot(snapshot)
+    assert set(plan["selected_media_ids"]) == {
+        media_id for beat in beats for media_id in beat.media_ids
+    }
+
+
+def test_deterministic_guided_beats_shrinks_target_when_capacity_is_short() -> None:
+    """Three 2s clips can never structurally support a 30s guided story.
+
+    The fallback must shrink to the achievable total (with a safety margin
+    for the compiler's own frame quantization) rather than raising, and every
+    beat must still clear the per-source minimum-moment floor.
+    """
+
+    media = _guided_snapshot_media([2.0, 2.0, 2.0])
+
+    beats = edit_direction_planner.deterministic_guided_beats(media, 30, pace="balanced")
+
+    total_s = sum(beat.duration_s for beat in beats)
+    # Achievable capacity (3 * 2.0s minus 2 crossfade overlaps of 0.12s) minus
+    # the one-frame-per-source safety margin deterministic_guided_beats keeps.
+    raw_capacity_s = 3 * 2.0 - 2 * 0.12
+    safety_margin_s = (1.0 / 30.0) * 3
+    assert total_s == pytest.approx(raw_capacity_s - safety_margin_s, abs=0.01)
+    assert total_s < 30
+    for beat in beats:
+        assert beat.duration_s >= edit_direction_planner.GUIDED_STORY_MIN_MOMENT_S * len(
+            beat.media_ids
+        )
+
+    snapshot = EditProposalSnapshot(
+        title="Shrunk",
+        duration_s=total_s,
+        pace="balanced",
+        media=media,
+        story_beats=beats,
+    )
+    validate_proposal_timing(snapshot)
+
+
+def test_guided_story_capacity_s_uses_every_eligible_source_and_clamps_when_short() -> None:
+    # The incident footage's structural capacity (all 8 eligible >=1.4s clips,
+    # 7 crossfade overlaps of 0.12s) comfortably covers the 45s brief -- the
+    # incident's root cause was fallback *selection* picking only 7 of the 8
+    # eligible sources (see the b2242487 regression test above), not a
+    # genuine capacity shortfall. The clamp is therefore a no-op here.
+    incident_media = _guided_snapshot_media(
+        [1.27, 2.57, 2.0, 6.3, 10.27, 5.07, 11.2, 6.7, 1.2, 2.83]
+    )
+    capacity = edit_direction_planner.guided_story_capacity_s(incident_media, pace="balanced")
+    expected = sum([11.2, 10.27, 6.7, 6.3, 5.07, 2.83, 2.57, 2.0]) - 7 * 0.12
+    assert capacity == pytest.approx(expected, abs=0.01)
+    assert capacity > 45
+    assert max(3, min(45, capacity)) == 45
+
+    # Ample footage: the brief's own duration is preserved untouched.
+    ample_media = _guided_snapshot_media([20.0] * 6)
+    ample_capacity = edit_direction_planner.guided_story_capacity_s(ample_media, pace="balanced")
+    assert ample_capacity > 45
+    assert max(3, min(45, ample_capacity)) == 45
+
+    # Genuinely short footage: the clamp actually reduces the target below
+    # the brief, which is what protects the specialist agent from being
+    # asked to author more seconds than the footage can ever support.
+    short_media = _guided_snapshot_media([2.0, 2.0, 2.0])
+    short_capacity = edit_direction_planner.guided_story_capacity_s(short_media, pace="balanced")
+    assert short_capacity == pytest.approx(3 * 2.0 - 2 * 0.12, abs=0.01)
+    clamped = max(3, min(30, short_capacity))
+    assert clamped < 30
+    assert clamped == pytest.approx(short_capacity)
+
+
+@pytest.mark.parametrize("seed", range(25))
+def test_deterministic_guided_beats_fallback_always_validates(seed: int) -> None:
+    rng = random.Random(seed)
+    clip_count = rng.randint(2, 12)
+    durations = [round(rng.uniform(1.0, 15.0), 2) for _ in range(clip_count)]
+    target = rng.uniform(10.0, 60.0)
+    media = _guided_snapshot_media(durations)
+
+    beats = edit_direction_planner.deterministic_guided_beats(media, target, pace="balanced")
+
+    snapshot = EditProposalSnapshot(
+        title="Property fallback",
+        duration_s=sum(beat.duration_s for beat in beats),
+        pace="balanced",
+        media=media,
+        story_beats=beats,
+    )
+    try:
+        validate_proposal_timing(snapshot)
+    except GuidedStoryError as exc:  # pragma: no cover - failure path documents itself
+        pytest.fail(f"fallback produced an uncompilable story for {durations=} {target=}: {exc}")
 
 
 def test_round_robin_capacity_and_fallback_match_production_lengths() -> None:
