@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.71.0] - 2026-09-18
+
+### Changed
+- feat(planner): let guided-story clips run their full length (capacity-driven beats and in-beat split) (#1082) <!-- release-pr: 1082 -->
+
 ## [0.76.70.0] - 2026-09-18
 
 ### Changed
