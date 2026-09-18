@@ -112,6 +112,11 @@ to redesign the drawer for TestFlight.
 
 ## 5. Suggested reviewer notes (draft)
 
+Superseded by the demo-account notes in
+[`docs/runbooks/testflight.md`](../runbooks/testflight.md#apple-beta-app-review-demo-account)
+(KRI-111): those lead with the reviewer email/password login rather than Sign in
+with Apple/Google alone. Kept below for the rest of this draft's flow detail.
+
 Kria turns footage into short videos. Sign in with Apple or Google. The account
 keeps your private projects and finished videos connected. No purchase or paid
 subscription is required in this build.
@@ -128,9 +133,15 @@ account so Kria can revoke its access. Reviewer contact: use the protected
 `KRIA_BETA_REVIEW_CONTACT_*` configuration. Do not put real credentials in this file.
 
 These notes describe the intended repaired build. Confirm them against the final
-Release build before entering them in App Store Connect. There is no Release demo
-login; if review requires credentials, provide a dedicated account through App
-Store Connect rather than enabling the DEBUG test harness.
+Release build before entering them in App Store Connect. KRI-111 (2026-09-17)
+added a flag-gated reviewer email/password login (`REVIEWER_LOGIN_ENABLED` +
+`POST /auth/mobile/reviewer-login`) after Apple rejected build 0.1.0 (46) under
+Guideline 2.1(a) for lacking demo credentials; `demo_account_required` is now
+`true` in the release lane, so App Store Connect's Beta App Review Information
+carries a working demo account on every upload. See
+[`docs/runbooks/testflight.md`](../runbooks/testflight.md#apple-beta-app-review-demo-account)
+for the full setup, rotation, and verification procedure — do not reintroduce
+the DEBUG test harness for this.
 
 ## 6. Next pass
 

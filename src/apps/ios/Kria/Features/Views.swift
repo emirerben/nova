@@ -8,6 +8,12 @@ struct SignInView: View {
     @EnvironmentObject private var model: AppModel
     @State private var message: String?
     @State private var appleNonce = UUID().uuidString
+    // Visible in every build configuration, Release included — the server,
+    // not the client, decides whether `auth/mobile/reviewer-login` is
+    // available (404 when the feature is disabled). Exists so Apple's Beta
+    // App Review team can sign in with a demo username/password instead of
+    // Sign in with Apple/Google. See KRI-111.
+    @State private var showsReviewerSignIn = false
     var body: some View {
         GeometryReader { viewport in
         ScrollView {
@@ -22,6 +28,11 @@ struct SignInView: View {
                 .signInWithAppleButtonStyle(.black).frame(height: 52).clipShape(Capsule()).accessibilityLabel("Sign in with Apple")
             #endif
             Button("Continue with Google") { Task { await signInWithGoogle() } }.buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity)
+            Button("Sign in with email") { showsReviewerSignIn = true }
+                .font(.footnote)
+                .foregroundStyle(KriaColor.zinc)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .accessibilityIdentifier("signin.email")
             if AppConfiguration.current.allowsDevelopmentAuth {
                 Button("Continue with local account") {
                     do { try auth.signIn(with: MobileSession(accessToken: "local-access", refreshToken: "local-refresh", expiresIn: 3600), displayName: "Local creator") }
@@ -36,6 +47,7 @@ struct SignInView: View {
         .padding(24).frame(maxWidth: 520).frame(maxWidth: .infinity, alignment: .leading)
         }
         }
+        .sheet(isPresented: $showsReviewerSignIn) { ReviewerSignInView() }
     }
     private func handleAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
         appleNonce = UUID().uuidString

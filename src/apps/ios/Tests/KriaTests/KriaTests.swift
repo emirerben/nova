@@ -425,6 +425,76 @@ final class KriaTests: XCTestCase {
         try await api.revokeMobileSession("refresh")
     }
 
+    // Reviewer sign-in (KRI-111): Apple Beta App Review's demo username/password
+    // path. There is no session yet, so these pin that a 401/404 from this call
+    // surfaces as a distinguishable `APIError.requestFailed(status:)` rather than
+    // the generic silent-refresh / `.sessionExpired` machinery, and that nothing
+    // is written to the token store unless the call actually succeeds.
+    func testReviewerSignInSendsPostWithBothFieldsAndNoAuthorizationHeader() async throws {
+        let store = MemoryTokenStore()
+        var capturedBody: [String: Any]?
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/auth/mobile/reviewer-login")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            capturedBody = try? JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any]
+            return (200, Data(#"{"access_token":"reviewer-access","refresh_token":"reviewer-refresh","token_type":"Bearer","expires_in":900}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: stubSession())
+        _ = try await api.reviewerSignIn(email: "reviewer@kria.app", password: "s3cret")
+        XCTAssertEqual(capturedBody?["email"] as? String, "reviewer@kria.app")
+        XCTAssertEqual(capturedBody?["password"] as? String, "s3cret")
+    }
+
+    @MainActor func testReviewerSignInSuccessDecodesSessionAndSignsUserIn() async throws {
+        let store = MemoryTokenStore()
+        let hits = RequestHitCounter()
+        URLProtocolStub.handler = { request in
+            hits.increment()
+            if request.url?.path == "/auth/mobile/reviewer-login" {
+                return (200, Data(#"{"access_token":"reviewer-access","refresh_token":"reviewer-refresh","token_type":"Bearer","expires_in":900}"#.utf8))
+            }
+            return (404, Data())
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: stubSession())
+        let auth = AuthStore(tokenStore: store, api: api)
+        let session = try await api.reviewerSignIn(email: "reviewer@kria.app", password: "s3cret")
+        try auth.signIn(with: session, displayName: "Kria Reviewer")
+        XCTAssertTrue(auth.isSignedIn)
+        XCTAssertEqual(try store.read()?.accessToken, "reviewer-access")
+        await hits.waitUntilQuiet()
+    }
+
+    func testReviewerSignInInvalidCredentialsSurfaces401AndStoresNothing() async throws {
+        let store = MemoryTokenStore()
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/auth/mobile/reviewer-login")
+            return (401, Data(#"{"detail":{"code":"invalid_credentials","message":"Invalid email or password"}}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: stubSession())
+        do {
+            _ = try await api.reviewerSignIn(email: "reviewer@kria.app", password: "wrong")
+            XCTFail("Expected invalid-credentials failure")
+        } catch APIError.requestFailed(status: 401) {
+        } catch { XCTFail("Expected requestFailed(status: 401), got \(error)") }
+        XCTAssertNil(try store.read())
+    }
+
+    func testReviewerSignInUnavailableSurfaces404AndStoresNothing() async throws {
+        let store = MemoryTokenStore()
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/auth/mobile/reviewer-login")
+            return (404, Data())
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: store, session: stubSession())
+        do {
+            _ = try await api.reviewerSignIn(email: "reviewer@kria.app", password: "wrong")
+            XCTFail("Expected unavailable failure")
+        } catch APIError.requestFailed(status: 404) {
+        } catch { XCTFail("Expected requestFailed(status: 404), got \(error)") }
+        XCTAssertNil(try store.read())
+    }
+
     func testCurrentUserDecodesSnakeCaseMobileUserResponse() async throws {
         let store = MemoryTokenStore(MobileSession(accessToken: "access", refreshToken: "refresh", expiresIn: 900))
         URLProtocolStub.handler = { request in

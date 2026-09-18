@@ -172,6 +172,17 @@ class Settings(BaseSettings):
     apple_key_id: str = ""
     apple_private_key: str = ""
 
+    # Apple Beta App Review demo account (KRI-111). A single fixed
+    # email/password pair the App Review team can sign in with — Apple
+    # rejects TestFlight submissions that require a real account. The hash
+    # is never the plaintext password; see app/services/reviewer_login.py
+    # for the scrypt format and app/cli/reviewer_login.py to mint one.
+    # Rollback: `fly secrets set REVIEWER_LOGIN_ENABLED=false --app nova-video`
+    # + `fly machine restart <id>` (api + worker).
+    reviewer_login_enabled: bool = False
+    reviewer_login_email: str = ""
+    reviewer_login_password_hash: str = ""
+
     # HMAC key for pseudonymous creator/plan-item dataset groups. Exports fail
     # closed when unset or too short; it must not reuse an auth credential.
     training_dataset_split_secret: str = ""

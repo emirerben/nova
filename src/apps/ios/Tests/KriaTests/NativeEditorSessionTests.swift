@@ -2183,6 +2183,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession { throw APIError.unsupported }
     func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession { throw APIError.unsupported }
     func revokeMobileSession(_ refreshToken: String) async throws { throw APIError.unsupported }
+    func reviewerSignIn(email: String, password: String) async throws -> MobileSession { throw APIError.unsupported }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted { throw APIError.unsupported }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread { throw APIError.unsupported }
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta { throw APIError.unsupported }

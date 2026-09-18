@@ -131,3 +131,17 @@ class TestGuidedEditRolloutSafety:
         monkeypatch.setattr(config, "GUIDED_STORY_RENDERER_READY", False)
         with pytest.raises(ValidationError, match="requires the strict story renderer"):
             config.Settings()
+
+
+class TestReviewerLoginDefaults:
+    """KRI-111: the Apple Beta App Review demo account is fully opt-in."""
+
+    @pytest.mark.usefixtures("_clean_env")
+    def test_default_off_and_unconfigured(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://host:5432/db")
+        from app.config import Settings
+
+        settings = Settings()
+        assert settings.reviewer_login_enabled is False
+        assert settings.reviewer_login_email == ""
+        assert settings.reviewer_login_password_hash == ""

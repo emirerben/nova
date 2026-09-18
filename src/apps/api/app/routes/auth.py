@@ -9,6 +9,7 @@ This endpoint is gated by INTERNAL_API_KEY (server-to-server only).
 It is never called from the browser.
 """
 
+import hmac
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -22,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import _verify_internal_key, get_current_user
 from app.config import settings
 from app.database import get_db
+from app.limiter import get_real_ip, limiter
 from app.models import MobileIdentity, MobileSession, User
 from app.services.auth_locks import (
     account_lifecycle_lock_key,
@@ -44,6 +46,7 @@ from app.services.mobile_auth import (
     refresh_token_hash,
     verify_provider_id_token,
 )
+from app.services.reviewer_login import DUMMY_HASH, is_configured, verify_password
 
 log = structlog.get_logger(__name__)
 router = APIRouter()
@@ -266,6 +269,80 @@ async def mobile_exchange(
     )
     result.user = _mobile_user(user, list(providers))
     await db.commit()
+    return result
+
+
+class MobileReviewerLoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+# Apple's Beta App Review team signs in with a fixed demo account (KRI-111) —
+# this is the first `/auth/*` route to carry a limiter, because unlike every
+# other mobile-auth route it accepts a password directly instead of a
+# provider-verified ID token, so it needs its own brute-force ceiling.
+@router.post("/mobile/reviewer-login", response_model=MobileSessionOut)
+@limiter.limit("5/minute", key_func=get_real_ip)
+async def mobile_reviewer_login(
+    request: Request,
+    body: MobileReviewerLoginRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MobileSessionOut:
+    """Password sign-in for the reviewer demo account only.
+
+    Deliberately 404s (never 503) when unconfigured or the feature is off, so
+    the route never advertises its own existence in an environment where it
+    is not meant to be used. See app/services/reviewer_login.py for the hash
+    format and app/cli/reviewer_login.py to mint a REVIEWER_LOGIN_PASSWORD_HASH.
+    """
+    if not is_configured() or not settings.mobile_jwt_secret:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    # Compare as bytes: `hmac.compare_digest` raises TypeError on non-ASCII
+    # str input, and EmailStr admits internationalized addresses.
+    email_ok = hmac.compare_digest(
+        str(body.email).strip().lower().encode("utf-8"),
+        settings.reviewer_login_email.strip().lower().encode("utf-8"),
+    )
+    # Always run verify_password, even on a known-wrong email, so a wrong
+    # email and a wrong password take the same code path and cost roughly the
+    # same wall time — the response never reveals which check failed.
+    password_ok = verify_password(
+        body.password,
+        settings.reviewer_login_password_hash if email_ok else DUMMY_HASH,
+    )
+    if not email_ok or not password_ok:
+        log.warning("auth.reviewer_login.rejected", ip=get_real_ip(request))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials", "message": "Invalid email or password"},
+        )
+
+    reviewer_email = settings.reviewer_login_email.strip().lower()
+    await _acquire_auth_locks(db, _auth_email_lock_key(reviewer_email))
+    user = (
+        await db.execute(select(User).where(func.lower(User.email) == reviewer_email))
+    ).scalar_one_or_none()
+    if user is None:
+        user = User(
+            id=uuid.uuid4(),
+            email=settings.reviewer_login_email.strip(),
+            name="Kria Reviewer",
+            auth_provider="reviewer",
+            onboarding_status="pending",
+        )
+        db.add(user)
+        await db.flush()
+
+    result = await _issue_mobile_session(user, "reviewer", db)
+    providers = (
+        (await db.execute(select(MobileIdentity.provider).where(MobileIdentity.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+    result.user = _mobile_user(user, list(providers))
+    await db.commit()
+    log.info("auth.reviewer_login.success", user_id=str(user.id))
     return result
 
 
