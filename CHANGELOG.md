@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.70.0] - 2026-09-18
+
+### Changed
+- fix(planner): make the guided-story fallback and target clamp capacity-aware (#1081) <!-- release-pr: 1081 -->
+
 ## [0.76.69.0] - 2026-09-18
 
 ### Changed
