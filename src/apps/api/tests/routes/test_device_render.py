@@ -94,7 +94,14 @@ def mock_storage(fixture, monkeypatch):
         "object_metadata",
         lambda _: SimpleNamespace(size=12, content_type="video/mp4", generation="42"),
     )
-    monkeypatch.setattr(routes.storage, "signed_get_url", lambda _: "https://storage.example/video")
+    signed_calls = []
+
+    def signed_get_url(path, expiration_minutes=5):
+        signed_calls.append((path, expiration_minutes))
+        return "https://storage.example/video"
+
+    monkeypatch.setattr(routes.storage, "signed_get_url", signed_get_url)
+    return signed_calls
 
 
 def test_foreign_job_is_filtered_before_recipe_lookup(fixture):
@@ -159,7 +166,7 @@ def test_editor_change_during_verification_rejects_late_publication(fixture, mon
 
 def test_verified_publication_attaches_cleanup_and_reconciles_lost_response(fixture, monkeypatch):
     attempt, path = prepared(fixture)
-    mock_storage(fixture, monkeypatch)
+    signed_calls = mock_storage(fixture, monkeypatch)
     monkeypatch.setattr(settings, "phone_rendering_enabled", False)
     verifier = MagicMock()
     monkeypatch.setattr(routes, "_verify_export", verifier)
@@ -177,6 +184,12 @@ def test_verified_publication_attaches_cleanup_and_reconciles_lost_response(fixt
     assert cleanup.status == "attached"
     assert fixture.job.status == "variants_ready"
     assert fixture.job.assembly_plan["variants"][0]["video_path"] == path
+    # A phone-rendered variant's playback URL must survive at least as long
+    # as a normal viewing/scrubbing session — the bare `signed_get_url`
+    # default (5 min, sized for ffprobe preflight) previously expired while
+    # the URL was still on screen (prod job 9c7a1f4f-3ce6-40f5-81a3-e66f81f75963).
+    assert signed_calls == [(path, routes.PLAYBACK_URL_TTL_MIN)]
+    assert routes.PLAYBACK_URL_TTL_MIN > 60
     assert (
         fixture.client.post(
             f"/me/jobs/{fixture.job.id}/device-render/complete", json=payload

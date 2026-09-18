@@ -196,4 +196,19 @@ private actor SessionRequest {
         catch APIError.conflict {} catch { XCTFail("Unexpected error: \(error)") }
     }
 
+    /// A finished, synced device render must stop labeling the editor's
+    /// top-of-preview button "Rendering on iPhone" — see the KRI job
+    /// 9c7a1f4f report where the phone's own receipt was already
+    /// `phase: synced` but the button text never changed.
+    func testButtonTitleTracksEveryPhase() {
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .preparing), "Rendering on iPhone…")
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .rendering), "Rendering on iPhone…")
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .syncing), "Syncing…")
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .localReady), "Rendered on iPhone")
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .synced), "Rendered on iPhone")
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .needsAttention), "Needs attention")
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .cancelled), "Render stopped")
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .superseded), "Newer edit available")
+    }
+
 }
