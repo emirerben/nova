@@ -706,3 +706,45 @@ Deployment order: deploy this narrow server guard first, then append
 all existing capabilities; do not enable unrelated renderer features. Removing
 `authoredText` restores the prior capability gate. Keep saved plans unchanged;
 ordinary retry can reuse a failed confirmed plan when its retry budget remains.
+
+### Bundled-font and native-effect qualification (2026-09-18)
+
+The narrow per-instance table above (only `Fraunces-Bold.ttf`/`DMSans-Bold.ttf`, only plain
+`fade-in`) rejected *every* ordinary guided story: a static Fraunces title and static Inter-Bold
+context/narration labels are the normal shape of `context_label_text_elements`, not an edge case —
+prod job `b33e1c88-a8eb-4d51-81b6-388f7a32aebf` (2026-09-18 08:23 UTC) failed exactly here. On the
+product owner's decision to build the local renderer for all features rather than keep relying on
+cloud renders, `app/services/phone_rollout.py::_has_unqualified_font_instance` now has two modes,
+selected by `Settings.phone_font_qualification_strict` (env `PHONE_FONT_QUALIFICATION_STRICT`,
+**default `false`**):
+
+- **Default (`false`)** — a font instance qualifies when its asset is a `library` asset with
+  `catalog == "font"` whose `catalog_id` (filename) appears in
+  `assets/fonts/font-registry.json` (the same bundled-font set `bundled_font_asset()` in
+  `render_library.py` serves, i.e. what the iOS app ships in its bundle with the font's license),
+  AND either the font file itself carries no variation axes at all (e.g. `Inter-Bold.ttf` — nothing
+  for CoreText to pick differently) or its `font_variations` are non-empty (never let a variable
+  face fall back to CoreText's own default optical size). The layer's `effect` must be one of the
+  17 names `docs/reviews/kri-29/coverage.md`'s "## Text" section lists as having full native
+  implementations (derived at runtime from `PortableTextLayer.effect`'s Literal, minus `lyric-line`
+  and `caption-pop`, which stay excluded — the latter is separately gated a few lines below in
+  `validate_phone_pilot_recipe` regardless of this flag). Giant-title combinations are allowed here
+  too (`giant-title-wipe` has native support for every effect but handwriting); the unconditional
+  giant-title + handwriting reject, and every other check in `validate_phone_pilot_recipe`
+  (visual blocks, editor media, motion scenes, camera pulses, authored phases/backgrounds/
+  caption-pop/karaoke, the capability-list check), are completely unaffected by this flag.
+- **Strict (`true`)** — byte-identical to the original 2026-09-14 gate above: only the two exact
+  hand-qualified font instances, only on plain `fade-in`, no giant title. This is the kill switch —
+  flip it if the broader default-mode set ever needs pulling back without a redeploy:
+  `fly secrets set PHONE_FONT_QUALIFICATION_STRICT=true --app nova-video` +
+  `fly machine restart <id>` (api + worker).
+
+The API and worker must share the same value (same pattern as the other phone-rendering flags at
+the top of this runbook). Guards: `tests/services/test_phone_rollout.py`'s
+`test_default_mode_qualifies_static_title_and_context_labels` pins the exact prod-job-b33e1c88
+shape; `test_default_mode_rejects_font_outside_the_bundled_registry`,
+`test_default_mode_rejects_variable_font_missing_variations`, and
+`test_default_mode_still_blocks_giant_title_handwriting` pin what stays rejected; the original
+2026-09-14 tests are kept as strict-mode pins (`phone_font_qualification_strict` monkeypatched
+`true`), per `docs/reviews/kri-29/capability-matrix.md`'s "Font/authored-text qualification is
+per-instance" note that these are defense-in-depth, not redundant.

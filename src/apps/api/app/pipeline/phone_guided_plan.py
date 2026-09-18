@@ -20,7 +20,7 @@ from app.kria.recipes import (
 )
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
-from app.pipeline.guided_story import GuidedStoryExecutionPlan, _story_canvas
+from app.pipeline.guided_story import _FRAME_S, GuidedStoryExecutionPlan, _story_canvas
 from app.services.phone_sources import PhoneSourceBinding, require_bound_moment
 
 
@@ -225,6 +225,32 @@ def compile_phone_guided_plan(
         raise ValueError("phone timeline duration differs from approved plan")
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone moments must have unique identities")
+    # The on-device refit above (per moment) can shorten a clip's
+    # `source_duration` below what `moment.output_end_s`/`plan.resolved_duration_s`
+    # expected, without moving any `timeline_start` -- so the COMPILED timeline
+    # can end earlier than the plan's nominal duration even though `cursor`
+    # (which only ever tracks the unrefit planned positions) still matched it
+    # exactly, just above. Mirrors `EditRecipeV1.duration`'s own formula so
+    # this is exactly what the recipe will report once constructed below.
+    # Text layers are compiled from the plan's (pre-refit) timing and must
+    # never be allowed to end past this real, possibly-shrunk duration -- see
+    # the clamp pass after the layer loop.
+    compiled_duration = max(
+        (clip.timeline_start + clip.source_duration / clip.rate for clip in clips), default=0.0
+    )
+    # Millisecond rounding noise between independently-rounded timing fields
+    # is expected and already tolerated everywhere else in this function (see
+    # `_TIMING_ROUNDING_TOLERANCE_S`'s docstring above) -- it must not, by
+    # itself, be treated as a refit shrink. Only clamp text when the refit
+    # actually shortened the compiled timeline by more than that noise floor;
+    # otherwise every ordinary plan (no clip ever needed a refit) stays
+    # byte-identical, including a title that legitimately holds to exactly
+    # `plan.resolved_duration_s`.
+    text_bound_s = (
+        max(0.0, compiled_duration - _EXPORT_SAFETY_MARGIN_S)
+        if compiled_duration < plan.resolved_duration_s - _TIMING_ROUNDING_TOLERANCE_S
+        else None
+    )
     layers = []
     ordered_overlays = []
     for lane, elements in (
@@ -263,6 +289,20 @@ def compile_phone_guided_plan(
                 ),
             )
         layers.append(layer)
+    # Clamp every text layer (title, context/narration labels, sequence, and
+    # any "hold to the end of the story" layer whose compiled `end` equals the
+    # plan's nominal duration) to the timeline this recipe will actually
+    # report, shrinking `start` too if a layer would otherwise become shorter
+    # than one frame. Never emit a layer that ends past `recipe.duration` --
+    # see `EditRecipeV2.validate_asset_manifest`'s "text layer exceeds the
+    # timeline" check. `text_bound_s` is None (no-op) unless a real refit
+    # shrink happened, so a layer that already fit is left untouched.
+    if text_bound_s is not None:
+        for layer in layers:
+            if layer.end > text_bound_s:
+                layer.end = text_bound_s
+                if layer.end - layer.start < _FRAME_S:
+                    layer.start = max(0.0, layer.end - _FRAME_S)
     return EditRecipeV2(
         canvas=Canvas(width=canvas.width, height=canvas.height),
         assets=list(assets.values()),
