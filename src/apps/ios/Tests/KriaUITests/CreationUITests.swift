@@ -331,6 +331,29 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [pasted], timeout: 3), .completed)
     }
 
+    /// Taps in the blank band above and below a suggestion chip's label, still
+    /// inside its 44pt capsule, must apply the suggestion. Plain-style buttons
+    /// can leave that band dead, so this guards the chip's explicit capsule
+    /// content shape.
+    func testReadySuggestionChipsApplyFromTapsNearCapsuleEdges() {
+        let app = launchConfirmationFixture([:])
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+
+        let composer = app.textFields["Message Kria"]
+        for (suggestion, dy) in [("Try a stronger opening", 0.15), ("Make it warmer", 0.85)] {
+            let chip = app.buttons["Use suggestion: \(suggestion)"]
+            XCTAssertTrue(chip.waitForExistence(timeout: 5))
+            XCTAssertTrue(chip.isHittable)
+            XCTAssertGreaterThanOrEqual(chip.frame.height, 44)
+            chip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: dy)).tap()
+            let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", suggestion), object: composer)
+            XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 3), .completed, "Edge tap on '\(suggestion)' was ignored")
+        }
+    }
+
     /// Taps "Create this video" and waits for the recovery card's message,
     /// attaching a screenshot of the card.
     private func createVideoFailureMessage(in app: XCUIApplication, screenshot name: String) -> XCUIElement {

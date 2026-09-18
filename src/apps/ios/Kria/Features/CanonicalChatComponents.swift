@@ -700,6 +700,9 @@ private struct PromptChip: View {
                 .padding(.horizontal, 11)
                 .frame(minHeight: 44)
                 .overlay(Capsule().stroke(KriaColor.border, lineWidth: 1))
+                // Make the whole outlined chip the tap target explicitly instead of
+                // relying on the stroke overlay's hit area under a plain style.
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Use suggestion: \(text)")
