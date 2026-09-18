@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.75.0] - 2026-09-18
+
+### Changed
+- fix(ios): stop flaky native UI tests turning main red after merge (KRI-117) (#1086) <!-- release-pr: 1086 -->
+
 ## [0.76.74.0] - 2026-09-18
 
 ### Changed
