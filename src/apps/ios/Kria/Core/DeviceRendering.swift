@@ -231,13 +231,20 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
             _ = try await library.install(downloadedFile: file, for: asset)
         }
         var urls = try await PortableAssetResolver(originals: originals, library: library).resolve(manifest)
-        let derivatives = await library.root.deletingLastPathComponent().appending(path: "still-derivatives", directoryHint: .isDirectory)
+        // The verified cache holds exact bytes under a content address. Photos
+        // render from a cover-sized copy; videos need a playable file extension.
+        let project = await library.root.deletingLastPathComponent()
+        let derivatives = project.appending(path: "still-derivatives", directoryHint: .isDirectory)
+        let videos = project.appending(path: "visual-videos", directoryHint: .isDirectory)
         for asset in manifest.assets {
-            guard case .visual = asset.source, let verified = urls[asset.id] else { continue }
+            guard case .visual(_, _, let mediaKind) = asset.source, let verified = urls[asset.id] else { continue }
             try Task.checkCancellation()
             let canvas = recipe.canvas, fingerprint = asset.fingerprint
             urls[asset.id] = try await Task.detached {
-                try StillImageDerivative.prepare(source: verified, fingerprint: fingerprint, canvas: canvas, directory: derivatives)
+                switch mediaKind {
+                case .image: try StillImageDerivative.prepare(source: verified, fingerprint: fingerprint, canvas: canvas, directory: derivatives)
+                case .video: try VisualVideoFile.prepare(source: verified, fingerprint: fingerprint, directory: videos)
+                }
             }.value
         }
         return urls

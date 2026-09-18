@@ -92,14 +92,19 @@ def _clock_aligned(value: float) -> bool:
     )
 
 
+# The device recipe's source bound (EditRecipeV2 and Models.swift reject a
+# clip starting past it). Footage originals can't exceed it; pool videos can.
+_DEVICE_SOURCE_LIMIT_S = 1800
+
+
 def compile_phone_guided_plan(
     plan: GuidedStoryExecutionPlan,
     bindings: tuple[PhoneSourceBinding, ...],
     visuals: tuple[PhoneVisualBinding, ...] = (),
 ) -> EditRecipeV2:
-    """``visuals`` pins approved Visuals-pool photos (KRI-121). Callers pass them
-    only while ``stillImages`` is verified; without one, a photo moment fails
-    closed exactly as before."""
+    """``visuals`` pins approved Visuals-pool photos and videos (KRI-121). Callers
+    bind each kind only while its feature (``stillImages`` / ``visualVideos``)
+    is verified; without a binding, a pool moment fails closed exactly as before."""
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.portable_text_layout import compile_text_overlay
 
@@ -133,23 +138,38 @@ def compile_phone_guided_plan(
     if len({visual.media_id for visual in visuals}) != len(visuals):
         raise ValueError("phone visuals must have unique media identities")
     for index, moment in enumerate(plan.story_timeline):
-        # A Visuals-pool photo renders as a fullscreen still from its pinned
-        # pool bytes. The native compositor throws on a look over a still and
-        # has no card/zoom treatment, so anything else keeps failing closed.
-        still = moment.lane == "asset" and moment.kind == "image"
+        # Visuals-pool media renders from its pinned pool bytes: a photo as a
+        # still (fullscreen, or whole inside a supporting card), a video exactly
+        # like bound footage. The native compositor throws on a look over a
+        # still and has no zoom treatment, so anything else keeps failing closed.
+        pooled = moment.lane == "asset"
+        still = pooled and moment.kind == "image"
         visual = None
         binding = None
-        if still:
-            if not visuals:
-                raise UnsupportedPhonePlan("unsupported phone photo", capability="stillImages")
+        if pooled:
+            if not any(candidate.kind == moment.kind for candidate in visuals):
+                raise UnsupportedPhonePlan(
+                    "unsupported phone photo" if still else "unsupported phone visual video",
+                    capability="stillImages" if still else "visualVideos",
+                )
             visual = require_bound_visual(
                 visuals,
                 media_id=moment.media_id,
                 path=moment.gcs_path,
                 generation=moment.generation,
             )
+            if visual.kind != moment.kind:
+                raise ValueError("approved media does not match its pinned visual kind")
+        else:
+            binding = require_bound_moment(
+                bindings,
+                media_id=moment.media_id,
+                path=moment.gcs_path,
+                generation=moment.generation,
+            )
+        if still:
             if (
-                moment.layout != "fullscreen"
+                moment.layout not in {"fullscreen", "supporting_card"}
                 or moment.image_motion is not None
                 or moment.look_preset != "none"
                 or moment.look_adjustments
@@ -158,23 +178,22 @@ def compile_phone_guided_plan(
             ):
                 raise UnsupportedPhonePlan("unsupported phone photo treatment")
         else:
-            binding = require_bound_moment(
-                bindings,
-                media_id=moment.media_id,
-                path=moment.gcs_path,
-                generation=moment.generation,
-            )
+            # The recipe has no crop or retime for story footage; dropping
+            # either silently would render something the creator didn't approve.
             if (
                 moment.kind != "video"
                 or moment.layout != "fullscreen"
                 or moment.image_motion is not None
                 or moment.look_preset not in {"none", "golden_hour"}
                 or moment.look_adjustments
+                or moment.source_crop is not None
+                or moment.playback_rate not in {None, 1}
             ):
                 raise UnsupportedPhonePlan("unsupported phone moment treatment")
+            source = binding.original if binding is not None else visual
             if moment.look_preset == "golden_hour" and (
-                (binding.original.width, binding.original.height) != (canvas.width, canvas.height)
-                or binding.original.orientation_degrees != 0
+                (source.width, source.height) != (canvas.width, canvas.height)
+                or source.orientation_degrees != 0
             ):
                 raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
         source_duration = moment.source_end_s - moment.source_start_s
@@ -234,7 +253,7 @@ def compile_phone_guided_plan(
             )
         ):
             raise UnsupportedPhonePlan("phone moment timing must preserve its exact source window")
-        if visual is not None:
+        if still:
             asset = visual.render_asset()
             manifest[asset.id] = asset
             assets[asset.id] = MediaAsset(
@@ -251,11 +270,11 @@ def compile_phone_guided_plan(
                     timeline_start=moment.output_start_s,
                     rate=1,
                     transition=incoming,
+                    still_layout="supporting_card" if moment.layout == "supporting_card" else None,
                 )
             )
             cursor = moment.output_end_s
             continue
-        assert binding is not None
         if not math.isclose(
             source_duration, moment.duration_s, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
         ):
@@ -267,10 +286,7 @@ def compile_phone_guided_plan(
             # below still shifts the window if the original runs out.
             source_duration = round(moment.duration_s, 6)
         source_start = moment.source_start_s
-        if (
-            moment.source_end_s > binding.original.duration_s
-            or source_start >= binding.original.duration_s
-        ):
+        if moment.source_end_s > source.duration_s or source_start >= source.duration_s:
             # `moment.source_start_s`/`source_end_s` are planned against the
             # analysis proxy's server-measured (ffprobe) duration;
             # `binding.original.duration_s` is the client's on-device
@@ -292,7 +308,7 @@ def compile_phone_guided_plan(
             # edge case (the true last frame can land a few ms past the
             # nominal duration, or reading up to the exact boundary lands
             # mid-frame and the export fails). Leave a small safety margin.
-            available = max(0.0, binding.original.duration_s - _EXPORT_SAFETY_MARGIN_S)
+            available = max(0.0, source.duration_s - _EXPORT_SAFETY_MARGIN_S)
             fitted_duration = min(source_duration, available)
             if fitted_duration < 0.1:
                 raise UnsupportedPhonePlan(
@@ -300,23 +316,28 @@ def compile_phone_guided_plan(
                 )
             source_start = min(source_start, max(0.0, available - fitted_duration))
             source_duration = round(fitted_duration, 6)
-        original = binding.original
-        asset = binding.render_asset()
+        if pooled and source_start + source_duration > _DEVICE_SOURCE_LIMIT_S:
+            # Named up front rather than as the recipe's own validation error.
+            raise UnsupportedPhonePlan("phone visual video window is past the 30-minute limit")
+        asset = (binding or visual).render_asset()
         manifest[asset.id] = asset
         assets[asset.id] = MediaAsset(
             id=asset.id,
             relative_path=asset.id,
-            fingerprint=AssetFingerprint(hex=original.sha256, byte_count=original.byte_count),
-            duration=original.duration_s,
-            natural_size=MediaSize(width=original.width, height=original.height),
-            orientation_degrees=original.orientation_degrees,
+            fingerprint=AssetFingerprint(hex=source.sha256, byte_count=source.byte_count),
+            # Informational on device (the engine reads the file's own track);
+            # a long pool recording must not trip the asset's 30-minute bound.
+            duration=source.duration_s if source.duration_s <= _DEVICE_SOURCE_LIMIT_S else None,
+            natural_size=MediaSize(width=source.width, height=source.height),
+            orientation_degrees=source.orientation_degrees,
             # `PhoneSourceBinding.require_proxy` already guarantees a reserved
             # analysis proxy exists for every binding reaching this compiler —
             # accurately reflect that on the asset rather than leaving the
             # field at its always-false default. No client consumes this yet
             # (proxy-based local preview is KRI-95's job); this only makes the
-            # recipe describe reality.
-            is_proxy_available=True,
+            # recipe describe reality. A pool video has no proxy: its full
+            # bytes are already on the server.
+            is_proxy_available=binding is not None,
         )
         clips.append(
             TimelineClip(
@@ -335,6 +356,17 @@ def compile_phone_guided_plan(
         raise ValueError("phone timeline duration differs from approved plan")
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone moments must have unique identities")
+    # Composition.swift throws invalidTimeline unless the outgoing clip still
+    # plays through each incoming fade. A refit that shortened it breaks that,
+    # so refuse here instead of failing the export on the phone.
+    previous_end = None
+    for clip in sorted(clips, key=lambda clip: clip.timeline_start):
+        fade = clip.transition.duration if clip.transition is not None else 0
+        if fade > 0 and (previous_end is None or previous_end + 1e-6 < clip.timeline_start + fade):
+            raise UnsupportedPhonePlan("phone transition needs the full source window")
+        previous_end = (
+            clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
+        )
     # The on-device refit above (per moment) can shorten a clip's
     # `source_duration` below what `moment.output_end_s`/`plan.resolved_duration_s`
     # expected, without moving any `timeline_start` -- so the COMPILED timeline

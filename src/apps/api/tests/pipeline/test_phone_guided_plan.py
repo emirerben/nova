@@ -3,13 +3,15 @@ import typing
 import pytest
 
 from app.agents._schemas.text_element import TextElement
+from app.config import settings
 from app.kria.device_render import recipe_digest
 from app.kria.media_sources import OriginalMediaDescriptor
-from app.kria.recipes import MediaCapability
+from app.kria.recipes import MediaCapability, MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import VisualRenderAsset
 from app.pipeline.guided_story import GuidedStoryExecutionPlan
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
+from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
 
@@ -708,7 +710,6 @@ def test_photo_output_window_must_still_match_the_approved_timeline(change):
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("layout", "supporting_card"),
         ("image_motion", "subtle_zoom_in"),
         ("look_preset", "golden_hour"),
         ("look_preset", "warm"),
@@ -739,12 +740,20 @@ def test_photo_cannot_rebind_to_other_pool_bytes(field, value):
     assert not isinstance(excinfo.value, UnsupportedPhonePlan)
 
 
-@pytest.mark.parametrize("lane,kind", [("asset", "video"), ("clip", "image")])
-def test_only_asset_lane_photos_take_the_still_path(lane, kind):
-    # Pool videos and clip-lane images still need a bound device original.
-    plan, bindings, visuals = photo_fixture(lane=lane, kind=kind)
+def test_only_asset_lane_photos_take_the_still_path():
+    # A clip-lane image still needs a bound device original.
+    plan, bindings, visuals = photo_fixture(lane="clip")
     with pytest.raises(ValueError, match="immutable phone source"):
         compile_phone_guided_plan(plan, bindings, visuals)
+
+
+def test_pool_video_needs_its_own_video_visual_not_a_bound_photo():
+    # Only a photo is bound (visualVideos unverified): the pool video fails
+    # closed by capability instead of borrowing the photo's pinned bytes.
+    plan, bindings, visuals = photo_fixture(kind="video")
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone visual video") as excinfo:
+        compile_phone_guided_plan(plan, bindings, visuals)
+    assert excinfo.value.capability == "visualVideos"
 
 
 def test_duplicate_visual_identities_are_rejected():
@@ -769,3 +778,557 @@ def test_photo_reused_across_moments_shares_one_pinned_asset():
         asset_id
     ]
     assert recipe.duration == 7
+
+
+# --- KRI-121 round 2: supporting-card photos ---------------------------------
+
+
+def test_supporting_card_photo_compiles_to_a_still_card_clip(monkeypatch):
+    plan, bindings, visuals = photo_fixture(layout="supporting_card")
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    video, card = recipe.tracks[0].clips
+    assert card.still_layout == "supporting_card" and video.still_layout is None
+    # The card is a layout of the same pinned still, not a new timing program.
+    assert (card.source_start, card.source_duration, card.timeline_start, card.rate) == (0, 2, 3, 1)
+    assert card.look is None and card.hold_duration is None
+    assert card.transform == MediaTransform()
+    # Same pinned bytes and download as a fullscreen still: no new capability.
+    fullscreen = compile_phone_guided_plan(*photo_fixture())
+    assert recipe.required_capabilities == fullscreen.required_capabilities
+    assert recipe.asset_manifest == fullscreen.asset_manifest
+    clips = recipe.model_dump(mode="json")["tracks"][0]["clips"]
+    assert "still_layout" not in clips[0]
+    assert clips[1]["still_layout"] == "supporting_card"
+    # Fullscreen stills keep the exact document round 1 already issued.
+    assert "still_layout" not in fullscreen.model_dump_json()
+    assert recipe_digest(recipe) != recipe_digest(fullscreen)
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("image_motion", "subtle_zoom_in"),
+        ("look_preset", "golden_hour"),
+        ("look_preset", "warm"),
+        ("look_adjustments", {"brightness": 0.1}),
+        ("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}),
+        ("playback_rate", 2),
+    ],
+)
+def test_supporting_card_still_rejects_treatments_the_card_cannot_draw(field, value):
+    plan, bindings, visuals = photo_fixture(layout="supporting_card", **{field: value})
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone photo treatment"):
+        compile_phone_guided_plan(plan, bindings, visuals)
+
+
+def test_photo_used_fullscreen_and_as_a_card_shares_one_pinned_asset():
+    plan, bindings, visuals = photo_fixture()
+    plan.story_timeline.append(
+        plan.story_timeline[1].model_copy(
+            update={
+                "moment_id": "photo-card",
+                "layout": "supporting_card",
+                "output_start_s": 5,
+                "output_end_s": 7,
+            }
+        )
+    )
+    plan.resolved_duration_s = 7
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    asset_id = f"visual-{PHOTO_ID}"
+    stills = recipe.tracks[0].clips[1:]
+    assert [clip.source_asset_id for clip in stills] == [asset_id] * 2
+    assert [clip.still_layout for clip in stills] == [None, "supporting_card"]
+    assert [a.id for a in recipe.asset_manifest.assets if isinstance(a, VisualRenderAsset)] == [
+        asset_id
+    ]
+    assert [a.id for a in recipe.assets].count(asset_id) == 1
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+# --- KRI-121 round 2: Visuals-pool videos ------------------------------------
+
+VIDEO_ID = "7d4f1b3a-0e5c-4a8d-b9f2-1c6e8a7b5d43"
+
+
+def pool_video(**changes):
+    """A pinned pool video as the worker probes it: 8s, 1920x1080 stored sideways."""
+    return PhoneVisualBinding(
+        **{
+            "media_id": VIDEO_ID,
+            "gcs_path": f"users/owner/plan/item/pool/{VIDEO_ID}.mov",
+            "generation": "888",
+            "sha256": "d" * 64,
+            "byte_count": 4096,
+            "kind": "video",
+            "duration_s": 8,
+            "width": 1920,
+            "height": 1080,
+            "orientation_degrees": 90,
+        }
+        | changes
+    )
+
+
+def append_pool_video(plan, visual, **moment):
+    """Append a 2s asset-lane video moment reading ``visual`` from 1s to 3s."""
+    start = plan.resolved_duration_s
+    plan.selected_media_ids.append(visual.media_id)
+    plan.story_timeline.append(
+        plan.story_timeline[0].model_copy(
+            update={
+                "moment_id": "pool-video",
+                "media_id": visual.media_id,
+                "lane": "asset",
+                "kind": "video",
+                "gcs_path": visual.gcs_path,
+                "generation": visual.generation,
+                "layout": "fullscreen",
+                "source_start_s": 1,
+                "source_end_s": 3,
+                "output_start_s": start,
+                "output_end_s": start + 2,
+                "duration_s": 2,
+                **moment,
+            }
+        )
+    )
+    plan.resolved_duration_s = start + 2
+
+
+def pool_video_fixture(visual=None, **moment):
+    """``fixture()``'s bound 3s clip cut to a 2s Visuals-pool video."""
+    plan, bindings = fixture()
+    pinned = pool_video(**(visual or {}))
+    append_pool_video(plan, pinned, **moment)
+    return plan, bindings, (pinned,)
+
+
+def test_pool_video_compiles_like_bound_footage_from_its_pinned_pool_bytes():
+    plan, bindings, visuals = pool_video_fixture()
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    bound, pooled = recipe.tracks[0].clips
+    asset = visuals[0].render_asset()
+    assert (asset.id, asset.media_kind) == (f"visual-{VIDEO_ID}", "video")
+    # Unlike a still, a pool video keeps the approved source window.
+    assert (
+        pooled.source_asset_id,
+        pooled.source_start,
+        pooled.source_duration,
+        pooled.timeline_start,
+        pooled.rate,
+    ) == (asset.id, 1, 2, 3, 1)
+    assert pooled.look is None and pooled.still_layout is None and pooled.hold_duration is None
+    assert (bound.source_start, bound.source_duration) == (2, 3)
+    assert asset in recipe.asset_manifest.assets
+    projected = next(a for a in recipe.assets if a.id == asset.id)
+    assert projected.relative_path == asset.id
+    assert (projected.fingerprint.hex, projected.fingerprint.byte_count) == ("d" * 64, 4096)
+    assert projected.duration == 8
+    assert (projected.natural_size.width, projected.natural_size.height) == (1920, 1080)
+    assert projected.orientation_degrees == 90
+    # Its full bytes already sit in the pool: there is no analysis proxy.
+    assert not projected.is_proxy_available
+    assert next(a for a in recipe.assets if a.id == "source").is_proxy_available
+    assert "visualVideos" in recipe.required_capabilities
+    assert "stillImages" not in recipe.required_capabilities
+    assert recipe.duration == 5
+    document = recipe.model_dump_json()
+    assert "/pool/" not in document and visuals[0].gcs_path not in document
+    assert "still_layout" not in document
+    manifest = recipe.model_dump(mode="json")["asset_manifest"]["assets"]
+    assert [row.get("media_kind") for row in manifest] == [None, "video"]
+    assert EditRecipeV2.model_validate_json(document) == recipe
+
+
+def test_photo_and_pool_video_each_require_their_own_capability():
+    plan, bindings, photos = photo_fixture()
+    video = pool_video()
+    append_pool_video(plan, video)
+    recipe = compile_phone_guided_plan(plan, bindings, (*photos, video))
+    assert {"stillImages", "visualVideos"} <= recipe.required_capabilities
+    assert [
+        a.media_kind for a in recipe.asset_manifest.assets if isinstance(a, VisualRenderAsset)
+    ] == ["image", "video"]
+    assert recipe.duration == 7
+
+
+@pytest.mark.parametrize("bind_photo", [False, True])
+def test_pool_video_without_a_pinned_video_fails_closed_naming_visual_videos(bind_photo):
+    # The worker binds videos only while visualVideos is verified; a verified
+    # stillImages alone must not let a pool video through.
+    plan, bindings, _ = pool_video_fixture()
+    visuals = photo_fixture()[2] if bind_photo else ()
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone visual video") as excinfo:
+        compile_phone_guided_plan(plan, bindings, visuals)
+    assert excinfo.value.capability == "visualVideos"
+    assert "visualVideos" in typing.get_args(MediaCapability)
+
+
+def test_photo_without_a_pinned_photo_fails_closed_even_when_a_video_is_bound():
+    plan, bindings, _ = photo_fixture()
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone photo") as excinfo:
+        compile_phone_guided_plan(plan, bindings, (pool_video(),))
+    assert excinfo.value.capability == "stillImages"
+
+
+def test_unused_pool_videos_leave_a_video_only_recipe_byte_identical():
+    plan, bindings = fixture()
+    visuals = (*photo_fixture()[2], pool_video())
+    with_visuals = compile_phone_guided_plan(plan, bindings, visuals)
+    without = compile_phone_guided_plan(plan, bindings)
+    assert with_visuals == without
+    assert recipe_digest(with_visuals) == recipe_digest(without)
+    assert not {"stillImages", "visualVideos"} & with_visuals.required_capabilities
+    assert "media_kind" not in with_visuals.model_dump_json()
+
+
+def pool_only_video_fixture(duration_s):
+    """``fixture()``'s single moment re-sourced from a pool video, same window."""
+    plan, _ = fixture()
+    visual = pool_video(duration_s=duration_s)
+    plan.selected_media_ids = [visual.media_id]
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(
+        update={
+            "media_id": visual.media_id,
+            "lane": "asset",
+            "gcs_path": visual.gcs_path,
+            "generation": visual.generation,
+        }
+    )
+    return plan, (visual,)
+
+
+@pytest.mark.parametrize(
+    "duration_s,expected",
+    [
+        (10, (2, 3)),
+        # Shifted to keep the full 3s: 4.85 - the 0.05s safety margin = 4.8.
+        (4.85, (1.8, 3)),
+        (4.999, (1.949, 3)),
+        # Shorter than the moment itself: truncated to 2.5 - 0.05.
+        (2.5, (0, 2.45)),
+    ],
+)
+def test_pool_video_window_refits_against_the_probed_duration_like_bound_footage(
+    duration_s, expected
+):
+    plan, visuals = pool_only_video_fixture(duration_s)
+    pooled = compile_phone_guided_plan(plan, (), visuals)
+    clip = pooled.tracks[0].clips[0]
+    assert (clip.source_start, clip.source_duration) == pytest.approx(expected)
+    plan, bindings = fixture()
+    bindings[0].original.duration_s = duration_s
+    bound = compile_phone_guided_plan(plan, bindings)
+    reference = bound.tracks[0].clips[0]
+    assert (clip.source_start, clip.source_duration) == (
+        reference.source_start,
+        reference.source_duration,
+    )
+    assert pooled.duration == bound.duration
+
+
+def test_pool_video_window_rejects_when_essentially_nothing_is_available():
+    plan, visuals = pool_only_video_fixture(0.05)
+    with pytest.raises(UnsupportedPhonePlan, match="exact source window"):
+        compile_phone_guided_plan(plan, (), visuals)
+
+
+def test_pool_video_timing_must_preserve_its_source_window():
+    # Only a still may drift off its nominal window; a pool video is footage.
+    plan, bindings, visuals = pool_video_fixture(source_end_s=3.15)
+    with pytest.raises(UnsupportedPhonePlan, match="exact source window"):
+        compile_phone_guided_plan(plan, bindings, visuals)
+
+
+@pytest.mark.parametrize("duration_s,projected", [(1800, 1800), (1800.5, None), (2400, None)])
+def test_long_pool_recording_omits_the_informational_asset_duration(duration_s, projected):
+    # The pool accepts recordings past MediaAsset.duration's 30-minute bound;
+    # the device reads the real duration from the file's own track.
+    plan, bindings, visuals = pool_video_fixture(visual={"duration_s": duration_s})
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    asset = next(a for a in recipe.assets if a.id == f"visual-{VIDEO_ID}")
+    assert asset.duration == projected
+    assert asset.natural_size is not None
+    clip = recipe.tracks[0].clips[1]
+    assert (clip.source_start, clip.source_duration) == (1, 2)
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_golden_hour_pool_video_compiles_only_exact_canvas_unrotated():
+    exact = {"width": 1080, "height": 1920, "orientation_degrees": 0}
+    plan, bindings, visuals = pool_video_fixture(visual=exact, look_preset="golden_hour")
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    assert recipe.tracks[0].clips[1].look == "golden_hour"
+    assert {"goldenHourLook", "visualVideos"} <= recipe.required_capabilities
+    for change in (
+        {"orientation_degrees": 90},
+        {"width": 1920, "height": 1080},
+        # Sideways storage that displays as the canvas is still not exact.
+        {"width": 1920, "height": 1080, "orientation_degrees": 90},
+    ):
+        plan, bindings, visuals = pool_video_fixture(
+            visual=exact | change, look_preset="golden_hour"
+        )
+        with pytest.raises(UnsupportedPhonePlan, match="exact-canvas"):
+            compile_phone_guided_plan(plan, bindings, visuals)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("layout", "supporting_card"),
+        ("image_motion", "subtle_zoom_in"),
+        ("look_preset", "warm"),
+        ("look_adjustments", {"brightness": 0.1}),
+        ("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}),
+        ("playback_rate", 2),
+    ],
+)
+def test_pool_video_treatments_the_recipe_cannot_carry_fail_closed(field, value):
+    plan, bindings, visuals = pool_video_fixture(**{field: value})
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone moment treatment"):
+        compile_phone_guided_plan(plan, bindings, visuals)
+
+
+def test_explicit_unit_playback_rate_is_not_a_video_treatment():
+    plan, bindings, visuals = pool_video_fixture(playback_rate=1.0)
+    plan.story_timeline[0].playback_rate = 1.0
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    assert recipe_digest(recipe) == recipe_digest(compile_phone_guided_plan(*pool_video_fixture()))
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}), ("playback_rate", 2)],
+)
+def test_bound_footage_crop_and_retime_fail_closed_instead_of_silently_dropping(field, value):
+    # Both compiled before, rendering uncropped 1x footage the creator never approved.
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={field: value})
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone moment treatment"):
+        compile_phone_guided_plan(plan, bindings)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("generation", "889"),
+        ("gcs_path", "users/owner/plan/item/pool/other.mov"),
+        ("media_id", "6c3e0a2f-9d4b-4a7c-8f32-8b1e5d4c3b21"),
+    ],
+)
+def test_pool_video_cannot_rebind_to_other_pool_bytes(field, value):
+    plan, bindings, visuals = pool_video_fixture(**{field: value})
+    with pytest.raises(ValueError, match="pinned visual") as excinfo:
+        compile_phone_guided_plan(plan, bindings, visuals)
+    assert not isinstance(excinfo.value, UnsupportedPhonePlan)
+
+
+@pytest.mark.parametrize("moment_kind", ["video", "image"])
+def test_visual_bound_under_the_other_kinds_moment_is_an_integrity_failure(moment_kind):
+    # Both kinds are bound, so the capability check passes; the moment then
+    # names the identity of a visual of the other kind.
+    plan, bindings, (photo,) = photo_fixture()
+    video = pool_video()
+    append_pool_video(plan, video)
+    wrong = photo if moment_kind == "video" else video
+    index = 2 if moment_kind == "video" else 1
+    plan.story_timeline[index] = plan.story_timeline[index].model_copy(
+        update={
+            "media_id": wrong.media_id,
+            "gcs_path": wrong.gcs_path,
+            "generation": wrong.generation,
+        }
+    )
+    with pytest.raises(ValueError, match="pinned visual kind") as excinfo:
+        compile_phone_guided_plan(plan, bindings, (photo, video))
+    assert not isinstance(excinfo.value, UnsupportedPhonePlan)
+
+
+def test_pool_video_crossfades_into_a_photo():
+    plan, bindings, (video,) = pool_video_fixture(
+        transition_after="crossfade", transition_duration_s=0.3
+    )
+    _, _, (photo,) = photo_fixture()
+    plan.selected_media_ids.append(photo.media_id)
+    plan.story_timeline.append(
+        plan.story_timeline[1].model_copy(
+            update={
+                "moment_id": "photo",
+                "media_id": photo.media_id,
+                "kind": "image",
+                "gcs_path": photo.gcs_path,
+                "generation": photo.generation,
+                "layout": "supporting_card",
+                "source_start_s": 0,
+                "source_end_s": 2,
+                "output_start_s": 4.7,
+                "output_end_s": 6.7,
+                "transition_after": "cut",
+                "transition_duration_s": None,
+            }
+        )
+    )
+    plan.resolved_duration_s = 6.7
+    recipe = compile_phone_guided_plan(plan, bindings, (video, photo))
+    bound, pooled, card = recipe.tracks[0].clips
+    assert bound.transition is None and pooled.transition is None
+    assert (card.transition.kind, card.transition.duration) == ("crossfade", 0.3)
+    assert (pooled.source_start, pooled.source_duration, pooled.timeline_start) == (1, 2, 3)
+    assert (card.source_start, card.source_duration) == (0, 2)
+    assert card.timeline_start == pytest.approx(4.7)
+    assert card.still_layout == "supporting_card"
+    assert recipe.duration == pytest.approx(6.7)
+    assert {"crossfade", "stillImages", "visualVideos"} <= recipe.required_capabilities
+
+
+def pool_video_crossfading_into_a_photo(visual_duration_s, source_start_s, source_end_s):
+    """The bound clip, then a pool video window that crossfades (0.3s) into a 2s photo."""
+    length = source_end_s - source_start_s
+    plan, bindings, (video,) = pool_video_fixture(
+        visual={"duration_s": visual_duration_s},
+        source_start_s=source_start_s,
+        source_end_s=source_end_s,
+        output_end_s=3 + length,
+        duration_s=length,
+        transition_after="crossfade",
+        transition_duration_s=0.3,
+    )
+    _, _, (photo,) = photo_fixture()
+    start = 3 + length - 0.3
+    plan.selected_media_ids.append(photo.media_id)
+    plan.story_timeline.append(
+        plan.story_timeline[1].model_copy(
+            update={
+                "moment_id": "photo",
+                "media_id": photo.media_id,
+                "kind": "image",
+                "gcs_path": photo.gcs_path,
+                "generation": photo.generation,
+                "source_start_s": 0,
+                "source_end_s": 2,
+                "output_start_s": start,
+                "output_end_s": start + 2,
+                "duration_s": 2,
+                "transition_after": "cut",
+                "transition_duration_s": None,
+            }
+        )
+    )
+    plan.resolved_duration_s = start + 2
+    return plan, bindings, (video, photo)
+
+
+@pytest.mark.parametrize(
+    "visual_duration_s, window, compiled",
+    [
+        # The planner used the whole file; bound at that same duration, no refit.
+        (4, (0, 4), (0, 4)),
+        # A refit that only shifts the start keeps the clip playing through the fade.
+        (4.5, (0.6, 4.6), (0.45, 4)),
+    ],
+    ids=["reaches-the-end", "shifted"],
+)
+def test_pool_video_keeps_its_full_window_into_a_crossfade(visual_duration_s, window, compiled):
+    plan, bindings, visuals = pool_video_crossfading_into_a_photo(visual_duration_s, *window)
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    _, pooled, card = recipe.tracks[0].clips
+    assert (pooled.source_start, pooled.source_duration) == pytest.approx(compiled)
+    assert pooled.timeline_start + pooled.source_duration == pytest.approx(
+        card.timeline_start + card.transition.duration
+    )
+
+
+def test_refit_that_shortens_a_pool_video_before_a_crossfade_is_refused():
+    # A 3.97s file under a 4s window refits to 3.92s and would end at 6.92,
+    # before the photo's fade completes at 7.0: Composition.swift throws
+    # invalidTimeline, so the phone would fail the export after approval.
+    plan, bindings, visuals = pool_video_crossfading_into_a_photo(3.97, 0, 4)
+    with pytest.raises(UnsupportedPhonePlan, match="transition needs the full source window"):
+        compile_phone_guided_plan(plan, bindings, visuals)
+
+
+def test_refit_that_shortens_bound_footage_before_a_transition_is_refused():
+    plan, bindings = transition_fixture()
+    bindings[0].original.duration_s = 2.5  # the first 3s window refits to 2.45s
+    with pytest.raises(UnsupportedPhonePlan, match="transition needs the full source window"):
+        compile_phone_guided_plan(plan, bindings)
+    # At a cut the same shortened clip still compiles, as before.
+    plan.story_timeline[0].transition_after = "cut"
+    plan.story_timeline[1].output_start_s = 3
+    plan.story_timeline[1].output_end_s = 6
+    plan.resolved_duration_s = 6
+    compile_phone_guided_plan(plan, bindings)
+
+
+@pytest.mark.parametrize("window", [(1850, 1852), (1800.5, 1802.5), (1799, 1801)])
+def test_pool_video_window_past_the_device_source_limit_is_refused_up_front(window):
+    # Not the recipe's pydantic ValidationError: the job fails naming the reason.
+    start, end = window
+    plan, bindings, visuals = pool_video_fixture(
+        visual={"duration_s": 2400}, source_start_s=start, source_end_s=end
+    )
+    with pytest.raises(UnsupportedPhonePlan, match="30-minute limit"):
+        compile_phone_guided_plan(plan, bindings, visuals)
+
+
+def test_pool_video_window_ending_at_the_device_source_limit_compiles():
+    plan, bindings, visuals = pool_video_fixture(
+        visual={"duration_s": 2400}, source_start_s=1798, source_end_s=1800
+    )
+    clip = compile_phone_guided_plan(plan, bindings, visuals).tracks[0].clips[1]
+    assert (clip.source_start, clip.source_duration) == (1798, 2)
+
+
+# --- KRI-121 round 2: projects with no device footage at all ------------------
+
+
+def visuals_only_fixture(with_video):
+    """A photo (then optionally a pool video) and no bound device original."""
+    plan, _, (photo,) = photo_fixture(output_start_s=0, output_end_s=2)
+    del plan.story_timeline[0]
+    plan.selected_media_ids = [photo.media_id]
+    plan.resolved_duration_s = 2
+    visuals = (photo,)
+    if with_video:
+        video = pool_video()
+        # `append_pool_video` copies the first moment, here the photo.
+        append_pool_video(plan, video)
+        visuals = (photo, video)
+    return plan, visuals
+
+
+@pytest.mark.parametrize("with_video", [False, True])
+def test_visuals_only_plan_compiles_with_zero_bindings(with_video):
+    plan, visuals = visuals_only_fixture(with_video)
+    recipe = compile_phone_guided_plan(plan, (), visuals)
+    clips = recipe.tracks[0].clips
+    assert [clip.source_asset_id for clip in clips] == [
+        visual.render_asset().id for visual in visuals
+    ]
+    assert all(isinstance(a, VisualRenderAsset) for a in recipe.asset_manifest.assets)
+    assert not any(a.is_proxy_available for a in recipe.assets)
+    assert ("visualVideos" in recipe.required_capabilities) == with_video
+    assert "stillImages" in recipe.required_capabilities
+    assert recipe.duration == (4 if with_video else 2)
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_round_two_leaves_already_issued_recipe_digests_unchanged():
+    # Measured at c7bcdf4be (round 1). A device recipe is pinned by digest, so
+    # adding still_layout / media_kind must not move a video-only or a
+    # fullscreen-photo recipe that carries neither.
+    assert (
+        recipe_digest(compile_phone_guided_plan(*fixture()))
+        == "5d9e6a37aae08622226ce4c2d60329e8f33bdc634d5fe103a0739ecb3a24f6db"
+    )
+    assert (
+        recipe_digest(compile_phone_guided_plan(*photo_fixture()))
+        == "06ed2d33f8522743f7aca40eb7abfd3a68fcaaa21600538de5688eb27bacda3d"
+    )

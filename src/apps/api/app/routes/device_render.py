@@ -229,12 +229,12 @@ async def download_device_asset(
 async def _visual_download_url(
     db: AsyncSession, job: Job, user_id: uuid.UUID, asset: VisualRenderAsset
 ) -> str:
-    """Grant the job owner's own Visuals-pool photo, never another item's bytes.
+    """Grant the job owner's own Visuals-pool photo or video, never another item's bytes.
 
     The recipe pinned one immutable generation; the device verifies the SHA-256.
-    Here the row must still be this job's plan item's ready image at that exact
-    generation under its owner's pool prefix, so a removed or replaced visual
-    fails closed instead of rendering different bytes.
+    Here the row must still be this job's plan item's ready visual of the pinned
+    kind, at that exact generation, under its owner's pool prefix, so a removed
+    or replaced visual fails closed instead of rendering different bytes.
     """
     try:
         visual_id = uuid.UUID(asset.visual_id)
@@ -251,7 +251,7 @@ async def _visual_download_url(
     prefix = f"users/{user_id}/plan/{row.plan_item_id}/pool/"
     if (
         row.status != "ready"
-        or row.kind != "image"
+        or row.kind != asset.media_kind
         or str(row.gcs_generation or "") != asset.generation
         or not row.gcs_path.startswith(prefix)
         or any(part in {"", ".", ".."} for part in row.gcs_path[len(prefix) :].split("/"))

@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw
 from app.pipeline.canvas import Canvas
 from app.pipeline.guided_story import (
     _compile_execution_plan_version,
+    _download_selected,
     _render_image_moment,
     _render_moments,
     compile_execution_plan,
@@ -170,6 +171,79 @@ def test_real_ffmpeg_guided_photo_is_static_by_default(tmp_path: Path) -> None:
     match = re.search(r"All:([0-9.]+)", result.stderr)
     assert match is not None
     assert float(match.group(1)) > 0.999
+
+
+@pytest.mark.parametrize(
+    ("layout", "half_alpha_xy"),
+    [("fullscreen", (60, 90)), ("supporting_card", (88, 90))],
+    ids=["fullscreen", "supporting-card"],
+)
+def test_real_ffmpeg_transparent_photo_renders_black_matte(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    layout: str,
+    half_alpha_xy: tuple[int, int],
+) -> None:
+    """Cloud half of the cloud/phone parity contract for transparent photos.
+
+    Without the matte the fullscreen graph shows the hidden white and the card
+    shows the blurred background through the hole; both must now be black, and
+    a 50%-alpha edge must be half-strength instead of fully opaque.
+    """
+    source = tmp_path / "uploaded.webp"
+    image = Image.new("RGBA", (640, 360), (50, 180, 120, 255))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((240, 120, 400, 240), fill=(255, 255, 255, 0))
+    draw.rectangle((40, 120, 200, 240), fill=(255, 0, 0, 128))
+    image.save(source, format="WEBP", lossless=True, exact=True)
+
+    def download(_path: str, local: str, *, generation: str) -> None:
+        shutil.copy2(source, local)
+
+    monkeypatch.setattr("app.storage.download_generation_to_file", download)
+    local_by_id, _receipts = _download_selected(
+        {
+            "selected_media_ids": ["cutout"],
+            "story_timeline": [
+                {
+                    "media_id": "cutout",
+                    "gcs_path": "users/u/cutout.webp",
+                    "generation": "7",
+                    "kind": "image",
+                }
+            ],
+        },
+        str(tmp_path),
+    )
+    output = tmp_path / "matte.mp4"
+    frame = tmp_path / "matte.png"
+
+    _render_image_moment(
+        local_by_id["cutout"],
+        str(output),
+        duration_s=0.5,
+        layout=layout,
+        canvas=Canvas(320, 180),
+    )
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(output)]
+        + ["-frames:v", "1", str(frame)],
+        check=True,
+        capture_output=True,
+    )
+
+    def close_to(actual: tuple[int, ...], expected: tuple[int, int, int]) -> bool:
+        # H.264 + yuv420p round-trip: a few levels of drift, never a colour swap.
+        return all(abs(a - e) <= 12 for a, e in zip(actual, expected, strict=True))
+
+    with Image.open(frame) as rendered:
+        rgb = rendered.convert("RGB")
+        assert rgb.size == (320, 180)
+        # Both layouts centre the photo, so the hole sits on the canvas centre
+        # and (160, 40) is opaque photo above it.
+        assert close_to(rgb.getpixel((160, 90)), (0, 0, 0))
+        assert close_to(rgb.getpixel((160, 40)), (50, 180, 120))
+        assert close_to(rgb.getpixel(half_alpha_xy), (128, 0, 0))
 
 
 def test_real_ffmpeg_many_quick_photos_keep_exact_frame_budget(

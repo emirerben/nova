@@ -10,7 +10,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 
 class _AssetModel(BaseModel):
@@ -39,15 +46,26 @@ class LibraryRenderAsset(_AssetModel):
 
 
 class VisualRenderAsset(_AssetModel):
-    """A photo from the job owner's Visuals pool (``PlanItemAsset``), pinned to
-    one storage generation. The grant re-checks ownership and the generation;
-    the device re-hashes the downloaded bytes against ``fingerprint``."""
+    """A photo or video from the job owner's Visuals pool (``PlanItemAsset``),
+    pinned to one storage generation. The grant re-checks ownership, kind and
+    the generation; the device re-hashes the downloaded bytes against
+    ``fingerprint``."""
 
     kind: Literal["visual"] = "visual"
     id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
     visual_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
     generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    # The device prepares photos and videos differently before compositing.
+    media_kind: Literal["image", "video"] = "image"
     fingerprint: RenderFingerprint
+
+    @model_serializer(mode="wrap")
+    def _photo_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # Photo manifests keep their original wire shape and recipe digests.
+        payload = handler(self)
+        if self.media_kind == "image":
+            payload.pop("media_kind", None)
+        return payload
 
 
 RenderAsset = Annotated[

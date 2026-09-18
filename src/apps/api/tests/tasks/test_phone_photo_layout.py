@@ -1,4 +1,4 @@
-"""KRI-121: phone items pin Visuals photos to the only layout the iPhone draws."""
+"""KRI-121: phone items keep photo cards, and only plan media the iPhone draws."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.tasks.edit_proposal_build as proposal_build
+from app.config import settings
 from app.pipeline import guided_story
 from app.schemas.edit_proposal import (
     EditProposal,
@@ -79,9 +80,9 @@ class _AgentOutput:
 
 
 def _settings(monkeypatch, *, verified: list[str], enabled: bool = True) -> None:
-    monkeypatch.setattr(proposal_build.settings, "phone_rendering_enabled", enabled)
-    monkeypatch.setattr(proposal_build.settings, "phone_render_user_ids", [])
-    monkeypatch.setattr(proposal_build.settings, "phone_render_verified_features", verified)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", enabled)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "phone_render_verified_features", verified)
 
 
 def _approved_snapshot(  # noqa: ANN202
@@ -196,22 +197,19 @@ def _compiled_layouts(snapshot) -> dict[str, str]:  # noqa: ANN001
 
 
 @pytest.mark.parametrize("brief_layout", ["supporting_card", None])
-def test_phone_item_pins_photos_fullscreen_over_brief_and_beat_layout(
+def test_phone_item_keeps_photo_cards_from_brief_and_beat_layout(
     monkeypatch, brief_layout: str | None
 ) -> None:
     _settings(monkeypatch, verified=["stillImages"])
 
-    snapshot = _approved_snapshot(
-        monkeypatch,
-        clip_path="users/u/plan/i/analysis-proxy-harbor.mp4",
-        brief_layout=brief_layout,
-    )
+    snapshot = _approved_snapshot(monkeypatch, clip_path=_PHONE_CLIP, brief_layout=brief_layout)
 
-    assert snapshot.image_layout == "fullscreen"
-    # The beat keeps the specialist's authored layout; the snapshot pin is
-    # what the compiler honors for the photo.
+    # The iPhone draws supporting cards itself, so "don't crop my photos" and
+    # the specialist's photo-only card beat both reach the device unchanged.
+    assert snapshot.image_layout == brief_layout
+    assert ("image_layout" in snapshot.model_dump(mode="json")) == (brief_layout is not None)
     assert [beat.layout for beat in snapshot.story_beats] == ["fullscreen", "supporting_card"]
-    assert _compiled_layouts(snapshot) == {_CLIP_ID: "fullscreen", _PHOTO_ID: "fullscreen"}
+    assert _compiled_layouts(snapshot) == {_CLIP_ID: "fullscreen", _PHOTO_ID: "supporting_card"}
 
 
 @pytest.mark.parametrize("brief_layout", ["supporting_card", None])
@@ -237,51 +235,13 @@ def test_flag_off_or_cloud_item_keeps_snapshot_layout(
 
 
 @pytest.mark.parametrize(
-    ("paths", "verified", "enabled", "cohort", "expected"),
-    [
-        (["users/u/plan/i/analysis-proxy-a.mp4"], ["stillImages"], True, None, "fullscreen"),
-        (["users/u/plan/i/analysis-proxy-a.mp4"], ["crossfade"], True, None, "supporting_card"),
-        # A disabled or out-of-cohort account can't render on the phone at
-        # all; dispatch fails it before layout matters, so leave the plan be.
-        (["users/u/plan/i/analysis-proxy-a.mp4"], ["stillImages"], False, None, "supporting_card"),
-        (
-            ["users/u/plan/i/analysis-proxy-a.mp4"],
-            ["stillImages"],
-            True,
-            uuid.uuid4(),
-            "supporting_card",
-        ),
-        # Photos-only and ordinary uploads render in the cloud.
-        (["users/u/plan/i/pool/a.jpg"], ["stillImages"], True, None, "supporting_card"),
-        (["users/u/plan/i/abc-a.mov"], ["stillImages"], True, None, "supporting_card"),
-    ],
-)
-def test_snapshot_image_layout_gate(
-    monkeypatch,
-    paths: list[str],
-    verified: list[str],
-    enabled: bool,
-    cohort: uuid.UUID | None,
-    expected: str,
-) -> None:
-    owner_id = uuid.uuid4()
-    _settings(monkeypatch, verified=verified, enabled=enabled)
-    if cohort is not None:
-        monkeypatch.setattr(proposal_build.settings, "phone_render_user_ids", [cohort])
-    media = [
-        MediaRef(lane="clip", media_id=f"m{index}", gcs_path=path, generation="1", kind="video")
-        for index, path in enumerate(paths)
-    ]
-
-    assert proposal_build._snapshot_image_layout("supporting_card", media, owner_id) == expected
-
-
-@pytest.mark.parametrize(
     ("verified", "expected"),
     [
-        # Photos render on the phone; its Visuals video never can.
+        # Each Visuals kind is plannable only once the device is verified for it.
+        (["stillImages", "visualVideos"], [_CLIP_ID, _PHOTO_ID, _POOL_VIDEO_ID]),
         (["stillImages"], [_CLIP_ID, _PHOTO_ID]),
-        # Before stillImages, only the bound footage is plannable.
+        (["visualVideos"], [_CLIP_ID, _POOL_VIDEO_ID]),
+        # Before either, only the bound footage is plannable.
         ([], [_CLIP_ID]),
     ],
 )
@@ -297,13 +257,19 @@ def test_phone_item_plans_only_media_the_iphone_draws(
 
     assert offered == [expected]
     assert [ref.media_id for ref in snapshot.media] == expected
+    # The specialist asked for a card on every pool beat. The iPhone draws video
+    # fullscreen only, so the Visuals video's beat is normalized; the photo's isn't.
+    assert _compiled_layouts(snapshot) == {
+        media_id: "supporting_card" if media_id == _PHOTO_ID else "fullscreen"
+        for media_id in expected
+    }
 
 
 def test_cloud_item_keeps_every_pool_visual(monkeypatch) -> None:
     _settings(monkeypatch, verified=["stillImages"])
     offered: list[list[str]] = []
 
-    _approved_snapshot(
+    snapshot = _approved_snapshot(
         monkeypatch,
         clip_path="users/u/plan/i/2d3cc760377d4b6993467a2955d4c945-harbor.mov",
         brief_layout=None,
@@ -312,3 +278,5 @@ def test_cloud_item_keeps_every_pool_visual(monkeypatch) -> None:
     )
 
     assert offered == [[_CLIP_ID, _PHOTO_ID, _POOL_VIDEO_ID]]
+    # A cloud render draws video cards, so the specialist's layout is untouched.
+    assert _compiled_layouts(snapshot)[_POOL_VIDEO_ID] == "supporting_card"

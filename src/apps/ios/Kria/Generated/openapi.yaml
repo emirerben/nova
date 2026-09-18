@@ -1680,6 +1680,7 @@
                 "hdr",
                 "local1080Export",
                 "stillImages",
+                "visualVideos",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -1789,6 +1790,7 @@
                 "hdr",
                 "local1080Export",
                 "stillImages",
+                "visualVideos",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -6247,6 +6249,15 @@
             "title": "Source Start",
             "type": "number"
           },
+          "still_layout": {
+            "default": null,
+            "enum": [
+              "supporting_card"
+            ],
+            "nullable": true,
+            "title": "Still Layout",
+            "type": "string"
+          },
           "text": {
             "$ref": "#/components/schemas/TextTreatment",
             "default": null,
@@ -6934,7 +6945,7 @@
       },
       "VisualRenderAsset": {
         "additionalProperties": false,
-        "description": "A photo from the job owner's Visuals pool (``PlanItemAsset``), pinned to\none storage generation. The grant re-checks ownership and the generation;\nthe device re-hashes the downloaded bytes against ``fingerprint``.",
+        "description": "A photo or video from the job owner's Visuals pool (``PlanItemAsset``),\npinned to one storage generation. The grant re-checks ownership, kind and\nthe generation; the device re-hashes the downloaded bytes against\n``fingerprint``.",
         "properties": {
           "fingerprint": {
             "$ref": "#/components/schemas/RenderFingerprint"
@@ -6959,6 +6970,15 @@
               "visual"
             ],
             "title": "Kind",
+            "type": "string"
+          },
+          "media_kind": {
+            "default": "image",
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Media Kind",
             "type": "string"
           },
           "visual_id": {

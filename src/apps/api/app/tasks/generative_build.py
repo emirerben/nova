@@ -3681,11 +3681,10 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
     guided = snapshot.get("guided_edit")
     if not isinstance(generation, str) or not generation or not isinstance(guided, dict):
         raise ValueError("Phone rendering requires an immutable approved guided plan")
+    # May be empty: a project with no footage renders from pinned Visuals alone.
     bindings = tuple(
         PhoneSourceBinding.model_validate(row) for row in snapshot[PHONE_SOURCES_FIELD]
     )
-    if not bindings:
-        raise ValueError("Phone rendering requires original source bindings")
     existing = (snapshot.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
     if existing is not None and existing.get("base_generation") == generation:
         return  # A delivery cannot rewrite an already issued device revision.
@@ -3695,13 +3694,22 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
         )
     raw_plan, _track = _guided_execution_plan(job_id, guided)
     plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
-    # Visuals-pool photos bind only while stillImages is verified; otherwise a
-    # photo moment keeps failing closed in the compiler exactly as before.
+    # Visuals-pool photos and videos bind only while their feature is verified;
+    # otherwise such a moment keeps failing closed in the compiler as before.
+    visual_kinds = frozenset(
+        kind
+        for kind, feature in (("image", "stillImages"), ("video", "visualVideos"))
+        if feature in settings.phone_render_verified_features
+    )
     visuals = (
-        bind_phone_visuals(_sync_session, job_id=job_id, story_timeline=plan.story_timeline)
-        if "stillImages" in settings.phone_render_verified_features
+        bind_phone_visuals(
+            _sync_session, job_id=job_id, story_timeline=plan.story_timeline, kinds=visual_kinds
+        )
+        if visual_kinds
         else ()
     )
+    if not bindings and not visuals:
+        raise ValueError("Phone rendering requires original source bindings or pinned visuals")
     recipe = compile_phone_guided_plan(plan, bindings, visuals=visuals)
     validate_phone_pilot_recipe(recipe)
     visual_rows = [visual.model_dump(mode="json") for visual in visuals]

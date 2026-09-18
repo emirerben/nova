@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 import CoreTransferable
+import KriaMediaEngine
 
 struct FootagePickerView: View {
     let projectID: UUID
@@ -65,7 +66,7 @@ struct FootagePickerView: View {
                 isPresented: $showingPhotosPicker,
                 selection: $photoItems,
                 maxSelectionCount: max(1, selectionCapacity.remaining),
-                matching: role == .visual ? (destination == .phonePhotos ? .images : .any(of: [.videos, .images])) : .videos
+                matching: role == .visual ? visualPickerFilter : .videos
             )
             .onChange(of: photoItems) { _, items in Task { await importPhotoItems(items) } }
             }
@@ -76,7 +77,7 @@ struct FootagePickerView: View {
             .disabled(selectionCapacity.remaining == 0 || !destination.canUpload || reservedClipCount > 0)
             .fileImporter(
                 isPresented: $showingFileImporter,
-                allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? (destination == .phonePhotos ? [.image] : [.movie, .image]) : [.movie],
+                allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? visualContentTypes : [.movie],
                 allowsMultipleSelection: selectionCapacity.remaining > 1,
                 onCompletion: importFiles
             )
@@ -84,7 +85,7 @@ struct FootagePickerView: View {
                 if selection.purpose == .analysisProxy {
                     AnalysisUploadConsentView { beginImport(selection) }
                 } else if selection.rendersOnPhone {
-                    CloudUploadConsentView(detail: CloudUploadConsentView.phonePhotosDetail) { beginImport(selection) }
+                    CloudUploadConsentView(detail: CloudUploadConsentView.phoneVisualsDetail) { beginImport(selection) }
                 } else {
                     CloudUploadConsentView { beginImport(selection) }
                 }
@@ -120,10 +121,25 @@ struct FootagePickerView: View {
             if let error = uploads.lastError { Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
         }.accessibilityElement(children: .contain)
     }
+    /// An iPhone-rendered project only takes the Visuals kinds this iPhone can draw.
+    private var visualPickerFilter: PHPickerFilter {
+        switch destination.visualKinds {
+        case [.image]: .images
+        case [.video]: .videos
+        default: .any(of: [.videos, .images])
+        }
+    }
+    private var visualContentTypes: [UTType] {
+        switch destination.visualKinds {
+        case [.image]: [.image]
+        case [.video]: [.movie]
+        default: [.movie, .image]
+        }
+    }
     private func requestConsent(source: UploadSource) {
         guard destination.canUpload else { return }
         consentSelection = UploadConsentSelection(source: source, purpose: destination == .phone ? .analysisProxy : .cloudRenderSource,
-                                                  rendersOnPhone: destination == .phonePhotos)
+                                                  rendersOnPhone: destination.visualKinds != nil)
     }
     private func beginImport(_ selection: UploadConsentSelection) {
         consentedPurpose = selection.purpose

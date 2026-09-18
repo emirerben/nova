@@ -248,12 +248,24 @@ private struct NativeSelectedClipInspector: View {
             NativeFootagePanel(session: session, selection: selection)
                 .disabled(!session.canEdit(.timeline))
             Section("Look and transition") {
-                Picker("Look", selection: $look) {
-                    ForEach(NativeEditorWireContract.lookPresets, id: \.self) { value in
-                        Text(nativeEditorWireLabel(value)).tag(value)
+                if !session.rendersOnDevice {
+                    Picker("Look", selection: $look) {
+                        ForEach(NativeEditorWireContract.lookPresets, id: \.self) { value in
+                            Text(nativeEditorWireLabel(value)).tag(value)
+                        }
+                    }
+                    .onChange(of: look) { _, value in session.setClipLookPreset(clipID: selection.id, preset: value) }
+                } else if let slot, (slot.lookPreset ?? "none") != "none" || slot.lookAdjustments?.isEmpty == false {
+                    // The phone renderer can't save a look yet (see the footage
+                    // panel's note); clear one saved earlier so Save works again.
+                    Button("Reset look") {
+                        session.beginTransaction()
+                        session.setClipLookPreset(clipID: selection.id, preset: "none")
+                        session.setClipLookAdjustments(clipID: selection.id, adjustments: nil)
+                        session.endTransaction()
+                        look = "none"
                     }
                 }
-                .onChange(of: look) { _, value in session.setClipLookPreset(clipID: selection.id, preset: value) }
                 Picker("Transition", selection: $transition) {
                     ForEach(NativeEditorWireContract.transitions, id: \.self) { value in
                         Text(nativeEditorWireLabel(value)).tag(value)

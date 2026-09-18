@@ -63,9 +63,19 @@ class EditRecipeV2(EditRecipeV1):
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")
         # Mirrors `EditRecipe.effectiveCapabilities`: a device that has not
-        # verified pool-photo downloads must never receive one.
-        if any(isinstance(asset, VisualRenderAsset) for asset in manifest.values()):
-            self.required_capabilities |= {"stillImages"}
+        # verified Visuals-pool downloads of a kind must never receive one.
+        for asset in manifest.values():
+            if isinstance(asset, VisualRenderAsset):
+                self.required_capabilities |= {
+                    "visualVideos" if asset.media_kind == "video" else "stillImages"
+                }
+        for track in self.tracks:
+            for clip in track.clips:
+                source = manifest.get(clip.source_asset_id)
+                if clip.still_layout is not None and not (
+                    isinstance(source, VisualRenderAsset) and source.media_kind == "image"
+                ):
+                    raise ValueError("a still card requires a Visuals photo")
         if self.motion_scenes is not None:
             program = self.motion_scenes
             program.validated_instances(int(self.duration * self.frame_rate))

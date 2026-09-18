@@ -1940,20 +1940,35 @@ struct NativeEditorTemporaryVideo {
 
     func setClipLookPreset(clipID: String, preset: String?) {
         let value = preset ?? "none"
-        guard NativeEditorWireContract.lookPresets.contains(value) else { return }
+        guard NativeEditorWireContract.lookPresets.contains(value), canSetClipLook(preset: value, adjustments: nil) else { return }
         mutateClip(clipID: clipID) { $0.lookPreset = value }
     }
     func setClipLookPreset(clipID: UUID, preset: String?) { setClipLookPreset(clipID: clipID.uuidString, preset: preset) }
     func updateClipLook(clipID: String, preset: String?, adjustments: [String: JSONValue]? = nil) {
         let value = preset ?? "none"
-        guard NativeEditorWireContract.lookPresets.contains(value) else { return }
+        guard NativeEditorWireContract.lookPresets.contains(value), canSetClipLook(preset: value, adjustments: adjustments) else { return }
         mutateClip(clipID: clipID) { slot in slot.lookPreset = value; if let adjustments { slot.lookAdjustments = adjustments } }
     }
     func updateClipLook(clipID: UUID, preset: String?, adjustments: [String: JSONValue]? = nil) { updateClipLook(clipID: clipID.uuidString, preset: preset, adjustments: adjustments) }
     func setClipLookAdjustments(clipID: String, adjustments: [String: JSONValue]?) {
+        guard canSetClipLook(preset: "none", adjustments: adjustments) else { return }
         mutateClip(clipID: clipID) { $0.lookAdjustments = adjustments }
     }
     func setClipLookAdjustments(clipID: UUID, adjustments: [String: JSONValue]?) { setClipLookAdjustments(clipID: clipID.uuidString, adjustments: adjustments) }
+    /// Device variants can't save a look yet (the server closes `clips.looks`).
+    /// Clearing one saved before that stays open, or the edit could never save.
+    private func canSetClipLook(preset: String, adjustments: [String: JSONValue]?) -> Bool {
+        if preset == "none", adjustments?.isEmpty ?? true { return true }
+        return !rendersOnDevice && canEditOperation(["clips.looks"], section: .timeline)
+    }
+    /// How a clip slot clears a stored crop or speed. The guided revision
+    /// writer keeps a key a Save omits (a new split slot inherits its
+    /// parent's), so clearing needs an explicit null unless the saved copy of
+    /// this slot never had the key; dropping it then keeps the snapshot shape.
+    func clipSlotClearValue(slotID: String, key: String) -> JSONValue? {
+        guard let saved = cleanDocument.clips.first(where: { $0.id == slotID }) else { return .null }
+        return saved.raw[key] == nil ? nil : .null
+    }
     func setClipTransition(clipID: String, transition: String, durationS: Double? = nil) {
         guard NativeEditorWireContract.transitions.contains(transition) else { return }
         let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 1) }
@@ -2017,7 +2032,7 @@ struct NativeEditorTemporaryVideo {
     func addClip(fileURL: URL) async {
         // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
         // no-op instead of a round trip that would 422 anyway.
-        guard canEditTimeline, !isAddingClip, let api, let jobID, draft.clips.count < 20 else { return }
+        guard canEditTimeline, !rendersOnDevice, !isAddingClip, let api, let jobID, draft.clips.count < 20 else { return }
         isAddingClip = true
         addClipError = nil
         defer { isAddingClip = false }
@@ -2232,9 +2247,12 @@ struct NativeEditorTemporaryVideo {
     // Basic media and cards use the existing lane contract. Only edits that
     // introduce editor_style need the newer styling capability.
     var canAuthorVisuals: Bool { canEditSection(.visualBlocks) }
-    var canImportVisuals: Bool { itemID != nil && (canAuthorVisuals || canEditSection(.motionScenes)) }
+    // Visual blocks and motion scenes have no on-device lane yet, so an edit
+    // rendered on this iPhone can't take new visuals after it was planned.
+    var canImportVisuals: Bool { itemID != nil && !rendersOnDevice && (canAuthorVisuals || canEditSection(.motionScenes)) }
     var visualImportUnavailableMessage: String? {
         if itemID == nil { return "Open a saved edit to add photos or videos." }
+        if rendersOnDevice { return "Adding media isn’t available yet for edits rendered on this iPhone. Add media in Visuals before you generate." }
         if !canImportVisuals { return "Adding visuals isn’t available for this edit." }
         return nil
     }

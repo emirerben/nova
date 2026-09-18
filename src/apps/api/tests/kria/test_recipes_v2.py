@@ -193,3 +193,164 @@ def test_visual_asset_derives_still_images_capability():
 def test_original_only_recipe_does_not_require_still_images():
     recipe = EditRecipeV2.model_validate(json.loads(FIXTURE.read_text()))
     assert "stillImages" not in recipe.required_capabilities
+
+
+# --- KRI-121 round 2: pool videos and supporting-card stills ------------------
+
+
+def add_visual_clip(document, media_kind):
+    """Append a second pool asset of ``media_kind`` with a clip reading it."""
+    asset = document["assets"][0] | {"id": "media-2", "relative_path": "media-2"}
+    asset["fingerprint"] = asset["fingerprint"] | {"hex": "b" * 64}
+    document["assets"].append(asset)
+    document["asset_manifest"]["assets"].append(
+        {
+            "kind": "visual",
+            "id": "media-2",
+            "visual_id": "7d4f1b3a-0e5c-4a8d-b9f2-1c6e8a7b5d43",
+            "generation": "888",
+            "fingerprint": {"sha256": "b" * 64, "byte_count": 100},
+        }
+        | ({"media_kind": "video"} if media_kind == "video" else {})
+    )
+    clip = document["tracks"][0]["clips"][0]
+    document["tracks"][0]["clips"].append(
+        clip | {"id": "clip-2", "source_asset_id": "media-2", "timeline_start": 2.0}
+    )
+    return document
+
+
+def test_video_visual_derives_visual_videos_not_still_images():
+    document = visual_document()
+    document["asset_manifest"]["assets"][0]["media_kind"] = "video"
+    assert document["required_capabilities"] == []
+    recipe = EditRecipeV2.model_validate(document)
+    assert "visualVideos" in recipe.required_capabilities
+    assert "stillImages" not in recipe.required_capabilities
+    assert recipe.model_dump(mode="json")["asset_manifest"]["assets"][0]["media_kind"] == "video"
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+    photo = EditRecipeV2.model_validate(visual_document())
+    assert "visualVideos" not in photo.required_capabilities
+    assert recipe_digest(recipe) != recipe_digest(photo)
+
+
+def test_photo_visual_document_carries_no_media_kind():
+    # Round-1 photo recipes are pinned by digest; the default kind stays off the wire.
+    recipe = EditRecipeV2.model_validate(visual_document())
+    assert recipe.model_dump(mode="json") == visual_document() | {
+        "required_capabilities": ["stillImages"]
+    }
+    explicit = visual_document()
+    explicit["asset_manifest"]["assets"][0]["media_kind"] = "image"
+    assert recipe_digest(EditRecipeV2.model_validate(explicit)) == recipe_digest(recipe)
+
+
+@pytest.mark.parametrize(
+    "first,second,expected",
+    [
+        ("image", "video", {"stillImages", "visualVideos"}),
+        ("video", "image", {"stillImages", "visualVideos"}),
+        ("image", "image", {"stillImages"}),
+        ("video", "video", {"visualVideos"}),
+    ],
+)
+def test_mixed_visual_kinds_derive_each_capability(first, second, expected):
+    document = visual_document()
+    if first == "video":
+        document["asset_manifest"]["assets"][0]["media_kind"] = "video"
+    recipe = EditRecipeV2.model_validate(add_visual_clip(document, second))
+    assert recipe.required_capabilities & {"stillImages", "visualVideos"} == expected
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def card_document(**clip):
+    document = visual_document()
+    document["tracks"][0]["clips"][0] |= {"still_layout": "supporting_card"} | clip
+    return document
+
+
+def test_still_card_round_trips_and_changes_the_digest():
+    recipe = EditRecipeV2.model_validate(card_document())
+    assert recipe.tracks[0].clips[0].still_layout == "supporting_card"
+    # The card draws the same pinned photo: no capability beyond stillImages.
+    assert recipe.required_capabilities == {"stillImages"}
+    assert recipe.model_dump(mode="json")["tracks"][0]["clips"][0]["still_layout"] == (
+        "supporting_card"
+    )
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+    assert recipe_digest(recipe) != recipe_digest(EditRecipeV2.model_validate(visual_document()))
+    with pytest.raises(ValidationError):
+        EditRecipeV2.model_validate(card_document(still_layout="polaroid"))
+
+
+def test_absent_still_layout_stays_off_the_wire():
+    # Every already-issued recipe digest depends on the key being omitted.
+    for document in (json.loads(FIXTURE.read_text()), visual_document()):
+        recipe = EditRecipeV2.model_validate(document)
+        assert recipe.tracks[0].clips[0].still_layout is None
+        assert "still_layout" not in recipe.model_dump_json()
+        explicit = json.loads(json.dumps(document))
+        explicit["tracks"][0]["clips"][0]["still_layout"] = None
+        assert recipe_digest(EditRecipeV2.model_validate(explicit)) == recipe_digest(recipe)
+
+
+def test_still_card_requires_a_visuals_photo():
+    original = json.loads(FIXTURE.read_text())
+    original["tracks"][0]["clips"][0]["still_layout"] = "supporting_card"
+    with pytest.raises(ValidationError, match="requires a Visuals photo"):
+        EditRecipeV2.model_validate(original)
+    video = card_document()
+    video["asset_manifest"]["assets"][0]["media_kind"] = "video"
+    with pytest.raises(ValidationError, match="requires a Visuals photo"):
+        EditRecipeV2.model_validate(video)
+    # Per clip, not per recipe: a photo elsewhere does not excuse a video card.
+    mixed = add_visual_clip(visual_document(), "video")
+    mixed["tracks"][0]["clips"][1]["still_layout"] = "supporting_card"
+    with pytest.raises(ValidationError, match="requires a Visuals photo"):
+        EditRecipeV2.model_validate(mixed)
+    mixed["tracks"][0]["clips"][1]["still_layout"] = None
+    mixed["tracks"][0]["clips"][0]["still_layout"] = "supporting_card"
+    EditRecipeV2.model_validate(mixed)
+
+
+@pytest.mark.parametrize(
+    "clip",
+    [
+        {"rate": 2.0},
+        {"look": "golden_hour"},
+        {"hold_duration": 1.0},
+        {"hold_duration": 0.0},
+        {"transform": {"scale": 1.2}},
+        {"transform": {"rotation_degrees": 90.0}},
+        {"transform": {"position_x": 10.0}},
+        {"transform": {"position_y": -10.0}},
+    ],
+    ids=["rate", "look", "hold", "zero-hold", "scale", "rotation", "x", "y"],
+)
+def test_still_card_must_be_a_plain_clip(clip):
+    # The native card is composed once from the photo alone; any of these
+    # would be silently ignored on device.
+    EditRecipeV2.model_validate(card_document())
+    with pytest.raises(ValidationError, match="plain V2 main-track clip"):
+        EditRecipeV2.model_validate(card_document(**clip))
+
+
+def test_still_card_must_sit_on_the_main_video_track():
+    document = visual_document()
+    overlay = document["tracks"][0]["clips"][0] | {"id": "overlay-clip", "transition": None}
+    document["tracks"].append({"id": "overlay", "kind": "overlay", "clips": [overlay]})
+    EditRecipeV2.model_validate(document)
+    overlay["still_layout"] = "supporting_card"
+    with pytest.raises(ValidationError, match="plain V2 main-track clip"):
+        EditRecipeV2.model_validate(document)
+
+
+def test_still_card_cannot_ride_a_v1_recipe():
+    document = json.loads(FIXTURE.read_text())
+    document["schema_version"] = 1
+    document["renderer_version"] = "kria-ios-1"
+    del document["asset_manifest"], document["text_layers"]
+    EditRecipeV1.model_validate(document)
+    document["tracks"][0]["clips"][0]["still_layout"] = "supporting_card"
+    with pytest.raises(ValidationError, match="plain V2 main-track clip"):
+        EditRecipeV1.model_validate(document)

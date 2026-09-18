@@ -18,7 +18,6 @@ from celery.exceptions import MaxRetriesExceededError, Retry
 from sqlalchemy import func, select
 
 from app.agents._schemas.creator_agent import CreatorEditPlan
-from app.config import settings
 from app.database import sync_session
 from app.models import (
     ContentPlan,
@@ -32,7 +31,6 @@ from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     MAIN_CREATOR_FAIL_CLOSED,
     MAX_PROPOSAL_DURATION_S,
-    BeatLayout,
     EditProposal,
     EditProposalSnapshot,
     FastMontageCut,
@@ -58,9 +56,10 @@ from app.services.edit_proposal_limits import (
 from app.services.edit_proposals import (
     media_generations_match_sync,
     phone_renderable_media,
-    renders_on_phone,
+    phone_story_layouts,
     save_proposal_draft,
 )
+from app.services.phone_destination import item_visuals_only_on_device_sync
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -465,28 +464,6 @@ def _fast_story_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
     if not beats:
         raise ValueError("fast montage requires at least one cut")
     return beats
-
-
-def _snapshot_image_layout(
-    image_layout: BeatLayout | None,
-    media: list[MediaRef],
-    owner_id: object,
-) -> BeatLayout | None:
-    """Pin photos fullscreen when this plan will render on the creator's iPhone.
-
-    The device renderer only draws cover-cropped fullscreen stills, and
-    compile_phone_guided_plan fails the whole job on any other photo layout. A
-    null snapshot layout would let the specialist's per-beat ``supporting_card``
-    reach photos, so phone items pin it on the snapshot, which outranks beat
-    layout for every image moment. This also outranks a creator's recorded
-    "don't crop my photos" brief: a failed render is worse than a crop.
-    """
-
-    if "stillImages" in settings.phone_render_verified_features and renders_on_phone(
-        media, owner_id
-    ):
-        return "fullscreen"
-    return image_layout
 
 
 def feasible_guided_duration_s(media: list[MediaRef]) -> float:
@@ -1342,6 +1319,9 @@ def _run_draft_attempt(
                     db.commit()
                     return
             pool = _pool_refs(db, item, owner_id)
+            # Decided once per attempt so the plan, its digest and the story
+            # layouts agree; the save below rejects the attempt if it moved.
+            visuals_only_device = item_visuals_only_on_device_sync(db, item, owner_id)
             assignments = [
                 dict(a)
                 for a in (item.clip_assignments or [])
@@ -1441,7 +1421,9 @@ def _run_draft_attempt(
         # stored separately, but one object must not count twice in the story.
         clip_paths = {ref.gcs_path for ref in clip_refs}
         media = phone_renderable_media(
-            clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths], owner_id
+            clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths],
+            owner_id,
+            visuals_only_device=visuals_only_device,
         )
         if not media:
             with sync_session() as db:
@@ -1604,10 +1586,16 @@ def _run_draft_attempt(
                 return
             assert owner_id is not None
             fresh_pool = _pool_refs(db, item, owner_id)
+            fresh_visuals_only = item_visuals_only_on_device_sync(db, item, owner_id)
             fresh_media = phone_renderable_media(
-                clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths], owner_id
+                clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths],
+                owner_id,
+                visuals_only_device=fresh_visuals_only,
             )
-            if canonical_media_digest(fresh_media, narration) != digest:
+            if (
+                fresh_visuals_only != visuals_only_device
+                or canonical_media_digest(fresh_media, narration) != digest
+            ):
                 _fail(
                     item,
                     current,
@@ -1907,7 +1895,7 @@ def _run_draft_attempt(
             closing_title=brief.closing_title,
             font_family=brief.font_family,
             text_color=brief.text_color,
-            image_layout=_snapshot_image_layout(brief.image_layout, media, owner_id),
+            image_layout=brief.image_layout,
             licensed_sfx=brief.licensed_sfx,
             media=media,
             story_beats=(
@@ -1958,6 +1946,7 @@ def _run_draft_attempt(
             video_reuse_policy=video_reuse_policy,
             output_orientation=brief.output_orientation,
         )
+        snapshot = phone_story_layouts(snapshot, owner_id, visuals_only_device=visuals_only_device)
         if fallback_used:
             # Never auto-approve a deterministic recovery that the strict
             # renderer cannot compile from the complete accepted media set.

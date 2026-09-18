@@ -140,7 +140,7 @@ struct ProjectMediaUploadContract: Codable, Sendable, Equatable {
     /// narration/voiceover with no track is not a usable source).
     ///
     /// Not yet called from any production path: `ProjectUploadDestination.resolve`
-    /// still routes `.voiceover` attachments to `.cloud`/`.voiceoverNeedsCloud` regardless
+    /// still routes `.voiceover` attachments to `.cloud`/`.voiceoverUnavailableOnPhone` regardless
     /// of phone-rendering availability, because no recipe schema field can carry a
     /// narration track yet (see `MediaCapability.narrationAudio`,
     /// docs/reviews/kri-29/capability-matrix.md). This exists so that gate is a single,

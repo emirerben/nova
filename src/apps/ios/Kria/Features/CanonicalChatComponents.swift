@@ -334,9 +334,15 @@ struct FootageStage: View {
     var attachedMedia: [CreationAttachedMedia] = []
     var isBusy = false
     var removeMedia: (String) -> Void = { _ in }
+    /// Photos and videos in Visuals. A montage can be made from them alone.
+    var visualCount = 0
+    var continueWithVisuals: () -> Void = {}
 
     private var readiness: FootageReadiness {
         FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count)
+    }
+    private var visualsReadiness: FootageReadiness {
+        FootageReadiness(attachedCount: format == .montage && mediaCount == 0 ? visualCount : 0, pendingCount: uploads.count)
     }
 
     var body: some View {
@@ -394,6 +400,16 @@ struct FootageStage: View {
                 Button("Continue with \(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips")", action: continueWithFootage)
                     .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy || !readiness.canContinue)
+            }
+
+            if visualsReadiness.attachedCount > 0 {
+                Text("\(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals") ready")
+                    .font(KriaFont.body(12).weight(.medium))
+                    .foregroundStyle(KriaColor.zinc)
+                Button("Continue with \(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals")", action: continueWithVisuals)
+                    .buttonStyle(CanonicalPrimaryButtonStyle())
+                    .disabled(isBusy || !visualsReadiness.canContinue)
+                    .accessibilityIdentifier("continue-with-visuals")
             }
 
             if readiness.pendingCount > 0 {

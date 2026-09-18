@@ -38,14 +38,15 @@ public struct RenderFingerprint: Codable, Equatable, Sendable {
 }
 
 public enum RenderAssetCatalog: String, Codable, Sendable { case music, soundEffect = "sound_effect", font, overlay }
+public enum VisualMediaKind: String, Codable, Sendable { case image, video }
 
 public struct RenderAssetReference: Codable, Equatable, Sendable {
     public enum Source: Equatable, Sendable {
         case original(mediaID: String)
         case library(catalog: RenderAssetCatalog, catalogID: String, generation: String)
-        /// A photo from the creator's Visuals pool, pinned to one storage
+        /// A photo or video from the creator's Visuals pool, pinned to one storage
         /// generation. Downloaded through the same per-asset grant as library bytes.
-        case visual(visualID: String, generation: String)
+        case visual(visualID: String, generation: String, mediaKind: VisualMediaKind = .image)
     }
     public let id: String
     public let fingerprint: RenderFingerprint
@@ -53,25 +54,27 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
     public init(id: String, fingerprint: RenderFingerprint, source: Source) {
         self.id = id; self.fingerprint = fingerprint; self.source = source
     }
-    private enum CodingKeys: String, CodingKey { case kind, id, fingerprint, mediaId, catalog, catalogId, generation, visualId }
+    private enum CodingKeys: String, CodingKey { case kind, id, fingerprint, mediaId, catalog, catalogId, generation, visualId, mediaKind }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["kind", "id", "fingerprint", "mediaId", "catalog", "catalogId", "generation", "visualId"])
+        try rejectUnknownAssetFields(decoder, allowed: ["kind", "id", "fingerprint", "mediaId", "catalog", "catalogId", "generation", "visualId", "mediaKind"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         fingerprint = try c.decode(RenderFingerprint.self, forKey: .fingerprint)
         switch try c.decode(String.self, forKey: .kind) {
         case "original":
-            guard !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.generation), !c.contains(.visualId) else { throw RenderAssetError.invalidManifest }
+            guard !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.generation), !c.contains(.visualId), !c.contains(.mediaKind) else { throw RenderAssetError.invalidManifest }
             source = .original(mediaID: try c.decode(String.self, forKey: .mediaId))
         case "library":
-            guard !c.contains(.mediaId), !c.contains(.visualId) else { throw RenderAssetError.invalidManifest }
+            guard !c.contains(.mediaId), !c.contains(.visualId), !c.contains(.mediaKind) else { throw RenderAssetError.invalidManifest }
             source = .library(catalog: try c.decode(RenderAssetCatalog.self, forKey: .catalog),
                               catalogID: try c.decode(String.self, forKey: .catalogId),
                               generation: try c.decode(String.self, forKey: .generation))
         case "visual":
             guard !c.contains(.mediaId), !c.contains(.catalog), !c.contains(.catalogId) else { throw RenderAssetError.invalidManifest }
+            // The server omits the kind for photos so their manifests keep one shape.
             source = .visual(visualID: try c.decode(String.self, forKey: .visualId),
-                             generation: try c.decode(String.self, forKey: .generation))
+                             generation: try c.decode(String.self, forKey: .generation),
+                             mediaKind: try c.decodeIfPresent(VisualMediaKind.self, forKey: .mediaKind) ?? .image)
         default: throw RenderAssetError.invalidManifest
         }
         try validate()
@@ -86,9 +89,10 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         case .library(let catalog, let catalogID, let generation):
             try c.encode("library", forKey: .kind); try c.encode(catalog, forKey: .catalog)
             try c.encode(catalogID, forKey: .catalogId); try c.encode(generation, forKey: .generation)
-        case .visual(let visualID, let generation):
+        case .visual(let visualID, let generation, let mediaKind):
             try c.encode("visual", forKey: .kind); try c.encode(visualID, forKey: .visualId)
             try c.encode(generation, forKey: .generation)
+            if mediaKind != .image { try c.encode(mediaKind, forKey: .mediaKind) }
         }
     }
     public func validate() throws {
@@ -97,7 +101,7 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         switch source {
         case .original(let mediaID): identifiers = [id, mediaID]
         case .library(_, let catalogID, let generation): identifiers = [id, catalogID, generation]
-        case .visual(let visualID, let generation): identifiers = [id, visualID, generation]
+        case .visual(let visualID, let generation, _): identifiers = [id, visualID, generation]
         }
         guard identifiers.allSatisfy({ !$0.isEmpty && $0.count <= 160 && $0.rangeOfCharacter(from: .whitespacesAndNewlines) == nil }) else {
             throw RenderAssetError.invalidManifest

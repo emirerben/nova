@@ -1132,6 +1132,10 @@ def _analyze_video(
             "rotation_degrees": rotation,
             "display_width": dims[0],
             "display_height": dims[1],
+            # Phone plans leave out a pool video the iPhone can't compose
+            # (edit_proposals.phone_renderable_media); binding re-checks the bytes.
+            "video_codec": probe.codec,
+            "pix_fmt": probe.pix_fmt,
         }
         return analysis, aspect, duration, dims
     except SoftTimeLimitExceeded:

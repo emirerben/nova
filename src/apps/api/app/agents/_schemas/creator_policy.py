@@ -17,9 +17,11 @@ CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 CAPABILITY_GUIDED_VOICEOVER = "guided_voiceover"
 GUIDED_VOICEOVER_EXECUTION_CONTRACT = "guided_voiceover_v1"
 CAPABILITY_PHONE_SOURCE_AUDIO = "phone_source_audio"
-# Present only on phone manifests whose device engine is verified for stills.
-# The capability resolver reads that setting; this module never does.
+# Each is present only on phone manifests whose device engine is verified for
+# that kind of Visuals media. The capability resolver reads that setting; this
+# module never does.
 CAPABILITY_PHONE_STILL_IMAGES = "phone_still_images"
+CAPABILITY_PHONE_VISUAL_VIDEOS = "phone_visual_videos"
 
 
 def _requires_guided_voiceover(
@@ -43,9 +45,27 @@ class PhoneMediaUnavailableError(MixedMediaTimingUnavailableError):
     the route uses the subtype only to tell the creator what went wrong.
     """
 
-    def __init__(self, message: str, *, still_images_available: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        still_images_available: bool = False,
+        visual_videos_available: bool = False,
+    ) -> None:
         super().__init__(message)
         self.still_images_available = still_images_available
+        self.visual_videos_available = visual_videos_available
+
+
+class PhoneFormatUnavailableError(MixedMediaTimingUnavailableError):
+    """The iPhone has no renderer for this edit format or for voiceover audio.
+
+    Subclassed for the same reason as ``PhoneMediaUnavailableError``.
+    """
+
+    def __init__(self, message: str, *, voiceover: bool = False) -> None:
+        super().__init__(message)
+        self.voiceover = voiceover
 
 
 class MontageCadenceUnavailableError(ValueError):
@@ -80,13 +100,18 @@ def effective_render_program(
     phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
     if phone is not None:
         if not phone.available:
+            if phone.reason_code == "unsupported_phone_audio":
+                raise PhoneFormatUnavailableError(
+                    phone.reason or "phone rendering does not support voiceover audio",
+                    voiceover=True,
+                )
             raise MixedMediaTimingUnavailableError(phone.reason or "phone rendering is unavailable")
         if manifest.has_voiceover or strategy.audio_strategy == "voiceover":
-            raise MixedMediaTimingUnavailableError(
-                "phone rendering does not support voiceover audio"
+            raise PhoneFormatUnavailableError(
+                "phone rendering does not support voiceover audio", voiceover=True
             )
         if not guided_edit_applicable(strategy_format, has_voiceover=False):
-            raise MixedMediaTimingUnavailableError("phone sources require a guided edit format")
+            raise PhoneFormatUnavailableError("phone sources require a guided edit format")
         source_ids: set[str] = set()
         if strategy.montage_cadence is not None:
             source_ids.update(strategy.montage_cadence.source_media_ids)
@@ -95,16 +120,23 @@ def effective_render_program(
         selected_ids = set(strategy.selected_media_ids) | source_ids
         stills = manifest.capabilities.get(CAPABILITY_PHONE_STILL_IMAGES)
         still_images_available = bool(stills is not None and stills.available)
+        videos = manifest.capabilities.get(CAPABILITY_PHONE_VISUAL_VIDEOS)
+        visual_videos_available = bool(videos is not None and videos.available)
 
         def phone_renderable(media: CreatorMediaRef) -> bool:
-            if media.kind == "video" and not media.media_id.startswith("asset-"):
-                return True
-            # Visuals-pool photos compile to fullscreen stills. A still has no
-            # sound or source cuts, so it can never drive audio or cadence.
+            if not media.media_id.startswith("asset-"):
+                return media.kind == "video"
+            if media.kind == "video":
+                # A Visuals video compiles exactly like bound footage and the
+                # device mixes its sound the same way, so it may also drive
+                # audio or cadence.
+                return visual_videos_available
+            # Visuals-pool photos compile to stills (fullscreen or a supporting
+            # card). A still has no sound or source cuts, so it can never drive
+            # audio or cadence.
             return (
                 still_images_available
                 and media.kind == "image"
-                and media.media_id.startswith("asset-")
                 and media.media_id not in source_ids
             )
 
@@ -116,6 +148,7 @@ def effective_render_program(
             raise PhoneMediaUnavailableError(
                 "phone rendering requires bound video sources",
                 still_images_available=still_images_available,
+                visual_videos_available=visual_videos_available,
             )
     guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
     guided_voiceover = manifest.capabilities.get(CAPABILITY_GUIDED_VOICEOVER)
@@ -348,6 +381,7 @@ __all__ = [
     "GUIDED_VOICEOVER_EXECUTION_CONTRACT",
     "MixedMediaTimingUnavailableError",
     "MontageCadenceUnavailableError",
+    "PhoneFormatUnavailableError",
     "PhoneMediaUnavailableError",
     "effective_render_program",
     "normalize_creator_strategy_media",

@@ -190,6 +190,19 @@ import UIKit
         XCTAssertFalse(v2Done.summary.awaitsConfirmation)
     }
 
+    /// "Continue with N visuals" must count what the server's Visuals-only
+    /// rule counts, not every pool row that holds capacity.
+    func testDeviceReadyVisualCountReadsTheServerRuleCount() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.thread(runtime: 1)) as? [String: Any])
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let older = try decoder.decode(CreationThread.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(older.deviceReadyVisualCount, 0)
+        object["media_capabilities"] = ["visuals": ["current": 5, "max": 20, "device_ready": 2]]
+        let thread = try decoder.decode(CreationThread.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(thread.visualCount, 5)
+        XCTAssertEqual(thread.deviceReadyVisualCount, 2)
+    }
+
     func testOlderPollCannotReplaceEqualRevisionMutationProjection() {
         var order = ThreadProjectionOrder()
         let oldPoll = order.begin()

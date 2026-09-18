@@ -234,7 +234,21 @@ struct CreationThread: Codable, Identifiable, Sendable {
     let events: [ThreadEvent]
     let creatorAgent: [String: JSONValue]?
     let speechCleanup: [String: JSONValue]?
-    enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state, events; case creatorAgent = "creator_agent"; case speechCleanup = "speech_cleanup"; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case activePlanItemID = "active_plan_item_id"; case updatedAt = "updated_at" }
+    /// Per-role upload counts and limits; older servers omit it.
+    let mediaCapabilities: [String: JSONValue]?
+    /// Visuals in this project's pool, so a project made only of Visuals can continue.
+    var visualCount: Int {
+        if case .number(let count) = mediaCapabilities?["visuals"]?.objectValue?["current"] { return max(0, Int(count)) }
+        return 0
+    }
+    /// Ready Visuals of a kind this iPhone draws: the count the server's
+    /// Visuals-only rule uses. `visualCount` also holds failed, in-flight and
+    /// undrawable rows. 0 for non-pilot accounts and older servers.
+    var deviceReadyVisualCount: Int {
+        if case .number(let count) = mediaCapabilities?["visuals"]?.objectValue?["device_ready"] { return max(0, Int(count)) }
+        return 0
+    }
+    enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state, events; case creatorAgent = "creator_agent"; case speechCleanup = "speech_cleanup"; case mediaCapabilities = "media_capabilities"; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case activePlanItemID = "active_plan_item_id"; case updatedAt = "updated_at" }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -251,6 +265,7 @@ struct CreationThread: Codable, Identifiable, Sendable {
         events = try values.decodeIfPresent([ThreadEvent].self, forKey: .events) ?? []
         creatorAgent = try values.decodeIfPresent([String: JSONValue].self, forKey: .creatorAgent)
         speechCleanup = try values.decodeIfPresent([String: JSONValue].self, forKey: .speechCleanup)
+        mediaCapabilities = try values.decodeIfPresent([String: JSONValue].self, forKey: .mediaCapabilities)
     }
 
     var summary: ProjectSummary {

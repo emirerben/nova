@@ -1038,7 +1038,10 @@ struct NativeMiniStrip: View {
     // 20 mirrors the server's `_MAX_CLIPS` pool cap (see
     // NativeEditorSession.addClip) — disabling here keeps the sheet from ever
     // reaching a guard clause the user can't see feedback for.
-    private var canAddClip: Bool { session.canEditTimeline && session.draft.clips.count < 20 }
+    // An edit rendered on this iPhone only knows the originals bound when it was
+    // planned; adding a clip would upload a full original to the cloud for an
+    // edit the phone can never save.
+    private var canAddClip: Bool { session.canEditTimeline && !session.rendersOnDevice && session.draft.clips.count < 20 }
 
     var body: some View {
         VStack(spacing: 6) {

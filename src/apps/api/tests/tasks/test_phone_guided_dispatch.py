@@ -8,6 +8,7 @@ import pytest
 
 from app.kria.render_assets import VisualRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.services import phone_visuals
 from app.services.device_render import device_status
 from app.services.generative_jobs import build_generative_job
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD
@@ -246,25 +247,51 @@ def test_phone_plan_failure_persists_failure_reason(monkeypatch, raised, expecte
     cloud.assert_not_called()
 
 
-def photo_setup(monkeypatch, *, still_images, row=None):
-    """A guided phone job whose approved story shows one Visuals-pool photo."""
+def pool_setup(monkeypatch, *, moments, rows, features=()):
+    """A guided phone job whose approved story shows Visuals-pool media."""
     job, snapshot, session, planner, cloud = setup(monkeypatch)
-    plan, _ = photos.photo_plan()
+    plan, _ = photos.pool_plan(*moments)
     planner.return_value = (plan.model_dump(mode="json"), None)
     job.user_id = photos.USER_ID
     job.content_plan_item_id = photos.ITEM_ID
     session.get.return_value = job
-    session.execute.return_value.scalars.return_value.all.return_value = [row or photos.photo_row()]
+    session.execute.return_value.scalars.return_value.all.return_value = rows
     downloads = photos.fake_storage(
-        monkeypatch, {(photos.PHOTO_PATH, photos.PHOTO_GENERATION): photos.PHOTO_BYTES}
+        monkeypatch,
+        {
+            (photos.PHOTO_PATH, photos.PHOTO_GENERATION): photos.PHOTO_BYTES,
+            (photos.VIDEO_PATH, photos.VIDEO_GENERATION): photos.VIDEO_BYTES,
+        },
     )
-    if still_images:
-        monkeypatch.setattr(
-            gb.settings,
-            "phone_render_verified_features",
-            [*gb.settings.phone_render_verified_features, "stillImages"],
-        )
+    photos.fake_probe(monkeypatch)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [*gb.settings.phone_render_verified_features, *features],
+    )
     return job, snapshot, cloud, downloads
+
+
+def photo_setup(monkeypatch, *, still_images, row=None):
+    return pool_setup(
+        monkeypatch,
+        moments=[photos.photo_moment()],
+        rows=[row or photos.photo_row()],
+        features=["stillImages"] if still_images else [],
+    )
+
+
+def spy_on_binding(monkeypatch):
+    """Record the kinds the worker asks the binder for."""
+    real = phone_visuals.bind_phone_visuals
+    asked = []
+
+    def bind(open_session, **kwargs):
+        asked.append(kwargs["kinds"])
+        return real(open_session, **kwargs)
+
+    monkeypatch.setattr(phone_visuals, "bind_phone_visuals", bind)
+    return asked
 
 
 def run_until_failure(monkeypatch, job):
@@ -340,6 +367,124 @@ def test_verified_still_images_leave_video_only_stories_unchanged(monkeypatch):
 def test_stale_pool_photo_fails_closed_as_unsupported(monkeypatch, change):
     job, _, cloud, downloads = photo_setup(
         monkeypatch, still_images=True, row=photos.photo_row(**change)
+    )
+    _, kwargs = run_until_failure(monkeypatch, job)
+    assert kwargs.get("failure_reason") == "phone_plan_unsupported"
+    assert downloads == []
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan
+    cloud.assert_not_called()
+
+
+PHOTO_PIN = (photos.PHOTO_PATH, photos.PHOTO_GENERATION)
+VIDEO_PIN = (photos.VIDEO_PATH, photos.VIDEO_GENERATION)
+
+
+def mixed_setup(monkeypatch, features):
+    """The bound clip, then a pool photo, then a pool video."""
+    return pool_setup(
+        monkeypatch,
+        moments=[photos.photo_moment(), photos.video_moment()],
+        rows=[photos.photo_row(), photos.video_row()],
+        features=features,
+    )
+
+
+@pytest.mark.parametrize(
+    "features, asked_kinds, bound, message",
+    [
+        ([], [], [], "unsupported phone photo"),
+        (["stillImages"], [{"image"}], [PHOTO_PIN], "unsupported phone visual video"),
+        (["visualVideos"], [{"video"}], [VIDEO_PIN], "unsupported phone photo"),
+    ],
+    ids=["neither", "still_images_only", "visual_videos_only"],
+)
+def test_each_pool_kind_binds_only_while_its_feature_is_verified(
+    monkeypatch, features, asked_kinds, bound, message
+):
+    job, _, cloud, downloads = mixed_setup(monkeypatch, features)
+    asked = spy_on_binding(monkeypatch)
+    args, kwargs = run_until_failure(monkeypatch, job)
+    # The unverified kind stays unbound, so the compiler fails closed on it;
+    # with neither verified the binder is never even called.
+    assert asked == [frozenset(kinds) for kinds in asked_kinds]
+    assert downloads == bound
+    assert kwargs.get("failure_reason") == "phone_plan_unsupported"
+    assert message in args[1]
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan
+    assert "_device_render_v1" not in job.assembly_plan
+    cloud.assert_not_called()
+
+
+def test_both_verified_features_pin_photos_and_videos_in_one_recipe(monkeypatch):
+    job, _, cloud, downloads = mixed_setup(monkeypatch, ["stillImages", "visualVideos"])
+    asked = spy_on_binding(monkeypatch)
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device"
+    assert asked == [frozenset({"image", "video"})]
+    assert downloads == [PHOTO_PIN, VIDEO_PIN]
+    request = device_status(job, "guided_story").request
+    kinds = [a.media_kind for a in request.recipe.asset_manifest.assets if a.kind == "visual"]
+    assert sorted(kinds) == ["image", "video"]
+    assert {"stillImages", "visualVideos"} <= set(request.recipe.required_capabilities)
+    assert job.assembly_plan[PHONE_VISUALS_FIELD] == [
+        photos.photo_visual().model_dump(mode="json"),
+        photos.video_visual().model_dump(mode="json"),
+    ]
+    cloud.assert_not_called()
+
+
+def test_verified_visual_videos_pin_the_pool_video_into_the_device_recipe(monkeypatch):
+    job, _, cloud, downloads = pool_setup(
+        monkeypatch,
+        moments=[photos.video_moment()],
+        rows=[photos.video_row()],
+        features=["visualVideos"],
+    )
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device"
+    request = device_status(job, "guided_story").request
+    visual = photos.video_visual()
+    [asset] = [a for a in request.recipe.asset_manifest.assets if a.kind == "visual"]
+    assert asset == VisualRenderAsset(
+        id=f"visual-{photos.VIDEO_ID}",
+        visual_id=photos.VIDEO_ID,
+        generation=photos.VIDEO_GENERATION,
+        media_kind="video",
+        fingerprint={"sha256": visual.sha256, "byte_count": visual.byte_count},
+    )
+    assert '"media_kind":"video"' in request.model_dump_json()
+    assert "visualVideos" in request.recipe.required_capabilities
+    assert "stillImages" not in request.recipe.required_capabilities
+    clip = request.recipe.tracks[0].clips[-1]
+    assert (clip.source_asset_id, clip.source_start, clip.source_duration, clip.timeline_start) == (
+        asset.id,
+        1,
+        2,
+        3,
+    )
+    # Recipes carry identities only; the storage path stays in private job state.
+    assert photos.VIDEO_PATH not in request.model_dump_json()
+    rows = job.assembly_plan[PHONE_VISUALS_FIELD]
+    assert rows == [visual.model_dump(mode="json")]
+    assert rows[0]["kind"] == "video"
+    assert job_references_pool_asset(
+        SimpleNamespace(raw_storage_path=None, assembly_plan={PHONE_VISUALS_FIELD: rows}),
+        asset_id="unrelated",
+        gcs_path=photos.VIDEO_PATH,
+    )
+    assert downloads == [VIDEO_PIN]
+    cloud.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "change", [{"status": "failed"}, {"kind": "image"}], ids=["status", "kind"]
+)
+def test_stale_pool_video_fails_closed_as_unsupported(monkeypatch, change):
+    job, _, cloud, downloads = pool_setup(
+        monkeypatch,
+        moments=[photos.video_moment()],
+        rows=[photos.video_row(**change)],
+        features=["visualVideos"],
     )
     _, kwargs = run_until_failure(monkeypatch, job)
     assert kwargs.get("failure_reason") == "phone_plan_unsupported"

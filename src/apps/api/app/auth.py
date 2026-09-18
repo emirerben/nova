@@ -141,6 +141,28 @@ async def get_current_user(
     return row
 
 
+async def is_native_client(
+    # Depending on the user keeps this report from ever answering for a request
+    # that did not authenticate; FastAPI resolves get_current_user once.
+    _user: Annotated[User, Depends(get_current_user)],
+    x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> bool:
+    """Whether get_current_user's mobile-session branch authenticated this request.
+
+    The web proxy (internal key + X-User-Id) is the only other way in, so True
+    means the native app. Mirrors get_current_user's branch conditions exactly.
+    """
+    if settings.internal_api_key and authorization == f"Bearer {settings.internal_api_key}":
+        return False
+    return bool(
+        authorization
+        and authorization.startswith("Bearer ")
+        and settings.mobile_jwt_secret
+        and not x_user_id
+    )
+
+
 async def get_current_user_or_synthetic(
     x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
     authorization: Annotated[str | None, Header()] = None,
@@ -170,12 +192,15 @@ async def get_current_user_or_synthetic(
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentUserOrSynthetic = Annotated[User, Depends(get_current_user_or_synthetic)]
+NativeClient = Annotated[bool, Depends(is_native_client)]
 
 __all__ = [
     "SYNTHETIC_USER_ID",
     "CurrentUser",
     "CurrentUserOrSynthetic",
+    "NativeClient",
     "ensure_job_owner",
     "get_current_user",
     "get_current_user_or_synthetic",
+    "is_native_client",
 ]

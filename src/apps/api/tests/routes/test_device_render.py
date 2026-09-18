@@ -388,8 +388,8 @@ def test_library_download_rejects_legacy_recipe(fixture, monkeypatch):
     assert download_asset(fixture).status_code == 404
 
 
-def visual_recipe(fixture, monkeypatch, visual_id=None):
-    """Pin a recipe whose only asset is the job owner's own pool photo."""
+def visual_recipe(fixture, monkeypatch, visual_id=None, kind="image"):
+    """Pin a recipe whose only asset is the job owner's own pool photo or video."""
     from app.kria.recipes_v2 import EditRecipeV2
     from app.models import PlanItemAsset
     from app.services.phone_sources import PhoneVisualBinding
@@ -402,16 +402,20 @@ def visual_recipe(fixture, monkeypatch, visual_id=None):
         user_id=fixture.user.id,
         plan_item_id=item_id,
         status="ready",
-        kind="image",
+        kind=kind,
         gcs_generation="42",
-        gcs_path=f"users/{fixture.user.id}/plan/{item_id}/pool/{visual_id}.jpg",
+        gcs_path=f"users/{fixture.user.id}/plan/{item_id}/pool/{visual_id}"
+        + (".mov" if kind == "video" else ".jpg"),
     )
+    probe = {"duration_s": 8, "width": 1920, "height": 1080} if kind == "video" else {}
     asset = PhoneVisualBinding(
         media_id=visual_id,
         gcs_path=row.gcs_path,
         generation="42",
         sha256="a" * 64,
         byte_count=12,
+        kind=kind,
+        **probe,
     ).render_asset()
     value = fixture.request.recipe.model_dump(mode="json")
     value.update(
@@ -524,6 +528,45 @@ def test_visual_download_rejects_changed_pool_rows(fixture, monkeypatch, mutatio
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == "Visual changed; refresh the recipe"
     assert signer.call_count == int(mutation in {"removed", "unsignable"})
+
+
+def test_visual_download_signs_a_pinned_pool_video(fixture, monkeypatch):
+    asset, row, signer = visual_recipe(fixture, monkeypatch, kind="video")
+    assert asset.media_kind == "video"
+    assert "visualVideos" in fixture.request.recipe.required_capabilities
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(row.gcs_path, generation="42")
+    assert response.json()["asset_id"] == asset.id
+    assert response.json()["download_url"] == "https://storage.example/pinned"
+
+
+@pytest.mark.parametrize("pinned,stored", [("video", "image"), ("image", "video")])
+def test_visual_download_requires_the_row_to_be_the_pinned_kind(
+    fixture, monkeypatch, pinned, stored
+):
+    # The device prepares photos and videos differently, so a row whose kind
+    # no longer matches the recipe must not be signed as the other one.
+    asset, row, signer = visual_recipe(fixture, monkeypatch, kind=pinned)
+    row.kind = stored
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Visual changed; refresh the recipe"
+    signer.assert_not_called()
+
+
+@pytest.mark.parametrize("mutation", ["not_ready", "generation", "other_item_prefix"])
+def test_visual_video_download_rejects_changed_pool_rows(fixture, monkeypatch, mutation):
+    asset, row, signer = visual_recipe(fixture, monkeypatch, kind="video")
+    if mutation == "not_ready":
+        row.status = "analyzing"
+    elif mutation == "generation":
+        row.gcs_generation = "43"
+    else:
+        row.gcs_path = f"users/{fixture.user.id}/plan/{uuid.uuid4()}/pool/clip.mov"
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    signer.assert_not_called()
 
 
 def test_visual_download_rejects_a_superseded_recipe(fixture, monkeypatch):

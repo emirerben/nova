@@ -248,4 +248,155 @@ final class RenderAssetTests: XCTestCase {
         XCTAssertEqual(CapabilityNegotiator(provider: DefaultRendererCapabilities(capabilities: base.union([.stillImages]))).decide(for: recipe).route, .local)
         XCTAssertEqual(try RecipeJSON.decoder().decode([MediaCapability].self, from: Data(#"["stillImages"]"#.utf8)), [.stillImages])
     }
+
+    // MARK: - KRI-121 round 2: Visuals-pool videos and the supporting card
+
+    /// Mirrors `VisualRenderAsset.media_kind`: the server sends it for videos only,
+    /// so photo manifests (and their digests) keep the round-1 shape.
+    func testVisualVideoWireShapeRoundTripsAndPhotosOmitTheKind() throws {
+        let fingerprint = #"{"sha256":"\#(String(repeating: "b", count: 64))","byte_count":2048}"#
+        let video = """
+        {"version":1,"assets":[{"kind":"visual","id":"visual-\(visualID)","visual_id":"\(visualID)","generation":"1757000000000001","media_kind":"video","fingerprint":\(fingerprint)}]}
+        """
+        let manifest = try RecipeJSON.decoder().decode(RenderAssetManifest.self, from: Data(video.utf8))
+        XCTAssertEqual(manifest.assets.first?.source, .visual(visualID: visualID, generation: "1757000000000001", mediaKind: .video))
+        XCTAssertNotEqual(manifest.assets.first?.source, .visual(visualID: visualID, generation: "1757000000000001"))
+        let encoded = try RecipeJSON.encoder().encode(manifest)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: encoded) as? NSDictionary,
+                       try JSONSerialization.jsonObject(with: Data(video.utf8)) as? NSDictionary)
+        XCTAssertEqual(try RecipeJSON.decoder().decode(RenderAssetManifest.self, from: encoded), manifest)
+
+        func wireKeys(_ manifest: RenderAssetManifest) throws -> Set<String> {
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(manifest)) as? [String: Any])
+            return Set(try XCTUnwrap((object["assets"] as? [[String: Any]])?.first).keys)
+        }
+        let photoKeys: Set<String> = ["kind", "id", "visual_id", "generation", "fingerprint"]
+        XCTAssertEqual(try wireKeys(manifest), photoKeys.union(["media_kind"]))
+        let photo = RenderAssetManifest(assets: [RenderAssetReference(id: "visual-a", fingerprint: RenderFingerprint(sha256: String(repeating: "b", count: 64), byteCount: 2048),
+                                                                      source: .visual(visualID: "a", generation: "7", mediaKind: .image))])
+        XCTAssertEqual(try wireKeys(photo), photoKeys)
+        // An explicit "image" is accepted and written back in the photo shape.
+        let explicit = try RecipeJSON.decoder().decode(RenderAssetManifest.self, from: Data(video.replacingOccurrences(of: "\"media_kind\":\"video\"", with: "\"media_kind\":\"image\"").utf8))
+        XCTAssertEqual(explicit.assets.first?.source, .visual(visualID: visualID, generation: "1757000000000001"))
+        XCTAssertEqual(try wireKeys(explicit), photoKeys)
+
+        let original = #"{"version":1,"assets":[{"kind":"original","id":"clip","media_id":"proxy-id","fingerprint":\#(fingerprint)}]}"#
+        let library = #"{"version":1,"assets":[{"kind":"library","id":"music","catalog":"music","catalog_id":"track","generation":"1","fingerprint":\#(fingerprint)}]}"#
+        XCTAssertNoThrow(try RecipeJSON.decoder().decode(RenderAssetManifest.self, from: Data(original.utf8)))
+        XCTAssertNoThrow(try RecipeJSON.decoder().decode(RenderAssetManifest.self, from: Data(library.utf8)))
+        // Only a Visuals-pool asset has a media kind, and only the two pool kinds exist.
+        for bad in [original.replacingOccurrences(of: "\"media_id\"", with: "\"media_kind\":\"video\",\"media_id\""),
+                    original.replacingOccurrences(of: "\"media_id\"", with: "\"media_kind\":\"image\",\"media_id\""),
+                    library.replacingOccurrences(of: "\"catalog_id\"", with: "\"media_kind\":\"video\",\"catalog_id\""),
+                    library.replacingOccurrences(of: "\"catalog_id\"", with: "\"media_kind\":\"image\",\"catalog_id\""),
+                    video.replacingOccurrences(of: "\"media_kind\":\"video\"", with: "\"media_kind\":\"audio\""),
+                    video.replacingOccurrences(of: "\"media_kind\":\"video\"", with: "\"media_kind\":null,\"media_type\":\"video\"")] {
+            XCTAssertThrowsError(try RecipeJSON.decoder().decode(RenderAssetManifest.self, from: Data(bad.utf8)), bad)
+        }
+    }
+
+    private var fixtureURL: URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../../../api/tests/fixtures/kria_edit_recipe_v2.json").standardizedFileURL
+    }
+    private func fixtureRecipe() throws -> EditRecipe { try RecipeJSON.decode(Data(contentsOf: fixtureURL)) }
+
+    /// The backend fixture plus one Visuals-pool asset per kind, each cut onto the
+    /// main track after the fixture's two-second clip.
+    private func visualRecipe(_ kinds: [VisualMediaKind], stillLayout: StillLayout? = nil) throws -> EditRecipe {
+        var recipe = try fixtureRecipe()
+        var references = try XCTUnwrap(recipe.assetManifest).assets
+        for (index, kind) in kinds.enumerated() {
+            let reference = RenderAssetReference(id: "visual-\(kind.rawValue)",
+                                                 fingerprint: RenderFingerprint(sha256: String(repeating: kind == .video ? "c" : "b", count: 64), byteCount: 2048),
+                                                 source: .visual(visualID: kind.rawValue, generation: "1", mediaKind: kind))
+            references.append(reference)
+            recipe.assets.append(MediaAsset(id: reference.id, relativePath: reference.id,
+                                            fingerprint: AssetFingerprint(hex: reference.fingerprint.sha256, byteCount: reference.fingerprint.byteCount)))
+            recipe.tracks[0].clips.append(TimelineClip(id: "visual-clip-\(kind.rawValue)", sourceAssetID: reference.id, sourceDuration: 2,
+                                                       timelineStart: 2 + 2 * Double(index), stillLayout: kind == .image ? stillLayout : nil))
+        }
+        recipe.assetManifest = RenderAssetManifest(assets: references)
+        return recipe
+    }
+
+    /// Derived per pool kind, so a build that renders photos but not pool videos
+    /// (or the reverse) routes the recipe away instead of dropping the media.
+    func testVisualKindsDeriveTheirOwnCapabilities() throws {
+        let kinds: Set<MediaCapability> = [.stillImages, .visualVideos]
+        XCTAssertEqual(try fixtureRecipe().effectiveCapabilities.intersection(kinds), [])
+        let cases: [([VisualMediaKind], Set<MediaCapability>)] = [([.image], [.stillImages]), ([.video], [.visualVideos]),
+                                                                  ([.image, .video], [.stillImages, .visualVideos])]
+        for (visuals, expected) in cases {
+            let recipe = try visualRecipe(visuals)
+            try recipe.validate()
+            XCTAssertTrue(recipe.requiredCapabilities.isEmpty)
+            XCTAssertEqual(recipe.effectiveCapabilities.intersection(kinds), expected)
+            XCTAssertEqual(try RecipeJSON.decode(RecipeJSON.encode(recipe)), recipe)
+        }
+        let both = try visualRecipe([.image, .video])
+        let base: Set<MediaCapability> = [.basicComposition, .local1080Export]
+        let photosOnly = CapabilityNegotiator(provider: DefaultRendererCapabilities(capabilities: base.union([.stillImages]))).decide(for: both)
+        XCTAssertEqual(photosOnly.route, .cloud)
+        XCTAssertEqual(photosOnly.missingCapabilities, [.visualVideos])
+        XCTAssertEqual(CapabilityNegotiator(provider: DefaultRendererCapabilities(capabilities: base.union(kinds))).decide(for: both).route, .local)
+
+        XCTAssertEqual(try RecipeJSON.decoder().decode([MediaCapability].self, from: Data(#"["visualVideos"]"#.utf8)), [.visualVideos])
+        var wire = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any])
+        wire["required_capabilities"] = ["visualVideos"]
+        XCTAssertEqual(try RecipeJSON.decode(JSONSerialization.data(withJSONObject: wire)).requiredCapabilities, [.visualVideos])
+    }
+
+    /// Mirrors `TimelineClip.still_layout` in `app/kria/recipes.py`: dropped from
+    /// the wire when unset, so recipes without a card keep their digest.
+    func testStillLayoutWireShapeIsAbsentUnlessSet() throws {
+        let wire = #"{"id":"photo-1","source_asset_id":"visual-image","source_start":0,"source_duration":2.5,"timeline_start":2,"rate":1,"transform":{"scale":1,"rotation_degrees":0,"position_x":0,"position_y":0},"transition":null,"text":null,"volume":1,"still_layout":"supporting_card"}"#
+        let card = try RecipeJSON.decoder().decode(TimelineClip.self, from: Data(wire.utf8))
+        XCTAssertEqual(card.stillLayout, .supportingCard)
+        XCTAssertEqual(card, TimelineClip(id: "photo-1", sourceAssetID: "visual-image", sourceDuration: 2.5, timelineStart: 2, stillLayout: .supportingCard))
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(card)) as? [String: Any])
+        XCTAssertEqual(encoded["still_layout"] as? String, "supporting_card")
+        XCTAssertEqual(try RecipeJSON.decoder().decode(TimelineClip.self, from: RecipeJSON.encoder().encode(card)), card)
+
+        let fullscreen = try RecipeJSON.decoder().decode(TimelineClip.self, from: Data(wire.replacingOccurrences(of: #","still_layout":"supporting_card""#, with: "").utf8))
+        XCTAssertNil(fullscreen.stillLayout)
+        let plain = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(fullscreen)) as? [String: Any])
+        XCTAssertNil(plain["still_layout"])
+        XCTAssertNil(plain["stillLayout"])
+        XCTAssertThrowsError(try RecipeJSON.decoder().decode(TimelineClip.self, from: Data(wire.replacingOccurrences(of: "supporting_card", with: "polaroid").utf8)))
+
+        let recipe = try visualRecipe([.image], stillLayout: .supportingCard)
+        XCTAssertEqual(try RecipeJSON.decode(RecipeJSON.encode(recipe)), recipe)
+        XCTAssertEqual(try RecipeJSON.decode(RecipeJSON.encode(recipe)).tracks[0].clips.last?.stillLayout, .supportingCard)
+    }
+
+    /// The card is a whole Visuals photo on the main track at its authored size;
+    /// anything else has no cloud counterpart and must not reach the compositor.
+    func testStillLayoutValidatesOnlyOnMainTrackVisualPhotos() throws {
+        let valid = try visualRecipe([.image, .video], stillLayout: .supportingCard)
+        XCTAssertEqual(valid.tracks[0].clips.map(\.stillLayout), [nil, .supportingCard, nil])
+        XCTAssertNoThrow(try valid.validate())
+        XCTAssertEqual(CapabilityNegotiator(provider: DefaultRendererCapabilities(capabilities: valid.effectiveCapabilities)).decide(for: valid).route, .local)
+
+        func rejected(_ name: String, _ edit: (inout EditRecipe) -> Void) {
+            var recipe = valid
+            edit(&recipe)
+            XCTAssertThrowsError(try recipe.validate(), name) { XCTAssertEqual($0 as? RecipeError, .invalidTimeline, name) }
+        }
+        rejected("device original") { $0.tracks[0].clips[0].stillLayout = .supportingCard }
+        rejected("pool video") { $0.tracks[0].clips[2].stillLayout = .supportingCard }
+        rejected("retimed") { $0.tracks[0].clips[1].rate = 2 }
+        rejected("held") { $0.tracks[0].clips[1].holdDuration = 0.5 }
+        rejected("graded") { $0.tracks[0].clips[1].look = .goldenHour }
+        rejected("cropped") { $0.tracks[0].clips[1].sourceCrop = NormalizedSourceRect(x: 0, y: 0, width: 0.5, height: 0.5) }
+        rejected("moved") { $0.tracks[0].clips[1].transform = MediaTransform(scale: 1.2) }
+        rejected("overlay track") {
+            let card = $0.tracks[0].clips.remove(at: 1)
+            $0.tracks.append(TimelineTrack(id: "overlays", kind: .overlay, clips: [card]))
+        }
+        // The same edits are fine on a full-screen photo.
+        var fullscreen = try visualRecipe([.image])
+        fullscreen.tracks[0].clips[1].transform = MediaTransform(scale: 1.2)
+        XCTAssertNoThrow(try fullscreen.validate())
+    }
 }

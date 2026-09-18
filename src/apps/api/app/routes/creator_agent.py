@@ -46,10 +46,12 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents._schemas.creator_policy import (
     CAPABILITY_GUIDED_VOICEOVER,
+    CAPABILITY_PHONE_SOURCE_AUDIO,
     GUIDED_VOICEOVER_EXECUTION_CONTRACT,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
+    PhoneFormatUnavailableError,
     PhoneMediaUnavailableError,
     normalize_creator_strategy_media,
 )
@@ -1402,6 +1404,95 @@ async def _record_cadence_unavailable(
     )
 
 
+_PHONE_VOICEOVER_UNAVAILABLE_MESSAGE = (
+    "A voiceover can't render on your iPhone yet, and this project's videos render "
+    "on this iPhone. Ask for this edit without a voiceover. No fallback edit was rendered."
+)
+
+
+def _phone_media_unavailable_message(exc: PhoneMediaUnavailableError) -> str:
+    """Name only the limits that still apply for the verified Visuals kinds."""
+
+    if exc.still_images_available and exc.visual_videos_available:
+        limit = (
+            "It can use photos and videos from Visuals, but a photo can't supply "
+            "sound or cut timing."
+        )
+    elif exc.still_images_available:
+        limit = (
+            "It can show photos from Visuals, but videos from Visuals can't be used, "
+            "and a photo can't supply sound or cut timing."
+        )
+    elif exc.visual_videos_available:
+        limit = "It can use videos from Visuals, but photos from Visuals can't be used."
+    else:
+        limit = (
+            "It can only use the videos attached to this project, not photos or "
+            "videos from Visuals."
+        )
+    return f"This edit renders on your iPhone. {limit} No fallback edit was rendered."
+
+
+async def _record_media_unavailable(
+    db: AsyncSession,
+    session: CreatorAgentSession,
+    exc: MixedMediaTimingUnavailableError,
+) -> None:
+    """Fail the turn with honest copy when no renderer can honor the media or format."""
+
+    # The phone subclasses are checked before their mixed-media parent: the
+    # iPhone refusing Visuals media, a format or a voiceover is not a
+    # photo/video timing outage.
+    if isinstance(exc, PhoneMediaUnavailableError):
+        code = "phone_media_unavailable"
+        message = _phone_media_unavailable_message(exc)
+    elif isinstance(exc, PhoneFormatUnavailableError):
+        code = "phone_voiceover_unavailable" if exc.voiceover else "phone_format_unavailable"
+        message = (
+            _PHONE_VOICEOVER_UNAVAILABLE_MESSAGE
+            if exc.voiceover
+            else "Only Montage videos can render on your iPhone right now, "
+            "not talking or narrated ones. Choose Montage to render on this "
+            "iPhone. No fallback edit was rendered."
+        )
+    else:
+        code = "mixed_media_timing_unavailable"
+        message = (
+            "Mixed photo and video timing is temporarily unavailable. "
+            "No fallback edit was rendered."
+        )
+    session.status = "failed"
+    session.last_error = {"code": code, "message": str(exc)[:300]}
+    await append_event(
+        db,
+        session,
+        event_type="assistant_error",
+        payload={"message": message, "code": code},
+    )
+
+
+def _dispatch_unavailable_message(manifest: Any) -> str:
+    """A phone project that cannot dispatch is not missing a clip; say why."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if phone is None or phone.available:
+        return "Add at least one clip first, then I can design the edit around it."
+    if phone.reason_code == "unsupported_phone_audio":
+        return (
+            "A voiceover can't render on your iPhone yet, and this project's videos "
+            "render on this iPhone. Remove the voiceover and I can design the edit."
+        )
+    if phone.reason_code == "unverified_phone_sources":
+        return (
+            "I couldn't verify this project's iPhone footage, so it can't render on "
+            "this iPhone yet. Reconnect its original footage, then try again."
+        )
+    return (
+        "Rendering on your iPhone is temporarily unavailable, and this project's "
+        "videos render there. Your project is saved; try again later."
+    )
+
+
 def _enqueue_creator_clip_metadata(item: PlanItem, plan: ContentPlan) -> None:
     """Best-effort metadata extraction; creator planning never waits on it."""
 
@@ -1774,9 +1865,7 @@ async def _run_planning_turn(
             locked,
             event_type="assistant_question",
             role="assistant",
-            payload={
-                "message": "Add at least one clip first, then I can design the edit around it."
-            },
+            payload={"message": _dispatch_unavailable_message(manifest)},
         )
         return await _response(db, locked)
 
@@ -2117,6 +2206,12 @@ async def _run_planning_turn(
             except MontageCadenceUnavailableError as exc:
                 await _record_cadence_unavailable(db, locked, exc)
                 return await _response(db, locked)
+            except MixedMediaTimingUnavailableError as exc:
+                # A cadence over sources the phone can't draw (a Visuals video
+                # before visualVideos is verified) is refused the same way the
+                # planning path below refuses it, never left mid-turn.
+                await _record_media_unavailable(db, locked, exc)
+                return await _response(db, locked)
             cycle_s = cadence.cut_duration_s * len(cadence.source_media_ids)
             capacity_s = round_robin_capacity_s(manifest.media, cadence)
             requested_s = strategy.target_duration_s
@@ -2358,51 +2453,8 @@ async def _run_planning_turn(
             if isinstance(exc, MontageCadenceUnavailableError):
                 await _record_cadence_unavailable(db, locked, exc)
                 return await _response(db, locked)
-            if isinstance(exc, PhoneMediaUnavailableError):
-                # Checked before its mixed-media parent: a phone project
-                # rejecting Visuals media is not a photo/video timing outage.
-                locked.status = "failed"
-                locked.last_error = {
-                    "code": "phone_media_unavailable",
-                    "message": str(exc)[:300],
-                }
-                await append_event(
-                    db,
-                    locked,
-                    event_type="assistant_error",
-                    payload={
-                        "message": (
-                            "This edit renders on your phone. It can show Visuals photos "
-                            "as full-screen stills, but it can't use videos from Visuals "
-                            "or take sound or cut timing from a photo. "
-                            "No fallback edit was rendered."
-                            if exc.still_images_available
-                            else "This edit renders on your phone, which can only use the "
-                            "videos attached to this project, not photos or videos from "
-                            "Visuals. No fallback edit was rendered."
-                        ),
-                        "code": "phone_media_unavailable",
-                    },
-                )
-                return await _response(db, locked)
             if isinstance(exc, MixedMediaTimingUnavailableError):
-                locked.status = "failed"
-                locked.last_error = {
-                    "code": "mixed_media_timing_unavailable",
-                    "message": str(exc)[:300],
-                }
-                await append_event(
-                    db,
-                    locked,
-                    event_type="assistant_error",
-                    payload={
-                        "message": (
-                            "Mixed photo and video timing is temporarily unavailable. "
-                            "No fallback edit was rendered."
-                        ),
-                        "code": "mixed_media_timing_unavailable",
-                    },
-                )
+                await _record_media_unavailable(db, locked, exc)
                 return await _response(db, locked)
             if _strict_creator_format(strategy.edit_format):
                 # Any real format-availability failure is classified above as

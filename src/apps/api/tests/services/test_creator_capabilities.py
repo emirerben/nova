@@ -8,6 +8,7 @@ from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditSnaps
 from app.agents._schemas.creator_policy import (
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
+    PhoneFormatUnavailableError,
     PhoneMediaUnavailableError,
 )
 from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageCadenceConstraint
@@ -180,10 +181,28 @@ def test_phone_only_montage_rejects_voiceover_strategy(monkeypatch) -> None:
         phone_source_media_ids=["phone-a"],
         phone_rendering_allowed=True,
     )
-    with pytest.raises(MixedMediaTimingUnavailableError, match="does not support voiceover"):
+    # The phone subtype keeps every mixed-media handler working unchanged.
+    with pytest.raises(MixedMediaTimingUnavailableError, match="does not support voiceover") as exc:
         capabilities.compile_strategy_to_plan(
             manifest, CreativeStrategy(audio_strategy="voiceover")
         )
+    assert isinstance(exc.value, PhoneFormatUnavailableError)
+    assert exc.value.voiceover is True
+
+
+def test_phone_item_with_recorded_voiceover_names_the_voiceover(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+        has_voiceover=True,
+    )
+    with pytest.raises(PhoneFormatUnavailableError, match="recorded voiceover") as exc:
+        capabilities.compile_strategy_to_plan(manifest, CreativeStrategy())
+    assert exc.value.voiceover is True
 
 
 def test_phone_only_strategy_rejects_audio_led_format_even_when_enabled(monkeypatch) -> None:
@@ -196,10 +215,12 @@ def test_phone_only_strategy_rejects_audio_led_format_even_when_enabled(monkeypa
         phone_source_media_ids=["phone-a"],
         phone_rendering_allowed=True,
     )
-    with pytest.raises(MixedMediaTimingUnavailableError, match="guided edit format"):
+    with pytest.raises(MixedMediaTimingUnavailableError, match="guided edit format") as exc:
         capabilities.compile_strategy_to_plan(
             manifest, CreativeStrategy(edit_format="talking_head")
         )
+    assert isinstance(exc.value, PhoneFormatUnavailableError)
+    assert exc.value.voiceover is False
 
 
 def _phone_manifest_with_pool(monkeypatch, pool, *, verified_features=(), allowed=True):
@@ -232,7 +253,12 @@ def _pool_strategies(pool_id: str) -> dict[str, CreativeStrategy]:
 
 @pytest.mark.parametrize(
     ("pool_kind", "verified_features"),
-    [("image", []), ("video", []), ("video", ["stillImages"])],
+    [
+        ("image", []),
+        ("video", []),
+        ("video", ["stillImages"]),
+        ("image", ["visualVideos"]),
+    ],
 )
 def test_unused_pool_media_does_not_disable_phone_clips_but_cannot_be_selected(
     monkeypatch, pool_kind, verified_features
@@ -248,7 +274,8 @@ def test_unused_pool_media_does_not_disable_phone_clips_but_cannot_be_selected(
         with pytest.raises(MixedMediaTimingUnavailableError, match="bound video sources") as exc:
             capabilities.compile_strategy_to_plan(manifest, strategy)
         assert isinstance(exc.value, PhoneMediaUnavailableError)
-        assert exc.value.still_images_available is bool(verified_features)
+        assert exc.value.still_images_available is ("stillImages" in verified_features)
+        assert exc.value.visual_videos_available is ("visualVideos" in verified_features)
 
 
 def test_phone_still_images_capability_requires_verified_device_stills(monkeypatch) -> None:
@@ -278,6 +305,124 @@ def test_phone_still_images_capability_requires_verified_device_stills(monkeypat
         media=[{"media_id": "clip-a", "kind": "video"}, *pool],
     )
     assert capabilities.CAPABILITY_PHONE_STILL_IMAGES not in cloud.capabilities
+
+
+def test_phone_visual_videos_capability_requires_verified_device_videos(monkeypatch) -> None:
+    pool = [{"media_id": "asset-video", "kind": "video"}]
+    unverified = _phone_manifest_with_pool(monkeypatch, pool, verified_features=["stillImages"])
+    # Absent with the flag off, so the stills-only manifest hash is unchanged.
+    assert capabilities.CAPABILITY_PHONE_VISUAL_VIDEOS not in unverified.capabilities
+
+    verified = _phone_manifest_with_pool(
+        monkeypatch, pool, verified_features=["stillImages", "visualVideos"]
+    )
+    assert verified.capabilities[capabilities.CAPABILITY_PHONE_VISUAL_VIDEOS].available
+    assert verified.manifest_hash != unverified.manifest_hash
+
+    disabled = _phone_manifest_with_pool(
+        monkeypatch, pool, verified_features=["visualVideos"], allowed=False
+    )
+    videos = disabled.capabilities[capabilities.CAPABILITY_PHONE_VISUAL_VIDEOS]
+    assert not videos.available
+    assert videos.reason_code == "disabled_by_setting"
+
+    cloud = capabilities.resolve_creator_manifest(
+        item_id="item-cloud",
+        edit_format="montage",
+        media=[{"media_id": "clip-a", "kind": "video"}, *pool],
+    )
+    assert capabilities.CAPABILITY_PHONE_VISUAL_VIDEOS not in cloud.capabilities
+
+
+@pytest.mark.parametrize("scope", ["all", "selected", "audio", "cadence"])
+def test_verified_phone_visual_videos_allow_pool_videos_even_as_sources(monkeypatch, scope) -> None:
+    manifest = _phone_manifest_with_pool(
+        monkeypatch,
+        [{"media_id": "asset-video", "kind": "video", "duration_s": 12}],
+        verified_features=["visualVideos"],
+    )
+    # A Visuals video compiles like bound footage, sound and cuts included.
+    plan = capabilities.compile_strategy_to_plan(manifest, _pool_strategies("asset-video")[scope])
+    assert plan.strategy.render_program == "guided"
+    assert [command.command for command in plan.commands] == [
+        "set_item_intent",
+        "draft_guided_proposal",
+        "dispatch_render",
+    ]
+
+
+def test_verified_phone_visuals_leave_only_the_photo_source_limit(monkeypatch) -> None:
+    manifest = _phone_manifest_with_pool(
+        monkeypatch,
+        [
+            {"media_id": "asset-photo", "kind": "image"},
+            {"media_id": "asset-video", "kind": "video"},
+        ],
+        verified_features=["stillImages", "visualVideos"],
+    )
+    plan = capabilities.compile_strategy_to_plan(manifest, CreativeStrategy(media_scope="all"))
+    assert plan.strategy.selected_media_ids == ["phone-a", "asset-photo", "asset-video"]
+
+    photo_strategies = _pool_strategies("asset-photo")
+    for strategy in (photo_strategies["audio"], photo_strategies["cadence"]):
+        with pytest.raises(PhoneMediaUnavailableError, match="bound video sources") as exc:
+            capabilities.compile_strategy_to_plan(manifest, strategy)
+        assert exc.value.still_images_available is True
+        assert exc.value.visual_videos_available is True
+
+
+_PHONE_UNSUPPORTED = [
+    "sound_effects",
+    "media_overlays",
+    "visual_blocks",
+    "motion_scenes",
+    "wide_looks",
+]
+
+
+def test_phone_manifest_never_advertises_lanes_the_phone_compiler_rejects(monkeypatch) -> None:
+    manifest = _phone_manifest_with_pool(monkeypatch, [])
+    for name in _PHONE_UNSUPPORTED:
+        assert not manifest.capabilities[name].available
+        assert manifest.capabilities[name].reason_code == "unsupported_on_phone"
+    # The iPhone draws crossfades and dips itself.
+    assert manifest.capabilities["transitions"].available
+
+    cloud = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+    )
+    assert all(cloud.capabilities[name].available for name in _PHONE_UNSUPPORTED)
+
+    # An ordinary phone montage still plans; only the unsupported extras drop out.
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(optional_treatments=["sfx", "overlays", "looks", "transitions"]),
+    )
+    assert plan.strategy.render_program == "guided"
+    assert plan.strategy.optional_treatments == ["transitions"]
+    assert [command.command for command in plan.commands] == [
+        "set_item_intent",
+        "draft_guided_proposal",
+        "dispatch_render",
+    ]
+
+
+def test_phone_named_sfx_request_fails_up_front_with_phone_copy(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        catalog=[{"catalog_id": "sfx-fah", "kind": "sound_effect", "label": "Fah"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+    )
+    with pytest.raises(capabilities.CreatorSfxUnavailableError, match="on your iPhone yet"):
+        capabilities.compile_strategy_to_plan(
+            manifest, CreativeStrategy(licensed_sfx={"effect_id": "sfx-fah"})
+        )
 
 
 @pytest.mark.parametrize("scope", ["all", "selected"])
@@ -329,6 +474,7 @@ def test_verified_phone_stills_still_reject_pool_video_and_photo_sources(monkeyp
         with pytest.raises(PhoneMediaUnavailableError, match="bound video sources") as exc:
             capabilities.compile_strategy_to_plan(manifest, strategy)
         assert exc.value.still_images_available is True
+        assert exc.value.visual_videos_available is False
 
 
 def test_phone_original_audio_preserves_explicit_audio_policy(monkeypatch) -> None:
@@ -1109,3 +1255,119 @@ def test_session_receipt_pins_original_current_edit_snapshot(monkeypatch) -> Non
         "variant_id": "original_text",
         "edit_hash": "a" * 64,
     }
+
+
+# --- KRI-121 round 2: a project holding only Visuals plans for the iPhone ----
+
+
+def _visuals_only_manifest(monkeypatch, media, *, verified_features, **changes):
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(
+        capabilities.settings, "phone_render_verified_features", list(verified_features)
+    )
+    return capabilities.resolve_creator_manifest(
+        **(
+            {
+                "item_id": "item-visuals",
+                "edit_format": "montage",
+                "media": media,
+                "phone_source_media_ids": [],
+                "phone_rendering_allowed": True,
+                "phone_visuals_only": True,
+            }
+            | changes
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("media", "verified_features", "scope"),
+    [
+        ([{"media_id": "asset-photo", "kind": "image"}], ["stillImages"], "all"),
+        ([{"media_id": "asset-video", "kind": "video"}], ["visualVideos"], "all"),
+        (
+            [
+                {"media_id": "asset-photo", "kind": "image"},
+                {"media_id": "asset-video", "kind": "video"},
+            ],
+            ["stillImages", "visualVideos"],
+            "all",
+        ),
+        (
+            # The undrawable pool video is simply not selected.
+            [
+                {"media_id": "asset-photo", "kind": "image"},
+                {"media_id": "asset-video", "kind": "video"},
+            ],
+            ["stillImages"],
+            "selected",
+        ),
+    ],
+    ids=["photos", "pool_videos", "both", "photo_beside_an_undrawable_video"],
+)
+def test_visuals_only_phone_manifest_plans_a_guided_device_render(
+    monkeypatch, media, verified_features, scope
+) -> None:
+    manifest = _visuals_only_manifest(monkeypatch, media, verified_features=verified_features)
+    for name in (
+        capabilities.CAPABILITY_PHONE_SOURCE_AUDIO,
+        capabilities.CAPABILITY_DRAFT_GUIDED_PROPOSAL,
+        capabilities.CAPABILITY_DISPATCH_RENDER,
+    ):
+        assert manifest.capabilities[name].available, name
+    strategy = (
+        CreativeStrategy(media_scope="all")
+        if scope == "all"
+        else CreativeStrategy(selected_media_ids=["asset-photo"])
+    )
+    plan = capabilities.compile_strategy_to_plan(manifest, strategy)
+    assert plan.strategy.render_program == "guided"
+    assert [command.command for command in plan.commands] == [
+        "set_item_intent",
+        "draft_guided_proposal",
+        "dispatch_render",
+    ]
+    # The destination is part of what a confirmation pins.
+    cloud = capabilities.resolve_creator_manifest(
+        item_id="item-visuals", edit_format="montage", media=media
+    )
+    assert cloud.manifest_hash != manifest.manifest_hash
+
+
+@pytest.mark.parametrize(
+    "case", ["flag_absent", "footage_attached", "nothing_drawable", "no_visuals", "disabled"]
+)
+def test_empty_phone_sources_stay_invalid_receipts_outside_the_visuals_only_case(
+    monkeypatch, case
+) -> None:
+    media = [{"media_id": "asset-photo", "kind": "image"}]
+    changes: dict = {}
+    verified = ["stillImages"]
+    if case == "flag_absent":
+        changes["phone_visuals_only"] = False
+    elif case == "footage_attached":
+        media = [{"media_id": "clip-a", "kind": "video"}, *media]
+    elif case == "nothing_drawable":
+        verified = ["visualVideos"]
+    elif case == "no_visuals":
+        media = []
+    else:
+        changes["phone_rendering_allowed"] = False
+    manifest = _visuals_only_manifest(monkeypatch, media, verified_features=verified, **changes)
+    phone = manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO]
+    assert not phone.available
+    assert phone.reason_code == (
+        "disabled_by_setting" if case == "disabled" else "unverified_phone_sources"
+    )
+    assert not manifest.capabilities[capabilities.CAPABILITY_DISPATCH_RENDER].available
+
+
+def test_visuals_only_phone_manifest_still_refuses_voiceover(monkeypatch) -> None:
+    manifest = _visuals_only_manifest(
+        monkeypatch,
+        [{"media_id": "asset-photo", "kind": "image"}],
+        verified_features=["stillImages"],
+        has_voiceover=True,
+    )
+    phone = manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO]
+    assert (phone.available, phone.reason_code) == (False, "unsupported_phone_audio")
