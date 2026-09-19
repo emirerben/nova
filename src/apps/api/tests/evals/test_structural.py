@@ -21,6 +21,7 @@ from .runners.structural import (
     check_audio_template,
     check_clip_metadata,
     check_creative_direction,
+    check_edit_copilot_compiles,
     check_platform_copy,
     check_template_recipe,
     check_transcript,
@@ -976,3 +977,102 @@ class TestRunStructuralDispatch:
     def test_unknown_agent_raises(self):
         with pytest.raises(ValueError):
             run_structural("nope.unknown", None, None)
+
+
+class TestCheckEditCopilotCompilesCatchesARegression:
+    """`check_edit_copilot_compiles` is a guard against `compile_editor_ops`
+    regressing silently -- these tests prove the guard itself actually fires
+    when the compiler misbehaves, not just when it behaves.
+    """
+
+    def _six_bar_removal_output(self):
+        from app.agents.edit_copilot import EditCopilotOutput
+
+        return EditCopilotOutput(
+            intent="edit",
+            ops=[{"op": "remove_text", "bar_index": index} for index in (1, 2, 3, 4)],
+            confidence=0.93,
+            reply="Removed the four thought captions.",
+            outcome="proposed",
+        )
+
+    def _six_bar_snapshot_input(self):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            variant_snapshot={
+                "text_bars": [
+                    {
+                        "id": f"text-{index}",
+                        "text": f"bar {index}",
+                        "start_s": float(index),
+                        "end_s": float(index) + 1.0,
+                    }
+                    for index in range(6)
+                ]
+            }
+        )
+
+    def test_reports_a_pre_1093_pop_in_place_regression(self, monkeypatch):
+        """Reproduces the exact PR #1093 bug: `remove_text` bar_index values
+        addressed against the ORIGINAL snapshot get popped from a list that is
+        shrinking mid-bundle, so bar_index 4 goes out of range after bars
+        1/3/5 have already been popped -- the same "remove the texts that
+        aren't the titles" incident `story_remove_all_thought_bars.json` pins
+        at the fixed `compile_editor_ops`. If this regressed back to the old
+        behavior, the structural check must report it, not pass silently.
+        """
+        import app.services.kria_editor_ops as kria_editor_ops
+
+        def _pre_1093_compile_editor_ops(job, variant, ops):
+            text = list(variant.get("text_elements") or [])
+            for op in ops:
+                # BUG: pops from the live, shrinking list instead of resolving
+                # `bar_index` against the snapshot the model was shown.
+                text.pop(op["bar_index"])
+            return kria_editor_ops.CompiledEditorDraft(payload={"text_elements": text}, changes=[])
+
+        monkeypatch.setattr(kria_editor_ops, "compile_editor_ops", _pre_1093_compile_editor_ops)
+
+        failures = check_edit_copilot_compiles(
+            self._six_bar_removal_output(),
+            self._six_bar_snapshot_input(),
+            "edit_copilot/regression-probe",
+        )
+
+        assert failures, "a regressed compile_editor_ops must be reported, not swallowed"
+        assert any("compile_editor_ops" in failure for failure in failures)
+        assert any("regression-probe" in failure for failure in failures)
+
+    def test_reports_any_bundle_compile_editor_ops_rejects(self, monkeypatch):
+        """Simpler regression shape the task allows in place of the exact
+        pop-in-place reproduction: any bundle `compile_editor_ops` errors on
+        must surface as a structural failure."""
+        import app.services.kria_editor_ops as kria_editor_ops
+
+        def _always_rejects(job, variant, ops):
+            raise kria_editor_ops.KriaEditorOpError("simulated compiler regression")
+
+        monkeypatch.setattr(kria_editor_ops, "compile_editor_ops", _always_rejects)
+
+        failures = check_edit_copilot_compiles(
+            self._six_bar_removal_output(),
+            self._six_bar_snapshot_input(),
+            "edit_copilot/regression-probe-2",
+        )
+
+        assert failures == [
+            "edit_copilot/regression-probe-2: compile_editor_ops rejected ops "
+            "['remove_text', 'remove_text', 'remove_text', 'remove_text']: "
+            "simulated compiler regression"
+        ]
+
+    def test_the_fixed_compiler_passes_the_same_bundle(self):
+        """Sanity check the two regression tests above against reality: the
+        CURRENT (fixed) `compile_editor_ops` accepts this exact bundle."""
+        failures = check_edit_copilot_compiles(
+            self._six_bar_removal_output(),
+            self._six_bar_snapshot_input(),
+            "edit_copilot/regression-probe-3",
+        )
+        assert failures == []

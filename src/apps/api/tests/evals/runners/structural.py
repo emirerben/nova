@@ -1947,6 +1947,243 @@ def check_edit_copilot(output: Any) -> list[str]:
     return failures
 
 
+# Ops `compile_editor_ops` (app/services/kria_editor_ops.py) actually branches
+# on. Everything in `check_edit_copilot`'s `valid_ops` vocabulary that is NOT
+# in this set (sfx/overlay/motion-block/camera-effect/carousel/tool/
+# edit_direction/intro_layout/undo/repeat/...) is executed by a different
+# runtime entirely (Kria runtime v2 / creator-craft), never by
+# `compile_editor_ops` — a golden using those ops is out of scope for
+# `check_edit_copilot_compiles`, not a failure and not allowlisted.
+_EDITOR_OPS_COMPILABLE_NAMES = frozenset(
+    {
+        "remove_visual_media",
+        "edit_text",
+        "patch_text_style",
+        "set_text_timing",
+        "add_text",
+        "remove_text",
+        "patch_text_appearance",
+        "set_clip_duration",
+        "set_clip_in",
+        "trim_clip_start",
+        "set_look_preset",
+        "trim_output_start",
+        "reorder_clip",
+        "remove_clip",
+        "split_clip",
+        "set_transition",
+        "add_unused_sources",
+        "set_media_duration",
+        "stack_images",
+        "edit_caption",
+        "replace_caption_text",
+        "set_caption_timing",
+        "set_caption_emphasis",
+        "set_caption_meta",
+        "set_mix",
+        "remove_music",
+        "swap_music",
+        "set_title",
+    }
+)
+
+# Within `_EDITOR_OPS_COMPILABLE_NAMES`, ops whose section `prepare_editor_commit`
+# can validate from a synthetic snapshot alone (no timeline resolution against a
+# real clip pool, no live speech-cut/source-pool digest).
+_EDITOR_OPS_NO_TIMELINE_NAMES = frozenset(
+    {
+        "remove_visual_media",
+        "edit_text",
+        "patch_text_style",
+        "set_text_timing",
+        "add_text",
+        "remove_text",
+        "patch_text_appearance",
+        "edit_caption",
+        "replace_caption_text",
+        "set_caption_timing",
+        "set_caption_emphasis",
+        "set_caption_meta",
+        "set_mix",
+        "remove_music",
+        "swap_music",
+        "set_title",
+    }
+)
+
+# Fixture stems that ARE within `_EDITOR_OPS_COMPILABLE_NAMES` but still can't
+# be safely compiled/committed from a path-free snapshot alone. Keep this
+# short and reviewable — see structural.py's docstring note above for the
+# broader "different runtime" bucket, which needs no entry here at all.
+_EDITOR_OPS_ALLOWLIST: dict[str, str] = {
+    "component_prices_selective": (
+        "the real variant carries 150+ pre-existing generated price labels; "
+        "the montage-archetype 50-element cap in validate_text_elements_payload "
+        "assumes a synthetic default archetype this snapshot doesn't identify."
+    ),
+    "component_scores_selective": (
+        "same 150+ pre-existing generated label count as component_prices_selective "
+        "— the real production archetype (with its own element-cap policy) isn't "
+        "recoverable from the path-free snapshot."
+    ),
+    "appearance_mixed_over_12_scope_contract_v2": (
+        "the appearance selector spans text + caption + motion inventory kinds "
+        "(a scope-contract fixture for the SELECTOR, not the write path); "
+        "compile_editor_ops's patch_text_appearance handler only resolves "
+        "target_ids against variant.text_elements, so a caption/motion target id "
+        "can never be found there — see phone_title_top_left_inter_no_shadow.json "
+        "for the text-only appearance path this replay does cover."
+    ),
+    "appearance_remove_no_depth_scope_contract_v2": (
+        "same text+motion mixed-kind selector as appearance_mixed_over_12_"
+        "scope_contract_v2 — out of scope for the same reason."
+    ),
+}
+
+
+def _permissive_editor_settings(mp: Any) -> None:
+    """Patch every capability/feature flag `compile_editor_ops` and
+    `prepare_editor_commit` read to its most permissive value, plus the GCS
+    calls `prepare_editor_commit` makes on a real object.
+
+    Permissive-by-design: this check validates that the PORTABLE ops the model
+    already chose survive the compiler/commit plumbing, not that today's prod
+    flag defaults gate them correctly (each flag has its own kill-switch test
+    for that).
+    """
+    from app.config import settings
+    from app.routes import generative_jobs as gj
+
+    for flag in (
+        "GENERATIVE_TIMELINE_EDITOR_ENABLED",
+        "sound_effects_enabled",
+        "media_overlays_enabled",
+        "visual_blocks_enabled",
+        "motion_scenes_enabled",
+        "overlay_autoplace_enabled",
+        "subtitled_text_lane_enabled",
+        "edit_wide_looks_enabled",
+    ):
+        mp.setattr(settings, flag, True, raising=False)
+    mp.setattr(settings, "guided_story_editor_v2_enabled", False, raising=False)
+    mp.setattr(gj, "_TEXT_ELEMENTS_ENABLED", True, raising=False)
+    mp.setattr(gj.storage, "object_exists", lambda _path: True, raising=False)
+    mp.setattr(
+        gj.storage,
+        "signed_download_url",
+        lambda _path, filename, **_kwargs: f"https://eval.invalid/{filename}",
+        raising=False,
+    )
+    mp.setattr(gj, "signed_get_url", lambda p, ttl=None: f"https://eval.invalid/{p}", raising=False)
+
+
+def check_edit_copilot_compiles(
+    output: Any,
+    input: Any,  # noqa: A002
+    fixture_id: str | None = None,
+) -> list[str]:
+    """Replay a golden's parsed ops through the real op compiler + commit validators.
+
+    `check_edit_copilot` stops at "is every op name in the v1 vocabulary" — that
+    floor let three phone chat-edit bugs ship past the eval gate on 2026-09-19:
+    a `remove_text` bundle popped bars in place instead of addressing the
+    original snapshot indices (#1093), a guided-story text-deletion guard
+    rejected the compiled payload on phone variants (#1093), and a correct
+    `patch_text_appearance` op was silently dropped because the server chat
+    snapshot never advertised the text-appearance inventory (#1100). This check
+    proves a golden's ops actually survive `compile_editor_ops` (app/services/
+    kria_editor_ops.py) and, for the op families that don't touch the timeline,
+    `prepare_editor_commit` (app/routes/generative_jobs.py) — the same two call
+    sites production runs.
+    """
+    if not isinstance(output, EditCopilotOutput):
+        return []
+    if output.outcome not in {"proposed", "applied"} or not output.ops:
+        return []
+
+    stem = (fixture_id or "").split("/")[-1]
+    if stem in _EDITOR_OPS_ALLOWLIST:
+        return []
+
+    op_names = [op.get("op") for op in output.ops if isinstance(op, dict)]
+    label = fixture_id or "<unknown golden>"
+
+    # A live speech-cut candidate is resolved against `speech_cut_state`'s
+    # revision counter on a real, DB-backed job — not reproducible from a
+    # static snapshot fixture. Out of scope by rule, not by fixture name (no
+    # current golden hits this; kept so a future one degrades gracefully).
+    if "apply_speech_cut_candidate" in op_names:
+        return []
+    if any(name not in _EDITOR_OPS_COMPILABLE_NAMES for name in op_names):
+        return []
+
+    import pytest
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import EditorCommitRequest
+    from app.services.kria_editor_ops import KriaEditorOpError, compile_editor_ops
+
+    from .snapshot_variant import build_synthetic_variant_and_job
+
+    snapshot = getattr(input, "variant_snapshot", None) or {}
+    job, variant = build_synthetic_variant_and_job(snapshot, output.ops)
+
+    mp = pytest.MonkeyPatch()
+    try:
+        # `compile_editor_ops` itself reads live capability flags for
+        # `remove_visual_media` (`_removable_visual_media` -> `_editor_capabilities`
+        # -> `settings.visual_blocks_enabled`), so the permissive patch has to be
+        # in place before compiling too, not just before `prepare_editor_commit`.
+        _permissive_editor_settings(mp)
+
+        try:
+            compiled = compile_editor_ops(job, variant, output.ops)
+        except KriaEditorOpError as exc:
+            return [f"{label}: compile_editor_ops rejected ops {op_names}: {exc}"]
+        except Exception as exc:  # noqa: BLE001 — a crash is itself a real finding
+            return [
+                f"{label}: compile_editor_ops raised {type(exc).__name__}({exc}) for ops {op_names}"
+            ]
+
+        try:
+            payload = EditorCommitRequest.model_validate(compiled.payload)
+        except Exception as exc:  # noqa: BLE001
+            return [
+                f"{label}: EditorCommitRequest rejected the compiled payload for ops "
+                f"{op_names}: {exc}"
+            ]
+
+        if any(name not in _EDITOR_OPS_NO_TIMELINE_NAMES for name in op_names):
+            # Timeline-touching bundle: compiling + validating the payload above
+            # is still a real check; `prepare_editor_commit` additionally needs
+            # `resolve_timeline_slots_for_edit` against a real clip pool, out of
+            # scope for a path-free synthetic snapshot.
+            return []
+
+        from app.routes import generative_jobs as gj
+
+        music_track = None
+        if getattr(payload, "music_track_id", None):
+            from .snapshot_variant import build_fake_music_track
+
+            music_track = build_fake_music_track(payload.music_track_id)
+        try:
+            gj.prepare_editor_commit(job, variant["variant_id"], payload, music_track=music_track)
+        except HTTPException as exc:
+            return [
+                f"{label}: prepare_editor_commit rejected ops {op_names} "
+                f"({exc.status_code} {exc.detail!r})"
+            ]
+        except Exception as exc:  # noqa: BLE001 — a crash is itself a real finding
+            return [
+                f"{label}: prepare_editor_commit raised {type(exc).__name__}({exc}) "
+                f"for ops {op_names}"
+            ]
+        return []
+    finally:
+        mp.undo()
+
+
 def check_edit_director(
     output: Any,
     input: EditDirectorInput,  # noqa: A002
@@ -2493,7 +2730,12 @@ def check_slide_post_composer(
     return failures
 
 
-def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
+def run_structural(
+    agent_name: str,
+    output: Any,
+    input: Any,
+    fixture_id: str | None = None,  # noqa: A002
+) -> list[str]:
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
         return check_overlay_format_matcher(output)
@@ -2662,7 +2904,7 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
     if agent_name == "nova.plan.style_intent":
         return check_style_intent(output)
     if agent_name == "nova.edit.copilot":
-        return check_edit_copilot(output)
+        return check_edit_copilot(output) + check_edit_copilot_compiles(output, input, fixture_id)
     if agent_name == "nova.edit.director":
         return check_edit_director(output, input)
     if agent_name == "nova.creator.main":
