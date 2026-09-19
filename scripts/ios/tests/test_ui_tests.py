@@ -144,11 +144,14 @@ class UISelectionTests(unittest.TestCase):
                 ui.expected_tests(f"smoke,{group}"),
                 set(data["groups"]["smoke"] + data["groups"][group]),
             )
+        # Smoke alone is the PR tripwire when the selector wants full coverage.
+        self.assertEqual(ui.expected_tests("smoke"), set(data["groups"]["smoke"]))
+        with self.assertRaises(ValueError):
+            ui.validate_groups("smoke")
         for invalid in (
             None,
             "",
             "none",
-            "smoke",
             "editor,smoke",
             "smoke,editor,creation",
         ):

@@ -11,9 +11,10 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
     def setUp(self):
         self.workflow = WORKFLOW.read_text()
 
-    def test_pr_required_gate_runs_unit_mode(self):
+    def test_pr_builds_the_ui_bundle_only_when_native_ui_inputs_changed(self):
         self.assertIn(
-            "github.event_name == 'pull_request' && 'unit' || 'prepare-ui'",
+            "(github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true')"
+            " && 'prepare-ui' || 'unit'",
             self.workflow,
         )
         self.assertIn("- name: Build and unit tests", self.workflow)
@@ -40,15 +41,41 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("if: matrix.lane == 'native'", native_xcode)
         self.assertIn("name: ios-native-test-diagnostics", native_xcode)
 
-    def test_full_ui_regression_is_deferred_but_fail_closed(self):
+    def test_prs_run_a_bounded_ui_subset_and_main_runs_the_full_regression(self):
         ui_step = self.workflow.split("- name: Native UI tests (reuse compiled build)", 1)[1]
+        ui_step = ui_step.split("- name: Compare focused UI coverage", 1)[0]
         self.assertIn(
-            "if: matrix.lane == 'native' && github.event_name != 'pull_request'",
+            "if: matrix.lane == 'native' && (github.event_name != 'pull_request'"
+            " || needs.changes.outputs.ios_ui == 'true')",
             ui_step,
         )
-        self.assertIn("KRIA_IOS_UI_GROUPS: full", ui_step)
+        # Non-PR events always run full. A PR runs the selector's focused group,
+        # and only smoke when the selector wants full: never the full suite.
+        self.assertIn(
+            "KRIA_IOS_UI_GROUPS: ${{ github.event_name != 'pull_request' && 'full'"
+            " || (needs.changes.outputs.ios_ui_groups == 'full' && 'smoke'"
+            " || needs.changes.outputs.ios_ui_groups) }}",
+            ui_step,
+        )
         self.assertIn("- name: Report deferred PR UI regression", self.workflow)
-        self.assertIn("runs fail-closed on the subsequent `main` push", self.workflow)
+        self.assertIn("runs fail-closed on the", self.workflow)
+        self.assertIn("subsequent `main` push", self.workflow)
+
+    def test_smoke_tripwire_covers_creation_to_ready_and_the_editor(self):
+        import json
+
+        manifest = json.loads(
+            (WORKFLOW.parents[2] / "scripts/ios/ui-test-groups.json").read_text()
+        )
+        smoke = manifest["groups"]["smoke"]
+        self.assertIn(
+            "KriaUITests/CreationUITests/"
+            "testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
+            smoke,
+        )
+        self.assertTrue(any("/EditorUITests/" in test for test in smoke))
+        # The PR subset must stay bounded.
+        self.assertLessEqual(len(smoke), 6)
 
 
 if __name__ == "__main__":
