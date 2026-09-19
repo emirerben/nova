@@ -641,3 +641,131 @@ def test_rotation_round_trips_through_style_patch_and_snapshot(monkeypatch) -> N
     )
     saved = compiled.payload.model_dump(mode="json", exclude_none=True)["text_elements"]
     assert saved[0]["rotation_deg"] == 8
+
+
+def _appearance_variant() -> dict:
+    variant = _variant_with_bars("Emir Olympics", "post match pub")
+    for row in variant["text_elements"]:
+        row.update({"stroke_width": 2.0, "shadow_enabled": True})
+    return variant
+
+
+def test_snapshot_advertises_the_text_appearance_inventory_when_enabled(monkeypatch) -> None:
+    # 2026-09-19 (job d9a965b0): "remove all shadow and outline" was rejected
+    # because the server-side chat snapshot never carried the inventory the
+    # web drawer builds client-side; the atomic rule then dropped the font,
+    # size and placement ops alongside it.
+    variant = _appearance_variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True},
+    )
+    monkeypatch.setattr("app.config.settings.text_appearance_enabled", True)
+
+    snapshot = build_editor_snapshot(_job(variant), variant)
+
+    assert snapshot["text_appearance_version"] == 1
+    targets = snapshot["text_appearance"]["targets"]
+    assert [t["id"] for t in targets] == ["text-0", "text-1"]
+    assert targets[0]["kind"] == "text"
+    assert targets[0]["supported_fields"] == ["stroke_width", "shadow_enabled"]
+    assert targets[0]["values"] == {"stroke_width": 2.0, "shadow_enabled": True}
+    assert isinstance(targets[0]["identity"], str) and targets[0]["identity"]
+
+    monkeypatch.setattr("app.config.settings.text_appearance_enabled", False)
+    assert "text_appearance" not in build_editor_snapshot(_job(variant), variant)
+
+
+def test_prod_appearance_bundle_parses_and_compiles_end_to_end(monkeypatch) -> None:
+    from app.agents._runtime import ModelClient
+    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+
+    variant = _appearance_variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True},
+    )
+    monkeypatch.setattr("app.config.settings.text_appearance_enabled", True)
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    raw = json.dumps(
+        {
+            "intent": "edit",
+            "ops": [
+                {
+                    "op": "patch_text_appearance",
+                    "selector": {"scope": "editable_text", "quantifier": "all"},
+                    "patch": {"stroke_width": 0, "shadow_enabled": False},
+                    "text_appearance_version": 1,
+                },
+                {
+                    "op": "patch_text_style",
+                    "bar_index": 0,
+                    "patch": {
+                        "font_family": "Inter",
+                        "size_px": 64.0,
+                        "alignment": "left",
+                        "position": "custom",
+                        "x_frac": 0.3,
+                        "y_frac": 0.12,
+                    },
+                },
+                {
+                    "op": "patch_text_style",
+                    "bar_index": 1,
+                    "patch": {
+                        "font_family": "Inter",
+                        "size_px": 64.0,
+                        "alignment": "left",
+                        "position": "custom",
+                        "x_frac": 0.3,
+                        "y_frac": 0.12,
+                    },
+                },
+            ],
+            "confidence": 0.95,
+            "reply": "Done.",
+            "suggestions": [],
+            "needs_clarification": False,
+        }
+    )
+    output = EditCopilotAgent(ModelClient()).parse(
+        raw,
+        EditCopilotInput(
+            utterance=(
+                "Change the texts to inter font, remove all shadow and outline. "
+                "Place the texts near top left. Lower the font size"
+            ),
+            prior_turns=[],
+            variant_snapshot=snapshot,
+        ),
+    )
+    assert output.outcome == "proposed"
+    assert [op["op"] for op in output.ops] == [
+        "patch_text_appearance",
+        "patch_text_style",
+        "patch_text_style",
+    ]
+
+    compiled = compile_editor_ops(_job(variant), variant, output.ops)
+    saved = compiled.payload.model_dump(mode="json", exclude_none=True)["text_elements"]
+    for row in saved:
+        assert (row["stroke_width"], row["shadow_enabled"]) == (0, False)
+        assert (row["font_family"], row["size_px"], row["position"]) == ("Inter", 64.0, "custom")
+        assert (row["x_frac"], row["y_frac"], row["alignment"]) == (0.3, 0.12, "left")
+
+
+def test_patch_text_appearance_rejects_a_target_removed_earlier_in_the_bundle() -> None:
+    variant = _appearance_variant()
+    with pytest.raises(KriaEditorOpError, match="Text changed"):
+        compile_editor_ops(
+            _job(variant),
+            variant,
+            [
+                {"op": "remove_text", "bar_index": 1},
+                {
+                    "op": "patch_text_appearance",
+                    "patch": {"shadow_enabled": False},
+                    "target_ids": ["text-0", "text-1"],
+                },
+            ],
+        )
