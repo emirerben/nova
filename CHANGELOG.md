@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.87.0] - 2026-09-19
+
+### Changed
+- feat(copilot): rotation in the text style contract + explicit placement rules (prompt v44) (#1098) <!-- release-pr: 1098 -->
+
 ## [0.76.86.0] - 2026-09-19
 
 ### Changed
