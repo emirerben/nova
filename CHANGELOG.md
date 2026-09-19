@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.91.0] - 2026-09-19
+
+### Changed
+- feat(copilot): bring the server chat snapshot to parity with the web drawer (#1102) <!-- release-pr: 1102 -->
+
 ## [0.76.90.0] - 2026-09-19
 
 ### Changed
