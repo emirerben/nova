@@ -27,7 +27,8 @@ def test_story_native_goldens_preserve_recorded_prompt_provenance() -> None:
     # Replay keeps the version that authored the golden; live runs validate
     # the current prompt separately without relabeling historical evidence.
     assert all(
-        load_fixture(path).prompt_version in {"2026-09-09-v42", EDIT_COPILOT_PROMPT_VERSION}
+        load_fixture(path).prompt_version
+        in {"2026-09-09-v42", "2026-09-13-v43", EDIT_COPILOT_PROMPT_VERSION}
         for path in story_fixtures
     )
 

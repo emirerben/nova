@@ -34,7 +34,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-13-v43"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-19-v44"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -474,6 +474,7 @@ _STYLE_PATCH_FIELDS = frozenset(
         "position",
         "x_frac",
         "y_frac",
+        "rotation_deg",
     }
 )
 _TEXT_APPEARANCE_FIELDS = frozenset({"stroke_width", "shadow_enabled"})
@@ -1888,7 +1889,8 @@ _VALUE_RETRY_RULES = (
     "as CENTRE fractions 0-1 (top left ~ x 0.3, y 0.12; bottom right ~ x 0.7, "
     "y 0.85) plus alignment; alignment left|center|right; text_case "
     "none|upper|lower|title; colors are #RRGGBB; size_px 8-300; stroke_width "
-    "0-20; shadow_enabled true|false; font_family and effect must be names "
+    "0-20; shadow_enabled true|false; rotation_deg clockwise degrees -360..360; "
+    "font_family and effect must be names "
     "listed in this prompt; every index must exist in CURRENT DRAFT; times are "
     "seconds within the draft's duration."
 )
@@ -4645,6 +4647,12 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
                 state.invalid_value()
                 return {}
             out[key] = max(0.0, min(1.0, num))
+        elif key == "rotation_deg":
+            num = _as_float(value)
+            if num is None:
+                state.invalid_value()
+                return {}
+            out[key] = max(-360.0, min(360.0, num))
         elif key == "letter_spacing":
             num = _as_float(value)
             if num is None:

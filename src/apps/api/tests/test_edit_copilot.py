@@ -4241,12 +4241,14 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # bounded generic component provenance in negotiated context, then
     # (2026-09-09-v41) for the negotiated text appearance inventory and atomic
     # selector operation, then (2026-09-09-v42) for roster-scale atomic
-    # edit bundles and preserved two-thousand-character creator requests —
+    # edit bundles and preserved two-thousand-character creator requests, then
+    # (2026-09-19-v44) for explicit placement rules (custom + centre fractions,
+    # never invented position names) and rotation_deg as a style field —
     # update this pin whenever
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-13-v43"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-19-v44"
 
 
 def _motion_snapshot() -> dict:
@@ -4815,3 +4817,10 @@ def test_copilot_run_arms_the_targeted_retry_only_for_capable_clients(monkeypatc
     assert EditCopilotAgent(_Cassette()).run(payload) == "ran"
     assert EditCopilotAgent(ModelClient()).run(payload) == "ran"
     assert seen == [False, True]
+
+
+def test_copilot_rotation_is_a_style_field_and_is_clamped() -> None:
+    out = _parse([{"op": "patch_text_style", "bar_index": 0, "patch": {"rotation_deg": 400}}])
+    assert out.ops[0]["patch"] == {"rotation_deg": 360.0}
+    out = _parse([{"op": "patch_text_style", "bar_index": 0, "patch": {"rotation_deg": "tilted"}}])
+    assert out.ops == []

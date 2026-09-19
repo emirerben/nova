@@ -623,3 +623,21 @@ def test_snapshot_text_bars_expose_centre_fractions(monkeypatch) -> None:
 
     bar = snapshot["text_bars"][0]
     assert (bar["position"], bar["x_frac"], bar["y_frac"]) == ("custom", 0.3, 0.12)
+
+
+def test_rotation_round_trips_through_style_patch_and_snapshot(monkeypatch) -> None:
+    variant = _variant()
+    variant["text_elements"][0]["rotation_deg"] = -12.0
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True},
+    )
+    assert build_editor_snapshot(_job(variant), variant)["text_bars"][0]["rotation_deg"] == -12.0
+
+    compiled = compile_editor_ops(
+        _job(variant),
+        variant,
+        [{"op": "patch_text_style", "bar_index": 0, "patch": {"rotation_deg": 8}}],
+    )
+    saved = compiled.payload.model_dump(mode="json", exclude_none=True)["text_elements"]
+    assert saved[0]["rotation_deg"] == 8
