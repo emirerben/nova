@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.86.0] - 2026-09-19
+
+### Changed
+- feat(copilot): retry once with the rejected ops quoted when values are invalid (#1097) <!-- release-pr: 1097 -->
+
 ## [0.76.85.0] - 2026-09-19
 
 ### Changed
