@@ -1,0 +1,40 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-19-v45",
+  "input": {
+    "utterance": "remove the texts that aren't the titles",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text"],
+      "has_narrated_captions": false,
+      "text_bars": [
+        {"id": "text-0", "text": "Corfu, day one", "start_s": 0.0, "end_s": 2.0, "role": "generative_intro"},
+        {"id": "text-1", "text": "Morning coffee by the port", "start_s": 2.0, "end_s": 4.0},
+        {"id": "text-2", "text": "Long walk on the beach", "start_s": 4.0, "end_s": 6.0},
+        {"id": "text-3", "text": "Lunch by the sea", "start_s": 6.0, "end_s": 8.0},
+        {"id": "text-4", "text": "Sunset drinks with the crew", "start_s": 8.0, "end_s": 10.0},
+        {"id": "text-5", "text": "See you tomorrow", "start_s": 10.0, "end_s": 12.0}
+      ],
+      "slots": [{"output_start_s": 0, "output_end_s": 12, "duration_s": 12}],
+      "total_duration_s": 12.0
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"remove_text\",\"bar_index\":1},{\"op\":\"remove_text\",\"bar_index\":2},{\"op\":\"remove_text\",\"bar_index\":3},{\"op\":\"remove_text\",\"bar_index\":4}],\"confidence\":0.93,\"reply\":\"Removed the four thought captions, keeping the title and the closing line.\",\"suggestions\":[\"Undo that\",\"Add a new caption\"],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {"op": "remove_text", "bar_index": 1},
+      {"op": "remove_text", "bar_index": 2},
+      {"op": "remove_text", "bar_index": 3},
+      {"op": "remove_text", "bar_index": 4}
+    ],
+    "confidence": 0.93,
+    "reply": "Removed the four thought captions, keeping the title and the closing line.",
+    "suggestions": ["Undo that", "Add a new caption"],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "2026-09-19 phone chat-edit regression (#1093): a six-bar guided story's 'remove the texts that aren't the titles' emitted remove_text bar_index 1..4; popping the text list in place while iterating deleted bars 1, 3, 5 and then rejected bar_index 4 as out of range, so nothing saved. This golden pins that the bundle addresses the ORIGINAL snapshot indices and that exactly the title (bar 0) and closing (bar 5) survive compile_editor_ops. (No `exact_edit_ops` here on purpose: that assertion block unconditionally reads `variant_snapshot.text_appearance`, which this remove_text-only golden doesn't carry — see phone_title_top_left_inter_no_shadow.json for that coverage.)"
+  }
+}

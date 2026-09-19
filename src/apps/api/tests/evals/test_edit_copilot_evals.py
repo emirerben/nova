@@ -197,10 +197,14 @@ def test_edit_copilot_eval(
             return sorted(rows, key=lambda row: json.dumps(row, sort_keys=True))
 
         assert semantic_ops(result.output["ops"]) == semantic_ops(fixture.meta["exact_edit_ops"])
-        inventory = fixture.input["variant_snapshot"]["text_appearance"]["targets"]
+        # Lazy: only an `exact_edit_ops` golden that actually contains a
+        # `patch_text_appearance` op needs a `text_appearance` inventory in its
+        # snapshot (e.g. plain `remove_text`/`split_clip` exact-op goldens
+        # legitimately have neither).
         for op in result.output["ops"]:
             if op["op"] != "patch_text_appearance":
                 continue
+            inventory = fixture.input["variant_snapshot"]["text_appearance"]["targets"]
             selector = op["selector"]
             targets = [
                 target

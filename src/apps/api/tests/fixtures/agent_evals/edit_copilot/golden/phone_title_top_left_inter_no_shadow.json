@@ -1,0 +1,134 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-19-v45",
+  "input": {
+    "utterance": "Change the texts to inter font, remove all shadow and outline. Place the texts near top left. Lower the font size",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text"],
+      "has_narrated_captions": false,
+      "text_appearance_version": 1,
+      "text_appearance": {
+        "version": 1,
+        "targets": [
+          {
+            "id": "title-1",
+            "kind": "text",
+            "supported_fields": ["stroke_width", "shadow_enabled"],
+            "values": {"stroke_width": 4, "shadow_enabled": true},
+            "identity": "title-1-fingerprint"
+          },
+          {
+            "id": "title-2",
+            "kind": "text",
+            "supported_fields": ["stroke_width", "shadow_enabled"],
+            "values": {"stroke_width": 4, "shadow_enabled": true},
+            "identity": "title-2-fingerprint"
+          }
+        ]
+      },
+      "text_bars": [
+        {
+          "id": "title-1",
+          "text": "Emir's Olympics",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "font_family": "Playfair Display",
+          "size_px": 96,
+          "color": "#FFFFFF",
+          "stroke_width": 4,
+          "shadow_enabled": true
+        },
+        {
+          "id": "title-2",
+          "text": "Post-match pub",
+          "start_s": 3.0,
+          "end_s": 6.0,
+          "font_family": "Playfair Display",
+          "size_px": 96,
+          "color": "#FFFFFF",
+          "stroke_width": 4,
+          "shadow_enabled": true
+        }
+      ],
+      "slots": [{"output_start_s": 0, "output_end_s": 6, "duration_s": 6}],
+      "total_duration_s": 6.0
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_appearance\",\"selector\":{\"scope\":\"editable_text\",\"quantifier\":\"all\"},\"patch\":{\"stroke_width\":0,\"shadow_enabled\":false},\"text_appearance_version\":1},{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"font_family\":\"Inter\",\"size_px\":64,\"alignment\":\"left\",\"position\":\"custom\",\"x_frac\":0.08,\"y_frac\":0.12}},{\"op\":\"patch_text_style\",\"bar_index\":1,\"patch\":{\"font_family\":\"Inter\",\"size_px\":64,\"alignment\":\"left\",\"position\":\"custom\",\"x_frac\":0.08,\"y_frac\":0.12}}],\"confidence\":0.94,\"reply\":\"Switched both titles to Inter, dropped the shadow and outline, moved them near the top left, and brought the size down.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {"scope": "editable_text", "quantifier": "all"},
+        "patch": {"stroke_width": 0, "shadow_enabled": false},
+        "text_appearance_version": 1
+      },
+      {
+        "op": "patch_text_style",
+        "bar_index": 0,
+        "patch": {
+          "font_family": "Inter",
+          "size_px": 64,
+          "alignment": "left",
+          "position": "custom",
+          "x_frac": 0.08,
+          "y_frac": 0.12
+        }
+      },
+      {
+        "op": "patch_text_style",
+        "bar_index": 1,
+        "patch": {
+          "font_family": "Inter",
+          "size_px": 64,
+          "alignment": "left",
+          "position": "custom",
+          "x_frac": 0.08,
+          "y_frac": 0.12
+        }
+      }
+    ],
+    "confidence": 0.94,
+    "reply": "Switched both titles to Inter, dropped the shadow and outline, moved them near the top left, and brought the size down.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "2026-09-19 phone chat-edit regression (#1100, job d9a965b0): the server chat snapshot never carried the text-appearance inventory the web drawer builds client-side, so a correct patch_text_appearance op was rejected and, being part of an atomic bundle, took the font/size/placement patch_text_style ops down with it. This golden pins the fixed snapshot (text_appearance_version + inventory present) compiling all three ops into one atomic commit.",
+    "exact_edit_ops": [
+      {
+        "op": "patch_text_appearance",
+        "selector": {"scope": "editable_text", "quantifier": "all"},
+        "patch": {"stroke_width": 0, "shadow_enabled": false},
+        "text_appearance_version": 1
+      },
+      {
+        "op": "patch_text_style",
+        "bar_index": 0,
+        "patch": {
+          "font_family": "Inter",
+          "size_px": 64,
+          "alignment": "left",
+          "position": "custom",
+          "x_frac": 0.08,
+          "y_frac": 0.12
+        }
+      },
+      {
+        "op": "patch_text_style",
+        "bar_index": 1,
+        "patch": {
+          "font_family": "Inter",
+          "size_px": 64,
+          "alignment": "left",
+          "position": "custom",
+          "x_frac": 0.08,
+          "y_frac": 0.12
+        }
+      }
+    ]
+  }
+}

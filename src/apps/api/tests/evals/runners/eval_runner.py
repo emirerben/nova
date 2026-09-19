@@ -497,7 +497,9 @@ def run_eval(
         )
 
     validated_input = agent.Input.model_validate(effective_input)
-    structural_failures = run_structural(fixture.agent, output, validated_input)
+    structural_failures = run_structural(
+        fixture.agent, output, validated_input, fixture_id=fixture.fixture_id
+    )
 
     judge_result: JudgeResult | None = None
     if judge is not None and not structural_failures:
@@ -553,7 +555,7 @@ def run_eval(
                 shadow_agent = agent_cls(model_client)
                 shadow_output = shadow_agent.run(effective_input, ctx=eval_ctx)
             result.shadow_structural_failures = run_structural(
-                fixture.agent, shadow_output, validated_input
+                fixture.agent, shadow_output, validated_input, fixture_id=fixture.fixture_id
             )
             if judge is not None and not result.shadow_structural_failures:
                 result.shadow_judge = judge.score(
