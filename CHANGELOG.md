@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.83.0] - 2026-09-19
+
+### Changed
+- fix(phone): keep approved timing for text-only phone saves under guided editor v2 (#1094) <!-- release-pr: 1094 -->
+
 ## [0.76.82.0] - 2026-09-19
 
 ### Changed
