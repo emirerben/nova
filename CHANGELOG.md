@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.85.0] - 2026-09-19
+
+### Changed
+- fix(phone): accept frame-clocked guided-editor v2 timelines in the phone compiler (#1096) <!-- release-pr: 1096 -->
+
 ## [0.76.84.0] - 2026-09-19
 
 ### Changed
