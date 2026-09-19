@@ -1065,3 +1065,35 @@ def test_remove_camera_effect_compiles() -> None:
         _job(variant), variant, [{"op": "remove_camera_effect", "camera_effect_index": 0}]
     )
     assert compiled.payload.model_dump(mode="json", exclude_none=True)["camera_effects"] == []
+
+
+def test_guided_story_keeps_the_title_family_for_its_title_bar(monkeypatch) -> None:
+    # Guided v2 reports intro_controls False (the title is the "guided-title"
+    # bar, and the parser rewrites set_title into edit_text on it); the family
+    # gate must still admit set_title there.
+    variant = _variant()
+    variant["resolved_archetype"] = "guided_story"
+    variant["text_elements"][0]["id"] = "guided-title"
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "intro_controls": False},
+    )
+    assert "title" in build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
+
+    variant["text_elements"][0]["id"] = "text-1"
+    assert "title" not in build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
+
+
+def test_device_variants_do_not_advertise_lanes_the_phone_cannot_render(monkeypatch) -> None:
+    variant = _variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "sfx": True, "camera_effects": True},
+    )
+    assert {"sfx", "effect"} <= set(
+        build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
+    )
+
+    variant["render_destination"] = "device"
+    families = set(build_editor_snapshot(_job(variant), variant)["allowed_op_families"])
+    assert not families & {"sfx", "effect"}

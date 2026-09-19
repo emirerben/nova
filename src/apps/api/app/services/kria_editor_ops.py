@@ -207,7 +207,11 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     # (`guided_story_editor_v2_section_unsupported`). Advertising "title" there
     # let the model call set_title, which always failed downstream (2026-09-19
     # snapshot-parity audit).
-    if caps.get("intro_controls") is not False:
+    if caps.get("intro_controls") is not False or _has_guided_title_bar(variant):
+        # Guided stories keep their title as the "guided-title" text bar; the
+        # parser rewrites set_title into edit_text on that bar (see
+        # `_guided_title_index` in app/agents/edit_copilot.py), which the
+        # family gate must let through even though intro_controls is False.
         families.append("title")
     if caps.get("timeline") is True:
         families.append("clip")
@@ -236,11 +240,23 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         families.append("music")
     if _removable_visual_media(job, variant):
         families.append("visual_media")
-    if caps.get("sfx") is True:
+    # Phone recipes do not render the sound-effect or camera-effect lanes yet
+    # (KRI-114 Phase 4): the phone compiler rejects them at commit, so a
+    # device-rendered variant must not advertise families that can only end
+    # in a 422 unsupported_phone_edit.
+    on_device = variant.get("render_destination") == "device"
+    if caps.get("sfx") is True and not on_device:
         families.append("sfx")
-    if caps.get("camera_effects") is True:
+    if caps.get("camera_effects") is True and not on_device:
         families.append("effect")
     return sorted(set(families) & _PORTABLE_FAMILIES)
+
+
+def _has_guided_title_bar(variant: dict[str, Any]) -> bool:
+    return variant.get("resolved_archetype") == "guided_story" and any(
+        isinstance(row, dict) and row.get("id") == "guided-title" and not row.get("removed")
+        for row in variant.get("text_elements") or []
+    )
 
 
 _TEXT_APPEARANCE_FIELDS = ("stroke_width", "shadow_enabled")
