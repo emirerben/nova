@@ -301,7 +301,9 @@ def _rejection_detail(exc: Exception) -> str:
     """Operator-facing reason for a rejected chat edit (never a traceback)."""
     detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
     if isinstance(detail, dict):
-        detail = detail.get("message") or detail.get("code") or ""
+        code = detail.get("code") or ""
+        reason = detail.get("reason") or ""
+        detail = detail.get("message") or (f"{code}: {reason}" if reason else code) or ""
     return str(detail or exc.__class__.__name__)[:300]
 
 

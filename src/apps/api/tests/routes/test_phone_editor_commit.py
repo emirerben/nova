@@ -11,6 +11,7 @@ from app.kria.device_render import make_device_request
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.routes import generative_jobs as gj
 from app.services.device_render import device_status, pin_device_request
+from app.services.phone_editor import prepare_phone_editor_commit
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 from tests.pipeline.test_phone_guided_plan import fixture
 
@@ -253,3 +254,67 @@ async def test_legacy_phone_mutations_fail_before_state_or_queue_changes(monkeyp
     assert vars(job) == before
     db.commit.assert_not_awaited()
     cloud.assert_not_called()
+
+
+def test_text_only_phone_save_keeps_approved_timing_under_guided_v2(monkeypatch):
+    # 2026-09-19 (job d9a965b0): with guided editor v2 on, every phone text
+    # edit re-projected the timeline through compile_guided_runtime_plan, which
+    # re-clocks moments/transitions onto 1/30 s frames; the phone compiler then
+    # rejected the recipe ("phone transition offset must match cloud
+    # milliseconds") and the creator saw a bare unsupported_phone_edit.
+    from app.services import phone_editor
+
+    job = phone_job(monkeypatch)
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    old = device_status(job, "guided_story").request
+
+    def _boom(*_args):
+        raise AssertionError("text-only saves must not re-clock the approved timeline")
+
+    monkeypatch.setattr(phone_editor, "compile_guided_runtime_plan", _boom)
+
+    def prepare(staged):
+        variant = staged.assembly_plan["variants"][0]
+        variant["text_elements"] = []  # the creator removed every text bar
+        return {
+            "has_render_section": True,
+            "guided_revision": {"revision_number": 2},
+            "sections": {"text_elements": True, "timeline": False},
+            "generation": "second",
+        }
+
+    prep = prepare_phone_editor_commit(job, "guided_story", prepare=prepare)
+
+    new = device_status(job, "guided_story").request
+    assert prep["render_destination"] == "device"
+    assert new.identity.recipe_revision == old.identity.recipe_revision + 1
+    assert new.recipe.text_layers == []
+    assert new.recipe.duration == old.recipe.duration
+    assert job.assembly_plan["variants"][0]["render_status"] == "awaiting_device"
+
+
+def test_unsupported_phone_edit_names_its_reason(monkeypatch):
+    from app.services import phone_editor
+
+    job = phone_job(monkeypatch)
+    job.assembly_plan["guided_edit"] = {}
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(
+        phone_editor,
+        "compile_guided_runtime_plan",
+        lambda *_args: (_ for _ in ()).throw(ValueError("re-clocked timeline")),
+    )
+    with pytest.raises(HTTPException) as error:
+        prepare_phone_editor_commit(
+            job,
+            "guided_story",
+            prepare=lambda staged: {
+                "has_render_section": True,
+                "guided_revision": {"revision_number": 2},
+                "sections": {"timeline": True},
+                "generation": "second",
+            },
+        )
+    assert error.value.status_code == 422
+    assert error.value.detail["code"] == "unsupported_phone_edit"
+    assert error.value.detail["reason"] == "ValueError: re-clocked timeline"

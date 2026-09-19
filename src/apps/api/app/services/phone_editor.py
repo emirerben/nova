@@ -6,6 +6,7 @@ import copy
 from collections.abc import Callable
 from typing import Any
 
+import structlog
 from fastapi import HTTPException
 
 from app.config import settings
@@ -20,6 +21,8 @@ from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
+
+log = structlog.get_logger()
 
 
 class _StagedJob:
@@ -48,15 +51,23 @@ def prepare_phone_editor_commit(
         variant = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
         plan = copy.deepcopy(assembly["guided_story_execution_plan"])
         revision = prep.get("guided_revision")
-        if revision is not None:
+        render_sections = {key for key, value in prep["sections"].items() if value}
+        if not (render_sections - {"text_elements"}):
+            # A text-only save keeps the approved plan's device-verified timing
+            # program and swaps just the text lane, whether it came from a
+            # legacy guided editor or the v2 revision contract. Re-projecting
+            # through `compile_guided_runtime_plan` re-clocks every moment and
+            # transition onto 1/30 s frames, which `compile_phone_guided_plan`
+            # rejects as a different program from the millisecond timing the
+            # phone was pinned against -- so under guided editor v2 every phone
+            # text edit was a 422 `unsupported_phone_edit` (2026-09-19 chat-edit
+            # incident, job d9a965b0). Other approved lanes, including the
+            # contextual and narration label lanes, are preserved untouched.
+            plan["text_elements"] = variant.get("text_elements") or []
+        elif revision is not None:
             plan = compile_guided_runtime_plan(plan, assembly["guided_edit"], revision)
         else:
-            # Legacy guided editors permit text-only saves. Preserve all other
-            # approved lanes, including contextual and narration label lanes.
-            render_sections = {key for key, value in prep["sections"].items() if value}
-            if render_sections - {"text_elements"}:
-                raise ValueError("phone editor requires a canonical guided revision")
-            plan["text_elements"] = variant.get("text_elements") or []
+            raise ValueError("phone editor requires a canonical guided revision")
         bindings = tuple(
             PhoneSourceBinding.model_validate(row) for row in assembly[PHONE_SOURCES_FIELD]
         )
@@ -77,7 +88,20 @@ def prepare_phone_editor_commit(
                 variant.update(song_reference_variant_fields(plan))
         staged.status = "awaiting_device"
     except (KeyError, StopIteration, TypeError, ValueError, GuidedStoryError) as exc:
-        raise HTTPException(422, detail={"code": "unsupported_phone_edit"}) from exc
+        # The cause was invisible: a bare code reached the creator and nothing
+        # reached the logs (2026-09-19 phone chat-edit incident). Keep the
+        # wire code stable; name the failing step for operators.
+        reason = f"{type(exc).__name__}: {exc}"[:300]
+        log.warning(
+            "phone_editor_commit_unsupported",
+            job_id=str(job.id),
+            variant_id=variant_id,
+            reason=reason,
+            exc_info=True,
+        )
+        raise HTTPException(
+            422, detail={"code": "unsupported_phone_edit", "reason": reason}
+        ) from exc
     job.assembly_plan = staged.assembly_plan
     job.status = staged.status
     if "started_at" in vars(staged):
