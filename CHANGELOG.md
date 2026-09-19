@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.79.0] - 2026-09-19
+
+### Changed
+- fix(ios): UI-test fixture moves a confirmed plan to executing, unbreaking CreationUITests on main (KRI-117) (#1090) <!-- release-pr: 1090 -->
+
 ## [0.76.78.0] - 2026-09-18
 
 ### Changed
