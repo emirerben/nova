@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.92.0] - 2026-09-19
+
+### Changed
+- test(evals): replay copilot goldens through the op compiler and commit validators (#1103) <!-- release-pr: 1103 -->
+
 ## [0.76.91.0] - 2026-09-19
 
 ### Changed
