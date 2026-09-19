@@ -21,6 +21,7 @@ from app.kria.recipes import (
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
 from app.pipeline.guided_story import _FRAME_S, GuidedStoryExecutionPlan, _story_canvas
+from app.schemas.guided_edit_revision import GUIDED_EDITOR_FPS
 from app.services.phone_sources import PhoneSourceBinding, require_bound_moment
 
 
@@ -72,6 +73,18 @@ _TIMING_ROUNDING_TOLERANCE_S = 0.005
 # past the nominal duration, or reading up to the exact boundary lands
 # mid-frame and the on-device export fails outright).
 _EXPORT_SAFETY_MARGIN_S = 0.05
+
+# Guided-editor v2 revisions quantize every position to the editor frame clock
+# (`app.schemas.guided_edit_revision.GUIDED_EDITOR_FPS`, the same 1/30 s as
+# guided_story's `_FRAME_S`); approval plans use a millisecond clock. A phone
+# program may sit on either.
+
+
+def _clock_aligned(value: float) -> bool:
+    """True when `value` sits on the millisecond clock or the guided-editor frame clock."""
+    return math.isclose(value, round(value, 3), abs_tol=1e-9) or math.isclose(
+        value * GUIDED_EDITOR_FPS, round(value * GUIDED_EDITOR_FPS), abs_tol=1e-4
+    )
 
 
 def compile_phone_guided_plan(
@@ -133,21 +146,41 @@ def compile_phone_guided_plan(
         if index and boundaries[index - 1] not in {"none", "cut"}:
             previous = plan.story_timeline[index - 1]
             requested = previous.transition_duration_s or plan.transition_policy.duration_s or 0.3
-            duration = min(requested, min(previous.duration_s, moment.duration_s) * 0.3)
-            # Cloud emits millisecond xfade durations/offsets. Reject a timing
-            # program that would require a different frame-boundary decision.
-            if not math.isclose(duration, round(duration, 3), abs_tol=1e-9):
+            clamped = min(requested, min(previous.duration_s, moment.duration_s) * 0.3)
+            # The overlap the plan actually laid out is the authority: approval
+            # plans place `output_start_s` exactly `clamped` before the previous
+            # moment ends (millisecond clock), while guided-editor v2 revisions
+            # re-clock every position onto 1/30 s frames and keep the requested
+            # `transition_duration_s` as authored (0.12 s requested, 4 frames =
+            # 0.133333 s laid out). Rendering the authored value against
+            # frame-clocked positions is a different program from the one the
+            # revision encodes -- and rejecting the frame clock outright made
+            # every timeline save on a phone variant a 422 (2026-09-19, job
+            # d9a965b0). Accept either clock; still refuse a layout that
+            # contradicts the request by more than one frame.
+            duration = round(previous.output_end_s - moment.output_start_s, 6)
+            if (
+                duration <= _TIMING_ROUNDING_TOLERANCE_S
+                or duration
+                > min(previous.duration_s, moment.duration_s) + _TIMING_ROUNDING_TOLERANCE_S
+            ):
+                raise UnsupportedPhonePlan("phone transition must overlap its neighbouring moments")
+            if abs(duration - clamped) > _FRAME_S + _TIMING_ROUNDING_TOLERANCE_S:
+                raise UnsupportedPhonePlan(
+                    "phone transition timing must match the approved overlap"
+                )
+            if not _clock_aligned(duration):
                 raise UnsupportedPhonePlan("phone transition timing must match cloud milliseconds")
             incoming = Transition(kind=transition_names[boundaries[index - 1]], duration=duration)
             expected_start -= duration
-            if not math.isclose(expected_start, round(expected_start, 3), abs_tol=1e-9):
+            if not _clock_aligned(expected_start):
                 raise UnsupportedPhonePlan("phone transition offset must match cloud milliseconds")
         if (
             not math.isclose(
                 moment.output_start_s, expected_start, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
             )
             or not math.isclose(
-                source_duration, moment.duration_s, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
+                source_duration, moment.duration_s, abs_tol=_FRAME_S + _TIMING_ROUNDING_TOLERANCE_S
             )
             or not math.isclose(
                 moment.output_end_s - moment.output_start_s,
@@ -156,6 +189,16 @@ def compile_phone_guided_plan(
             )
         ):
             raise UnsupportedPhonePlan("phone moment timing must preserve its exact source window")
+        if not math.isclose(
+            source_duration, moment.duration_s, abs_tol=_TIMING_ROUNDING_TOLERANCE_S
+        ):
+            # A v2 revision quantizes `duration_s` and an approval-inherited
+            # `source_end_s` independently, so the two can disagree by one
+            # frame (7.153 s -> 7.166667 s vs 7.133333 s). The output slot is
+            # what the timeline, text and audio are timed against: fill it
+            # from the source rather than leave a one-frame hole. The refit
+            # below still shifts the window if the original runs out.
+            source_duration = round(moment.duration_s, 6)
         source_start = moment.source_start_s
         if (
             moment.source_end_s > binding.original.duration_s

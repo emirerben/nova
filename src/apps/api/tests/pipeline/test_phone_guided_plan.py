@@ -491,3 +491,51 @@ def test_v6_audio_transitions_still_reject_speed_changes():
     plan.story_timeline[0].source_end_s -= 0.5
     with pytest.raises(ValueError, match="exact source window"):
         compile_phone_guided_plan(plan, bindings)
+
+
+def test_frame_clocked_v2_revision_transitions_compile_from_the_laid_out_overlap():
+    # 2026-09-19 (job d9a965b0): guided-editor v2 re-clocks every position onto
+    # 1/30 s frames but keeps the authored 0.12 s request; the laid-out overlap
+    # is 4 frames (0.133333 s). Rejecting the frame clock as "not milliseconds"
+    # made every timeline save on a phone variant a 422 unsupported_phone_edit.
+    plan, bindings = transition_fixture("crossfade", duration=0.12)
+    overlap = round(4 / 30, 6)
+    second = plan.story_timeline[1]
+    second.output_start_s = round(3 - overlap, 6)
+    second.output_end_s = round(6 - overlap, 6)
+    plan.resolved_duration_s = second.output_end_s
+
+    recipe = compile_phone_guided_plan(plan, bindings)
+
+    clip = recipe.tracks[0].clips[1]
+    assert clip.transition.duration == pytest.approx(overlap)
+    assert clip.timeline_start == pytest.approx(3 - overlap)
+    assert recipe.duration == pytest.approx(6 - overlap)
+
+
+def test_transition_overlap_contradicting_the_request_by_more_than_a_frame_rejects():
+    plan, bindings = transition_fixture("crossfade", duration=0.3)
+    # Laid out with a 0.3 s overlap while only 0.12 s was requested.
+    plan.story_timeline[0].transition_duration_s = 0.12
+    with pytest.raises(ValueError, match="approved overlap"):
+        compile_phone_guided_plan(plan, bindings)
+
+
+def test_one_frame_source_window_disagreement_fills_the_output_slot():
+    # v2 quantizes duration_s and an approval-inherited source_end_s
+    # independently (7.153 -> 7.166667 vs 7.133333). The output slot wins.
+    plan, bindings = fixture()
+    first = plan.story_timeline[0]
+    first.source_end_s = round(first.source_start_s + first.duration_s - 1 / 30, 6)
+
+    clip = compile_phone_guided_plan(plan, bindings).tracks[0].clips[0]
+
+    assert clip.source_duration == pytest.approx(first.duration_s)
+
+
+def test_source_window_disagreement_beyond_a_frame_still_rejects():
+    plan, bindings = fixture()
+    first = plan.story_timeline[0]
+    first.source_end_s = round(first.source_start_s + first.duration_s - 0.1, 6)
+    with pytest.raises(ValueError, match="exact source window"):
+        compile_phone_guided_plan(plan, bindings)
