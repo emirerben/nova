@@ -4,7 +4,7 @@ import copy
 import json
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -15,7 +15,7 @@ from app.routes import plan_items
 from app.services import creation_editor_actions as actions
 from app.services.kria_editor_ops import build_editor_snapshot
 from tests.routes.test_creation_threads import _request
-from tests.routes.test_editor_commit import _arm, _narrated_guided_job
+from tests.routes.test_editor_commit import REGEN, _arm, _job, _narrated_guided_job
 
 
 @pytest.mark.asyncio
@@ -141,3 +141,162 @@ async def test_chat_removal_saves_real_guided_media_only_before_queue(monkeypatc
     authority = build_editor_snapshot(job, job.assembly_plan["variants"][0])
     assert "visual_media" not in authority["allowed_op_families"]
     assert authority["base_generation"] == saved_variant["render_generation_id"]
+
+
+def _beat_text_job():
+    """A ready cloud (non-guided) montage variant: one title bar + three
+    per-beat caption bars, matching the 2026-09-19 incident's shape."""
+    return _job(
+        text_elements=[
+            {
+                "id": "title-1",
+                "text": "My Title",
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "role": "generative_intro",
+                "position": "middle",
+            },
+            *[
+                {
+                    "id": f"beat-{i}",
+                    "text": f"Friends compete in an energetic game of football {i}",
+                    "start_s": 2.0 + i,
+                    "end_s": 3.0 + i,
+                    "role": "generative_sequence",
+                    "position": "middle",
+                }
+                for i in range(3)
+            ],
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_edit_removes_non_title_text_and_keeps_title(monkeypatch):
+    """2026-09-19 incident: 'remove the random texts that aren't the title' on
+    an already-rendered cloud cut applies in place through the real
+    compile_editor_ops + prepare_editor_commit path and kicks the same
+    fast-reburn task PUT /text-elements uses -- never the Main Creator."""
+
+    _arm(monkeypatch)
+    job = _beat_text_job()
+    variant = job.assembly_plan["variants"][0]
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        active_plan_item_id=uuid.uuid4(),
+        state={"selected_variant_id": "song_text"},
+    )
+    body = SimpleNamespace(
+        message="remove the random texts that aren't the title",
+        client_event_id="remove-text-1",
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=job), execute=AsyncMock())
+    db.execute.return_value = Mock()
+    db.execute.return_value.scalars.return_value.all.return_value = []
+    events = []
+
+    async def append(_db, _thread, **event):
+        events.append(copy.deepcopy(event))
+
+    monkeypatch.setattr(routes, "_append", append)
+    # Highest bar_index first: `remove_text` pops in place, so removing
+    # low-to-high would shift later indices out from under the next op.
+    ops = [
+        {"op": "remove_text", "bar_index": 3},
+        {"op": "remove_text", "bar_index": 2},
+        {"op": "remove_text", "bar_index": 1},
+    ]
+    response = SimpleNamespace(
+        ops=ops,
+        outcome="proposed",
+        reply="I prepared this edit for the editor to validate and stage.",
+    )
+
+    async def copilot(body_arg, **kwargs):
+        assert body_arg.snapshot["allowed_op_families"]
+        assert kwargs["job_id"] == job.id
+        return response
+
+    monkeypatch.setattr(actions, "run_copilot_turn", copilot)
+
+    result = await actions.execute_copilot_edit(db, thread, body, user, job=job)
+
+    assert result is not None
+    assert result["thread"] is thread
+    assert result["job_id"] == job.id
+    assert result["variant_id"] == "song_text"
+    saved_variant = job.assembly_plan["variants"][0]
+    assert [row["id"] for row in saved_variant["text_elements"]] == ["title-1"]
+    assert saved_variant["text_elements"][0]["text"] == "My Title"
+    assert [event["event_type"] for event in events] == ["assistant_response"]
+    assert events[-1]["payload"]["outcome"] == "saved"
+    assert events[-1]["payload"]["sections"]["text_elements"] is True
+    assert gj.variant_render_baseline(saved_variant) != gj.variant_render_baseline(variant)
+
+    with patch(REGEN) as regen:
+        regen.apply_async = MagicMock()
+        await actions.finalize_copilot_edit_render(db, thread, user, result)
+    regen.apply_async.assert_called_once()
+    assert regen.apply_async.call_args.kwargs["args"] == [str(job.id), "song_text"]
+    assert regen.apply_async.call_args.kwargs["queue"] == "overlay-jobs"
+
+
+@pytest.mark.asyncio
+async def test_copilot_clarification_reports_without_applying_or_replanning(monkeypatch):
+    _arm(monkeypatch)
+    job = _beat_text_job()
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        active_plan_item_id=uuid.uuid4(),
+        state={"selected_variant_id": "song_text"},
+    )
+    body = SimpleNamespace(message="remove that", client_event_id="clarify-1")
+    db = SimpleNamespace(get=AsyncMock(return_value=job), execute=AsyncMock())
+    events = []
+
+    async def append(_db, _thread, **event):
+        events.append(copy.deepcopy(event))
+
+    monkeypatch.setattr(routes, "_append", append)
+    response = SimpleNamespace(ops=[], outcome="clarification", reply="Which text should I remove?")
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    result = await actions.execute_copilot_edit(db, thread, body, user, job=job)
+
+    assert result == {"thread": thread}
+    before = copy.deepcopy(job.assembly_plan)
+    assert job.assembly_plan == before  # nothing mutated
+    assert events[-1]["content"] == "Which text should I remove?"
+    assert events[-1]["payload"]["outcome"] == "clarification"
+
+
+@pytest.mark.asyncio
+async def test_copilot_unsupported_falls_through_without_side_effects(monkeypatch):
+    """The only signal that hands a ready-job message back to the Main
+    Creator: no chat event, no mutation, nothing to enqueue."""
+
+    _arm(monkeypatch)
+    job = _beat_text_job()
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        active_plan_item_id=uuid.uuid4(),
+        state={"selected_variant_id": "song_text"},
+    )
+    body = SimpleNamespace(
+        message="make this a completely different, longer story", client_event_id="oos-1"
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=job), execute=AsyncMock())
+    append = AsyncMock()
+    monkeypatch.setattr(routes, "_append", append)
+    response = SimpleNamespace(
+        ops=[], outcome="unsupported", reply="That kind of edit isn't available for this draft."
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    result = await actions.execute_copilot_edit(db, thread, body, user, job=job)
+
+    assert result is None
+    append.assert_not_awaited()

@@ -588,6 +588,215 @@ async def test_rendering_message_is_queued_without_calling_creator_agent() -> No
         )
 
 
+def _ready_copilot_thread(user_id: uuid.UUID) -> tuple[SimpleNamespace, SimpleNamespace]:
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user_id,
+        status="active",
+        revision=2,
+        active_job_id=uuid.uuid4(),
+        active_plan_item_id=uuid.uuid4(),
+        active_creator_agent_session_id=None,
+        state={
+            "media": [{"media_id": "m1"}],
+            "edit_format": "montage",
+            "media_count": 1,
+            "selected_variant_id": "a",
+            "intent": "A sports montage",
+        },
+    )
+    job = SimpleNamespace(id=thread.active_job_id, status="variants_ready")
+    return thread, job
+
+
+@pytest.mark.asyncio
+async def test_ready_job_edit_routes_through_copilot_not_creator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A chat edit to an already-rendered cut applies through the copilot,
+    never the Main Creator -- the 2026-09-19 incident this PR fixes."""
+
+    import app.routes.creation_threads as routes
+    from app.services import creation_editor_actions
+
+    monkeypatch.setattr(settings, "edit_copilot_enabled", True)
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread, job = _ready_copilot_thread(user.id)
+    db = Mock()
+    db.get = AsyncMock(return_value=job)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    agent = AsyncMock()
+    monkeypatch.setattr(routes, "_agent_message", agent)
+    response = SimpleNamespace()
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=response))
+    execute = AsyncMock(
+        return_value={
+            "thread": thread,
+            "job_id": job.id,
+            "variant_id": "a",
+            "prep": {"generation": "g2", "sections": {"text_elements": True}},
+        }
+    )
+    monkeypatch.setattr(creation_editor_actions, "execute_copilot_edit", execute)
+    finalize = AsyncMock()
+    monkeypatch.setattr(creation_editor_actions, "finalize_copilot_edit_render", finalize)
+
+    output = await message_thread(
+        _request(),
+        str(thread.id),
+        MessageBody(
+            message="remove the texts that aren't the title",
+            client_event_id="edit-1",
+            expected_revision=2,
+        ),
+        user,
+        db,
+    )
+
+    assert output is response
+    execute.assert_awaited_once()
+    assert execute.await_args.kwargs["job"] is job
+    finalize.assert_awaited_once()
+    agent.assert_not_awaited()
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_copilot_out_of_scope_falls_through_to_creator_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The copilot's own `unsupported` outcome -- not a keyword guess -- is
+    the only signal that re-routes a ready-job message to the Main Creator."""
+
+    import app.routes.creation_threads as routes
+    from app.services import creation_editor_actions
+
+    monkeypatch.setattr(settings, "edit_copilot_enabled", True)
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread, job = _ready_copilot_thread(user.id)
+    db = Mock()
+    db.get = AsyncMock(return_value=job)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    response = SimpleNamespace()
+    agent = AsyncMock(return_value=thread)
+    monkeypatch.setattr(routes, "_agent_message", agent)
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=response))
+    execute = AsyncMock(return_value=None)
+    monkeypatch.setattr(creation_editor_actions, "execute_copilot_edit", execute)
+    finalize = AsyncMock()
+    monkeypatch.setattr(creation_editor_actions, "finalize_copilot_edit_render", finalize)
+
+    output = await message_thread(
+        _request(),
+        str(thread.id),
+        MessageBody(
+            message="make this a totally different, longer story",
+            client_event_id="edit-2",
+            expected_revision=2,
+        ),
+        user,
+        db,
+    )
+
+    assert output is response
+    execute.assert_awaited_once()
+    finalize.assert_not_awaited()
+    agent.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_copilot_disabled_runs_creator_agent_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+    from app.services import creation_editor_actions
+
+    monkeypatch.setattr(settings, "edit_copilot_enabled", False)
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread, job = _ready_copilot_thread(user.id)
+    db = Mock()
+    db.get = AsyncMock(return_value=job)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    response = SimpleNamespace()
+    agent = AsyncMock(return_value=thread)
+    monkeypatch.setattr(routes, "_agent_message", agent)
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=response))
+    execute = AsyncMock()
+    monkeypatch.setattr(creation_editor_actions, "execute_copilot_edit", execute)
+
+    output = await message_thread(
+        _request(),
+        str(thread.id),
+        MessageBody(
+            message="remove the texts that aren't the title",
+            client_event_id="edit-3",
+            expected_revision=2,
+        ),
+        user,
+        db,
+    )
+
+    assert output is response
+    execute.assert_not_awaited()
+    agent.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_direction_message_never_routes_to_copilot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The iOS confirmation card's canned retry text always means re-plan,
+    never an edit -- even when a ready job is attached."""
+
+    import app.routes.creation_threads as routes
+    from app.services import creation_editor_actions
+
+    monkeypatch.setattr(settings, "edit_copilot_enabled", True)
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread, job = _ready_copilot_thread(user.id)
+    db = Mock()
+    db.get = AsyncMock(return_value=job)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    response = SimpleNamespace()
+    agent = AsyncMock(return_value=thread)
+    monkeypatch.setattr(routes, "_agent_message", agent)
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=response))
+    execute = AsyncMock()
+    monkeypatch.setattr(creation_editor_actions, "execute_copilot_edit", execute)
+
+    output = await message_thread(
+        _request(),
+        str(thread.id),
+        MessageBody(
+            message=routes.creator_agent.REFRESH_DIRECTION_MESSAGE,
+            client_event_id="edit-4",
+            expected_revision=2,
+        ),
+        user,
+        db,
+    )
+
+    assert output is response
+    execute.assert_not_awaited()
+    agent.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_status_only_message_reconciles_without_becoming_revision_intent(
     monkeypatch: pytest.MonkeyPatch,
