@@ -4663,3 +4663,69 @@ def test_text_appearance_unsupported_field_only_allows_explicit_noop(current, re
         assert out.rejection_reasons == []
     else:
         assert out.rejection_reasons[0]["reason"] == "capability_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("placement", "expected"),
+    [
+        ("top_left", {"position": "custom", "x_frac": 0.3, "y_frac": 0.12, "alignment": "left"}),
+        ("Top-Left", {"position": "custom", "x_frac": 0.3, "y_frac": 0.12, "alignment": "left"}),
+        (
+            "upper left corner",
+            {"position": "custom", "x_frac": 0.3, "y_frac": 0.12, "alignment": "left"},
+        ),
+        (
+            "bottom right",
+            {"position": "custom", "x_frac": 0.7, "y_frac": 0.85, "alignment": "right"},
+        ),
+        ("centre", {"position": "middle"}),
+        ("top center", {"position": "top", "alignment": "center"}),
+    ],
+)
+def test_copilot_everyday_placements_map_onto_the_position_contract(
+    placement: str, expected: dict
+) -> None:
+    # 2026-09-19 (job d9a965b0): "Make the titles smaller, place top left" was
+    # emitted as position "top_left" and dropped whole as invalid_value.
+    out = _parse(
+        [
+            {
+                "op": "patch_text_style",
+                "bar_index": 0,
+                "patch": {"size_px": 60, "position": placement},
+            }
+        ]
+    )
+    assert len(out.ops) == 1
+    patch = out.ops[0]["patch"]
+    assert patch["size_px"] == 60
+    for key, value in expected.items():
+        assert patch[key] == value
+
+
+def test_copilot_explicit_fractions_imply_the_custom_preset() -> None:
+    out = _parse(
+        [{"op": "patch_text_style", "bar_index": 0, "patch": {"x_frac": 0.2, "y_frac": 0.1}}]
+    )
+    assert out.ops[0]["patch"] == {"x_frac": 0.2, "y_frac": 0.1, "position": "custom"}
+
+
+def test_copilot_explicit_alignment_survives_placement_mapping() -> None:
+    out = _parse(
+        [
+            {
+                "op": "patch_text_style",
+                "bar_index": 0,
+                "patch": {"position": "top_left", "alignment": "center"},
+            }
+        ]
+    )
+    assert out.ops[0]["patch"]["alignment"] == "center"
+    assert out.ops[0]["patch"]["position"] == "custom"
+
+
+def test_copilot_unknown_placement_still_drops() -> None:
+    out = _parse(
+        [{"op": "patch_text_style", "bar_index": 0, "patch": {"position": "somewhere nice"}}]
+    )
+    assert out.ops == []

@@ -609,3 +609,17 @@ def test_text_ops_on_a_bar_removed_earlier_in_the_bundle_reject(second: dict) ->
             variant,
             [{"op": "remove_text", "bar_index": 1}, second],
         )
+
+
+def test_snapshot_text_bars_expose_centre_fractions(monkeypatch) -> None:
+    variant = _variant()
+    variant["text_elements"][0].update({"position": "custom", "x_frac": 0.3, "y_frac": 0.12})
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True},
+    )
+
+    snapshot = build_editor_snapshot(_job(variant), variant)
+
+    bar = snapshot["text_bars"][0]
+    assert (bar["position"], bar["x_frac"], bar["y_frac"]) == ("custom", 0.3, 0.12)

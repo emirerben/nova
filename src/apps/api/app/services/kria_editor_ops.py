@@ -184,6 +184,10 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
                 "text",
                 "stroke_width",
                 "shadow_enabled",
+                # Centre fractions let the model see where a bar sits before
+                # it moves one ("place the titles top left").
+                "x_frac",
+                "y_frac",
             }
         }
         for row in variant.get("text_elements") or []
