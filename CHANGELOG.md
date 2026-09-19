@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.90.0] - 2026-09-19
+
+### Changed
+- fix(copilot): anchor edge placements at the text edge, not its centre (prompt v45) (#1101) <!-- release-pr: 1101 -->
+
 ## [0.76.89.0] - 2026-09-19
 
 ### Changed
