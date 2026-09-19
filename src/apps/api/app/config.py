@@ -176,6 +176,12 @@ class Settings(BaseSettings):
     mobile_access_token_ttl_seconds: int = Field(default=900, ge=60, le=3600)
     mobile_refresh_token_ttl_days: int = Field(default=30, ge=1, le=365)
     mobile_link_max_auth_age_seconds: int = Field(default=300, ge=60, le=900)
+    # A rotated refresh token presented again within this window is treated
+    # as a benign race (two client instances / a relaunch replaying the token
+    # the other one just rotated) and answered 401 refresh_superseded WITHOUT
+    # revoking the family; the client re-reads its store and retries. Reuse
+    # outside the window still revokes the whole family (replay boundary).
+    mobile_refresh_reuse_grace_seconds: int = Field(default=30, ge=0, le=300)
     # Temporary native uploads are covered by the bucket's one-day lifecycle
     # rules; never let a receipt advertise a deadline beyond that backstop.
     mobile_upload_retention_hours: int = Field(default=24, ge=1, le=24)

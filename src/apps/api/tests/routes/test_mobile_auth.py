@@ -246,7 +246,9 @@ async def test_refresh_token_reuse_revokes_entire_family(monkeypatch) -> None:
     monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
     reused = SimpleNamespace(
         family_id=uuid.uuid4(),
-        used_at=datetime.now(UTC),
+        used_at=datetime.now(UTC) - timedelta(minutes=5),
+        replaced_by=uuid.uuid4(),
+        revoked_at=None,
     )
     db = _db(_scalar(reused), MagicMock())
 
@@ -257,6 +259,46 @@ async def test_refresh_token_reuse_revokes_entire_family(monkeypatch) -> None:
     assert raised.value.detail == {"code": "refresh_reuse_detected"}
     assert db.execute.await_count == 2
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_replay_inside_grace_window_is_superseded_not_revoked(monkeypatch) -> None:
+    # KRI-119 (2026-09-19): two app client instances over one Keychain both
+    # presented the same token; the second must not revoke the family.
+    monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
+    monkeypatch.setattr(settings, "mobile_refresh_reuse_grace_seconds", 30)
+    replayed = SimpleNamespace(
+        family_id=uuid.uuid4(),
+        used_at=datetime.now(UTC) - timedelta(seconds=2),
+        replaced_by=uuid.uuid4(),
+        revoked_at=None,
+    )
+    db = _db(_scalar(replayed))
+
+    with pytest.raises(HTTPException) as raised:
+        await auth.mobile_refresh(auth.MobileRefreshRequest(refresh_token="replayed"), db)
+
+    assert raised.value.status_code == 401
+    assert raised.value.detail == {"code": "refresh_superseded"}
+    assert db.execute.await_count == 1
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refresh_replay_of_a_revoked_family_inside_grace_still_rejects(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
+    replayed = SimpleNamespace(
+        family_id=uuid.uuid4(),
+        used_at=datetime.now(UTC) - timedelta(seconds=2),
+        replaced_by=uuid.uuid4(),
+        revoked_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    db = _db(_scalar(replayed), MagicMock())
+
+    with pytest.raises(HTTPException) as raised:
+        await auth.mobile_refresh(auth.MobileRefreshRequest(refresh_token="replayed"), db)
+
+    assert raised.value.detail == {"code": "refresh_reuse_detected"}
 
 
 @pytest.mark.asyncio
