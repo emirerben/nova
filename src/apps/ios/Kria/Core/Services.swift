@@ -618,7 +618,15 @@ struct RecipeAsset: Codable, Sendable, Identifiable { let id: String; let relati
 struct RecipeTrack: Codable, Sendable, Identifiable { let id: String; let kind: String; let clips: [RecipeClip] }
 struct RecipeClip: Codable, Sendable, Identifiable { let id: String; let sourceAssetID: String; let sourceStart: Double; let sourceDuration: Double; let timelineStart: Double; let rate: Double; enum CodingKeys: String, CodingKey { case id, rate; case sourceAssetID = "source_asset_id"; case sourceStart = "source_start"; case sourceDuration = "source_duration"; case timelineStart = "timeline_start" } }
 
+/// Process-wide: every `KriaAPI` instance (AuthModel, AppModel, the library
+/// audit) shares one Keychain, so they must share one in-flight refresh too.
+/// Per-instance coordinators let two instances replay the same single-use
+/// refresh token within the same second; the server treated the second as a
+/// replay attack, revoked the family, and signed the creator out (KRI-119,
+/// prod 2026-09-19 11:58:57Z: refresh 200 then refresh 401).
 private actor MobileSessionRefreshCoordinator {
+    static let shared = MobileSessionRefreshCoordinator()
+
     private var inFlight: (failedAccessToken: String, task: Task<MobileSession, Error>)?
 
     func refresh(
@@ -644,7 +652,16 @@ private actor MobileSessionRefreshCoordinator {
             request.httpBody = try JSONEncoder().encode(["refresh_token": current.refreshToken])
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-            guard (200..<300).contains(http.statusCode) else { throw APIError.sessionExpired }
+            guard (200..<300).contains(http.statusCode) else {
+                // The token we presented may have been rotated by another
+                // process (a relaunch mid-rotation) or, on older servers,
+                // another instance. If the store already holds a newer
+                // session, that rotation is the result we wanted.
+                if let stored = try tokenStore.read(), stored.refreshToken != current.refreshToken {
+                    return stored
+                }
+                throw APIError.sessionExpired
+            }
             let refreshed = try JSONDecoder().decode(MobileSession.self, from: data)
             try tokenStore.write(refreshed)
             return refreshed
@@ -695,7 +712,7 @@ struct KriaAPI: KriaAPIClient {
         self.tokenStore = tokenStore
         self.session = session
         self.checkedClient = Client(serverURL: baseURL, transport: URLSessionTransport())
-        self.refreshCoordinator = MobileSessionRefreshCoordinator()
+        self.refreshCoordinator = .shared
         _ = Self.checkedEditorOperationIDs
     }
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread {

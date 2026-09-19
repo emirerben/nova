@@ -362,6 +362,22 @@ async def mobile_refresh(
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     now = datetime.now(UTC)
     if session.used_at is not None:
+        used_at = session.used_at
+        if used_at.tzinfo is None:
+            used_at = used_at.replace(tzinfo=UTC)
+        if (
+            session.replaced_by is not None
+            and session.revoked_at is None
+            and (now - used_at).total_seconds() <= settings.mobile_refresh_reuse_grace_seconds
+        ):
+            # KRI-119: the app runs several API client instances over one
+            # Keychain (2026-09-19 11:58:57Z: refresh 200 then refresh 401
+            # within the same second). The second instance replayed the token
+            # the first had just rotated; revoking the family signed the
+            # creator out. Inside the grace window this is a race, not a
+            # replay: tell the client its token was superseded so it re-reads
+            # the store, and keep the family alive.
+            raise HTTPException(status_code=401, detail={"code": "refresh_superseded"})
         # Reuse of any rotated token invalidates the complete family.  This is
         # the critical replay boundary; do not merely reject this one token.
         await db.execute(
