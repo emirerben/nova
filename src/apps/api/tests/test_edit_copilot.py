@@ -4242,13 +4242,14 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # (2026-09-09-v41) for the negotiated text appearance inventory and atomic
     # selector operation, then (2026-09-09-v42) for roster-scale atomic
     # edit bundles and preserved two-thousand-character creator requests, then
-    # (2026-09-19-v44) for explicit placement rules (custom + centre fractions,
-    # never invented position names) and rotation_deg as a style field —
+    # (2026-09-19-v44) for explicit placement rules and rotation_deg as a
+    # style field, then (2026-09-19-v45) correcting x_frac to the alignment
+    # anchor (left edge / right edge / centre) so "top left" lands top left —
     # update this pin whenever
     # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-19-v44"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-09-19-v45"
 
 
 def _motion_snapshot() -> dict:
@@ -4670,15 +4671,15 @@ def test_text_appearance_unsupported_field_only_allows_explicit_noop(current, re
 @pytest.mark.parametrize(
     ("placement", "expected"),
     [
-        ("top_left", {"position": "custom", "x_frac": 0.3, "y_frac": 0.12, "alignment": "left"}),
-        ("Top-Left", {"position": "custom", "x_frac": 0.3, "y_frac": 0.12, "alignment": "left"}),
+        ("top_left", {"position": "custom", "x_frac": 0.08, "y_frac": 0.12, "alignment": "left"}),
+        ("Top-Left", {"position": "custom", "x_frac": 0.08, "y_frac": 0.12, "alignment": "left"}),
         (
             "upper left corner",
-            {"position": "custom", "x_frac": 0.3, "y_frac": 0.12, "alignment": "left"},
+            {"position": "custom", "x_frac": 0.08, "y_frac": 0.12, "alignment": "left"},
         ),
         (
             "bottom right",
-            {"position": "custom", "x_frac": 0.7, "y_frac": 0.85, "alignment": "right"},
+            {"position": "custom", "x_frac": 0.92, "y_frac": 0.85, "alignment": "right"},
         ),
         ("centre", {"position": "middle"}),
         ("top center", {"position": "top", "alignment": "center"}),
@@ -4764,6 +4765,7 @@ def test_copilot_retries_once_with_the_rejected_ops_quoted() -> None:
     assert "Papyrus" in hint
     assert "patch_text_style" in hint
     assert "position must be one of top, middle, bottom, custom" in hint
+    assert "LEFT edge" in hint
 
     # The second attempt is honest, never a third call.
     second = agent.parse(raw, payload)

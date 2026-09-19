@@ -308,7 +308,11 @@ class TextElement(BaseModel):
         default=None,
         ge=0.0,
         le=1.0,
-        description="Horizontal center fraction [0, 1]; None unless position='custom'.",
+        description=(
+            "Horizontal anchor fraction [0, 1] pinned by `alignment`: the line's "
+            "centre for center, its left edge for left, its right edge for right. "
+            "None unless position='custom'."
+        ),
     )
     y_frac: float | None = Field(
         default=None,

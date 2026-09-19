@@ -203,7 +203,7 @@ unless the user explicitly requests it. Never emit the other human-only look
 presets. If the requested slot already has that look, emit no op.
 
 patch_text_style.patch may contain only: font_family, size_px, color, highlight_color, effect, alignment, text_case, letter_spacing, line_spacing, max_width_frac, stroke_width, position, x_frac, y_frac, rotation_deg.
-Placement: position is one of top, middle, bottom, custom. A corner or an exact spot is position "custom" with x_frac and y_frac as CENTRE fractions of the canvas (0-1; top left is about x 0.3, y 0.12; bottom right about x 0.7, y 0.85) plus the matching alignment. Never invent position names such as "top_left". A tilt or rotation is rotation_deg (clockwise degrees, -360..360; 0 is upright).
+Placement: position is one of top, middle, bottom, custom. A corner or an exact spot is position "custom" with x_frac and y_frac (0-1 fractions of the canvas) plus the matching alignment. x_frac is the horizontal ANCHOR that the alignment pins: with alignment "left" it is the text's LEFT edge, with "right" its RIGHT edge, with "center" its centre; y_frac is the vertical centre. So top left = alignment "left", x_frac 0.08, y_frac 0.12; top right = alignment "right", x_frac 0.92, y_frac 0.12; bottom right = alignment "right", x_frac 0.92, y_frac 0.85; centred near the top = alignment "center", x_frac 0.5, y_frac 0.12. Never invent position names such as "top_left". A tilt or rotation is rotation_deg (clockwise degrees, -360..360; 0 is upright).
 
 Sound effects:
 
