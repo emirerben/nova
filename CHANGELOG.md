@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.82.0] - 2026-09-19
+
+### Changed
+- fix(editor): apply chat text removals against the snapshot and allow them on phone variants (#1093) <!-- release-pr: 1093 -->
+
 ## [0.76.81.0] - 2026-09-19
 
 ### Changed
