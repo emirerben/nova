@@ -34,7 +34,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-09-19-v44"
+EDIT_COPILOT_PROMPT_VERSION = "2026-09-19-v45"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1885,9 +1885,11 @@ _VALUE_RETRY_REASONS = frozenset({"invalid_value", "missing_required"})
 _VALUE_RETRY_MAX_OPS = 8
 _VALUE_RETRY_RULES = (
     "Value rules: position must be one of top, middle, bottom, custom -- "
-    "for a corner or an exact spot use position custom with x_frac and y_frac "
-    "as CENTRE fractions 0-1 (top left ~ x 0.3, y 0.12; bottom right ~ x 0.7, "
-    "y 0.85) plus alignment; alignment left|center|right; text_case "
+    "for a corner or an exact spot use position custom with x_frac/y_frac 0-1: "
+    "x_frac is the anchor the alignment pins (left alignment = the text's LEFT "
+    "edge, right = its RIGHT edge, center = its centre), y_frac the vertical "
+    "centre (top left = alignment left, x 0.08, y 0.12; bottom right = alignment "
+    "right, x 0.92, y 0.85); alignment left|center|right; text_case "
     "none|upper|lower|title; colors are #RRGGBB; size_px 8-300; stroke_width "
     "0-20; shadow_enabled true|false; rotation_deg clockwise degrees -360..360; "
     "font_family and effect must be names "
@@ -4525,20 +4527,25 @@ def _clean_caption_replacement(value: object, *, max_chars: int = 500) -> str | 
 # emitting `position: "top_left"` for "place the titles top left" and the whole
 # op was dropped as invalid_value (2026-09-19, job d9a965b0). Map the everyday
 # placements onto the contract instead of failing the creator's request.
-# Values are CENTRE fractions of a portrait canvas (see TextElement.x_frac).
+# `x_frac` is the horizontal ANCHOR the renderer pins the line to
+# (`text_overlay_skia._anchored_left_x`): with alignment left it is the
+# line's LEFT edge, with right its RIGHT edge, with center its centre. Centre
+# values (0.3 / 0.7) with an edge alignment pushed "top left" to the right
+# half of the canvas (2026-09-19, job d9a965b0). Edge placements sit at the
+# 8% safe margin; `y_frac` stays a vertical centre.
 _PLACEMENT_SYNONYMS: dict[str, tuple[str, float | None, float | None, str | None]] = {
     "top": ("top", None, None, None),
     "middle": ("middle", None, None, None),
     "center": ("middle", None, None, None),
     "bottom": ("bottom", None, None, None),
-    "top_left": ("custom", 0.3, 0.12, "left"),
+    "top_left": ("custom", 0.08, 0.12, "left"),
     "top_center": ("top", None, None, "center"),
-    "top_right": ("custom", 0.7, 0.12, "right"),
-    "middle_left": ("custom", 0.3, 0.5, "left"),
-    "middle_right": ("custom", 0.7, 0.5, "right"),
-    "bottom_left": ("custom", 0.3, 0.85, "left"),
+    "top_right": ("custom", 0.92, 0.12, "right"),
+    "middle_left": ("custom", 0.08, 0.5, "left"),
+    "middle_right": ("custom", 0.92, 0.5, "right"),
+    "bottom_left": ("custom", 0.08, 0.85, "left"),
     "bottom_center": ("bottom", None, None, "center"),
-    "bottom_right": ("custom", 0.7, 0.85, "right"),
+    "bottom_right": ("custom", 0.92, 0.85, "right"),
 }
 
 

@@ -28,7 +28,7 @@ def test_story_native_goldens_preserve_recorded_prompt_provenance() -> None:
     # the current prompt separately without relabeling historical evidence.
     assert all(
         load_fixture(path).prompt_version
-        in {"2026-09-09-v42", "2026-09-13-v43", EDIT_COPILOT_PROMPT_VERSION}
+        in {"2026-09-09-v42", "2026-09-13-v43", "2026-09-19-v44", EDIT_COPILOT_PROMPT_VERSION}
         for path in story_fixtures
     )
 
