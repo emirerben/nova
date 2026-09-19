@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.84.0] - 2026-09-19
+
+### Changed
+- fix(copilot): map everyday text placements onto the position contract (#1095) <!-- release-pr: 1095 -->
+
 ## [0.76.83.0] - 2026-09-19
 
 ### Changed
