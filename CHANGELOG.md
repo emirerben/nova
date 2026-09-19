@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.89.0] - 2026-09-19
+
+### Changed
+- fix(copilot): advertise the text-appearance inventory on server chat edits and compile the op (#1100) <!-- release-pr: 1100 -->
+
 ## [0.76.88.0] - 2026-09-19
 
 ### Changed
