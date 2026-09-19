@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.80.0] - 2026-09-19
+
+### Changed
+- ci(ios): run a bounded native UI subset on PRs that touch UI inputs (KRI-117) (#1091) <!-- release-pr: 1091 -->
+
 ## [0.76.79.0] - 2026-09-19
 
 ### Changed
