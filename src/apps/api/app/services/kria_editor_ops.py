@@ -10,6 +10,8 @@ validation when an approval is consumed.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -160,6 +162,51 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
+_TEXT_APPEARANCE_FIELDS = ("stroke_width", "shadow_enabled")
+
+
+def _text_appearance_enabled() -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(getattr(settings, "text_appearance_enabled", False))
+
+
+def _text_appearance_inventory(text_bars: list[dict[str, Any]], *, cues_present: bool) -> dict:
+    """Mirror the web drawer's `buildTextAppearanceInventory` for text bars.
+
+    Targets are the editable text bars; `identity` fingerprints the fields
+    the parser compares so a stale inventory cannot address a changed bar.
+    Caption and motion targets are not modelled on this path yet.
+    """
+    targets = []
+    for row in text_bars:
+        bar_id = row.get("id")
+        if not isinstance(bar_id, str) or not bar_id.strip():
+            continue
+        editable = row.get("role") != "lyric_line"
+        identity_source = json.dumps(
+            {
+                key: row.get(key)
+                for key in ("id", "text", "start_s", "end_s", *_TEXT_APPEARANCE_FIELDS)
+            },
+            sort_keys=True,
+            default=str,
+        )
+        targets.append(
+            {
+                "id": bar_id,
+                "kind": "text",
+                "supported_fields": list(_TEXT_APPEARANCE_FIELDS) if editable else [],
+                "values": {
+                    "stroke_width": row.get("stroke_width"),
+                    "shadow_enabled": row.get("shadow_enabled", True),
+                },
+                "identity": hashlib.sha256(identity_source.encode("utf-8")).hexdigest()[:16],
+            }
+        )
+    return {"version": 1, "caption_cues_editable": cues_present, "targets": targets}
+
+
 def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
     """Return the bounded, URL/path-free snapshot accepted by EditCopilot."""
 
@@ -204,8 +251,9 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
         for row in variant.get("caption_cues") or []
         if isinstance(row, dict)
     ]
+    families = _allowed_families(job, variant)
     snapshot: dict[str, Any] = {
-        "allowed_op_families": _allowed_families(job, variant),
+        "allowed_op_families": families,
         "base_generation": variant_render_baseline(variant),
         "has_narrated_captions": bool(cues)
         or variant.get("resolved_archetype") in {"subtitled", "talking_head"},
@@ -215,6 +263,14 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
         "text_bars": text_bars,
         "total_duration_s": duration,
     }
+    if "text" in families and _text_appearance_enabled():
+        # The web drawer builds this inventory client-side; the server chat
+        # path never did, so the model's correct "remove shadow and outline"
+        # op (patch_text_appearance) was rejected as invalid and, being
+        # atomic, took every sibling op down with it (2026-09-19, job
+        # d9a965b0: font, size and placement changes all dropped).
+        snapshot["text_appearance_version"] = 1
+        snapshot["text_appearance"] = _text_appearance_inventory(text_bars, cues_present=bool(cues))
     if cues or snapshot["has_narrated_captions"]:
         snapshot["captions"] = {
             "cues": cues,
@@ -492,6 +548,22 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         elif name == "remove_text":
             removed_text_bars.add(id(_text_bar(op.get("bar_index"))))
             text = [row for row in text if id(row) not in removed_text_bars]
+            changed.add("text")
+        elif name == "patch_text_appearance":
+            patch = {
+                key: value
+                for key, value in dict(op.get("patch") or {}).items()
+                if key in _TEXT_APPEARANCE_FIELDS
+            }
+            targets = list(op.get("target_ids") or [])
+            if not patch or not targets:
+                raise KriaEditorOpError("No text appearance change was supplied")
+            live = {row.get("id"): row for row in text if isinstance(row.get("id"), str)}
+            for target_id in targets:
+                row = live.get(target_id)
+                if row is None or id(row) in removed_text_bars:
+                    raise KriaEditorOpError("Text changed before this edit could be drafted")
+                row.update(patch)
             changed.add("text")
         elif name in {"set_clip_duration", "set_clip_in", "trim_clip_start", "set_look_preset"}:
             index = _require_index(slots, op.get("slot_index"), "Timeline")
