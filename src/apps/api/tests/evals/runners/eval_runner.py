@@ -120,6 +120,10 @@ class CassetteModelClient(ModelClient):
     to replay the recorded response.
     """
 
+    # A cassette holds exactly one recorded response, so an agent must not
+    # spend a targeted clarification retry against it (see EditCopilotAgent).
+    supports_clarification_retry = False
+
     def __init__(self, raw_text: str, *, tokens_in: int = 0, tokens_out: int = 0) -> None:
         self.raw_text = raw_text
         self.tokens_in = tokens_in

@@ -4729,3 +4729,89 @@ def test_copilot_unknown_placement_still_drops() -> None:
         [{"op": "patch_text_style", "bar_index": 0, "patch": {"position": "somewhere nice"}}]
     )
     assert out.ops == []
+
+
+def test_copilot_retries_once_with_the_rejected_ops_quoted() -> None:
+    # 2026-09-19 (job d9a965b0): a value the contract rejects used to end the
+    # turn with "I couldn't build a valid draft change". The agent now raises
+    # once so the runtime re-asks with the rejected ops and the value rules.
+    from app.agents._runtime import SchemaError
+
+    agent = _agent()
+    agent._value_retry_armed = True  # what run() sets for a live client
+    raw = json.dumps(
+        {
+            "intent": "edit",
+            "ops": [
+                {"op": "patch_text_style", "bar_index": 0, "patch": {"font_family": "Papyrus"}}
+            ],
+            "confidence": 0.9,
+            "reply": "Done.",
+            "suggestions": [],
+            "needs_clarification": False,
+        }
+    )
+    payload = EditCopilotInput(
+        utterance="use papyrus", prior_turns=[], variant_snapshot=_snapshot()
+    )
+
+    with pytest.raises(SchemaError, match="operation values rejected"):
+        agent.parse(raw, payload)
+
+    hint = agent.schema_clarification()
+    assert "Papyrus" in hint
+    assert "patch_text_style" in hint
+    assert "position must be one of top, middle, bottom, custom" in hint
+
+    # The second attempt is honest, never a third call.
+    second = agent.parse(raw, payload)
+    assert second.outcome == "failed"
+    assert second.ops == []
+
+
+def test_copilot_targeted_retry_is_not_used_for_unsupported_or_stale_ops() -> None:
+    agent = _agent()
+    agent._value_retry_armed = True
+    raw = json.dumps(
+        {
+            "intent": "edit",
+            "ops": [{"op": "restyle_all", "preset": "x"}],
+            "confidence": 0.9,
+            "reply": "Done.",
+            "suggestions": [],
+            "needs_clarification": False,
+        }
+    )
+    out = agent.parse(
+        raw, EditCopilotInput(utterance="x", prior_turns=[], variant_snapshot=_snapshot())
+    )
+    assert out.outcome == "unsupported"
+    assert agent._value_retry_hint is None
+
+
+def test_copilot_fresh_agent_has_no_retry_hint() -> None:
+    assert _agent().schema_clarification().endswith("No markdown or prose outside JSON.")
+
+
+def test_copilot_direct_parse_never_raises_for_invalid_values() -> None:
+    out = _parse([{"op": "patch_text_style", "bar_index": 0, "patch": {"font_family": "Papyrus"}}])
+    assert out.outcome == "failed"
+
+
+def test_copilot_run_arms_the_targeted_retry_only_for_capable_clients(monkeypatch) -> None:
+    from app.agents import _runtime
+
+    class _Cassette(ModelClient):
+        supports_clarification_retry = False
+
+    seen: list[bool] = []
+
+    def fake_run(self, input, *, ctx=None):  # noqa: A002
+        seen.append(self._value_retry_armed)
+        return "ran"
+
+    monkeypatch.setattr(_runtime.Agent, "run", fake_run)
+    payload = EditCopilotInput(utterance="x", prior_turns=[], variant_snapshot=_snapshot())
+    assert EditCopilotAgent(_Cassette()).run(payload) == "ran"
+    assert EditCopilotAgent(ModelClient()).run(payload) == "ran"
+    assert seen == [False, True]
