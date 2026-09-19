@@ -367,3 +367,189 @@ async def test_enqueue_exception_after_attempt_moved_does_not_report_failure(
     assert routes._append.await_args.kwargs["payload"]["outcome"] == "saved"
     assert job.assembly_plan["variants"][0]["render_status"] == render_status
     assert "error_class" not in job.assembly_plan["variants"][0]
+
+
+def test_post_render_edit_job_statuses_match_the_route_literal():
+    # Both call sites (this constant, and the literal in
+    # creation_threads.message_thread) must agree on what "ready" means for a
+    # post-render chat edit.
+    assert actions.POST_RENDER_EDIT_JOB_STATUSES == {
+        "done",
+        "variants_ready",
+        "variants_ready_partial",
+    }
+
+
+@pytest.fixture
+def copilot_edit_context(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    variant = {
+        "variant_id": "a",
+        "render_generation_id": "g1",
+        "text_elements": [
+            {"id": "title", "text": "My Title", "role": "generative_intro"},
+            {"id": "cap1", "text": "caption 1", "role": "generative_sequence"},
+        ],
+    }
+    job = SimpleNamespace(
+        id=uuid.uuid4(), status="variants_ready", assembly_plan={"variants": [variant]}
+    )
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        active_plan_item_id=uuid.uuid4(),
+        state={"selected_variant_id": "a"},
+    )
+    body = SimpleNamespace(
+        message="remove the caption that isn't the title", client_event_id="edit-test"
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=job), execute=AsyncMock())
+    monkeypatch.setattr(
+        actions, "build_editor_snapshot", lambda *_: {"allowed_op_families": ["text", "title"]}
+    )
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    return SimpleNamespace(db=db, thread=thread, body=body, user=user, job=job, variant=variant)
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_message_too_long_never_calls_model(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    ctx.body.message = "x" * 2001
+    run = AsyncMock()
+    monkeypatch.setattr(actions, "run_copilot_turn", run)
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread}
+    run.assert_not_awaited()
+    assert "shorten" in routes._append.await_args.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_no_addressable_variant_never_calls_model(
+    copilot_edit_context, monkeypatch
+):
+    ctx = copilot_edit_context
+    ctx.thread.state = {}
+    ctx.job.assembly_plan["variants"].append({"variant_id": "b"})
+    run = AsyncMock()
+    monkeypatch.setattr(actions, "run_copilot_turn", run)
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread}
+    run.assert_not_awaited()
+    assert "Open the specific video version" in routes._append.await_args.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_unsupported_outcome_falls_through(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(ops=[], outcome="unsupported", reply="ignored")
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result is None
+    routes._append.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_no_effect_outcome_reports_without_replanning(
+    copilot_edit_context, monkeypatch
+):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(ops=[], outcome="no_effect", reply="That's already the case.")
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread}
+    assert routes._append.await_args.kwargs["content"] == "That's already the case."
+    assert routes._append.await_args.kwargs["payload"]["outcome"] == "no_effect"
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_applies_ops_and_stages_render(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[{"op": "remove_text", "bar_index": 1}], outcome="proposed", reply="ignored"
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    payload = actions.EditorCommitRequest(base_generation="g1", text_elements=[])
+    monkeypatch.setattr(
+        actions,
+        "compile_editor_ops",
+        Mock(return_value=SimpleNamespace(payload=payload, changes=["Remove text"])),
+    )
+    ctx.db.execute.return_value = Mock()
+    ctx.db.execute.return_value.scalars.return_value.all.return_value = []
+    prep = {"generation": "g2", "sections": {"text_elements": True}}
+    monkeypatch.setattr(actions, "prepare_editor_commit", Mock(return_value=prep))
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread, "job_id": ctx.job.id, "variant_id": "a", "prep": prep}
+    assert routes._append.await_args.kwargs["payload"]["outcome"] == "saved"
+    assert "Remove text" in routes._append.await_args.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_baseline_conflict_propagates_as_409(copilot_edit_context, monkeypatch):
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[{"op": "remove_text", "bar_index": 1}], outcome="proposed", reply="ignored"
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    payload = actions.EditorCommitRequest(base_generation="g1", text_elements=[])
+    monkeypatch.setattr(
+        actions,
+        "compile_editor_ops",
+        Mock(return_value=SimpleNamespace(payload=payload, changes=["Remove text"])),
+    )
+    ctx.db.execute.return_value = Mock()
+    ctx.db.execute.return_value.scalars.return_value.all.return_value = []
+    monkeypatch.setattr(
+        actions,
+        "prepare_editor_commit",
+        Mock(side_effect=HTTPException(status_code=409, detail="baseline_conflict")),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+    assert error.value.status_code == 409
+    routes._append.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_guided_story_stale_media_reports_unsupported(
+    copilot_edit_context, monkeypatch
+):
+    from app.pipeline import guided_story
+    from app.routes import plan_items
+
+    ctx = copilot_edit_context
+    ctx.variant["resolved_archetype"] = "guided_story"
+    response = SimpleNamespace(
+        ops=[{"op": "remove_text", "bar_index": 1}], outcome="proposed", reply="ignored"
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    payload = actions.EditorCommitRequest(
+        base_generation="g1", text_elements=[], guided_revision_number=1
+    )
+    monkeypatch.setattr(
+        actions,
+        "compile_editor_ops",
+        Mock(return_value=SimpleNamespace(payload=payload, changes=["Remove text"])),
+    )
+    ctx.db.execute.return_value = Mock()
+    ctx.db.execute.return_value.scalars.return_value.all.return_value = []
+    monkeypatch.setattr(guided_story, "validate_guided_snapshot", lambda _: (1, "digest", {}))
+    monkeypatch.setattr(plan_items, "_proposal_media_is_current", AsyncMock(return_value=False))
+    stage = Mock()
+    monkeypatch.setattr(actions, "prepare_editor_commit", stage)
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    stage.assert_not_called()
+    assert result == {"thread": ctx.thread}
+    assert routes._append.await_args.kwargs["payload"]["outcome"] == "unsupported"

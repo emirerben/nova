@@ -3117,6 +3117,7 @@ async def message_thread(
         raise HTTPException(status_code=409, detail="Creation thread changed")
     # Editor actions own their user-message admission so the model call can
     # release locks without committing an incomplete idempotency receipt.
+    from app.services import creation_editor_actions  # noqa: PLC0415
     from app.services.creation_editor_actions import (  # noqa: PLC0415
         execute_visual_removal,
         is_visual_removal_request,
@@ -3232,6 +3233,33 @@ async def message_thread(
             await db.commit()
             await db.refresh(thread)
             return await _response(db, thread)
+        # A message about an already-rendered cut is an edit to that cut, not
+        # a new creative instruction -- routing it into the Main Creator would
+        # re-plan and re-render (2026-09-19 incident). Try the same
+        # edit-copilot the web editor's Nova chat drawer uses first, applying
+        # any resulting ops server-side through the shared editor-commit
+        # validators. The canned iOS "refresh direction" affordance is exempt:
+        # it always means "re-plan with my current footage," never an edit.
+        if (
+            settings.edit_copilot_enabled
+            and current_job is not None
+            and current_job.status in creation_editor_actions.POST_RENDER_EDIT_JOB_STATUSES
+            and not creator_agent._is_refresh_retry_message(body.message)
+        ):
+            copilot_result = await creation_editor_actions.execute_copilot_edit(
+                db, thread, body, user, job=current_job
+            )
+            if copilot_result is not None:
+                thread = copilot_result["thread"]
+                await db.commit()
+                await db.refresh(thread)
+                await creation_editor_actions.finalize_copilot_edit_render(
+                    db, thread, user, copilot_result
+                )
+                return await _response(db, thread)
+            # Copilot reports this needs different footage/direction/format
+            # than an in-place edit can address -- fall through to the Main
+            # Creator planning turn below, unchanged.
     state = dict(thread.state or {})
     # Free text before the format and footage prerequisites is durable but
     # inert. Do not invoke the Creator Agent with an incomplete manifest.
