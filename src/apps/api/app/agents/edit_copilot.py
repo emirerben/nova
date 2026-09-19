@@ -4446,9 +4446,78 @@ def _clean_caption_replacement(value: object, *, max_chars: int = 500) -> str | 
     return clean[:max_chars]
 
 
+# Creators say "top left" / "bottom right corner"; the portable contract only
+# knows the vertical presets plus `custom` + centre fractions. The model kept
+# emitting `position: "top_left"` for "place the titles top left" and the whole
+# op was dropped as invalid_value (2026-09-19, job d9a965b0). Map the everyday
+# placements onto the contract instead of failing the creator's request.
+# Values are CENTRE fractions of a portrait canvas (see TextElement.x_frac).
+_PLACEMENT_SYNONYMS: dict[str, tuple[str, float | None, float | None, str | None]] = {
+    "top": ("top", None, None, None),
+    "middle": ("middle", None, None, None),
+    "center": ("middle", None, None, None),
+    "bottom": ("bottom", None, None, None),
+    "top_left": ("custom", 0.3, 0.12, "left"),
+    "top_center": ("top", None, None, "center"),
+    "top_right": ("custom", 0.7, 0.12, "right"),
+    "middle_left": ("custom", 0.3, 0.5, "left"),
+    "middle_right": ("custom", 0.7, 0.5, "right"),
+    "bottom_left": ("custom", 0.3, 0.85, "left"),
+    "bottom_center": ("bottom", None, None, "center"),
+    "bottom_right": ("custom", 0.7, 0.85, "right"),
+}
+
+
+def _normalize_placement_key(value: str) -> str:
+    key = re.sub(r"[\s\-]+", "_", value.strip().casefold())
+    key = re.sub(r"_?(corner|of_the_screen|of_screen)$", "", key)
+    key = key.replace("upper", "top").replace("lower", "bottom").replace("centre", "center")
+    key = key.replace("middle_center", "middle").replace("center_center", "middle")
+    parts = key.split("_")
+    if (
+        len(parts) == 2
+        and parts[0] in {"left", "right"}
+        and parts[1] in {"top", "middle", "bottom"}
+    ):
+        key = f"{parts[1]}_{parts[0]}"
+    if key in {"center_left", "center_right"}:
+        key = key.replace("center", "middle")
+    return key
+
+
+def _resolve_placement(patch: dict) -> dict:
+    """Rewrite everyday placement words into the contract's position/fraction fields."""
+    resolved = dict(patch)
+    position = resolved.get("position")
+    if isinstance(position, str) and position not in _VALID_POSITION:
+        mapped = _PLACEMENT_SYNONYMS.get(_normalize_placement_key(position))
+        if mapped is not None:
+            preset, x_frac, y_frac, alignment = mapped
+            resolved["position"] = preset
+            if preset == "custom":
+                resolved.setdefault("x_frac", x_frac)
+                resolved.setdefault("y_frac", y_frac)
+            if alignment is not None:
+                resolved.setdefault("alignment", alignment)
+    if ("x_frac" in resolved or "y_frac" in resolved) and resolved.get("position") in {
+        None,
+        "top",
+        "middle",
+        "bottom",
+    }:
+        # Explicit fractions are only honoured under the custom preset; a
+        # bare x/y patch means "put it exactly here", so make that explicit.
+        resolved["position"] = "custom"
+        resolved.setdefault("x_frac", 0.5)
+        resolved.setdefault(
+            "y_frac", {"top": 0.12, "middle": 0.5, "bottom": 0.85}.get(patch.get("position"), 0.5)
+        )
+    return resolved
+
+
 def _coerce_patch(patch: dict, state: _ParseState) -> dict:
     out: dict[str, Any] = {}
-    for key, value in patch.items():
+    for key, value in _resolve_placement(patch).items():
         if key not in _STYLE_PATCH_FIELDS:
             continue
         if key == "font_family":
