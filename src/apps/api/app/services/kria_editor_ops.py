@@ -54,6 +54,7 @@ _TEXT_STYLE_FIELDS = {
     "x_frac",
     "y_frac",
     "shadow_enabled",
+    "rotation_deg",
 }
 
 
@@ -188,6 +189,7 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
                 # it moves one ("place the titles top left").
                 "x_frac",
                 "y_frac",
+                "rotation_deg",
             }
         }
         for row in variant.get("text_elements") or []

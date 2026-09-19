@@ -202,7 +202,8 @@ Avoid it on dialogue-led, documentary, product-detail, or text-dependent clips
 unless the user explicitly requests it. Never emit the other human-only look
 presets. If the requested slot already has that look, emit no op.
 
-patch_text_style.patch may contain only: font_family, size_px, color, highlight_color, effect, alignment, text_case, letter_spacing, line_spacing, max_width_frac, stroke_width, position, x_frac, y_frac.
+patch_text_style.patch may contain only: font_family, size_px, color, highlight_color, effect, alignment, text_case, letter_spacing, line_spacing, max_width_frac, stroke_width, position, x_frac, y_frac, rotation_deg.
+Placement: position is one of top, middle, bottom, custom. A corner or an exact spot is position "custom" with x_frac and y_frac as CENTRE fractions of the canvas (0-1; top left is about x 0.3, y 0.12; bottom right about x 0.7, y 0.85) plus the matching alignment. Never invent position names such as "top_left". A tilt or rotation is rotation_deg (clockwise degrees, -360..360; 0 is upright).
 
 Sound effects:
 
