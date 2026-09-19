@@ -7,6 +7,7 @@ import hashlib
 import re
 from typing import Any
 
+import structlog
 from fastapi import HTTPException
 from sqlalchemy import select
 
@@ -22,6 +23,8 @@ from app.services.kria_editor_ops import (
     build_editor_snapshot,
     compile_editor_ops,
 )
+
+log = structlog.get_logger()
 
 # Job.status values a generative render lands on once its variants exist and
 # are addressable by chat.  Kept in sync with the literal set the messages
@@ -291,6 +294,30 @@ async def execute_visual_removal(db: Any, thread: Any, body: Any, user: Any) -> 
     return thread
 
 
+_GENERIC_REJECTION_REPLY = "I couldn't safely apply that change. Nothing was changed."
+
+
+def _rejection_detail(exc: Exception) -> str:
+    """Operator-facing reason for a rejected chat edit (never a traceback)."""
+    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+    if isinstance(detail, dict):
+        detail = detail.get("message") or detail.get("code") or ""
+    return str(detail or exc.__class__.__name__)[:300]
+
+
+def _rejection_reply(exc: Exception) -> str:
+    """Creator-facing copy: only a validator's own authored sentence is safe to show.
+
+    `_GUIDED_STORY_TEXT_REQUIRED_ERROR`-style dict details carry a `message`
+    written for creators; bare strings and codes are internal and stay generic.
+    """
+    if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+        message = str(exc.detail.get("message") or "").strip()
+        if message:
+            return f"{message} Nothing was changed."
+    return _GENERIC_REJECTION_REPLY
+
+
 def _applied_summary(changes: list[str]) -> str:
     if not changes:
         return "Applied your edit"
@@ -475,7 +502,15 @@ async def execute_copilot_edit(
             raise
         prep = None
         receipt["outcome"] = "unsupported"
-        reply = "I couldn't safely apply that change. Nothing was changed."
+        receipt["rejection"] = _rejection_detail(exc)
+        log.warning(
+            "creation_copilot_edit_rejected",
+            job_id=str(job_id),
+            variant_id=variant_id,
+            ops=[str(op.get("op") or "") for op in response.ops],
+            detail=receipt["rejection"],
+        )
+        reply = _rejection_reply(exc)
 
     await routes._append(
         db,

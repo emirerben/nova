@@ -536,3 +536,76 @@ def test_real_guided_save_removes_media_preserving_revision_and_narration(monkey
         "media_overlays",
     ):
         assert saved[lane] == before[lane]
+
+
+def _variant_with_bars(*texts: str) -> dict:
+    variant = _variant()
+    variant["text_elements"] = [
+        {**_variant()["text_elements"][0], "id": f"text-{index}", "text": text}
+        for index, text in enumerate(texts)
+    ]
+    return variant
+
+
+def test_remove_text_bundle_addresses_the_snapshot_bars_not_the_shrinking_list() -> None:
+    # 2026-09-19: "remove the texts that aren't the titles" on a six-bar guided
+    # story emitted remove_text 1..4; popping in place deleted bars 1, 3, 5 and
+    # then rejected bar 4 as out of range, so nothing was saved.
+    variant = _variant_with_bars(
+        "Title", "Thought A", "Thought B", "Thought C", "Thought D", "Closing"
+    )
+    assert [row["id"] for row in variant["text_elements"]] == [f"text-{i}" for i in range(6)]
+
+    compiled = compile_editor_ops(
+        _job(variant),
+        variant,
+        [{"op": "remove_text", "bar_index": index} for index in (1, 2, 3, 4)],
+    )
+
+    saved = compiled.payload.model_dump(mode="json", exclude_none=True)["text_elements"]
+    assert [row["id"] for row in saved] == ["text-0", "text-5"]
+    assert [row["text"] for row in variant["text_elements"]][1:5] == [
+        "Thought A",
+        "Thought B",
+        "Thought C",
+        "Thought D",
+    ]
+
+
+def test_text_edits_after_a_removal_still_target_snapshot_indexes() -> None:
+    variant = _variant_with_bars("Title", "Thought A", "Closing")
+
+    compiled = compile_editor_ops(
+        _job(variant),
+        variant,
+        [
+            {"op": "remove_text", "bar_index": 1},
+            {"op": "edit_text", "bar_index": 2, "text": "The end"},
+            {"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#FF0000"}},
+        ],
+    )
+
+    saved = compiled.payload.model_dump(mode="json", exclude_none=True)["text_elements"]
+    assert [(row["id"], row["text"]) for row in saved] == [
+        ("text-0", "Title"),
+        ("text-2", "The end"),
+    ]
+    assert saved[0]["color"] == "#FF0000"
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        {"op": "remove_text", "bar_index": 1},
+        {"op": "edit_text", "bar_index": 1, "text": "ghost"},
+        {"op": "set_text_timing", "bar_index": 1, "start_s": 0.5, "end_s": 1.5},
+    ],
+)
+def test_text_ops_on_a_bar_removed_earlier_in_the_bundle_reject(second: dict) -> None:
+    variant = _variant_with_bars("Title", "Thought A", "Closing")
+    with pytest.raises(KriaEditorOpError, match="Text changed"):
+        compile_editor_ops(
+            _job(variant),
+            variant,
+            [{"op": "remove_text", "bar_index": 1}, second],
+        )

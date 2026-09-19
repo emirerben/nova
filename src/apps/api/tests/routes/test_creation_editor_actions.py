@@ -553,3 +553,75 @@ async def test_copilot_edit_guided_story_stale_media_reports_unsupported(
     stage.assert_not_called()
     assert result == {"thread": ctx.thread}
     assert routes._append.await_args.kwargs["payload"]["outcome"] == "unsupported"
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_rejected_commit_surfaces_the_validators_own_message(
+    copilot_edit_context, monkeypatch
+):
+    # 2026-09-19: the phone chat-edit was rejected by a guided-story guard and the
+    # creator only saw "I couldn't safely apply that change" with no reason logged.
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[{"op": "remove_text", "bar_index": 1}], outcome="proposed", reply="ignored"
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    payload = actions.EditorCommitRequest(base_generation="g1", text_elements=[])
+    monkeypatch.setattr(
+        actions,
+        "compile_editor_ops",
+        Mock(return_value=SimpleNamespace(payload=payload, changes=["Remove text"])),
+    )
+    ctx.db.execute.return_value = Mock()
+    ctx.db.execute.return_value.scalars.return_value.all.return_value = []
+    monkeypatch.setattr(
+        actions,
+        "prepare_editor_commit",
+        Mock(
+            side_effect=HTTPException(
+                status_code=422,
+                detail={
+                    "code": "guided_story_text_required",
+                    "message": (
+                        "Keep the approved title and thought moments; edit their wording instead."
+                    ),
+                },
+            )
+        ),
+    )
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread}
+    kwargs = routes._append.await_args.kwargs
+    assert kwargs["content"] == (
+        "Keep the approved title and thought moments; edit their wording instead. "
+        "Nothing was changed."
+    )
+    assert kwargs["payload"]["outcome"] == "unsupported"
+    assert kwargs["payload"]["rejection"] == (
+        "Keep the approved title and thought moments; edit their wording instead."
+    )
+
+
+@pytest.mark.asyncio
+async def test_copilot_edit_internal_rejections_stay_generic(copilot_edit_context, monkeypatch):
+    from app.services.kria_editor_ops import KriaEditorOpError
+
+    ctx = copilot_edit_context
+    response = SimpleNamespace(
+        ops=[{"op": "remove_text", "bar_index": 9}], outcome="proposed", reply="ignored"
+    )
+    monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
+    monkeypatch.setattr(
+        actions,
+        "compile_editor_ops",
+        Mock(side_effect=KriaEditorOpError("Text changed before this edit could be drafted")),
+    )
+
+    result = await actions.execute_copilot_edit(ctx.db, ctx.thread, ctx.body, ctx.user, job=ctx.job)
+
+    assert result == {"thread": ctx.thread}
+    kwargs = routes._append.await_args.kwargs
+    assert kwargs["content"] == "I couldn't safely apply that change. Nothing was changed."
+    assert kwargs["payload"]["rejection"] == "Text changed before this edit could be drafted"

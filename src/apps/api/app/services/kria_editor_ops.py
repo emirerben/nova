@@ -398,6 +398,20 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
     text = copy.deepcopy(
         [row for row in variant.get("text_elements") or [] if isinstance(row, dict)]
     )
+    # `bar_index` always addresses the TEXT BARS list the model was shown
+    # (`build_editor_snapshot`), never the list as it shrinks mid-bundle. The
+    # web drawer resolves the same way (`textSnapAt` + DELETE_BAR by id);
+    # popping in place made "remove bars 1-4" delete bars 1, 3 and 5 and then
+    # reject bar 4 as out of range (2026-09-19 phone chat-edit incident).
+    text_bars = list(text)
+    removed_text_bars: set[int] = set()
+
+    def _text_bar(index: object) -> dict[str, Any]:
+        row = text_bars[_require_index(text_bars, index, "Text")]
+        if id(row) in removed_text_bars:
+            raise KriaEditorOpError("Text changed before this edit could be drafted")
+        return row
+
     captions = copy.deepcopy(
         [row for row in variant.get("caption_cues") or [] if isinstance(row, dict)]
     )
@@ -434,11 +448,10 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             visual_blocks = [row for row in current if row.get("id") not in set(targets)]
             changed.add("visual_media")
         elif name == "edit_text":
-            index = _require_index(text, op.get("bar_index"), "Text")
-            text[index]["text"] = str(op["text"])
+            _text_bar(op.get("bar_index"))["text"] = str(op["text"])
             changed.add("text")
         elif name == "patch_text_style":
-            index = _require_index(text, op.get("bar_index"), "Text")
+            row = _text_bar(op.get("bar_index"))
             patch = {
                 key: value
                 for key, value in dict(op.get("patch") or {}).items()
@@ -446,11 +459,12 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             }
             if not patch:
                 raise KriaEditorOpError("No portable text style fields were supplied")
-            text[index].update(patch)
+            row.update(patch)
             changed.add("text")
         elif name == "set_text_timing":
-            index = _require_index(text, op.get("bar_index"), "Text")
-            text[index].update({key: op[key] for key in ("start_s", "end_s") if key in op})
+            _text_bar(op.get("bar_index")).update(
+                {key: op[key] for key in ("start_s", "end_s") if key in op}
+            )
             changed.add("text")
         elif name == "add_text":
             text.append(
@@ -470,7 +484,8 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             )
             changed.add("text")
         elif name == "remove_text":
-            text.pop(_require_index(text, op.get("bar_index"), "Text"))
+            removed_text_bars.add(id(_text_bar(op.get("bar_index"))))
+            text = [row for row in text if id(row) not in removed_text_bars]
             changed.add("text")
         elif name in {"set_clip_duration", "set_clip_in", "trim_clip_start", "set_look_preset"}:
             index = _require_index(slots, op.get("slot_index"), "Timeline")

@@ -2475,8 +2475,6 @@ def _require_guided_story_text_ids(variant: dict, elements: list[dict]) -> None:
         return
     receipt = variant.get("render_receipt") or {}
     required = list(receipt.get("approved_text_ids") or receipt.get("expected_text_ids") or [])
-    if variant.get("render_destination") == "device":
-        required = [row["id"] for row in variant.get("text_elements") or [] if row.get("id")]
     try:
         from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
 
@@ -2486,6 +2484,14 @@ def _require_guided_story_text_ids(variant: dict, elements: list[dict]) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=_GUIDED_STORY_TEXT_REQUIRED_ERROR,
         ) from exc
+    if variant.get("render_destination") == "device":
+        # A phone variant has no cloud render receipt to honour: the device
+        # recipe is recompiled from the saved text lane as a whole
+        # (`prepare_phone_editor_commit`), so removing a title or thought bar
+        # is a legitimate edit there, the same as under guided editor v2.
+        # Requiring every current id (the #1015 pilot default) made any
+        # deletion on the phone a 422 (2026-09-19 chat-edit incident).
+        return
     submitted = [element.id for element in parsed if element.text.strip()]
     if not required or any(submitted.count(required_id) != 1 for required_id in required):
         raise HTTPException(
