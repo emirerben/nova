@@ -277,10 +277,11 @@ not the cached manifest. Standalone developer runs do not restore times by defau
 
 Run cache/phase regression tests with `python3 -m unittest discover -s
 scripts/ios/tests -v`. To disable timestamp restoration, remove
-`KRIA_RESTORE_INPUT_TIMES` from the CI build step. To restore full PR UI coverage
-in a future policy change, make the PR workflow invoke the `prepare-ui` and `ui`
-phases whenever `ios_ui=true`; neither rollback should skip compilation or relax
-`build-and-test`.
+`KRIA_RESTORE_INPUT_TIMES` from the CI build step. To return PRs to build and
+unit tests only, make the `ios.yml` build step select `unit` for every
+`pull_request` and restrict the UI step to non-PR events; to run the full suite
+on PRs instead, pass `full` through. Neither change should skip compilation or
+relax `build-and-test`.
 
 Local verification of the timestamp restore on 2026-09-10 reset all 126 native
 and shared input mtimes to simulate a fresh checkout, then ran the `unit` mode
@@ -290,24 +291,30 @@ in 32.1 seconds. Both runs had zero `SwiftCompile`,
 not a promised GitHub-hosted duration; the first cache without a timestamp
 manifest still needs to establish one.
 
-### Focused UI coverage (historical KRI-27)
+### Focused UI coverage (KRI-27, restored for PRs by KRI-117)
 
-The former focused-UI policy ran a reviewed native feature's UI checks plus four
+The focused-UI policy runs a reviewed native feature's UI checks plus four
 cross-app smoke scenarios. The manifest in
 `scripts/ios/ui-test-groups.json` lists exact source paths and XCTest identifiers.
 The groups are `creation`, `projects`, and `editor`; `smoke` covers workspace
 navigation, creation through ready, editor back navigation, and playback.
-Under that former policy, shared workspace/app state, services/models,
-design-system files, media-engine code, resources, project configuration, test
-infrastructure, and unknown paths required the full suite. Changes touching more
-than one feature also ran full.
-Under that former policy, the chat-components file also owned project navigation,
+Shared workspace/app state, services/models, design-system files, media-engine
+code, resources, project configuration, test infrastructure, and unknown paths
+select `full`. Changes touching more than one feature also select `full`.
+The chat-components file also owned project navigation,
 the chat transport served project fixtures, and `EditorViews.swift` contained
 gallery results; those shared files deliberately had no focused mapping. Project
 implementation lived in shared workspace/state files, so those changes ran full;
 project-test-only edits could select `smoke,projects`.
 
-All main pushes now run full coverage, while PRs run build and unit tests only.
+All main pushes run full coverage. PRs run build and unit tests, and a PR with
+`ios_ui=true` also runs a bounded native UI subset before merge: the selector's
+`smoke,<group>` when exactly one feature group changed, or `smoke` alone when the
+selector reports `full` (the full suite itself stays post-merge, so PR cost is
+bounded by the largest single group). This exists because a PR that was green on
+build and unit tests broke creation-to-ready for every later merge (#1088); the
+smoke group contains that scenario. `smoke` is an execution-only value: the
+selector never emits it and the gate rejects it as a selector output.
 The selector retains `ios` and `ios_ui`, adding `ios_ui_groups` (`none`, `full`, or exactly
 `smoke,creation`, `smoke,projects`, or `smoke,editor`). The required `build-and-test`
 gate still rejects missing or inconsistent group outputs on every run.
@@ -332,8 +339,8 @@ KRIA_IOS_TEST_MODE=ui KRIA_IOS_UI_GROUPS=smoke,creation bash scripts/ios/verify.
 Use a fresh `prepare-ui` before each UI invocation. UI-only mode requires an explicit group;
 missing, empty, or malformed selections fail. The full local gate supplies
 `full` automatically, and manual CI supplies the full group after preparation.
-PR CI does not invoke the UI phase, even when the selector reports
-`ios_ui=true`.
+PR CI invokes the UI phase only when the selector reports `ios_ui=true`, with
+the bounded subset described above.
 
 Each invocation writes logs, phase timings, and distinct unit/UI `.xcresult`
 bundles under `test-results/ios/`. GitHub uploads these artifacts on success or

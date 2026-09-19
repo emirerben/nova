@@ -19,6 +19,13 @@ def validate_groups(value):
     return value
 
 
+def validate_execution(value):
+    """Selector output plus "smoke": the PR tripwire when the selector wants full."""
+    if value != "smoke":
+        validate_groups(value)
+    return value
+
+
 def manifest():
     data = json.loads(MANIFEST.read_text())
     if set(data["groups"]) != {"smoke", "creation", "projects", "editor"}:
@@ -83,7 +90,7 @@ def select_groups(paths, root=ROOT):
 
 
 def expected_tests(value, root=ROOT):
-    validate_groups(value)
+    validate_execution(value)
     if value == "none":
         raise ValueError("UI execution cannot select none")
     if value == "full":

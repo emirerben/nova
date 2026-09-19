@@ -107,9 +107,10 @@ jobs:
         if: matrix.lane == 'native'
         id: build-unit
         env:
-          # PRs deliberately stop at the required build/unit gate. Full native
-          # UI coverage runs after merge and on explicit manual regressions.
-          KRIA_IOS_TEST_MODE: ${{ github.event_name == 'pull_request' && 'unit' || 'prepare-ui' }}
+          # PRs that touch native UI inputs also build the UI bundle for the
+          # bounded pre-merge subset below. Other PRs stop at build/unit. Full
+          # native UI coverage runs after merge and on manual regressions.
+          KRIA_IOS_TEST_MODE: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true') && 'prepare-ui' || 'unit' }}
           KRIA_RESTORE_INPUT_TIMES: "1"
         run: bash scripts/ios/verify.sh
       # Save a usable build as soon as compilation/unit tests pass. In particular,
@@ -130,12 +131,16 @@ jobs:
             src/apps/ios/.derived-data/CompilationCache.noindex
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
       - name: Native UI tests (reuse compiled build)
-        # Do not shorten this suite with a PR timeout: it is a separate,
-        # fail-closed full regression on main and workflow_dispatch instead.
-        if: matrix.lane == 'native' && github.event_name != 'pull_request'
+        # main and workflow_dispatch run the fail-closed full regression. A PR
+        # that touches native UI inputs runs a bounded pre-merge subset: smoke
+        # plus the one affected feature group, or smoke alone when the selector
+        # wants full coverage (shared, unmapped, or multi-group changes). The
+        # smoke group walks creation to a ready cut, which a green build/unit
+        # PR once broke for every later merge (#1088).
+        if: matrix.lane == 'native' && (github.event_name != 'pull_request' || needs.changes.outputs.ios_ui == 'true')
         env:
           KRIA_IOS_TEST_MODE: ui
-          KRIA_IOS_UI_GROUPS: full
+          KRIA_IOS_UI_GROUPS: ${{ github.event_name != 'pull_request' && 'full' || (needs.changes.outputs.ios_ui_groups == 'full' && 'smoke' || needs.changes.outputs.ios_ui_groups) }}
         run: bash scripts/ios/verify.sh
       - name: Compare focused UI coverage (manual only)
         if: matrix.lane == 'native' && github.event_name == 'workflow_dispatch' && inputs.benchmark_ui_group != 'none'
@@ -156,11 +161,13 @@ jobs:
         if: matrix.lane == 'native' && github.event_name == 'pull_request'
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## Native UI regression deferred
+          ## Full native UI regression deferred
 
-          This required PR check ran the build and unit-test gate. The complete
-          serial native UI suite runs fail-closed on the subsequent `main` push
-          and can also be run with `workflow_dispatch`.
+          This required PR check ran the build and unit-test gate, plus a
+          bounded native UI subset when the PR touches native UI inputs (smoke
+          and the affected feature group, or smoke alone for shared changes).
+          The complete serial native UI suite runs fail-closed on the
+          subsequent `main` push and can also be run with `workflow_dispatch`.
           EOF
 
   build-and-test:
