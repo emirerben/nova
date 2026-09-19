@@ -19,7 +19,7 @@ from typing import Any, ClassVar, Literal
 import structlog
 from pydantic import BaseModel, Field
 
-from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
+from app.agents._runtime import Agent, AgentSpec, RefusalError, RunContext, SchemaError
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
@@ -1861,6 +1861,10 @@ class _ParseState:
         self.confidence = confidence
         self.invalid_value_seen = False
         self.rejection_reasons: list[dict[str, str]] = []
+        # The raw op currently being parsed, and the ones rejected for values
+        # the model could fix on a second try (see `_value_retry_hint`).
+        self.current_raw: dict[str, Any] | None = None
+        self.invalid_raw_ops: list[dict[str, Any]] = []
 
     def invalid_value(self) -> None:
         self.invalid_value_seen = True
@@ -1868,6 +1872,43 @@ class _ParseState:
 
     def reject(self, *, op: str, reason: str, detail: str) -> None:
         self.rejection_reasons.append({"op": op, "reason": reason, "detail": detail})
+        if (
+            reason in _VALUE_RETRY_REASONS
+            and isinstance(self.current_raw, dict)
+            and len(self.invalid_raw_ops) < _VALUE_RETRY_MAX_OPS
+        ):
+            self.invalid_raw_ops.append(self.current_raw)
+
+
+_VALUE_RETRY_REASONS = frozenset({"invalid_value", "missing_required"})
+_VALUE_RETRY_MAX_OPS = 8
+_VALUE_RETRY_RULES = (
+    "Value rules: position must be one of top, middle, bottom, custom -- "
+    "for a corner or an exact spot use position custom with x_frac and y_frac "
+    "as CENTRE fractions 0-1 (top left ~ x 0.3, y 0.12; bottom right ~ x 0.7, "
+    "y 0.85) plus alignment; alignment left|center|right; text_case "
+    "none|upper|lower|title; colors are #RRGGBB; size_px 8-300; stroke_width "
+    "0-20; shadow_enabled true|false; font_family and effect must be names "
+    "listed in this prompt; every index must exist in CURRENT DRAFT; times are "
+    "seconds within the draft's duration."
+)
+
+
+def _value_retry_hint(state: _ParseState) -> str:
+    """One targeted retry: quote what was rejected and the rules it broke."""
+    rejected = json.dumps(state.invalid_raw_ops, ensure_ascii=False)[:1200]
+    details = "; ".join(
+        f"{item['op']}: {item['detail']}"
+        for item in state.rejection_reasons
+        if item["reason"] in _VALUE_RETRY_REASONS
+    )[:600]
+    return (
+        "\n\nYour previous reply was rejected because these operations carried "
+        f"invalid or missing values: {rejected}. Reasons: {details}. {_VALUE_RETRY_RULES} "
+        "Re-emit the SAME requested edit with valid values (keep every other field "
+        "unchanged). If it genuinely cannot be expressed, return ops: [] and say what "
+        "is not possible instead of claiming a change."
+    )
 
 
 _BULK_SCOPES = frozenset({"timeline", "unused_sources"})
@@ -3154,6 +3195,24 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 current_pending,
             )
 
+        if (
+            outcome == "failed"
+            and state.invalid_raw_ops
+            and self._value_retry_armed
+            and not self._value_retry_used
+        ):
+            # The model understood the request but wrote a value the contract
+            # does not accept (e.g. position "top_left"). Dropping the op and
+            # telling the creator "I couldn't build a valid draft change" wastes
+            # a turn the model can fix itself: raise once so the runtime's
+            # schema retry re-asks with the rejected ops quoted (2026-09-19,
+            # job d9a965b0). A second failure returns honestly as before.
+            self._value_retry_used = True
+            self._value_retry_hint = _value_retry_hint(state)
+            raise SchemaError(
+                "edit_copilot: operation values rejected -- retrying with the rejected ops quoted"
+            )
+
         try:
             return EditCopilotOutput(
                 intent=intent,  # type: ignore[arg-type]
@@ -3170,13 +3229,25 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         except Exception as exc:  # noqa: BLE001
             raise RefusalError(f"edit_copilot: output validation — {exc}") from exc
 
+    # Per-instance targeted retry state (one EditCopilotAgent per turn). The
+    # retry is only armed inside `run()`: a direct `parse()` (tests, replay
+    # tooling) keeps returning the honest "failed" outcome without raising.
+    _value_retry_armed: bool = False
+    _value_retry_used: bool = False
+    _value_retry_hint: str | None = None
+
+    def run(self, input: EditCopilotInput | dict, *, ctx: RunContext | None = None):  # noqa: A002
+        self._value_retry_armed = getattr(self.client, "supports_clarification_retry", True)
+        return super().run(input, ctx=ctx)
+
     def schema_clarification(self) -> str:
+        hint = self._value_retry_hint or ""
         return (
             "\n\nIMPORTANT: return ONLY valid JSON with keys: intent "
             "(edit|clarify|describe|reject|unknown), ops (array of editor op objects), "
             "confidence (float 0-1), reply (string), suggestions (list of short chips), "
             "needs_clarification (boolean), clarification_context (object or null), "
-            "pending_actions (array). No markdown or prose outside JSON."
+            "pending_actions (array). No markdown or prose outside JSON." + hint
         )
 
     def refusal_clarification(self) -> str:
@@ -3197,6 +3268,7 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         state.reject(op="unknown", reason="unknown_operation", detail="operation must be an object")
         return None
 
+    state.current_raw = raw_op
     name = str(raw_op.get("op") or raw_op.get("type") or "").strip()
     if name not in _VALID_OPS:
         log.warning("edit_copilot.drop_unknown_op", op=name)
