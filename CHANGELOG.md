@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.81.0] - 2026-09-19
+
+### Changed
+- fix(creator): apply post-render chat edits through the edit copilot instead of re-planning (#1092) <!-- release-pr: 1092 -->
+
 ## [0.76.80.0] - 2026-09-19
 
 ### Changed
