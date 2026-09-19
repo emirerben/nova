@@ -7686,3 +7686,35 @@ def test_guided_raw_revision_is_not_a_public_write_surface(monkeypatch):
 
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail == "GUIDED_REVISION_WIRE_UNSUPPORTED"
+
+
+def test_device_guided_story_permits_deleting_text_bars() -> None:
+    # A phone variant has no cloud render receipt; its recipe is recompiled
+    # from the saved text lane, so removing a thought bar is a real edit
+    # (2026-09-19 chat-edit incident: every deletion was a 422 on the phone).
+    title = {**_VALID_ELEMENT, "id": "guided-title", "text": "Title"}
+    thought = {**_VALID_ELEMENT, "id": "guided-thought-1", "text": "Thought"}
+    variant = {
+        "resolved_archetype": "guided_story",
+        "render_destination": "device",
+        "text_elements": [title, thought],
+    }
+
+    gj._require_guided_story_text_ids(variant, [title])
+    gj._require_guided_story_text_ids(variant, [])
+
+    with pytest.raises(HTTPException) as exc:
+        gj._require_guided_story_text_ids(variant, [{**title, "start_s": "not-a-number"}])
+    assert exc.value.detail["code"] == "guided_story_text_required"
+
+
+def test_cloud_guided_story_still_requires_every_approved_text_id() -> None:
+    element = {**_VALID_ELEMENT, "id": "guided-thought-1"}
+    variant = {
+        "resolved_archetype": "guided_story",
+        "render_receipt": {"approved_text_ids": ["guided-thought-1"]},
+        "text_elements": [element],
+    }
+    gj._require_guided_story_text_ids(variant, [element])
+    with pytest.raises(HTTPException):
+        gj._require_guided_story_text_ids(variant, [])
