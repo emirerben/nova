@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.88.0] - 2026-09-19
+
+### Changed
+- fix(auth): share one refresh in flight across API client instances + server reuse grace (KRI-119) (#1099) <!-- release-pr: 1099 -->
+
 ## [0.76.87.0] - 2026-09-19
 
 ### Changed
