@@ -34,7 +34,9 @@ _PORTABLE_FAMILIES = {
     "automatic_cut",
     "caption",
     "clip",
+    "effect",
     "music",
+    "sfx",
     "text",
     "title",
     "transition",
@@ -127,11 +129,90 @@ def _removable_visual_media(job: Any, variant: dict[str, Any]) -> list[dict[str,
     ]
 
 
+def _music_operation_editable(caps: dict[str, Any], key: str) -> bool:
+    music_ops = caps.get("music_operations")
+    value = music_ops.get(key) if isinstance(music_ops, dict) else None
+    if isinstance(value, dict):
+        return value.get("editable") is True
+    return value is True
+
+
+def _music_removable(caps: dict[str, Any], current_track_id: str | None) -> bool:
+    if not current_track_id:
+        return False
+    music_ops = caps.get("music_operations")
+    # Only guided_story-v2 variants expose a per-operation `music_operations`
+    # map (e.g. reference_only music blocks "remove" independently of a track
+    # simply being present). Legacy/montage capabilities never set this key,
+    # so preserve the prior "any current track is removable" behavior there.
+    if isinstance(music_ops, dict) and "remove" in music_ops:
+        return _music_operation_editable(caps, "remove")
+    return True
+
+
+def _source_pool_rows(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]:
+    """Path-free bulk-selector catalog for add_unused_sources/set_media_duration/
+    stack_images.
+
+    Mirrors just enough of the web drawer's `source_pool` rows for
+    `_bulk_source_catalog_present`/`_bulk_target_rows` in app/agents/edit_copilot.py
+    to resolve real target counts and a stable selection digest. Without this,
+    every bulk selector on the phone/server chat path failed closed with a
+    "stale_target"/clarification response because no source catalog (`source_pool`,
+    `sources`, or `clips`) was ever present in the snapshot (2026-09-19 audit).
+    """
+    paths = list((job.all_candidates or {}).get("clip_paths") or [])
+    slots = _variant_slots(variant)
+    used_clip_indexes = {
+        row.get("clip_index")
+        for row in slots
+        if not row.get("removed") and row.get("clip_index") is not None
+    }
+    durations = {
+        int(row["clip_index"]): float(row["source_duration_s"])
+        for row in slots
+        if row.get("clip_index") is not None and row.get("source_duration_s") is not None
+    }
+    return [
+        {
+            "clip_index": index,
+            "media_id": str(index),
+            "kind": _path_kind(path),
+            # `add_unused_sources` requires a truthy generation on every
+            # target row (edit_copilot.py: "every added source requires an
+            # exact ready generation") as a staleness guard. There is no
+            # separate per-clip generation concept on `job.all_candidates`,
+            # so derive a stable, path-free proxy: it changes if and only if
+            # the underlying clip path changes, which is exactly the
+            # invalidation this field exists to provide.
+            "generation": hashlib.sha256(path.encode("utf-8")).hexdigest()[:12],
+            "duration_s": durations.get(index),
+            "used": index in used_clip_indexes,
+            "ready": True,
+        }
+        for index, path in enumerate(paths)
+    ]
+
+
 def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     caps = _editor_capabilities(job, variant)
     families: list[str] = []
     if caps.get("text_elements") is True:
-        families.extend(["text", "title"])
+        families.append("text")
+    # Title editing is gated independently of text_elements — mirrors the web
+    # drawer's canEditIntroControls (`capabilities.intro_controls !== false`).
+    # A guided_story-v2 variant can have text_elements editable (its title is
+    # an ordinary "guided-title" text bar) while intro_controls stays False;
+    # the atomic Save route rejects `payload.title` outright for those variants
+    # (`guided_story_editor_v2_section_unsupported`). Advertising "title" there
+    # let the model call set_title, which always failed downstream (2026-09-19
+    # snapshot-parity audit).
+    if caps.get("intro_controls") is not False or _has_guided_title_bar(variant):
+        # Guided stories keep their title as the "guided-title" text bar; the
+        # parser rewrites set_title into edit_text on that bar (see
+        # `_guided_title_index` in app/agents/edit_copilot.py), which the
+        # family gate must let through even though intro_controls is False.
+        families.append("title")
     if caps.get("timeline") is True:
         families.append("clip")
         clips = caps.get("clips") or {}
@@ -159,7 +240,23 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         families.append("music")
     if _removable_visual_media(job, variant):
         families.append("visual_media")
+    # Phone recipes do not render the sound-effect or camera-effect lanes yet
+    # (KRI-114 Phase 4): the phone compiler rejects them at commit, so a
+    # device-rendered variant must not advertise families that can only end
+    # in a 422 unsupported_phone_edit.
+    on_device = variant.get("render_destination") == "device"
+    if caps.get("sfx") is True and not on_device:
+        families.append("sfx")
+    if caps.get("camera_effects") is True and not on_device:
+        families.append("effect")
     return sorted(set(families) & _PORTABLE_FAMILIES)
+
+
+def _has_guided_title_bar(variant: dict[str, Any]) -> bool:
+    return variant.get("resolved_archetype") == "guided_story" and any(
+        isinstance(row, dict) and row.get("id") == "guided-title" and not row.get("removed")
+        for row in variant.get("text_elements") or []
+    )
 
 
 _TEXT_APPEARANCE_FIELDS = ("stroke_width", "shadow_enabled")
@@ -252,6 +349,7 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
         if isinstance(row, dict)
     ]
     families = _allowed_families(job, variant)
+    caps = _editor_capabilities(job, variant)
     snapshot: dict[str, Any] = {
         "allowed_op_families": families,
         "base_generation": variant_render_baseline(variant),
@@ -263,6 +361,13 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
         "text_bars": text_bars,
         "total_duration_s": duration,
     }
+    timeline_max_slots = caps.get("timeline_max_slots")
+    if isinstance(timeline_max_slots, int) and timeline_max_slots > 0:
+        snapshot["editor_limits"] = {"max_timeline_slots": timeline_max_slots}
+    if "clip" in families:
+        # Unlocks add_unused_sources/set_media_duration/stack_images bulk
+        # selectors — see `_source_pool_rows`.
+        snapshot["source_pool"] = _source_pool_rows(job, variant)
     if "text" in families and _text_appearance_enabled():
         # The web drawer builds this inventory client-side; the server chat
         # path never did, so the model's correct "remove shadow and outline"
@@ -302,13 +407,57 @@ def build_editor_snapshot(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
     current_track_id = variant.get("music_track_id")
     if "music" in snapshot["allowed_op_families"]:
         snapshot["music"] = {
+            # A real swap candidate list needs a DB-backed music-library
+            # lookup this pure (job, variant) function cannot make today —
+            # see docs/reviews/copilot-snapshot-parity-2026-09-19.md. Keep
+            # swappable False rather than advertise a family the parser can
+            # only ever reject (swap_music requires `track_id` to resolve
+            # against `music.candidates`).
             "swappable": False,
-            "removable": bool(current_track_id),
+            "removable": _music_removable(caps, current_track_id),
             "current_track_id": current_track_id,
             "current_track_title": None,
             "candidates": [],
         }
         snapshot["mix"] = {"music_level": variant.get("mix")}
+    if "sfx" in snapshot["allowed_op_families"]:
+        placements = [row for row in variant.get("sound_effects") or [] if isinstance(row, dict)]
+        snapshot["sfx"] = {
+            "placements": [
+                {
+                    "index": index,
+                    "id": row.get("id"),
+                    "label": row.get("label"),
+                    "at_s": row.get("at_s"),
+                    "gain": row.get("gain", 1.0),
+                    "duration_s": row.get("duration_s"),
+                    "effect_group_id": row.get("effect_group_id"),
+                }
+                for index, row in enumerate(placements)
+            ],
+            # The public sound-effects catalog needs a DB lookup this pure
+            # function cannot make (same limitation as music candidates
+            # above). An empty catalog is safe, not silently broken: the
+            # parser's add_sfx branch requires `effect_id` to resolve via
+            # `_id_in_section(..., "sfx", "catalog", "id")`, so add_sfx
+            # always fails closed as a clarification — it never reaches
+            # compile_editor_ops. patch_sfx/remove_sfx on existing
+            # placements work fully without a catalog.
+            "catalog": [],
+        }
+    if "effect" in snapshot["allowed_op_families"]:
+        snapshot["camera_effects"] = [
+            {
+                "index": index,
+                "id": row.get("id"),
+                "start_s": row.get("start_s"),
+                "end_s": row.get("end_s"),
+                "intensity": row.get("intensity"),
+                "effect_group_id": row.get("effect_group_id"),
+            }
+            for index, row in enumerate(variant.get("camera_effects") or [])
+            if isinstance(row, dict)
+        ]
     guided = _guided_v2_revision(job, variant)
     if guided is not None:
         snapshot["guided_revision"] = {
@@ -476,6 +625,12 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
 
     captions = copy.deepcopy(
         [row for row in variant.get("caption_cues") or [] if isinstance(row, dict)]
+    )
+    camera_effects = copy.deepcopy(
+        [row for row in variant.get("camera_effects") or [] if isinstance(row, dict)]
+    )
+    sound_effects = copy.deepcopy(
+        [row for row in variant.get("sound_effects") or [] if isinstance(row, dict)]
     )
     slots = _variant_slots(variant)
     base_generation = variant_render_baseline(variant)
@@ -735,6 +890,41 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         elif name == "set_title":
             title = str(op["title"])
             changed.add("title")
+        elif name == "add_camera_effect":
+            camera_effects.append(
+                {
+                    "id": f"kria-{uuid.uuid4().hex}",
+                    "start_s": float(op["start_s"]),
+                    "end_s": float(op["end_s"]),
+                    "intensity": float(op.get("intensity", 0.04)),
+                    "effect_group_id": op.get("effect_bundle_id"),
+                }
+            )
+            changed.add("camera_effects")
+        elif name in {"patch_camera_effect", "remove_camera_effect"}:
+            index = _require_index(camera_effects, op.get("camera_effect_index"), "Camera effect")
+            if name == "remove_camera_effect":
+                camera_effects.pop(index)
+            else:
+                patch = {
+                    key: value
+                    for key, value in dict(op).items()
+                    if key in {"start_s", "end_s", "intensity"}
+                }
+                if not patch:
+                    raise KriaEditorOpError("No portable camera effect field was supplied")
+                camera_effects[index].update(patch)
+            changed.add("camera_effects")
+        elif name in {"patch_sfx", "remove_sfx"}:
+            index = _require_index(sound_effects, op.get("sfx_index"), "Sound effect")
+            if name == "remove_sfx":
+                sound_effects.pop(index)
+            else:
+                patch = {key: value for key, value in dict(op).items() if key in {"at_s", "gain"}}
+                if not patch:
+                    raise KriaEditorOpError("No portable sound effect field was supplied")
+                sound_effects[index].update(patch)
+            changed.add("sound_effects")
         else:
             raise KriaEditorOpError(f"{name or 'Unknown operation'} is not portable to Kria yet")
         changes.append(_summary(op))
@@ -754,6 +944,8 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         music_track_id=music_track_id,
         remove_music=remove_music,
         title=title,
+        camera_effects=camera_effects if "camera_effects" in changed else None,
+        sound_effects=sound_effects if "sound_effects" in changed else None,
     )
     return CompiledEditorDraft(payload=request, changes=list(dict.fromkeys(changes))[:3])
 

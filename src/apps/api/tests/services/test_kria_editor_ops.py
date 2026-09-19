@@ -769,3 +769,331 @@ def test_patch_text_appearance_rejects_a_target_removed_earlier_in_the_bundle() 
                 },
             ],
         )
+
+
+# --- Snapshot-parity additions (2026-09-19 audit) --------------------------
+#
+# The web drawer negotiates several sections client-side that the server
+# chat-edit snapshot never carried, so operations the model could otherwise
+# validly propose (bulk source selectors, sfx/camera-effect edits) were
+# always rejected — the same failure mode as the text_appearance incident
+# above. These tests pin the closed gaps and the deliberately-safe partial
+# ones (add_sfx without a DB-backed catalog).
+
+
+def test_title_family_excluded_when_intro_controls_disabled(monkeypatch) -> None:
+    # Mirrors the web drawer's canEditIntroControls: a guided_story-v2
+    # variant can have text_elements editable (the title is an ordinary
+    # "guided-title" text bar) while intro_controls is False. The atomic
+    # Save route rejects `payload.title` outright for those variants, so
+    # advertising "title" there let the model call set_title into a wall.
+    variant = _variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "intro_controls": False},
+    )
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    assert "title" not in snapshot["allowed_op_families"]
+    assert "text" in snapshot["allowed_op_families"]
+
+
+def test_title_family_included_when_intro_controls_absent(monkeypatch) -> None:
+    variant = _variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True},
+    )
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    assert "title" in snapshot["allowed_op_families"]
+
+
+def test_music_removable_requires_capability_when_music_operations_present(
+    monkeypatch,
+) -> None:
+    variant = _variant()  # carries a music_track_id
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {
+            "text_elements": True,
+            "mix": True,
+            "music_operations": {"remove": {"editable": False}},
+        },
+    )
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    assert snapshot["music"]["removable"] is False
+
+
+def test_music_removable_true_when_track_present_and_no_music_operations_map(
+    monkeypatch,
+) -> None:
+    variant = _variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "mix": True},
+    )
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    assert snapshot["music"]["removable"] is True
+
+
+def test_editor_limits_reflects_capability_ceiling(monkeypatch) -> None:
+    variant = _variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {
+            "text_elements": True,
+            "timeline": True,
+            "timeline_max_slots": 24,
+        },
+    )
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    assert snapshot["editor_limits"] == {"max_timeline_slots": 24}
+
+
+def test_snapshot_exposes_source_pool_for_bulk_selectors(monkeypatch) -> None:
+    # Without `source_pool`, `_bulk_source_catalog_present` in edit_copilot.py
+    # never finds a catalog, so add_unused_sources/set_media_duration/
+    # stack_images fail closed with "stale_target" on every phone chat turn.
+    variant = _variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "timeline": True},
+    )
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    assert "clip" in snapshot["allowed_op_families"]
+    pool = snapshot["source_pool"]
+    assert [row["clip_index"] for row in pool] == [0, 1, 2]
+    assert pool[0]["used"] is True
+    assert pool[2]["used"] is False
+    assert pool[2]["kind"] == "image"
+    encoded = json.dumps(snapshot)
+    assert "users/" not in encoded
+
+
+def test_add_unused_sources_end_to_end_parse_and_compile(monkeypatch) -> None:
+    from app.agents._runtime import ModelClient
+    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+
+    variant = _variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "timeline": True},
+    )
+    job = _job(variant)
+    snapshot = build_editor_snapshot(job, variant)
+    raw = json.dumps(
+        {
+            "intent": "edit",
+            "ops": [
+                {
+                    "op": "add_unused_sources",
+                    "selector": {
+                        "scope": "unused_sources",
+                        "media_kind": "image",
+                        "quantifier": "all",
+                    },
+                }
+            ],
+            "confidence": 0.9,
+            "reply": "Added your remaining photo.",
+            "suggestions": [],
+            "needs_clarification": False,
+        }
+    )
+    output = EditCopilotAgent(ModelClient()).parse(
+        raw,
+        EditCopilotInput(
+            utterance="Add the rest of my unused photos to the video",
+            prior_turns=[],
+            variant_snapshot=snapshot,
+        ),
+    )
+    assert output.outcome == "proposed"
+    assert [op["op"] for op in output.ops] == ["add_unused_sources"]
+
+    compiled = compile_editor_ops(job, variant, output.ops)
+    saved_slots = compiled.payload.model_dump(mode="json", exclude_none=True)["timeline_slots"]
+    assert [row["clip_index"] for row in saved_slots] == [0, 1, 2]
+
+
+def _sfx_variant() -> dict:
+    variant = _variant()
+    variant["sound_effects"] = [
+        {
+            "id": "sfx-1",
+            "sound_effect_id": "pop",
+            "label": "Pop",
+            "at_s": 1.0,
+            "gain": 1.0,
+            "duration_s": 0.4,
+            "src_gcs_path": "sound-effects/pop/audio.mp3",
+        }
+    ]
+    return variant
+
+
+def test_sfx_snapshot_exposes_placements_with_an_empty_catalog(monkeypatch) -> None:
+    variant = _sfx_variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "sfx": True},
+    )
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    assert "sfx" in snapshot["allowed_op_families"]
+    assert snapshot["sfx"]["catalog"] == []
+    assert snapshot["sfx"]["placements"] == [
+        {
+            "index": 0,
+            "id": "sfx-1",
+            "label": "Pop",
+            "at_s": 1.0,
+            "gain": 1.0,
+            "duration_s": 0.4,
+            "effect_group_id": None,
+        }
+    ]
+    assert "sound-effects/" not in json.dumps(snapshot)
+
+
+def test_patch_sfx_and_remove_sfx_compile() -> None:
+    variant = _sfx_variant()
+    compiled = compile_editor_ops(
+        _job(variant), variant, [{"op": "patch_sfx", "sfx_index": 0, "gain": 0.5}]
+    )
+    saved = compiled.payload.model_dump(mode="json", exclude_none=True)["sound_effects"]
+    assert saved[0]["gain"] == 0.5
+    # Untouched fields (including the resolved asset path) survive the patch.
+    assert saved[0]["src_gcs_path"] == "sound-effects/pop/audio.mp3"
+
+    compiled = compile_editor_ops(_job(variant), variant, [{"op": "remove_sfx", "sfx_index": 0}])
+    assert compiled.payload.model_dump(mode="json", exclude_none=True)["sound_effects"] == []
+
+
+def test_add_sfx_fails_closed_without_a_catalog(monkeypatch) -> None:
+    # `add_sfx` needs a DB-backed effect catalog this pure (job, variant)
+    # function cannot fetch (see the parity doc). The parser's own
+    # `_id_in_section(..., "sfx", "catalog", "id")` check must reject it
+    # BEFORE it ever reaches compile_editor_ops — never advertise a
+    # capability, then silently drop the whole turn when it turns out to be
+    # uncompilable.
+    from app.agents._runtime import ModelClient
+    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+
+    variant = _sfx_variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "sfx": True},
+    )
+    snapshot = build_editor_snapshot(_job(variant), variant)
+    raw = json.dumps(
+        {
+            "intent": "edit",
+            "ops": [{"op": "add_sfx", "effect_id": "sfx_pop", "at_s": 1.2, "gain": 1.0}],
+            "confidence": 0.8,
+            "reply": "Added a pop sound.",
+            "suggestions": [],
+            "needs_clarification": False,
+        }
+    )
+    output = EditCopilotAgent(ModelClient()).parse(
+        raw,
+        EditCopilotInput(utterance="Add a pop sound", prior_turns=[], variant_snapshot=snapshot),
+    )
+    assert output.ops == []
+    assert output.outcome != "proposed"
+
+
+def _camera_effect_variant() -> dict:
+    variant = _variant()
+    variant["resolved_archetype"] = "subtitled"
+    variant["base_video_path"] = "users/u/base.mp4"
+    variant["camera_effects"] = [
+        {"id": "cam-1", "start_s": 1.0, "end_s": 2.2, "intensity": 0.04, "effect_group_id": None}
+    ]
+    return variant
+
+
+def test_camera_effects_end_to_end_add_and_patch(monkeypatch) -> None:
+    from app.agents._runtime import ModelClient
+    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+
+    variant = _camera_effect_variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "camera_effects": True},
+    )
+    job = _job(variant)
+    snapshot = build_editor_snapshot(job, variant)
+    assert "effect" in snapshot["allowed_op_families"]
+    assert snapshot["camera_effects"][0]["id"] == "cam-1"
+    assert "users/" not in json.dumps(snapshot)
+
+    raw = json.dumps(
+        {
+            "intent": "edit",
+            "ops": [
+                {"op": "patch_camera_effect", "camera_effect_index": 0, "intensity": 0.02},
+                {"op": "add_camera_effect", "start_s": 3.0, "end_s": 4.0, "intensity": 0.06},
+            ],
+            "confidence": 0.9,
+            "reply": "Adjusted the punch-ins.",
+            "suggestions": [],
+            "needs_clarification": False,
+        }
+    )
+    output = EditCopilotAgent(ModelClient()).parse(
+        raw,
+        EditCopilotInput(
+            utterance="Make the first zoom subtler and add another one later",
+            prior_turns=[],
+            variant_snapshot=snapshot,
+        ),
+    )
+    assert output.outcome == "proposed"
+    assert [op["op"] for op in output.ops] == ["patch_camera_effect", "add_camera_effect"]
+
+    compiled = compile_editor_ops(job, variant, output.ops)
+    saved = compiled.payload.model_dump(mode="json", exclude_none=True)["camera_effects"]
+    assert len(saved) == 2
+    assert saved[0]["intensity"] == 0.02
+    assert saved[1]["start_s"] == 3.0
+    assert saved[1]["end_s"] == 4.0
+
+
+def test_remove_camera_effect_compiles() -> None:
+    variant = _camera_effect_variant()
+    compiled = compile_editor_ops(
+        _job(variant), variant, [{"op": "remove_camera_effect", "camera_effect_index": 0}]
+    )
+    assert compiled.payload.model_dump(mode="json", exclude_none=True)["camera_effects"] == []
+
+
+def test_guided_story_keeps_the_title_family_for_its_title_bar(monkeypatch) -> None:
+    # Guided v2 reports intro_controls False (the title is the "guided-title"
+    # bar, and the parser rewrites set_title into edit_text on it); the family
+    # gate must still admit set_title there.
+    variant = _variant()
+    variant["resolved_archetype"] = "guided_story"
+    variant["text_elements"][0]["id"] = "guided-title"
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "intro_controls": False},
+    )
+    assert "title" in build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
+
+    variant["text_elements"][0]["id"] = "text-1"
+    assert "title" not in build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
+
+
+def test_device_variants_do_not_advertise_lanes_the_phone_cannot_render(monkeypatch) -> None:
+    variant = _variant()
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True, "sfx": True, "camera_effects": True},
+    )
+    assert {"sfx", "effect"} <= set(
+        build_editor_snapshot(_job(variant), variant)["allowed_op_families"]
+    )
+
+    variant["render_destination"] = "device"
+    families = set(build_editor_snapshot(_job(variant), variant)["allowed_op_families"])
+    assert not families & {"sfx", "effect"}
