@@ -84,9 +84,11 @@ private final class MediaDiagnosticModel: ObservableObject {
                 .appending(path: "KriaDiagnostics", directoryHint: .isDirectory)
             let output = root.appending(path: "exports/diagnostic-\(UUID().uuidString).mp4")
             let checkpoints = FileExportStateStore(directory: root.appending(path: "checkpoints"))
+            // Unbranded: a diagnostic cut, not a published video.
             let exporter = AVFoundationLocalExporter(
                 stateStore: checkpoints,
-                instrumentation: metrics
+                instrumentation: metrics,
+                branding: .none
             )
             message = "Exporting the native 1080 × 1920 diagnostic cut…"
             let checkpoint = try await exporter.export(
