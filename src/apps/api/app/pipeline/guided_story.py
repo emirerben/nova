@@ -55,6 +55,11 @@ _DURATION_MATCH_TOLERANCE_S = 0.001
 # confirmed copy is never dropped.
 _MIN_CLEAR_TEXT_WINDOW_S = 0.5
 _MEDIA_PREP_MAX_WORKERS = 3
+# Transparent photos are matted over this opaque colour before FFmpeg sees
+# them. The iPhone engine mirrors it (StillFrame.flattened in
+# src/apps/ios/Packages/KriaMediaEngine) — change both or cloud and phone
+# renders of the same photo diverge.
+_GUIDED_IMAGE_MATTE_RGB = (0, 0, 0)
 _DIRECTION_POLICY = {
     "guided_story": {
         "min_moment_s": GUIDED_STORY_MIN_MOMENT_S,
@@ -2846,6 +2851,12 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
         image2-only ``-loop`` option used by the story motion renderer. Keep the
         downloaded source untouched for the identity receipt and create a
         separate, EXIF-corrected JPEG/PNG solely for rendering.
+
+        Transparency never reaches FFmpeg: the fullscreen graphs drop alpha
+        (exposing whatever RGB hides under it) while the card overlay keeps
+        it, so the same file rendered differently per layout. Alpha images are
+        matted over ``_GUIDED_IMAGE_MATTE_RGB`` on encoded 8-bit sRGB values,
+        the exact rule the iPhone engine applies, and stay lossless PNG.
         """
         with Image.open(source) as opened:
             image = ImageOps.exif_transpose(opened)
@@ -2853,7 +2864,10 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
             has_alpha = "A" in image.getbands() or "transparency" in image.info
             if has_alpha:
                 render_path = f"{os.path.splitext(source)[0]}_render.png"
-                image.convert("RGBA").save(render_path, format="PNG", optimize=False)
+                rgba = image.convert("RGBA")
+                matte = Image.new("RGBA", rgba.size, (*_GUIDED_IMAGE_MATTE_RGB, 255))
+                flat = Image.alpha_composite(matte, rgba).convert("RGB")
+                flat.save(render_path, format="PNG", optimize=False)
             else:
                 render_path = f"{os.path.splitext(source)[0]}_render.jpg"
                 image.convert("RGB").save(

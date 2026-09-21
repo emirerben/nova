@@ -388,6 +388,212 @@ def test_library_download_rejects_legacy_recipe(fixture, monkeypatch):
     assert download_asset(fixture).status_code == 404
 
 
+def visual_recipe(fixture, monkeypatch, visual_id=None, kind="image"):
+    """Pin a recipe whose only asset is the job owner's own pool photo or video."""
+    from app.kria.recipes_v2 import EditRecipeV2
+    from app.models import PlanItemAsset
+    from app.services.phone_sources import PhoneVisualBinding
+
+    item_id = uuid.uuid4()
+    fixture.job.content_plan_item_id = item_id
+    visual_id = visual_id or str(uuid.uuid4())
+    row = SimpleNamespace(
+        id=visual_id,
+        user_id=fixture.user.id,
+        plan_item_id=item_id,
+        status="ready",
+        kind=kind,
+        gcs_generation="42",
+        gcs_path=f"users/{fixture.user.id}/plan/{item_id}/pool/{visual_id}"
+        + (".mov" if kind == "video" else ".jpg"),
+    )
+    probe = {"duration_s": 8, "width": 1920, "height": 1080} if kind == "video" else {}
+    asset = PhoneVisualBinding(
+        media_id=visual_id,
+        gcs_path=row.gcs_path,
+        generation="42",
+        sha256="a" * 64,
+        byte_count=12,
+        kind=kind,
+        **probe,
+    ).render_asset()
+    value = fixture.request.recipe.model_dump(mode="json")
+    value.update(
+        schema_version=2,
+        renderer_version="kria-ios-2",
+        asset_manifest={"assets": [asset.model_dump()]},
+    )
+    value["assets"][0].update(
+        id=asset.id,
+        relative_path=asset.id,
+        fingerprint={"algorithm": "sha256", "hex": "a" * 64, "byte_count": 12},
+    )
+    value["tracks"][0]["clips"][0]["source_asset_id"] = asset.id
+    fixture.request = make_device_request(
+        job_id=fixture.job.id,
+        variant_id="first",
+        revision=2,
+        recipe=EditRecipeV2.model_validate(value),
+    )
+    pin_device_request(fixture.job, fixture.request, base_generation="approved")
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+
+    async def get(model, key, **kwargs):
+        assert model is PlanItemAsset
+        return row if str(key) == str(row.id) else None
+
+    fixture.db.get.side_effect = get
+    signer = MagicMock(return_value="https://storage.example/pinned")
+    monkeypatch.setattr(routes.storage, "signed_get_url_for_generation", signer)
+    return asset, row, signer
+
+
+def test_visual_download_signs_exactly_the_pinned_pool_generation(fixture, monkeypatch):
+    asset, row, signer = visual_recipe(fixture, monkeypatch)
+    assert asset.id == f"visual-{row.id}"
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(row.gcs_path, generation="42")
+    assert response.json()["asset_id"] == asset.id
+    assert response.json()["download_url"] == "https://storage.example/pinned"
+    # A cached identity-map row could hide a concurrent removal or replacement.
+    assert fixture.db.get.await_args.kwargs == {"populate_existing": True}
+    # The owner lock is released before the (network-free) signing call.
+    fixture.db.rollback.assert_awaited_once()
+
+
+@pytest.mark.parametrize("mutation", ["owner", "other_item", "no_item", "missing", "bad_uuid"])
+def test_visual_download_hides_photos_outside_the_jobs_own_item(fixture, monkeypatch, mutation):
+    asset, row, signer = visual_recipe(
+        fixture, monkeypatch, visual_id="not-a-uuid" if mutation == "bad_uuid" else None
+    )
+    if mutation == "owner":
+        row.user_id = uuid.uuid4()
+    elif mutation == "other_item":
+        row.plan_item_id = uuid.uuid4()
+    elif mutation == "no_item":
+        fixture.job.content_plan_item_id = None
+    elif mutation == "missing":
+        row.id = uuid.uuid4()
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == "Visual unavailable"
+    signer.assert_not_called()
+    if mutation == "bad_uuid":
+        fixture.db.get.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "not_ready",
+        "video",
+        "generation",
+        "no_generation",
+        "other_owner_prefix",
+        "other_item_prefix",
+        "dot_dot",
+        "empty_segment",
+        "bare_prefix",
+        "removed",
+        "unsignable",
+    ],
+)
+def test_visual_download_rejects_changed_pool_rows(fixture, monkeypatch, mutation):
+    asset, row, signer = visual_recipe(fixture, monkeypatch)
+    prefix = f"users/{fixture.user.id}/plan/{row.plan_item_id}/pool/"
+    if mutation == "not_ready":
+        row.status = "analyzing"
+    elif mutation == "video":
+        row.kind = "video"
+    elif mutation == "generation":
+        row.gcs_generation = "43"
+    elif mutation == "no_generation":
+        row.gcs_generation = None
+    elif mutation == "other_owner_prefix":
+        row.gcs_path = f"users/{uuid.uuid4()}/plan/{row.plan_item_id}/pool/photo.jpg"
+    elif mutation == "other_item_prefix":
+        row.gcs_path = f"users/{fixture.user.id}/plan/{uuid.uuid4()}/pool/photo.jpg"
+    elif mutation == "dot_dot":
+        row.gcs_path = f"{prefix}../../{uuid.uuid4()}/pool/photo.jpg"
+    elif mutation == "empty_segment":
+        row.gcs_path = f"{prefix}/photo.jpg"
+    elif mutation == "bare_prefix":
+        row.gcs_path = prefix
+    elif mutation == "removed":
+        signer.side_effect = FileNotFoundError()
+    else:
+        signer.side_effect = ValueError("unsigned")
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Visual changed; refresh the recipe"
+    assert signer.call_count == int(mutation in {"removed", "unsignable"})
+
+
+def test_visual_download_signs_a_pinned_pool_video(fixture, monkeypatch):
+    asset, row, signer = visual_recipe(fixture, monkeypatch, kind="video")
+    assert asset.media_kind == "video"
+    assert "visualVideos" in fixture.request.recipe.required_capabilities
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(row.gcs_path, generation="42")
+    assert response.json()["asset_id"] == asset.id
+    assert response.json()["download_url"] == "https://storage.example/pinned"
+
+
+@pytest.mark.parametrize("pinned,stored", [("video", "image"), ("image", "video")])
+def test_visual_download_requires_the_row_to_be_the_pinned_kind(
+    fixture, monkeypatch, pinned, stored
+):
+    # The device prepares photos and videos differently, so a row whose kind
+    # no longer matches the recipe must not be signed as the other one.
+    asset, row, signer = visual_recipe(fixture, monkeypatch, kind=pinned)
+    row.kind = stored
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Visual changed; refresh the recipe"
+    signer.assert_not_called()
+
+
+@pytest.mark.parametrize("mutation", ["not_ready", "generation", "other_item_prefix"])
+def test_visual_video_download_rejects_changed_pool_rows(fixture, monkeypatch, mutation):
+    asset, row, signer = visual_recipe(fixture, monkeypatch, kind="video")
+    if mutation == "not_ready":
+        row.status = "analyzing"
+    elif mutation == "generation":
+        row.gcs_generation = "43"
+    else:
+        row.gcs_path = f"users/{fixture.user.id}/plan/{uuid.uuid4()}/pool/clip.mov"
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    signer.assert_not_called()
+
+
+def test_visual_download_rejects_a_superseded_recipe(fixture, monkeypatch):
+    asset, _, signer = visual_recipe(fixture, monkeypatch)
+    record = device_record(fixture.job, "first")
+    record["base_generation"] = "different"
+    save_device_record(fixture.job, "first", record)
+    assert download_asset(fixture, asset_id=asset.id).status_code == 409
+    signer.assert_not_called()
+    fixture.db.get.assert_not_awaited()
+
+
+@pytest.mark.parametrize("gate", ["cohort", "kill_switch"])
+def test_visual_download_requires_phone_rendering_for_the_user(fixture, monkeypatch, gate):
+    asset, _, signer = visual_recipe(fixture, monkeypatch)
+    if gate == "cohort":
+        monkeypatch.setattr(settings, "phone_render_user_ids", [uuid.uuid4()])
+    else:
+        monkeypatch.setattr(settings, "phone_rendering_enabled", False)
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Phone rendering is unavailable"
+    routes._owned_job.assert_not_awaited()
+    fixture.db.get.assert_not_awaited()
+    signer.assert_not_called()
+
+
 def test_published_phone_export_edits_pin_next_device_revision(fixture, monkeypatch):
     from app.routes import generative_jobs as gj
     from tests.routes.test_phone_editor_commit import phone_job, save

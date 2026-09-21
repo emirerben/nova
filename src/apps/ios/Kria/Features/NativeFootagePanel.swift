@@ -8,25 +8,10 @@ struct NativeFootagePanel: View {
 
     var body: some View {
         Group {
-            Section("Speed") {
-                NativeEditorSlider(
-                    session: session,
-                    value: Binding(
-                        get: { session.footagePlaybackRate(for: selection) },
-                        set: { session.setFootagePlaybackRate(selection, rate: $0) }
-                    ),
-                    in: 0.25...4,
-                    step: 0.05
-                ) { Text("Playback rate") }
-                Text("Changes footage speed while animation timing stays separate.").font(.footnote).foregroundStyle(.secondary)
-            }
-            Section("Freeform crop") {
-                NativeCropCanvas(crop: $crop, onBegin: { session.beginTransaction() }, onCommit: { value in
-                    session.setFootageCrop(selection, crop: value)
-                    session.endTransaction()
-                })
-                Button("Reset crop") { session.setFootageCrop(selection, crop: nil); crop = .init(x: 0, y: 0, width: 1, height: 1) }
-                    .disabled(crop == .init(x: 0, y: 0, width: 1, height: 1))
+            if session.rendersOnDevice {
+                deviceControls
+            } else {
+                editableControls
             }
         }
         // Recreate the controls when the inspector follows another item. This
@@ -35,6 +20,43 @@ struct NativeFootagePanel: View {
         .id(selection)
         .onAppear {
             crop = session.footageCrop(for: selection) ?? .init(x: 0, y: 0, width: 1, height: 1)
+        }
+    }
+
+    /// The phone renderer can't draw crop or speed yet, so a device variant
+    /// only offers to clear a value saved before that; otherwise Save fails.
+    @ViewBuilder private var deviceControls: some View {
+        Section("Speed and crop") {
+            Text("Crop, speed and looks aren’t available yet for edits rendered on this iPhone.").font(.footnote).foregroundStyle(.secondary)
+            if abs(session.footagePlaybackRate(for: selection) - 1) > 0.000_001 {
+                Button("Reset speed") { session.setFootagePlaybackRate(selection, rate: 1) }
+            }
+            if session.footageCrop(for: selection) != nil {
+                Button("Reset crop") { session.setFootageCrop(selection, crop: nil); crop = .init(x: 0, y: 0, width: 1, height: 1) }
+            }
+        }
+    }
+
+    @ViewBuilder private var editableControls: some View {
+        Section("Speed") {
+            NativeEditorSlider(
+                session: session,
+                value: Binding(
+                    get: { session.footagePlaybackRate(for: selection) },
+                    set: { session.setFootagePlaybackRate(selection, rate: $0) }
+                ),
+                in: 0.25...4,
+                step: 0.05
+            ) { Text("Playback rate") }
+            Text("Changes footage speed while animation timing stays separate.").font(.footnote).foregroundStyle(.secondary)
+        }
+        Section("Freeform crop") {
+            NativeCropCanvas(crop: $crop, onBegin: { session.beginTransaction() }, onCommit: { value in
+                session.setFootageCrop(selection, crop: value)
+                session.endTransaction()
+            })
+            Button("Reset crop") { session.setFootageCrop(selection, crop: nil); crop = .init(x: 0, y: 0, width: 1, height: 1) }
+                .disabled(crop == .init(x: 0, y: 0, width: 1, height: 1))
         }
     }
 }

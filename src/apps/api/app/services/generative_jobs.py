@@ -17,6 +17,7 @@ from app.agents._schemas.edit_format import (
     DAY_VLOG_RENDERER_VERSION,
     DEFAULT_EDIT_FORMAT,
     EDIT_FORMATS,
+    GUIDED_EDIT_FORMATS,
     SINGLE_HERO_RENDERER_VERSION,
     SLIDES_RENDERER_VERSION,
     coerce_edit_format,
@@ -279,6 +280,7 @@ def build_generative_job(
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
     phone_sources: tuple[PhoneSourceBinding, ...] = (),
+    render_on_device: bool = False,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -322,6 +324,20 @@ def build_generative_job(
             or len(set(clip_paths)) != len(clip_paths)
         ):
             raise ValueError("phone sources must exactly bind the selected clips")
+    elif render_on_device:
+        # A project with no footage at all (phone_destination): its Visuals are
+        # pinned by the worker, so the device job carries no source bindings.
+        # The seed path is a pool object, never a proxy or a cloud render source.
+        from app.config import settings  # noqa: PLC0415
+
+        if (
+            not settings.phone_rendering_for(user_id)
+            or mode != "content_plan"
+            or voiceover_gcs_path
+            or coerce_edit_format(edit_format) not in GUIDED_EDIT_FORMATS
+        ):
+            raise ValueError("phone planning is unavailable for this job")
+        require_cloud_source_paths(clip_paths)
     else:
         require_cloud_source_paths(
             clip_paths + ([voiceover_gcs_path] if voiceover_gcs_path else [])
@@ -479,6 +495,8 @@ def build_generative_job(
                 }
             }
             if phone_sources
-            else {}
+            # Key presence, not content, routes the worker to the phone planner
+            # and keeps the job out of every cloud re-renderer.
+            else ({"assembly_plan": {PHONE_SOURCES_FIELD: []}} if render_on_device else {})
         ),
     )

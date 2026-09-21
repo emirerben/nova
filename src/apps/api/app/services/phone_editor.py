@@ -20,7 +20,12 @@ from app.pipeline.guided_story import (
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_rollout import validate_phone_pilot_recipe
-from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
+from app.services.phone_sources import (
+    PHONE_SOURCES_FIELD,
+    PHONE_VISUALS_FIELD,
+    PhoneSourceBinding,
+    PhoneVisualBinding,
+)
 
 log = structlog.get_logger()
 
@@ -71,7 +76,15 @@ def prepare_phone_editor_commit(
         bindings = tuple(
             PhoneSourceBinding.model_validate(row) for row in assembly[PHONE_SOURCES_FIELD]
         )
-        recipe = compile_phone_guided_plan(GuidedStoryExecutionPlan.model_validate(plan), bindings)
+        # Photos reuse the worker's pinned receipts; this request path never
+        # hashes, so a photo placed after planning has none and fails closed.
+        visuals = tuple(
+            PhoneVisualBinding.model_validate(row)
+            for row in assembly.get(PHONE_VISUALS_FIELD) or []
+        )
+        recipe = compile_phone_guided_plan(
+            GuidedStoryExecutionPlan.model_validate(plan), bindings, visuals=visuals
+        )
         validate_phone_pilot_recipe(recipe)
         request = make_device_request(
             job_id=job.id,

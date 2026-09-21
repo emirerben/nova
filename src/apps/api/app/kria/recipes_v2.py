@@ -11,7 +11,7 @@ from app.kria.portable_motion import MotionSceneProgram
 from app.kria.portable_text import PortableTextLayer
 from app.kria.portable_visual import VisualCanvasFill
 from app.kria.recipes import EditRecipeV1
-from app.kria.render_assets import RenderAssetManifest
+from app.kria.render_assets import RenderAssetManifest, VisualRenderAsset
 
 
 class EditRecipeV2(EditRecipeV1):
@@ -62,6 +62,20 @@ class EditRecipeV2(EditRecipeV1):
         manifest = {asset.id: asset for asset in self.asset_manifest.assets}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")
+        # Mirrors `EditRecipe.effectiveCapabilities`: a device that has not
+        # verified Visuals-pool downloads of a kind must never receive one.
+        for asset in manifest.values():
+            if isinstance(asset, VisualRenderAsset):
+                self.required_capabilities |= {
+                    "visualVideos" if asset.media_kind == "video" else "stillImages"
+                }
+        for track in self.tracks:
+            for clip in track.clips:
+                source = manifest.get(clip.source_asset_id)
+                if clip.still_layout is not None and not (
+                    isinstance(source, VisualRenderAsset) and source.media_kind == "image"
+                ):
+                    raise ValueError("a still card requires a Visuals photo")
         if self.motion_scenes is not None:
             program = self.motion_scenes
             program.validated_instances(int(self.duration * self.frame_rate))

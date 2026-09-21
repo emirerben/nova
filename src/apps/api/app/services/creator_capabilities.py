@@ -30,6 +30,8 @@ from app.agents._schemas.creator_policy import (
     CAPABILITY_DRAFT_GUIDED_PROPOSAL,
     CAPABILITY_GUIDED_VOICEOVER,
     CAPABILITY_PHONE_SOURCE_AUDIO,
+    CAPABILITY_PHONE_STILL_IMAGES,
+    CAPABILITY_PHONE_VISUAL_VIDEOS,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
@@ -44,6 +46,7 @@ from app.agents._schemas.edit_format import (
 )
 from app.config import settings
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
+from app.services.phone_destination import phone_drawable_visual_kinds
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
 CAPABILITY_GUIDED_STORY = "guided_story"
@@ -73,6 +76,18 @@ _FEATURE_SETTINGS = {
     "motion_scenes": "motion_scenes_enabled",
     "sound_effects": "sound_effects_enabled",
 }
+
+# Treatments compile_phone_guided_plan rejects: the SFX, overlay, visual-block and
+# motion-scene lanes outright, and an edit-wide look on any source that is not
+# exact-canvas golden_hour. A phone manifest must not advertise them, so the
+# request is refused while planning instead of failing the device render later.
+_PHONE_UNSUPPORTED_CAPABILITIES = (
+    "sound_effects",
+    "media_overlays",
+    "visual_blocks",
+    "motion_scenes",
+    "wide_looks",
+)
 
 
 def _available() -> CapabilityAvailability:
@@ -163,6 +178,7 @@ def resolve_creator_manifest(
     narration: CreatorNarrationIdentity | Mapping[str, Any] | None = None,
     phone_source_media_ids: Sequence[str] | None = None,
     phone_rendering_allowed: bool = False,
+    phone_visuals_only: bool = False,
 ) -> ResolvedCreatorManifest:
     """Resolve a descriptive v1 manifest from server state and policy.
 
@@ -174,6 +190,8 @@ def resolve_creator_manifest(
     resolved_media = _as_media_refs(media)
     # None means cloud sources; an empty list means phone provenance whose
     # receipts could not be verified. Never erase that provenance on failure.
+    # The one exception is ``phone_visuals_only``: a project with no footage
+    # at all that phone_destination routed to the iPhone has no receipts to hold.
     resolved_phone_source_ids = set(phone_source_media_ids or ())
     resolved_catalog = _as_catalog_refs(catalog)
     resolved_narration = (
@@ -319,11 +337,21 @@ def resolve_creator_manifest(
         attached_media = [
             media for media in resolved_media if not media.media_id.startswith("asset-")
         ]
+        drawable_visual_kinds = phone_drawable_visual_kinds()
+        visuals_only = (
+            phone_visuals_only
+            and not resolved_phone_source_ids
+            and not attached_media
+            and any(
+                media.media_id.startswith("asset-") and media.kind in drawable_visual_kinds
+                for media in resolved_media
+            )
+        )
         if not phone_rendering_allowed:
             phone = _unavailable(
                 "disabled_by_setting", "phone rendering is unavailable for this account"
             )
-        elif (
+        elif not visuals_only and (
             not resolved_phone_source_ids
             or resolved_phone_source_ids
             != {media.media_id for media in attached_media if media.kind == "video"}
@@ -339,6 +367,17 @@ def resolve_creator_manifest(
         else:
             phone = _available()
         capabilities[CAPABILITY_PHONE_SOURCE_AUDIO] = phone
+        # Visuals photos and videos render on the device only once its engine
+        # is verified for each. Omitted otherwise so flag-off manifests keep
+        # their hashes.
+        if "stillImages" in settings.phone_render_verified_features:
+            capabilities[CAPABILITY_PHONE_STILL_IMAGES] = phone
+        if "visualVideos" in settings.phone_render_verified_features:
+            capabilities[CAPABILITY_PHONE_VISUAL_VIDEOS] = phone
+        for capability_name in _PHONE_UNSUPPORTED_CAPABILITIES:
+            capabilities[capability_name] = _unavailable(
+                "unsupported_on_phone", f"{capability_name} cannot render on the iPhone yet"
+            )
         if not phone.available:
             for capability_name in (
                 CAPABILITY_DRAFT_GUIDED_PROPOSAL,
@@ -424,11 +463,16 @@ def compile_strategy_to_plan(
         raise CreatorStrategyError(str(exc)) from exc
     licensed_sfx = strategy.licensed_sfx
     if licensed_sfx is not None:
-        if not manifest.capabilities.get(
+        sound_effects = manifest.capabilities.get(
             "sound_effects", _unavailable("not_advertised", "sound effects are unavailable")
-        ).available:
+        )
+        if not sound_effects.available:
             raise CreatorSfxUnavailableError(
-                "The requested licensed sound effect is unavailable. Choose another effect."
+                # No other effect would work either, so don't suggest one.
+                "Sound effects can't render on your iPhone yet. "
+                "Ask for this edit without the sound effect."
+                if sound_effects.reason_code == "unsupported_on_phone"
+                else "The requested licensed sound effect is unavailable. Choose another effect."
             )
         resolved = resolve_creator_sfx_catalog_ref(manifest, licensed_sfx.effect_id)
         if resolved is None:

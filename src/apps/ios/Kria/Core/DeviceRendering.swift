@@ -198,6 +198,9 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
     var bundledFonts: URL? = Bundle.main.url(forResource: "fonts", withExtension: nil)
     // No API authorization header or persistent cookies travel to object storage.
     var downloadSession: URLSession = URLSession(configuration: .ephemeral)
+    /// The grant route allows 30 requests a minute and a recipe needs one per
+    /// Visuals photo, so a photo-heavy render waits out the window instead of failing.
+    var rateLimitBackoff: Duration = .seconds(20)
 
     func resolve(for recipe: KriaMediaEngine.EditRecipe) async throws -> [String: URL] {
         guard recipe == request.recipe else { throw APIError.conflict }
@@ -207,14 +210,16 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
         }
         for asset in manifest.assets {
             try Task.checkCancellation()
-            guard case .library = asset.source else { continue }
+            // Originals resolve only from this iPhone's bindings; library bytes and
+            // Visuals-pool photos need a per-asset grant for the pinned generation.
+            if case .original = asset.source { continue }
             if (try? await library.resolve(asset)) != nil { continue }
             if case .library(catalog: .font, catalogID: _, generation: _) = asset.source {
                 guard let bundledFonts else { throw MediaEngineError.missingAsset(asset.id) }
                 _ = try await library.installBundledFont(asset, directory: bundledFonts)
                 continue
             }
-            let grant = try await api.downloadDeviceAsset(DeviceAssetDownloadBody(identity: request.identity, assetID: asset.id))
+            let grant = try await grant(for: asset)
             guard grant.assetID == asset.id, grant.downloadURL.scheme == "https", grant.expiresAt > Date() else {
                 throw APIError.invalidResponse
             }
@@ -225,6 +230,34 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
             try Task.checkCancellation()
             _ = try await library.install(downloadedFile: file, for: asset)
         }
-        return try await PortableAssetResolver(originals: originals, library: library).resolve(manifest)
+        var urls = try await PortableAssetResolver(originals: originals, library: library).resolve(manifest)
+        // The verified cache holds exact bytes under a content address. Photos
+        // render from a cover-sized copy; videos need a playable file extension.
+        let project = await library.root.deletingLastPathComponent()
+        let derivatives = project.appending(path: "still-derivatives", directoryHint: .isDirectory)
+        let videos = project.appending(path: "visual-videos", directoryHint: .isDirectory)
+        for asset in manifest.assets {
+            guard case .visual(_, _, let mediaKind) = asset.source, let verified = urls[asset.id] else { continue }
+            try Task.checkCancellation()
+            let canvas = recipe.canvas, fingerprint = asset.fingerprint
+            urls[asset.id] = try await Task.detached {
+                switch mediaKind {
+                case .image: try StillImageDerivative.prepare(source: verified, fingerprint: fingerprint, canvas: canvas, directory: derivatives)
+                case .video: try VisualVideoFile.prepare(source: verified, fingerprint: fingerprint, directory: videos)
+                }
+            }.value
+        }
+        return urls
+    }
+
+    private func grant(for asset: RenderAssetReference) async throws -> DeviceAssetDownloadTarget {
+        var retries = 0
+        while true {
+            do { return try await api.downloadDeviceAsset(DeviceAssetDownloadBody(identity: request.identity, assetID: asset.id)) }
+            catch APIError.requestFailed(status: 429) where retries < 3 {
+                retries += 1
+                try await Task.sleep(for: rateLimitBackoff)
+            }
+        }
     }
 }

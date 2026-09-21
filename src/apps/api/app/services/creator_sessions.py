@@ -45,6 +45,7 @@ from app.services.edit_proposal_limits import (
     queue_for_guided_contract,
 )
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
+from app.services.phone_destination import item_visuals_only_on_device
 from app.services.phone_sources import bind_phone_sources
 from app.services.tiktok_style_observations import effective_persona_style
 
@@ -263,6 +264,14 @@ async def resolve_item_creator_context(
             # Keep the phone restriction visible even for incomplete or stale
             # receipts. Planning must not silently fall back to cloud inputs.
             phone_source_media_ids = []
+    # A project with no footage at all still plans for the iPhone when the
+    # shared destination rule routes its Visuals there: a phone manifest with
+    # no phone sources.
+    phone_visuals_only = not source_paths and await item_visuals_only_on_device(
+        db, item, persona.user_id
+    )
+    if phone_visuals_only:
+        phone_source_media_ids = []
     seen: set[str] = set()
     for index, assignment in enumerate((item.clip_assignments or [])[:MAX_CREATOR_MEDIA_REFS]):
         if not isinstance(assignment, dict):
@@ -458,6 +467,7 @@ async def resolve_item_creator_context(
         catalog=catalog,
         phone_source_media_ids=phone_source_media_ids,
         phone_rendering_allowed=settings.phone_rendering_for(persona.user_id),
+        phone_visuals_only=phone_visuals_only,
         current_edit=current_edit,
         has_ready_variant=has_ready_variant,
         # Chat creation owns a trusted internal guided-proposal path, while

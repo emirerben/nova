@@ -54,7 +54,13 @@ from app.services.edit_proposal_limits import (
     EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
     EDIT_PROPOSAL_TASK_SOFT_TIME_LIMIT_S,
 )
-from app.services.edit_proposals import media_generations_match_sync, save_proposal_draft
+from app.services.edit_proposals import (
+    media_generations_match_sync,
+    phone_renderable_media,
+    phone_story_layouts,
+    save_proposal_draft,
+)
+from app.services.phone_destination import item_visuals_only_on_device_sync
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -1314,6 +1320,9 @@ def _run_draft_attempt(
                     db.commit()
                     return
             pool = _pool_refs(db, item, owner_id)
+            # Decided once per attempt so the plan, its digest and the story
+            # layouts agree; the save below rejects the attempt if it moved.
+            visuals_only_device = item_visuals_only_on_device_sync(db, item, owner_id)
             assignments = [
                 dict(a)
                 for a in (item.clip_assignments or [])
@@ -1412,7 +1421,11 @@ def _run_draft_attempt(
         # De-duplicate pool assets promoted into the clip lane: they remain
         # stored separately, but one object must not count twice in the story.
         clip_paths = {ref.gcs_path for ref in clip_refs}
-        media = clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths]
+        media = phone_renderable_media(
+            clip_refs + [ref for ref in pool if ref.gcs_path not in clip_paths],
+            owner_id,
+            visuals_only_device=visuals_only_device,
+        )
         if not media:
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
@@ -1574,8 +1587,16 @@ def _run_draft_attempt(
                 return
             assert owner_id is not None
             fresh_pool = _pool_refs(db, item, owner_id)
-            fresh_media = clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths]
-            if canonical_media_digest(fresh_media, narration) != digest:
+            fresh_visuals_only = item_visuals_only_on_device_sync(db, item, owner_id)
+            fresh_media = phone_renderable_media(
+                clip_refs + [ref for ref in fresh_pool if ref.gcs_path not in clip_paths],
+                owner_id,
+                visuals_only_device=fresh_visuals_only,
+            )
+            if (
+                fresh_visuals_only != visuals_only_device
+                or canonical_media_digest(fresh_media, narration) != digest
+            ):
                 _fail(
                     item,
                     current,
@@ -1928,6 +1949,7 @@ def _run_draft_attempt(
             video_reuse_policy=video_reuse_policy,
             output_orientation=brief.output_orientation,
         )
+        snapshot = phone_story_layouts(snapshot, owner_id, visuals_only_device=visuals_only_device)
         if fallback_used:
             # Never auto-approve a deterministic recovery that the strict
             # renderer cannot compile from the complete accepted media set.

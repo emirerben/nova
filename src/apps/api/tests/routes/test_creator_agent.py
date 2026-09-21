@@ -2910,6 +2910,275 @@ async def test_planning_fails_closed_when_mixed_media_specialist_is_unavailable(
     }
 
 
+async def _failed_phone_planning_turn(  # noqa: ANN202
+    monkeypatch,  # noqa: ANN001
+    manifest,  # noqa: ANN001
+    strategy,  # noqa: ANN001
+    user_message: str = "Use all of my footage",
+):
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=1,
+        active_plan=None,
+        last_error=None,
+    )
+    action = ProposeStrategy(kind="propose_strategy", strategy=strategy, summary="Use it.")
+    append_event = AsyncMock()
+    response = SimpleNamespace(status="failed")
+
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message=user_message,
+    )
+
+    assert result is response
+    assert session.active_plan is None
+    return session, append_event.await_args.kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pool_kind", "verified_features", "strategy", "limit"),
+    [
+        (
+            "image",
+            [],
+            {"media_scope": "all"},
+            "It can only use the videos attached to this project, not photos or videos "
+            "from Visuals.",
+        ),
+        (
+            "video",
+            ["stillImages"],
+            {"media_scope": "all"},
+            "It can show photos from Visuals, but videos from Visuals can't be used, "
+            "and a photo can't supply sound or cut timing.",
+        ),
+        (
+            "image",
+            ["visualVideos"],
+            {"media_scope": "all"},
+            "It can use videos from Visuals, but photos from Visuals can't be used.",
+        ),
+        (
+            "image",
+            ["stillImages", "visualVideos"],
+            {"montage_audio": {"source_media_ids": ["asset-pool-1"]}},
+            "It can use photos and videos from Visuals, but a photo can't supply sound "
+            "or cut timing.",
+        ),
+    ],
+)
+async def test_planning_names_phone_media_rejection_honestly(
+    monkeypatch, pool_kind, verified_features, strategy, limit
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(
+        creator_capabilities.settings, "phone_render_verified_features", verified_features
+    )
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-pool-1", "kind": pool_kind},
+        ],
+        phone_source_media_ids=["clip-1"],
+        phone_rendering_allowed=True,
+    )
+
+    session, event = await _failed_phone_planning_turn(
+        monkeypatch, manifest, CreativeStrategy(edit_format="montage", **strategy)
+    )
+
+    assert session.status == "failed"
+    assert session.last_error == {
+        "code": "phone_media_unavailable",
+        "message": "phone rendering requires bound video sources",
+    }
+    assert event["event_type"] == "assistant_error"
+    assert event["payload"] == {
+        "message": f"This edit renders on your iPhone. {limit} No fallback edit was rendered.",
+        "code": "phone_media_unavailable",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("strategy", "code", "message"),
+    [
+        (
+            {"edit_format": "talking_head"},
+            "phone_format_unavailable",
+            "Only Montage videos can render on your iPhone right now, not talking or "
+            "narrated ones. Choose Montage to render on this iPhone. "
+            "No fallback edit was rendered.",
+        ),
+        (
+            {"edit_format": "montage", "audio_strategy": "voiceover"},
+            "phone_voiceover_unavailable",
+            "A voiceover can't render on your iPhone yet, and this project's videos "
+            "render on this iPhone. Ask for this edit without a voiceover. "
+            "No fallback edit was rendered.",
+        ),
+    ],
+)
+async def test_planning_names_phone_format_and_voiceover_rejections_honestly(
+    monkeypatch, strategy, code, message
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(creator_capabilities.settings, "edit_format_talking_head_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+        phone_source_media_ids=["clip-1"],
+        phone_rendering_allowed=True,
+    )
+
+    session, event = await _failed_phone_planning_turn(
+        monkeypatch, manifest, CreativeStrategy(**strategy)
+    )
+
+    # Never the mixed photo/video timing copy: that outage has nothing to do with this.
+    assert session.status == "failed"
+    assert session.last_error["code"] == code
+    assert event["event_type"] == "assistant_error"
+    assert event["payload"] == {"message": message, "code": code}
+
+
+@pytest.mark.asyncio
+async def test_a_cadence_over_visuals_videos_the_phone_cannot_draw_is_refused_honestly(
+    monkeypatch,
+) -> None:
+    # A Visuals-only phone project (stillImages verified, visualVideos not) whose
+    # pool holds two videos from the web: the round-robin branch builds a cadence
+    # from them, and the phone refuses it before the later planning path runs.
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(
+        creator_capabilities.settings, "phone_render_verified_features", ["stillImages"]
+    )
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "asset-photo", "kind": "image"},
+            {"media_id": "asset-video-a", "kind": "video", "duration_s": 20},
+            {"media_id": "asset-video-b", "kind": "video", "duration_s": 20},
+        ],
+        phone_source_media_ids=[],
+        phone_rendering_allowed=True,
+        phone_visuals_only=True,
+    )
+
+    session, event = await _failed_phone_planning_turn(
+        monkeypatch,
+        manifest,
+        CreativeStrategy(edit_format="montage", target_duration_s=10),
+        user_message="Alternate the two videos every 1 second for 10 seconds.",
+    )
+
+    assert session.status == "failed"
+    assert session.last_error["code"] == "phone_media_unavailable"
+    assert event["event_type"] == "assistant_error"
+    assert event["payload"] == {
+        "message": "This edit renders on your iPhone. It can show photos from Visuals, but "
+        "videos from Visuals can't be used, and a photo can't supply sound or cut timing. "
+        "No fallback edit was rendered.",
+        "code": "phone_media_unavailable",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("has_voiceover", "allowed", "phone_ids", "message"),
+    [
+        (
+            True,
+            True,
+            ["clip-1"],
+            "A voiceover can't render on your iPhone yet, and this project's videos "
+            "render on this iPhone. Remove the voiceover and I can design the edit.",
+        ),
+        (
+            False,
+            True,
+            [],
+            "I couldn't verify this project's iPhone footage, so it can't render on "
+            "this iPhone yet. Reconnect its original footage, then try again.",
+        ),
+        (
+            False,
+            False,
+            ["clip-1"],
+            "Rendering on your iPhone is temporarily unavailable, and this project's "
+            "videos render there. Your project is saved; try again later.",
+        ),
+    ],
+)
+async def test_planning_never_asks_a_blocked_phone_project_for_another_clip(
+    monkeypatch, has_voiceover, allowed, phone_ids, message
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+        phone_source_media_ids=phone_ids,
+        phone_rendering_allowed=allowed,
+        has_voiceover=has_voiceover,
+    )
+
+    session, event = await _failed_phone_planning_turn(
+        monkeypatch, manifest, CreativeStrategy(edit_format="montage")
+    )
+
+    assert session.status == "briefing"
+    assert event["event_type"] == "assistant_question"
+    assert event["payload"] == {"message": message}
+
+
 @pytest.mark.asyncio
 async def test_planning_repairs_missing_model_media_ids_from_authoritative_manifest(
     monkeypatch,

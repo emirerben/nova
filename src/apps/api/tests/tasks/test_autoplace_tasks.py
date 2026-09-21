@@ -657,13 +657,21 @@ def test_analyze_image_downscales_and_meters_submitted_jpeg(monkeypatch, tmp_pat
     assert estimate_kwargs["media_height_px"] == 512
 
 
+def _video_probe(**changes) -> SimpleNamespace:
+    """The probe_video fields _analyze_video reads, for a 4s H.264 clip."""
+    return SimpleNamespace(
+        **{"duration_s": 4.0, "width": 720, "height": 1280, "codec": "h264", "pix_fmt": "yuv420p"}
+        | changes
+    )
+
+
 def test_analyze_video_does_not_treat_plan_item_as_job_owner(monkeypatch) -> None:
     from app.config import settings as _settings
 
     monkeypatch.setattr(_settings, "gemini_api_key", "gemini-key")
     monkeypatch.setattr(
         "app.pipeline.probe.probe_video",
-        lambda _path: SimpleNamespace(duration_s=4.0, width=720, height=1280),
+        lambda _path: _video_probe(width=720, height=1280),
     )
     file_ref = SimpleNamespace(uri="provider://file", mime_type="video/mp4")
     monkeypatch.setattr(
@@ -741,7 +749,7 @@ def test_analyze_video_persists_rotation_aware_display_dims(monkeypatch) -> None
     _patch_video_gemini(monkeypatch)
     monkeypatch.setattr(
         "app.pipeline.probe.probe_video",
-        lambda _path: SimpleNamespace(duration_s=4.0, width=1920, height=1080),
+        lambda _path: _video_probe(width=1920, height=1080),
     )
     monkeypatch.setattr(
         "app.pipeline.orientation.detect_rotation_and_dims",
@@ -767,7 +775,7 @@ def test_analyze_video_stale_rotation_flag_does_not_double_swap(monkeypatch) -> 
     _patch_video_gemini(monkeypatch)
     monkeypatch.setattr(
         "app.pipeline.probe.probe_video",
-        lambda _path: SimpleNamespace(duration_s=4.0, width=1080, height=1920),
+        lambda _path: _video_probe(width=1080, height=1920),
     )
     monkeypatch.setattr(
         "app.pipeline.orientation.detect_rotation_and_dims",
@@ -791,7 +799,7 @@ def test_analyze_video_fails_open_when_rotation_probe_errors(monkeypatch) -> Non
     _patch_video_gemini(monkeypatch)
     monkeypatch.setattr(
         "app.pipeline.probe.probe_video",
-        lambda _path: SimpleNamespace(duration_s=4.0, width=720, height=1280),
+        lambda _path: _video_probe(width=720, height=1280),
     )
 
     def _boom(_path):
@@ -805,6 +813,25 @@ def test_analyze_video_fails_open_when_rotation_probe_errors(monkeypatch) -> Non
     assert aspect == pytest.approx(0.5625)
     assert analysis is not None
     assert analysis["rotation_degrees"] == 0
+
+
+def test_analyze_video_records_what_a_phone_plan_needs_to_compose_it(monkeypatch) -> None:
+    """KRI-121: phone_renderable_media leaves a pool video the iPhone engine
+    can't compose (VP9, AV1, 4:2:2...) out of a phone plan using these facts."""
+
+    _patch_video_gemini(monkeypatch)
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: _video_probe(codec="vp9", pix_fmt="yuv420p10le"),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.orientation.detect_rotation_and_dims", lambda _path: (0, 720, 1280)
+    )
+
+    analysis, _aspect, _duration, _dims = ap._analyze_video("/tmp/webm-in-mp4.mp4")
+
+    assert analysis is not None
+    assert (analysis["video_codec"], analysis["pix_fmt"]) == ("vp9", "yuv420p10le")
 
 
 def test_stub_analysis_is_never_stale_after_the_version_bump() -> None:

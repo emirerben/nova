@@ -1007,6 +1007,38 @@ def _creator_selected_clip_paths(
     return [path_by_id[media_id] for media_id in selected if media_id in path_by_id]
 
 
+def _phone_unrenderable_reason(approved_snapshot: dict, owner_id: uuid.UUID) -> str | None:
+    """Why the phone would refuse a visuals-only item's approved plan, if it would.
+
+    The plan may predate the project's routing to the iPhone (made on the web,
+    before the device stamp, or before a Visuals kind was verified), so the
+    phone rules applied when a plan is built or edited never ran on it.
+    """
+
+    from app.schemas.edit_proposal import EditProposalSnapshot  # noqa: PLC0415
+    from app.services.edit_proposals import phone_story_layouts  # noqa: PLC0415
+    from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
+
+    snapshot = EditProposalSnapshot.model_validate(approved_snapshot)
+    selected_ids = {media_id for beat in snapshot.story_beats for media_id in beat.media_ids} | {
+        cut.media_id for cut in snapshot.fast_cuts or []
+    }
+    drawable_kinds = phone_drawable_visual_kinds()
+    if any(
+        ref.lane != "asset" or ref.kind not in drawable_kinds
+        for ref in snapshot.media
+        if ref.media_id in selected_ids
+    ):
+        return "undrawable_media"
+    # The phone compiler fails the whole job on a video moment that is not fullscreen.
+    if phone_story_layouts(snapshot, owner_id, visuals_only_device=True) is not snapshot:
+        return "video_on_card"
+    # The phone has no licensed-SFX lane.
+    if snapshot.licensed_sfx is not None:
+        return "licensed_sfx"
+    return None
+
+
 def _dispatch_item_render(
     session,  # noqa: ANN001
     item: PlanItem,
@@ -1295,6 +1327,31 @@ def _dispatch_item_render(
             # Failed/in-flight preflight bypasses have no valid snapshot, so
             # retain their analysis UUID privately for truthful projection.
             outcome_analysis_id = str(speech_cleanup_analysis_id)
+    # Decided on the item itself, before the seed path below stands in for
+    # clips: a project with no footage at all whose Visuals render on the iPhone.
+    from app.services.phone_destination import item_visuals_only_on_device_sync  # noqa: PLC0415
+
+    visuals_only_device = (
+        not item_clip_paths
+        and not guided_voiceover
+        and item_visuals_only_on_device_sync(session, item, plan.user_id)
+    )
+    if visuals_only_device and approved_proposal is not None:
+        unrenderable = _phone_unrenderable_reason(approved_proposal["snapshot"], plan.user_id)
+        if unrenderable:
+            # This project renders on the iPhone and never in the cloud. A plan
+            # approved before the project was routed here, around something the
+            # phone cannot render, is replanned instead of failing on device.
+            from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+
+            if mark_edit_proposal_stale(item):
+                session.commit()
+            log.warning(
+                "plan_item_render.visuals_only_device_unrenderable",
+                plan_item_id=str(item.id),
+                reason=unrenderable,
+            )
+            return DispatchResult("proposal_stale")
     clip_paths = item_clip_paths
     clip_paths = _creator_selected_clip_paths(item, clip_paths, creator_strategy)
     if creator_clip_order:
@@ -1483,6 +1540,7 @@ def _dispatch_item_render(
             creator_clip_order=creator_clip_order,
             creator_request=str(creator_request or "")[:12000],
             **({"phone_sources": phone_sources} if phone_sources else {}),
+            **({"render_on_device": True} if visuals_only_device else {}),
         )
         # Pin one immutable identity for this Creator-confirmed render before
         # the worker is queued.  Native variants historically received no

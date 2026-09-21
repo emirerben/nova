@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import UIKit
+import KriaMediaEngine
 
 struct AttachmentSheet: View {
     let projectID: UUID
@@ -8,6 +9,8 @@ struct AttachmentSheet: View {
     let attachedClipCount: Int
     let thread: CreationThread?
     let capabilities: CreationCapabilities?
+    /// False until the account's capabilities have loaded; uploads wait for them.
+    var capabilitiesLoaded = true
     let refresh: () async -> Void
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -48,9 +51,17 @@ struct AttachmentSheet: View {
     private var uploadDestination: ProjectUploadDestination {
         ProjectUploadDestination.resolve(
             capabilities: capabilities?.phoneRendering,
-            sourcePurposes: media.map(\.uploadPurpose) + pendingRecords.filter { $0.projectID == projectID }.map { $0.purpose.rawValue },
+            capabilitiesLoaded: capabilitiesLoaded,
+            sourcePurposes: ProjectUploadDestination.sourcePurposes(media: media, records: pendingRecords, projectID: projectID),
             role: role
         )
+    }
+    /// Names only the kinds the Visuals pickers offer on this destination.
+    private var visualsCaption: String {
+        let kinds = uploadDestination.visualKinds
+        return kinds == [.image] ? "Photos and screenshots."
+            : kinds == [.video] ? "Short supporting videos."
+            : "Photos, screenshots, or short supporting videos."
     }
 
     var body: some View {
@@ -65,11 +76,16 @@ struct AttachmentSheet: View {
                         }
                     }.pickerStyle(.segmented)
                     if role == .visual {
-                        Text("Photos, screenshots, or short supporting videos.").font(KriaFont.body(14))
+                        // When nothing can upload, the destination message explains why.
+                        if uploadDestination.canUpload { Text(visualsCaption).font(KriaFont.body(14)) }
                         if pool == nil, error == nil { ProgressView("Loading visuals…") }
                     }
-                    FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
-                        .id(role)
+                    // Until the pool loads, its limit is unknown; don't show a
+                    // disabled picker claiming the limit was reached.
+                    if role != .visual || pool != nil {
+                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
+                            .id(role)
+                    }
                     if role == .voiceover && uploadDestination == .cloud {
                         if recorder.isRecording {
                             Button("Stop recording") { Task { await finishRecording() } }.buttonStyle(CanonicalPrimaryButtonStyle())
@@ -134,6 +150,16 @@ struct AttachmentSheet: View {
                 while !Task.isCancelled {
                     await loadVisuals()
                     do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                }
+            }
+            // Uploads wait for the account's capabilities; keep asking rather
+            // than leave the sheet on "Checking…" after a failed load. A load
+            // changes `capabilitiesLoaded`, which restarts this task and ends it.
+            .task(id: capabilitiesLoaded) {
+                guard !capabilitiesLoaded else { return }
+                while !Task.isCancelled {
+                    await refresh()
+                    try? await Task.sleep(for: .seconds(3))
                 }
             }
             .onReceive(model.uploads.$records) { pendingRecords = $0 }

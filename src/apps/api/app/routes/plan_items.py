@@ -2781,9 +2781,20 @@ async def _current_direction_media_refs(
                 generation=str(asset.gcs_generation),
                 kind="image" if asset.kind == "image" else "video",
                 content_hash=asset.content_hash,
+                # The phone filter reads length and codec; the digest does not.
+                duration_s=float(asset.duration_s) if asset.duration_s else None,
+                analysis=dict(asset.analysis or {}),
             )
         )
-    return refs
+    from app.services.edit_proposals import phone_renderable_media  # noqa: PLC0415
+    from app.services.phone_destination import item_visuals_only_on_device  # noqa: PLC0415
+
+    # Same destination decision as the proposal build, so both digests agree.
+    return phone_renderable_media(
+        refs,
+        user_id,
+        visuals_only_device=await item_visuals_only_on_device(db, item, user_id),
+    )
 
 
 def _proposal_http_conflict(code: str, message: str) -> HTTPException:
@@ -3357,6 +3368,10 @@ async def edit_proposal_conversation_turn(
     item = await _load_owned_item(item_id, owner_id, db, for_update=True)
     _require_guided_edit_applicable(item)
     current = parse_edit_proposal(item.edit_proposal)
+    # Decided while the item is loaded and locked; the agent call below commits.
+    from app.services.phone_destination import item_visuals_only_on_device  # noqa: PLC0415
+
+    visuals_only_device = await item_visuals_only_on_device(db, item, owner_id)
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
         release_edit_conversation_attempt,
@@ -3568,6 +3583,12 @@ async def edit_proposal_conversation_turn(
                     result.revision,
                     output_orientation=brief.output_orientation,
                 )
+            # A revision can put footage on a card; the iPhone draws video fullscreen.
+            from app.services.edit_proposals import phone_story_layouts  # noqa: PLC0415
+
+            revised_snapshot = phone_story_layouts(
+                revised_snapshot, owner_id, visuals_only_device=visuals_only_device
+            )
             validate_proposal_timing(revised_snapshot)
         except Exception as exc:  # noqa: BLE001 - every invalid revision must release its fence
             log.warning("edit_guide.timing_invalid", item_id=item_id, error=str(exc)[:300])
@@ -3914,8 +3935,10 @@ async def update_item_edit_proposal(
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
         mark_edit_proposal_stale,
+        phone_story_layouts,
         save_proposal_draft,
     )
+    from app.services.phone_destination import item_visuals_only_on_device  # noqa: PLC0415
 
     current = parse_edit_proposal(item.edit_proposal)
     if (
@@ -3955,8 +3978,14 @@ async def update_item_edit_proposal(
             expected_version=body.expected_proposal_version,
             # Media metadata is server-owned. The client may edit the story,
             # text, ordering, and layout, but cannot smuggle arbitrary analysis
-            # or context into the approved render snapshot.
-            snapshot=server_snapshot,
+            # or context into the approved render snapshot. A phone item's
+            # video beats stay fullscreen, the only way the iPhone draws video;
+            # same destination decision as the proposal build.
+            snapshot=phone_story_layouts(
+                server_snapshot,
+                user.id,
+                visuals_only_device=await item_visuals_only_on_device(db, item, user.id),
+            ),
             # A human submitting their own corrected snapshot is unambiguous
             # manual review — never let a subsequent approval still record
             # approval_mode="auto" from the original auto-design reservation

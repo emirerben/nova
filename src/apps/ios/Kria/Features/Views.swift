@@ -702,6 +702,9 @@ private struct ApprovalCard: View {
 }
 
 struct CloudUploadConsentView: View {
+    static let defaultDetail = "Kria will upload the full-quality originals you select and keep them with this project so it can render in the cloud. Delete the project to remove its uploaded footage. You can cancel while an upload is in progress."
+    static let phoneVisualsDetail = "Kria will upload the full-quality visuals you select and keep them with this project so its AI can plan your edit. When your video renders on this iPhone, it downloads them again. Delete the project to remove its uploaded visuals. You can cancel while an upload is in progress."
+    var detail = CloudUploadConsentView.defaultDetail
     let onConsent: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var consent = false
@@ -710,7 +713,7 @@ struct CloudUploadConsentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("Upload your originals.").font(KriaFont.display(30))
-                    Text("Kria will upload the full-quality originals you select and keep them with this project so it can render in the cloud. Delete the project to remove its uploaded footage. You can cancel while an upload is in progress.").foregroundStyle(KriaColor.mutedInk)
+                    Text(detail).foregroundStyle(KriaColor.mutedInk)
                     Text("Selected media, including faces and voices, may be shared with Google Gemini and OpenAI for analysis, transcription, and editing.")
                         .foregroundStyle(KriaColor.mutedInk)
                     Link("Privacy Policy", destination: KriaLegal.privacyURL).frame(minHeight: 44)

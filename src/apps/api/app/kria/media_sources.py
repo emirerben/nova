@@ -8,12 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 PROXY_MEDIA_PREFIX = "analysis-proxy-"
 
-# "image" (visual-pool stills) is deliberately not in this set yet: unlike audio,
-# no existing registration path (see creation_threads._probe_registered_media,
-# which only branches on "video"/"audio") probes a still image's duration/audio
-# presence, and visual-pool attachments upload through a separate route entirely
-# (plan_items/{id}/assets). Adding "image" needs that path investigated first —
-# see docs/reviews/kri-29/coverage.md.
+# "image" is deliberately not in this set: Visuals-pool photos upload in full to
+# the pool (plan_items/{id}/assets) and render on the phone from those pinned
+# pool bytes through the manifest's "visual" kind (KRI-121, see
+# app.services.phone_visuals), so no photo ever needs an analysis proxy bound
+# to a device original. Mirrored by MediaSourceKind in MediaSourceContract.swift.
 MediaSourceKind = Literal["video", "audio"]
 
 # The proxy is measured by server-side ffprobe; the original's duration is
