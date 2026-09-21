@@ -120,10 +120,26 @@ def _match_key(text: str) -> str:
     return "".join(c for c in decomposed.casefold() if c.isalnum() and not unicodedata.combining(c))
 
 
-def _tokens(text: str) -> set[str]:
+def _word_list(text: str) -> list[str]:
     decomposed = unicodedata.normalize("NFKD", text).casefold()
     plain = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return {t for t in re.split(r"[^\w]+", plain, flags=re.UNICODE) if len(t) >= 2}
+    return [t for t in re.split(r"[^\w]+", plain, flags=re.UNICODE) if t]
+
+
+def _contains_phrase(haystack: str, phrase: str) -> bool:
+    """True when ``phrase``'s words appear in ``haystack`` as WHOLE words, in order,
+    contiguously. A letters-only substring test would let "the me" ground "Theme"."""
+    words, needle = _word_list(haystack), _word_list(phrase)
+    if not needle:
+        return False
+    span = len(needle)
+    return any(words[i : i + span] == needle for i in range(len(words) - span + 1))
+
+
+def _tokens(text: str) -> set[str]:
+    # Every word counts, including one-letter ones: dropping short tokens would
+    # let an unverified word ride along inside an otherwise grounded label.
+    return set(_word_list(text))
 
 
 def clean_label_text(value: object) -> str | None:
@@ -160,8 +176,7 @@ def ground_label(
     text = clean_label_text(value)
     if text is None:
         return None
-    key = _match_key(text)
-    if key and key in _match_key(creator_request or ""):
+    if _contains_phrase(creator_request or "", text):
         return GroundedLabel(
             media_id=media_id,
             text=text,

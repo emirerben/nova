@@ -86,6 +86,32 @@ def test_creator_words_are_grounded_without_any_clip_evidence():
     assert label.text == "post match pub"
 
 
+def test_creator_words_must_match_whole_words_not_letters_across_word_boundaries():
+    request = "add the name of each sport, say it is great, then the pub"
+    nothing = ClipUnderstanding()
+
+    for run_on in ("Theme", "Sayit", "Tit", "Hes", "Ache"):  # letters spanning two words
+        assert (
+            ground_label(
+                media_id="m1", value=run_on, confidence=1.0, creator_request=request, record=nothing
+            )
+            is None
+        ), run_on
+    for real in ("sport", "the pub", "Say It"):
+        label = ground_label(
+            media_id="m1", value=real, confidence=0.0, creator_request=request, record=nothing
+        )
+        assert label is not None and label.grounding == "creator_text", real
+
+
+def test_every_word_of_a_label_must_be_grounded_including_short_ones():
+    record = _record(subject="", summary="", setting="", activity="playing soccer")
+
+    assert _ground("Soccer", record=record) is not None
+    assert _ground("X Soccer", record=record) is None
+    assert _ground("5 Soccer", record=record) is None
+
+
 def test_vision_verified_answer_grounds_a_value_the_record_lacks():
     vague = _record(subject="people playing field sport", summary="", setting="", activity="")
 
