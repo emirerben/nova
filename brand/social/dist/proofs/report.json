@@ -157,24 +157,20 @@
   },
   "legibility": {
     "mist/bright": {
-      "median": 1.21,
-      "worst_tile": 1.2,
+      "median": 1.16,
+      "worst_tile": 1.16,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": false,
-      "accepted_below_floor": null
+      "meets_reference": false
     },
     "graphite/bright": {
-      "median": 4.01,
-      "worst_tile": 3.98,
-      "passes_floor": true,
+      "median": 2.68,
+      "worst_tile": 2.68,
+      "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
-      "gated": true,
-      "passes_watermark_floor": true,
-      "accepted_below_floor": null
+      "meets_reference": true
     },
     "sky/bright": {
       "median": 1.54,
@@ -182,29 +178,23 @@
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": false,
-      "accepted_below_floor": null
+      "meets_reference": false
     },
     "mist/dark": {
-      "median": 6.13,
-      "worst_tile": 6.13,
-      "passes_floor": true,
-      "meets_target": true,
+      "median": 2.98,
+      "worst_tile": 2.98,
+      "passes_floor": false,
+      "meets_target": false,
       "recommended_pairing": true,
-      "gated": true,
-      "passes_watermark_floor": true,
-      "accepted_below_floor": null
+      "meets_reference": true
     },
     "graphite/dark": {
-      "median": 2.16,
-      "worst_tile": 2.16,
+      "median": 1.71,
+      "worst_tile": 1.71,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": true,
-      "accepted_below_floor": null
+      "meets_reference": false
     },
     "sky/dark": {
       "median": 9.21,
@@ -212,29 +202,23 @@
       "passes_floor": true,
       "meets_target": true,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": true,
-      "accepted_below_floor": null
+      "meets_reference": true
     },
     "mist/mid": {
-      "median": 2.14,
-      "worst_tile": 2.14,
+      "median": 1.53,
+      "worst_tile": 1.53,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
-      "gated": true,
-      "passes_watermark_floor": true,
-      "accepted_below_floor": null
+      "meets_reference": false
     },
     "graphite/mid": {
-      "median": 1.44,
-      "worst_tile": 1.43,
+      "median": 1.35,
+      "worst_tile": 1.35,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": false,
-      "accepted_below_floor": null
+      "meets_reference": false
     },
     "sky/mid": {
       "median": 2.31,
@@ -242,29 +226,23 @@
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": true,
-      "accepted_below_floor": null
+      "meets_reference": true
     },
     "mist/warm": {
-      "median": 1.81,
-      "worst_tile": 1.8,
+      "median": 1.37,
+      "worst_tile": 1.37,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
-      "gated": true,
-      "passes_watermark_floor": false,
-      "accepted_below_floor": "2026-09-21: weight reduced on review; mark reads as intended"
+      "meets_reference": false
     },
     "graphite/warm": {
-      "median": 1.72,
-      "worst_tile": 1.71,
+      "median": 1.55,
+      "worst_tile": 1.54,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": false,
-      "accepted_below_floor": null
+      "meets_reference": false
     },
     "sky/warm": {
       "median": 1.86,
@@ -272,29 +250,23 @@
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": false,
-      "accepted_below_floor": null
+      "meets_reference": false
     },
     "mist/busy": {
-      "median": 1.86,
-      "worst_tile": 1.76,
+      "median": 1.33,
+      "worst_tile": 1.34,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
-      "gated": true,
-      "passes_watermark_floor": false,
-      "accepted_below_floor": "2026-09-21: weight reduced on review; mark reads as intended"
+      "meets_reference": false
     },
     "graphite/busy": {
-      "median": 1.68,
-      "worst_tile": 1.61,
+      "median": 1.57,
+      "worst_tile": 1.54,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": false,
-      "accepted_below_floor": null
+      "meets_reference": false
     },
     "sky/busy": {
       "median": 1.91,
@@ -302,9 +274,7 @@
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false,
-      "passes_watermark_floor": false,
-      "accepted_below_floor": null
+      "meets_reference": false
     }
   }
 }

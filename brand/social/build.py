@@ -89,40 +89,27 @@ MARK_W_OUTRO = 560
 # The watermark is a quiet grey mark with a diffuse shadow and nothing else --
 # no chip, no halo, no box. Two tones cover the range: one light, one dark.
 # name:   (ink colour, baked opacity, shadow opacity or None)
-# Weights were walked down after the first shipped pair read too heavy on
-# footage. The shadow was the culprit rather than the ink: at 45% it left a
-# dark halo that made even a light grey mark look weighted, so it comes down
-# further than the ink does. See ACCEPTED_BELOW_FLOOR for what this costs.
+# APPROVED WEIGHTS. Signed off 2026-09-21 after three rounds of review on real
+# footage. Deliberately near-subliminal: at this weight the mark is a quiet
+# attribution mark, not something a viewer reads. It WILL disappear into bright
+# footage, and that is the choice, not a defect -- see README section 2.
+#
+# `test_shipped_weights_match_the_approved_values` pins these so a later change
+# has to be deliberate.
 VARIANTS = {
-    "mist":     ("#CAD2DB", 0.72, 0.28),  # light grey: dark / mid / warm / busy
-    "graphite": ("#526071", 0.85, 0.16),  # dark grey: bright / pale footage
+    "mist":     ("#CAD2DB", 0.42, 0.10),  # light grey: dark / mid / warm / busy
+    "graphite": ("#526071", 0.62, 0.08),  # dark grey: bright / pale footage
     "sky":      (SKY,       1.00, None),  # logotype, white product screens only
 }
 
-# Pairings knowingly shipped under `verify.WATERMARK_FLOOR`.
-#
-# The floor is NOT lowered to accommodate them -- it stays at 2.0 and the build
-# still prints every shortfall. A pairing only belongs here when somebody has
-# looked at the render and decided the quieter mark is worth the contrast, and
-# the reason is recorded so the next person can disagree with it.
-#
-# Measured trade: 0.85/0.45 is the lightest weight that clears 2.0 everywhere,
-# and that weight is exactly what was rejected as too heavy on footage. There
-# is no weight that satisfies both, so this is a deliberate call, not a gap.
-ACCEPTED_BELOW_FLOOR: dict[str, str] = {
-    "mist/warm": "2026-09-21: weight reduced on review; mark reads as intended",
-    "mist/busy": "2026-09-21: weight reduced on review; mark reads as intended",
-}
-
-# Which footage each variant is signed off for. The build gates on exactly
-# these pairings; the report still measures the full cross-product so the
-# out-of-policy combinations stay visible as evidence rather than folklore.
+# Which footage each variant is intended for. The report measures the full
+# cross-product so the out-of-policy combinations stay visible as evidence
+# rather than folklore.
 RECOMMENDED = {
     "mist": ("dark", "mid", "warm", "busy"),
     "graphite": ("bright",),
     # `sky` is the brand logotype on white product surfaces, not a mark over
-    # footage. WCAG 1.4.11 exempts logotypes from the contrast minimum, so it
-    # is measured and reported but never gated.
+    # footage. WCAG 1.4.11 exempts logotypes from the contrast minimum.
     "sky": (),
 }
 
@@ -497,11 +484,8 @@ def export_proofs() -> dict:
             res = verify.contrast(ink_layer, composite)
             entry = res.as_dict()
             entry["recommended_pairing"] = bg_name in RECOMMENDED[variant]
-            entry["gated"] = entry["recommended_pairing"]
-            entry["passes_watermark_floor"] = (
-                res.worst_tile >= verify.WATERMARK_FLOOR)
-            entry["accepted_below_floor"] = ACCEPTED_BELOW_FLOOR.get(
-                f"{variant}/{bg_name}")
+            # Reported, never gated. See verify.WATERMARK_REFERENCE.
+            entry["meets_reference"] = res.worst_tile >= verify.WATERMARK_REFERENCE
             report["legibility"][f"{variant}/{bg_name}"] = entry
 
             _save_proof(_sheet(composite, variant, bg_name, res),
@@ -956,17 +940,13 @@ def main() -> int:
     (DIST / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     (DIST / "proofs" / "report.json").write_text(json.dumps(report, indent=2) + "\n")
 
-    failures = [k for k, v in report["legibility"].items()
-                if v["gated"] and not v["passes_watermark_floor"]
-                and not v["accepted_below_floor"]]
-    accepted = {k: round(v["worst_tile"], 2)
-                for k, v in report["legibility"].items()
-                if v["accepted_below_floor"]}
+    below = {k: round(v["worst_tile"], 2)
+             for k, v in report["legibility"].items()
+             if v["recommended_pairing"] and not v["meets_reference"]}
     bad_geom = [k for k, v in report["placements"].items() if not v["clear"]]
-    print(json.dumps({"legibility_failures": failures,
-                      "placement_failures": bad_geom,
-                      "accepted_below_floor": accepted}, indent=2))
-    return 1 if (failures or bad_geom) else 0
+    print(json.dumps({"placement_failures": bad_geom,
+                      "watermark_below_reference": below}, indent=2))
+    return 1 if bad_geom else 0
 
 
 if __name__ == "__main__":

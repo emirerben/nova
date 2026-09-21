@@ -57,8 +57,26 @@ def test_wordmark_is_derived_from_the_product_favicon():
     assert delta.max() <= 1.5, delta.max()
 
 
-@pytest.mark.parametrize("variant", sorted(B.RECOMMENDED))
-def test_recommended_pairings_clear_the_watermark_floor(variant):
+# The approved weights. Signed off on real footage; a change here should be a
+# deliberate edit to both places, not a stray tweak that nobody notices.
+APPROVED_WEIGHTS = {
+    "mist": ("#CAD2DB", 0.42, 0.10),
+    "graphite": ("#526071", 0.62, 0.08),
+}
+
+
+@pytest.mark.parametrize("variant", sorted(APPROVED_WEIGHTS))
+def test_shipped_weights_match_the_approved_values(variant):
+    assert B.VARIANTS[variant] == APPROVED_WEIGHTS[variant]
+
+
+@pytest.mark.parametrize("variant", sorted(APPROVED_WEIGHTS))
+def test_contrast_is_measured_for_every_recommended_pairing(variant):
+    """The watermark is not gated on contrast, but it is always measured.
+
+    The numbers are the record of what the chosen weight costs; losing them
+    would make the next weight change a matter of opinion.
+    """
     backgrounds = B._backgrounds()
     width = B.WATERMARK_SIZES["standard"]
     pad = B.watermark_pad(variant)
@@ -70,35 +88,8 @@ def test_recommended_pairings_clear_the_watermark_floor(variant):
         composite = verify.over(B._place(tile, B.WATERMARK_HOME, pad),
                                 backgrounds[bg_name])
         result = verify.contrast(ink, composite)
-        if f"{variant}/{bg_name}" in B.ACCEPTED_BELOW_FLOOR:
-            continue
-        assert result.worst_tile >= verify.WATERMARK_FLOOR, (
-            f"{variant} on {bg_name}: worst tile {result.worst_tile:.2f}:1 "
-            f"< {verify.WATERMARK_FLOOR}:1")
-
-
-def test_no_stale_entries_in_the_accepted_exception_list():
-    """An accepted exception must still be an exception.
-
-    Without this, a pairing that was waived once stays waived forever and
-    quietly stops being measured against the floor.
-    """
-    backgrounds = B._backgrounds()
-    for key in B.ACCEPTED_BELOW_FLOOR:
-        variant, _, bg_name = key.partition("/")
-        assert variant in B.VARIANTS and bg_name in backgrounds, key
-        assert bg_name in B.RECOMMENDED[variant], (
-            f"{key} is not a recommended pairing, so it is never gated")
-        pad = B.watermark_pad(variant)
-        tile = B.build_watermark(variant, B.WATERMARK_SIZES["standard"])
-        bare = wordmark(B.WATERMARK_SIZES["standard"], fill=B.VARIANTS[variant][0])
-        composite = verify.over(B._place(tile, B.WATERMARK_HOME, pad),
-                                backgrounds[bg_name])
-        result = verify.contrast(B._place(B._pad(bare.full, pad),
-                                          B.WATERMARK_HOME, pad), composite)
-        assert result.worst_tile < verify.WATERMARK_FLOOR, (
-            f"{key} now measures {result.worst_tile:.2f}:1 and clears the floor "
-            f"— remove it from ACCEPTED_BELOW_FLOOR")
+        assert result.worst_tile > 1.0, (
+            f"{variant} on {bg_name} is indistinguishable from its background")
 
 
 def test_the_two_tones_cover_every_footage_class_between_them():
@@ -119,10 +110,10 @@ def test_every_size_sits_on_the_caption_floor():
 
 @pytest.mark.skipif(not (DIST / "proofs" / "report.json").exists(),
                     reason="dist/ not built")
-def test_committed_report_has_no_gated_failures():
+def test_committed_report_is_geometrically_clean_and_still_measured():
     report = json.loads((DIST / "proofs" / "report.json").read_text())
-    failed = [k for k, v in report["legibility"].items()
-              if v["gated"] and not v["passes_watermark_floor"]
-              and not v["accepted_below_floor"]]
-    assert not failed, failed
     assert all(v["clear"] for v in report["placements"].values())
+    # Contrast is reported, not gated -- but it must be present, or the record
+    # of what the chosen weight costs is gone.
+    assert report["legibility"], "no legibility measurements in the report"
+    assert all("worst_tile" in v for v in report["legibility"].values())

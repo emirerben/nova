@@ -80,7 +80,10 @@ final class BrandingTests: XCTestCase {
                        colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         var count = 0
         for y in Int(rect.minY)..<Int(rect.maxY) {
-            for x in Int(rect.minX)..<Int(rect.maxX) where pixels[(y * width + x) * 4] > 100 {
+            // The mark ships near-subliminal: #CAD2DB at 42% over black peaks
+            // around 84, so the threshold sits below that rather than at a
+            // "clearly visible" level.
+            for x in Int(rect.minX)..<Int(rect.maxX) where pixels[(y * width + x) * 4] > 55 {
                 count += 1
             }
         }

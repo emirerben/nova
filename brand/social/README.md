@@ -83,17 +83,30 @@ Opacity is already baked into every file. Do not add your own on top.
 ### Which variant
 
 The mark is a quiet grey with a diffuse shadow and nothing else — no chip, no
-halo, no box. Two tones cover the range:
+halo, no box — and it is deliberately **near-subliminal**:
 
 | variant | use on | worst measured |
 | --- | --- | --- |
-| `mist` `#CAD2DB` @85% | **default** — dark, mid-tone, warm or busy footage | 2.2:1 |
-| `graphite` `#526071` @92% | bright, pale or overexposed footage | 4.5:1 |
+| `mist` `#CAD2DB` @42%, shadow 10% | **default** — dark, mid-tone, warm or busy footage | 1.3:1 |
+| `graphite` `#526071` @62%, shadow 8% | bright, pale or overexposed footage | 2.7:1 |
 | `sky` `#9BCAFF` | white product screens and UI demos only — the brand logotype, never over footage | n/a |
 
+> **This weight is below what is legible, on purpose.** Three rounds of review
+> on real footage landed here: heavier weights were rejected as too present, and
+> the lightest weight that stays readable on every footage class (85% ink / 45%
+> shadow) is exactly the one that was rejected. The mark signs the video; it is
+> not there to be read. On a bright shot it effectively disappears — that is the
+> chosen trade, not a defect.
+>
+> Because of that, **the watermark is not gated on contrast.** It is still
+> measured on every build and the numbers are in §7, so the cost stays visible
+> and the next weight change is an argument about data. What the build does gate
+> is geometry (the mark clears every platform's caption block) and the approved
+> weights, so nobody nudges the opacity by accident.
+
 `mist` is the look; `graphite` is the same treatment re-toned so the mark does
-not vanish on a bright shot. Switching between them is the only decision an
-editor has to make, and `build.py pick` makes it for you.
+not vanish quite so completely on a bright shot. `build.py pick` chooses for you
+offline — note the iOS app always ships `mist` (§5).
 
 If you are unsure, don't guess — measure the actual shot:
 
@@ -189,8 +202,8 @@ mark is not something they can select, move or trim. Branding is added by
 - Off switch: construct the exporter with `branding: .none`. Internal exports
   and the renderer-parity tests already do.
 - The app ships `mist` for every clip. Automatic per-clip tone selection (what
-  `build.py pick` does offline) is not wired into the renderer yet, so a very
-  bright shot will wash the mark out — see §2.
+  `build.py pick` does offline) is not wired into the renderer yet. At the
+  approved weight a bright shot washes the mark out either way — see §2.
 
 Cloud renders are a separate path and are **not** branded by this change.
 
@@ -224,38 +237,36 @@ warm and high-frequency busy. Contrast is WCAG 2.2, measured between the glyph
 and the ring of pixels immediately around it, then split into a 8×3 tile grid so
 a mark that reads on average but vanishes over one bright patch still fails.
 
-**The watermark is gated at 2.0:1, not the 3.0:1 used for text.** This is a
-deliberate, narrow exception. An unaided grey mark cannot hold 3:1 over busy
-mid-tone footage without a chip or a halo behind it — that was measured across
-three rounds of candidates — and putting a box behind the wordmark was rejected
-as too heavy. A watermark is an attribution mark rather than content: it has to
-be *noticeable*, not readable at a glance, and being quiet is the brief. Hook
-titles, step labels and captions are still gated at 3.0:1.
+**The watermark is not gated on these numbers** — see §2 for why. They are kept
+as the record of what the chosen weight costs, so the next person to change it
+argues with measurements rather than taste. Hook titles, step labels and
+captions *are* gated, at 3.0:1.
 
 Sheets: `dist/proofs/legibility-<variant>-<footage>.jpg` (half-resolution;
 they are evidence, not deliverables).
 
-| variant | footage | worst tile | signed off |
+| variant | footage | worst tile | intended for |
 | --- | --- | --- | --- |
-| `mist` | bright | 1.1:1 | no — out of policy |
-| `mist` | busy | 2.5:1 | **yes** — pass |
-| `mist` | dark | 8.0:1 | **yes** — pass |
-| `mist` | mid | 2.6:1 | **yes** — pass |
-| `mist` | warm | 2.2:1 | **yes** — pass |
-| `graphite` | bright | 4.5:1 | **yes** — pass |
-| `graphite` | busy | 1.5:1 | no — out of policy |
-| `graphite` | dark | 2.3:1 | no — out of policy |
-| `graphite` | mid | 1.4:1 | no — out of policy |
-| `graphite` | warm | 1.7:1 | no — out of policy |
-| `sky` | bright | 1.5:1 | n/a — logotype |
-| `sky` | busy | 2.1:1 | n/a — logotype |
-| `sky` | dark | 9.1:1 | n/a — logotype |
-| `sky` | mid | 2.3:1 | n/a — logotype |
-| `sky` | warm | 1.9:1 | n/a — logotype |
+| `mist` | bright | 1.2:1 | no |
+| `mist` | busy | 1.3:1 | **yes** |
+| `mist` | dark | 3.0:1 | **yes** |
+| `mist` | mid | 1.5:1 | **yes** |
+| `mist` | warm | 1.4:1 | **yes** |
+| `graphite` | bright | 2.7:1 | **yes** |
+| `graphite` | busy | 1.5:1 | no |
+| `graphite` | dark | 1.7:1 | no |
+| `graphite` | mid | 1.4:1 | no |
+| `graphite` | warm | 1.5:1 | no |
+| `sky` | bright | 1.5:1 | logotype |
+| `sky` | busy | 1.8:1 | logotype |
+| `sky` | dark | 9.2:1 | logotype |
+| `sky` | mid | 2.3:1 | logotype |
+| `sky` | warm | 1.9:1 | logotype |
 
-The rows marked *out of policy* are why the two-tone rule exists: `mist` really
-does collapse to 1.1:1 on a blown-out sky, and `graphite` to 1.5:1 on a busy
-mid-tone crowd. They are measured and kept visible rather than left as folklore.
+At this weight `mist` sits around 1.3–1.5:1 on most footage and only separates
+properly on dark shots (3.0:1); `graphite` holds 2.7:1 on a blown-out sky and
+little else. That is the whole picture, kept visible rather than left as
+folklore.
 
 `sky` is the brand logotype on white product surfaces. WCAG 1.4.11 exempts
 logotypes from the contrast minimum, so it is reported but never gated — do not

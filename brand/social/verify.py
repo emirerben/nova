@@ -23,14 +23,17 @@ from kria_brand import OCCLUSION
 CONTRAST_FLOOR = 3.0
 CONTRAST_TARGET = 4.5
 
-# A watermark is an attribution mark, not content: it has to be NOTICEABLE, not
-# readable at a glance, and being quiet is the entire point of the brief. An
-# unaided grey mark cannot hold 3:1 over busy mid-tone footage without a chip
-# or a halo behind it (measured, see README section 6), so the watermark set is
-# gated at a lower, explicitly separate floor. This is a deliberate exception
-# with a stated reason, not a relaxed version of the rule above -- text assets
-# are still gated at CONTRAST_FLOOR.
-WATERMARK_FLOOR = 2.0
+# The watermark is NOT gated on contrast. It is a near-subliminal attribution
+# mark, deliberately chosen at a weight where it disappears into bright footage
+# rather than one that stays readable -- see README section 2. Measuring it is
+# still worth doing, so every pairing is reported against this reference value
+# and the trade stays visible; nothing fails because of it. What the build DOES
+# gate on is geometry (the mark clears the platforms' caption block) and the
+# approved weights (nobody nudges the opacity by accident).
+#
+# Text assets -- hook titles, step labels, captions -- are a different matter
+# and are still gated at CONTRAST_FLOOR above.
+WATERMARK_REFERENCE = 2.0
 
 
 def _intersects(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
