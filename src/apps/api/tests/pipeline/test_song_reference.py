@@ -30,7 +30,7 @@ def test_v6_compiles_and_replays_external_reference_without_music() -> None:
     guided = _guided_snapshot()
     plan = compile_execution_plan(guided, track=_track())
 
-    assert plan["compiler_version"] == 6
+    assert plan["compiler_version"] == 7
     assert plan["music"] is None
     assert plan["song_reference"] == {
         "schema_version": 1,

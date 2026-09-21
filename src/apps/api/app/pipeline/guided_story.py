@@ -43,8 +43,12 @@ from app.schemas.edit_proposal import (
 
 log = structlog.get_logger()
 
-COMPILER_VERSION = 6
-VOICEOVER_COMPILER_VERSION = 6
+# v7: a fast montage carries the creator's `montage_audio` choice into the plan
+# (v6 dropped it, so "keep original audio" rendered muted). Stored plans are
+# re-validated by recompiling at their own version, so this is a new version
+# rather than a change to v6.
+COMPILER_VERSION = 7
+VOICEOVER_COMPILER_VERSION = 7
 VARIANT_ID = "guided_story"
 _FRAME_S = 1.0 / 30.0
 _ALLOCATION_EPSILON_S = 0.0005
@@ -181,7 +185,7 @@ class GuidedStoryExecutionPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    compiler_version: Literal[1, 2, 3, 4, 5, 6]
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7]
     proposal_version: int = Field(ge=1)
     media_digest: str = Field(min_length=64, max_length=64)
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
@@ -1234,7 +1238,7 @@ def _text_elements(
     beat_windows: list[dict],
     policy: dict,
     *,
-    compiler_version: Literal[1, 2, 3, 4, 5, 6],
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7],
 ) -> list[dict]:
     total_s = (
         canonical_narration_duration_s(snapshot.narration.duration_s)
@@ -1555,7 +1559,7 @@ def _compile_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
-    compiler_version: Literal[1, 2, 3, 4, 5, 6],
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7],
 ) -> dict[str, Any]:
     """Compile a deterministic plan with an explicitly versioned allocator."""
 
@@ -1699,6 +1703,14 @@ def _compile_execution_plan_version(
                 beat_windows=beat_windows,
                 mixed_media_timing=mixed_timing,
                 montage_cadence=snapshot.montage_cadence,
+                # The renderers read the creator's source-audio choice from the
+                # plan, not the snapshot. Without it a fast montage reports
+                # source_audio_preserved=False and every clip is muted.
+                montage_audio=(
+                    snapshot.montage_audio.model_dump(mode="json")
+                    if compiler_version >= 7 and snapshot.montage_audio is not None
+                    else None
+                ),
                 licensed_sfx_intent=(
                     snapshot.licensed_sfx.model_dump(mode="json")
                     if snapshot.licensed_sfx is not None
