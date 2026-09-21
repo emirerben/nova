@@ -13,6 +13,14 @@ from typing import Any
 
 from app.schemas.clip_intents import ClipIntent, GroundedLabel, ResolvedClipIntent
 
+# Key on a stored clip analysis holding cached vision answers (see IntentResolution).
+ANSWERS_KEY = "answers"
+
+
+def normalize_question(question: str) -> str:
+    """Stable cache key for a vision question."""
+    return " ".join(question.casefold().split())[:200]
+
 
 @dataclass(frozen=True)
 class IntentClip:
@@ -32,6 +40,10 @@ class IntentResolution:
     # Set when any intent could not be resolved with enough certainty. The chat
     # turn must ask this instead of proposing the strategy.
     question: str | None = None
+    # New vision answers from this turn, for the caller to persist on each
+    # clip's stored analysis under ANSWERS_KEY so a repeat question is free:
+    # {media_id: {normalized_question: {"answer", "confidence", "evidence"}}}.
+    vision_answers: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
     @property
     def needs_creator(self) -> bool:
