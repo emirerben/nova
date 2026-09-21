@@ -201,7 +201,14 @@ public protocol WaveformExtracting: Sendable { func extract(asset: URL, bucketCo
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         session.outputURL = destination; session.outputFileType = .mp4; session.shouldOptimizeForNetworkUse = true
         progress?(0)
-        await session.export()
+        // `Task.checkCancellation()` cannot interrupt `export()`, so without this an un-chosen clip
+        // would still burn the whole encode. `cancelExport()` is safe to call from any thread.
+        nonisolated(unsafe) let cancellable = session
+        await withTaskCancellationHandler {
+            await session.export()
+        } onCancel: {
+            cancellable.cancelExport()
+        }
         if Task.isCancelled { session.cancelExport(); throw CancellationError() }
         guard session.status == .completed else { throw session.error ?? MediaEngineError.exportFailed }
         progress?(1); return destination
