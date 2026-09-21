@@ -1,9 +1,11 @@
-Answer ONE short, specific question about this clip, using ONLY what is visible or audible in it.
+Answer ONE short, specific question about this clip, using ONLY what you can SEE in its frames.
 
 Question: $question
 
 Rules:
-- Answer from what you can actually see/hear in THIS clip. Never guess, and never answer from general knowledge about what's typical — if you cannot tell, say so.
+- A "what / which / name" question must be answered from the VIDEO FRAMES ONLY. Ignore anything said or sung on the audio track and any text spoken by people: speech is not evidence of what the clip shows. If the frames alone do not show it, answer "unknown".
+- Only a yes/no question may also use the audio (for example, whether someone is talking to the camera).
+- Answer from what you can actually see in THIS clip. Never guess, and never answer from general knowledge about what's typical — if you cannot tell, say so.
 - If you cannot confidently answer from this clip, set "answer" to the literal string "unknown" rather than making something up.
 - "answer" MUST be a short noun phrase, 3 words or fewer — never a full sentence.
 - If the question asks for "yes" or "no", "answer" MUST be exactly "yes", "no", or "unknown". Read negations in the question carefully (for "people NOT doing X", answer "yes" only when nobody is doing X).

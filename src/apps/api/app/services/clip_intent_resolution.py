@@ -34,6 +34,7 @@ from app.agents.clip_request_resolver import (
 )
 from app.config import settings
 from app.schemas.clip_intents import (
+    LABEL_MIN_CONFIDENCE,
     MEMBERSHIP_MIN_CONFIDENCE,
     ClipAssignment,
     ClipIntent,
@@ -178,6 +179,11 @@ def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | Non
         return None
     hit = answers.get(question_norm)
     return hit if isinstance(hit, dict) else None
+
+
+# The resolver's own spec allows 2 x 20s + 1s backoff; this is the hard stop the
+# chat turn waits for before it degrades to a question.
+_RESOLVER_DEADLINE_S = 45.0
 
 
 def _fallback_question(intent: ClipIntent) -> str:
@@ -334,8 +340,9 @@ async def resolve_clip_intents_for_turn(
 
     resolver_agent = ClipRequestResolverAgent(default_client())
     try:
-        resolver_output: ClipRequestResolverOutput = await asyncio.to_thread(
-            resolver_agent.run, resolver_input, ctx=ctx
+        resolver_output: ClipRequestResolverOutput = await asyncio.wait_for(
+            asyncio.to_thread(resolver_agent.run, resolver_input, ctx=ctx),
+            timeout=_RESOLVER_DEADLINE_S,
         )
     except Exception as exc:  # noqa: BLE001 — degrade gracefully, never raise from a chat turn
         # Covers TerminalError (refusal/schema/transient-exhausted) and any
@@ -409,7 +416,11 @@ async def resolve_clip_intents_for_turn(
                 if assignment is None:
                     continue
                 if intent.creator_text:
-                    if assignment.confidence >= MEMBERSHIP_MIN_CONFIDENCE:
+                    # The text is the creator's, but WHICH clip it lands on is the
+                    # resolver's call, and it prints: hold it to the label bar (0.8),
+                    # not the membership bar. Below that, the vision model confirms
+                    # membership with a yes/no check instead.
+                    if assignment.confidence >= LABEL_MIN_CONFIDENCE:
                         label = ground_label(
                             media_id=media_id,
                             value=intent.creator_text,
@@ -648,7 +659,7 @@ def _apply_vision_result(
 
     if candidate.op == "label":
         if candidate.creator_text:
-            if output.confidence >= MEMBERSHIP_MIN_CONFIDENCE:
+            if output.confidence >= LABEL_MIN_CONFIDENCE:
                 label = ground_label(
                     media_id=candidate.media_id,
                     value=candidate.creator_text,

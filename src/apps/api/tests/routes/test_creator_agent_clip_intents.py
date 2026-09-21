@@ -12,7 +12,7 @@ mapping, and brief forwarding on confirm.
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -465,14 +465,35 @@ def test_legacy_clip_intents_empty_when_neither_field_set() -> None:
 # ---------------------------------------------------------------------------
 
 
+class _Savepoint:
+    """Stand-in for ``AsyncSession.begin_nested()``: an async context manager."""
+
+    def __init__(self) -> None:
+        self.rolled_back = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.rolled_back = exc_type is not None
+        return False
+
+
+def _fake_db(**get_kwargs) -> AsyncMock:
+    db = AsyncMock()
+    db.get = AsyncMock(**get_kwargs)
+    db.savepoint = _Savepoint()
+    db.begin_nested = MagicMock(return_value=db.savepoint)
+    return db
+
+
 @pytest.mark.asyncio
 async def test_vision_answers_persist_onto_pool_asset_analysis() -> None:
     item_id = uuid.uuid4()
     asset_id = uuid.uuid4()
     asset = SimpleNamespace(plan_item_id=item_id, analysis={"summary": "a food clip"})
     item = SimpleNamespace(id=item_id)
-    db = AsyncMock()
-    db.get = AsyncMock(return_value=asset)
+    db = _fake_db(return_value=asset)
 
     await creator_routes._persist_clip_intent_vision_answers(
         db,
@@ -494,8 +515,7 @@ async def test_vision_answers_merge_without_clobbering_existing_cache() -> None:
         plan_item_id=item_id, analysis={ANSWERS_KEY: {"old question": {"answer": "no"}}}
     )
     item = SimpleNamespace(id=item_id)
-    db = AsyncMock()
-    db.get = AsyncMock(return_value=asset)
+    db = _fake_db(return_value=asset)
 
     await creator_routes._persist_clip_intent_vision_answers(
         db, item, {f"asset-{asset_id}": {"new question": {"answer": "yes"}}}
@@ -514,8 +534,7 @@ async def test_vision_answers_skip_raw_clip_assignments_media() -> None:
     is a documented no-op, never an error."""
 
     item = SimpleNamespace(id=uuid.uuid4())
-    db = AsyncMock()
-    db.get = AsyncMock(side_effect=AssertionError("must not be looked up"))
+    db = _fake_db(side_effect=AssertionError("must not be looked up"))
 
     await creator_routes._persist_clip_intent_vision_answers(
         db, item, {"clip-1": {"question": {"answer": "yes"}}}
@@ -525,12 +544,17 @@ async def test_vision_answers_skip_raw_clip_assignments_media() -> None:
 @pytest.mark.asyncio
 async def test_vision_answers_persist_failure_never_raises() -> None:
     item = SimpleNamespace(id=uuid.uuid4())
-    db = AsyncMock()
-    db.get = AsyncMock(side_effect=RuntimeError("db is down"))
+    db = _fake_db(side_effect=RuntimeError("db is down"))
 
     await creator_routes._persist_clip_intent_vision_answers(
         db, item, {f"asset-{uuid.uuid4()}": {"q": {"answer": "yes"}}}
     )  # must not raise
+
+    # The failure is confined to a SAVEPOINT: swallowing a flush error without one
+    # leaves the turn's transaction "pending rollback" and the final commit 500s.
+    db.begin_nested.assert_called_once()
+    assert db.savepoint.rolled_back is True
+    db.rollback.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

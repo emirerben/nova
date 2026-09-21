@@ -2536,22 +2536,27 @@ def compile_guided_runtime_plan(
                 _canonical_context_sport_labels,
                 _compact_context_sport_text_elements,
                 _grounded_context_labels,
+                _merge_context_label_rows,
             )
 
             clip_id_to_gcs = {ref.media_id: ref.gcs_path for ref in snapshot.media}
-            if grounded_intents:
-                labels = _grounded_context_labels(
+            labels = _merge_context_label_rows(
+                _grounded_context_labels(
                     grounded_intents,
                     clip_id_to_gcs,
                     matcher_clip_metas(snapshot),
                     media_refs=list(snapshot.media),
                 )
-            else:
-                labels = _canonical_context_sport_labels(
+                if grounded_intents
+                else None,
+                _canonical_context_sport_labels(
                     context_intent,
                     clip_id_to_gcs,
                     matcher_clip_metas(snapshot),
                 )
+                if context_intent
+                else [],
+            )
             by_clip_row = {row["clip_id"]: row for row in labels}
             context_elements: list[dict[str, Any]] = []
             for index, moment in enumerate(moments):

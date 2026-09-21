@@ -160,6 +160,11 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
         thinking_budget=384,
+        # Runs synchronously inside a chat turn: keep the worst case short
+        # (defaults allow ~249s of retries). A failure degrades to a question.
+        max_attempts=2,
+        backoff_s=(1.0,),
+        timeout_s=20.0,
     )
     Input = ClipRequestResolverInput
     Output = ClipRequestResolverOutput

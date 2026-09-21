@@ -1941,21 +1941,26 @@ async def _persist_clip_intent_vision_answers(
     if not vision_answers:
         return
     try:
-        for media_id, answers in vision_answers.items():
-            if not answers or not media_id.startswith("asset-"):
-                continue
-            try:
-                asset_uuid = uuid.UUID(media_id.removeprefix("asset-"))
-            except ValueError:
-                continue
-            asset = await db.get(PlanItemAsset, asset_uuid)
-            if asset is None or asset.plan_item_id != item.id:
-                continue
-            analysis = dict(asset.analysis) if isinstance(asset.analysis, dict) else {}
-            existing = dict(analysis.get(ANSWERS_KEY) or {})
-            existing.update(answers)
-            analysis[ANSWERS_KEY] = existing
-            asset.analysis = analysis
+        # SAVEPOINT: a flush error here must roll back ONLY this cache write.
+        # Swallowing it without one would leave the turn's transaction in
+        # "pending rollback" and turn the final commit into a 500.
+        async with db.begin_nested():
+            for media_id, answers in vision_answers.items():
+                if not answers or not media_id.startswith("asset-"):
+                    continue
+                try:
+                    asset_uuid = uuid.UUID(media_id.removeprefix("asset-"))
+                except ValueError:
+                    continue
+                asset = await db.get(PlanItemAsset, asset_uuid)
+                if asset is None or asset.plan_item_id != item.id:
+                    continue
+                analysis = dict(asset.analysis) if isinstance(asset.analysis, dict) else {}
+                existing = dict(analysis.get(ANSWERS_KEY) or {})
+                existing.update(answers)
+                analysis[ANSWERS_KEY] = existing
+                asset.analysis = analysis
+            await db.flush()
     except Exception as exc:  # noqa: BLE001
         log.warning("clip_intents.vision_answer_persist_failed", error=str(exc)[:300])
 

@@ -87,13 +87,20 @@ class ClipQuestionAgent(Agent[ClipQuestionInput, ClipQuestionOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.clip_question",
         prompt_id="clip_question",
-        prompt_version="2026-09-21.2",
+        prompt_version="2026-09-21.3",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
         # One short factual answer — no reasoning depth needed. Kept small so
         # the capped, deadline-bounded chat-turn re-query stays fast.
         thinking_budget=128,
+        # Runs inside a chat turn under one 25s batch deadline. asyncio cannot
+        # cancel a worker thread, so the agent itself must be short-lived: the
+        # default 5 attempts x 30s + backoff (~249s) would keep a Gemini slot
+        # and keep billing long after the turn answered the creator.
+        max_attempts=2,
+        backoff_s=(1.0,),
+        timeout_s=12.0,
     )
     Input = ClipQuestionInput
     Output = ClipQuestionOutput

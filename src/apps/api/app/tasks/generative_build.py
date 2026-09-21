@@ -11374,6 +11374,17 @@ def _grounded_context_labels(
     return list(accepted.values())
 
 
+def _merge_context_label_rows(
+    grounded_rows: list[dict[str, Any]] | None,
+    legacy_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Grounded rows win per clip; legacy (allowlist-fenced) rows fill the rest."""
+    if grounded_rows is None:
+        return legacy_rows
+    grounded_clip_ids = {row["clip_id"] for row in grounded_rows}
+    return [*grounded_rows, *(r for r in legacy_rows if r["clip_id"] not in grounded_clip_ids)]
+
+
 def _context_sport_text_elements(
     raw_labels: object,
     *,
@@ -11390,16 +11401,15 @@ def _context_sport_text_elements(
     assembled steps. Labels repeat when a source clip is used in multiple slots;
     no slot duration or downstream timeline is modified.
 
-    ``grounded_rows`` (KRI-127, flag CLIP_INTENTS_ENABLED): when not None
-    (including an empty list), these rows -- already re-verified by
-    ``_grounded_context_labels`` -- REPLACE ``raw_labels``/the legacy sport
-    allowlist entirely for this call. ``None`` (the default, and always the
-    value when the flag is off) preserves the exact legacy behavior.
+    ``grounded_rows`` (KRI-127, flag CLIP_INTENTS_ENABLED): rows already
+    re-verified by ``_grounded_context_labels``. They win PER CLIP; every other
+    clip keeps whatever the legacy allowlist resolves for it, so a new intent
+    that fails to ground can never erase a good label on an unrelated clip.
+    ``None`` (the default, and always the value when the flag is off)
+    preserves the exact legacy behavior.
     """
-    labels = (
-        grounded_rows
-        if grounded_rows is not None
-        else _canonical_context_sport_labels(raw_labels, clip_id_to_gcs, clip_metas)
+    labels = _merge_context_label_rows(
+        grounded_rows, _canonical_context_sport_labels(raw_labels, clip_id_to_gcs, clip_metas)
     )
     if not labels or len(steps) != len(resolved_plans):
         return []

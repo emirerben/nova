@@ -1,6 +1,6 @@
 {
   "agent": "nova.video.clip_question",
-  "prompt_version": "2026-09-21.2",
+  "prompt_version": "2026-09-21.3",
   "input": {
     "file_uri": "files/kri127-eval-fixture-clip",
     "file_mime": "video/mp4",

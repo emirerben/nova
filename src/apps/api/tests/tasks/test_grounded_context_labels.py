@@ -345,31 +345,52 @@ def test_every_grounded_element_carries_provenance_in_source_params():
         assert "context_label_source" not in params
 
 
-def test_grounded_rows_empty_list_suppresses_the_legacy_allowlist_entirely():
-    """flag on + resolved label intents present but none grounded => no
-    labels at all, even if a legacy `creator_context_label` is also set --
-    the two lanes never mix on one job."""
-    steps = [SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"})]
-    plans = [{"duration_s": 2.0}]
+def test_grounded_rows_win_per_clip_and_never_erase_legacy_labels_on_other_clips():
+    """A new intent that fails to ground must not wipe a good, allowlist-fenced
+    legacy label on an unrelated clip; a grounded row still wins for ITS clip."""
+    steps = [
+        SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"}),
+        SimpleNamespace(clip_id="clip-b", slot={"transition_in": "cut"}),
+    ]
+    plans = [{"duration_s": 2.0}, {"duration_s": 2.0}]
     legacy_raw = [
         {
             "source": "detected_sport",
-            "clip_id": "clip-a",
+            "clip_id": clip_id,
             "sport": "basketball",
             "position": "bottom_right",
             "size": "small",
             "confidence": 0.96,
         }
+        for clip_id in ("clip-a", "clip-b")
     ]
-    elements = _context_sport_text_elements(
+    kwargs = {
+        "steps": steps,
+        "resolved_plans": plans,
+        "clip_id_to_gcs": {"clip-a": "a.mp4", "clip-b": "b.mp4"},
+        "video_duration_s": 4.0,
+    }
+
+    nothing_grounded = _context_sport_text_elements(legacy_raw, grounded_rows=[], **kwargs)
+    assert [e["text"] for e in nothing_grounded] == ["Basketball"]  # compacted a+b run
+
+    one_grounded = _context_sport_text_elements(
         legacy_raw,
-        steps=steps,
-        resolved_plans=plans,
-        clip_id_to_gcs={"clip-a": "a.mp4"},
-        video_duration_s=2.0,
-        grounded_rows=[],
+        grounded_rows=[
+            {
+                "clip_id": "clip-a",
+                "sport": "Ramen",
+                "source": "grounded_label",
+                "grounding": "record_span",
+                "confidence": 0.9,
+                "intent_id": "i1",
+            }
+        ],
+        **kwargs,
     )
-    assert elements == []
+    assert [e["text"] for e in one_grounded] == ["Ramen", "Basketball"]
+    assert one_grounded[0]["source_params"]["grounding"] == "record_span"
+    assert "grounding" not in one_grounded[1]["source_params"]
 
 
 def test_grounded_and_legacy_elements_share_identical_timing_and_geometry():
