@@ -196,7 +196,7 @@ def main() -> None:
     # --- media fixtures -----------------------------------------------
     clips = {
         "cuts-c0": ("red", 440),
-        "cuts-c1": ("green", 494),
+        "cuts-c1": ("lime", 494),  # ffmpeg "green" is #008000, not pure green
         "crossfade-c0": ("blue", 523),
         "crossfade-c1": ("yellow", 587),
         "music-c0": ("cyan", 659),

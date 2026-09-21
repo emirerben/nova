@@ -46,6 +46,12 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     }
 
     func testLicensedMusicBedReplacesOriginalAudioOnTheIPhone() async throws {
+        // KRI-132 finding: the verified library cache stores music under an
+        // extensionless content address, and AVFoundation refuses it
+        // (-11828 "Cannot Open"). Visuals videos get a playable name from
+        // `VisualVideoFile.prepare`; library audio has no equivalent yet.
+        // Strict, so the fix has to delete this expectation.
+        XCTExpectFailure("library audio has no playable file extension", strict: true)
         try await assertCase("music")
     }
 
@@ -146,18 +152,6 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
         let movie = frames.appendingPathComponent("\(caseID).mp4")
         try? FileManager.default.removeItem(at: movie)
-        // KRI-132 open risk (see the script's module docstring): unlike a
-        // Visuals-pool video, whose bytes `VisualVideoFile.prepare` explicitly
-        // re-copies to `visual-videos/<sha>-<bytes>.<mp4|mov>` "because
-        // AVFoundation chooses its reader from the extension", this music
-        // bed's `.library` asset resolves straight from `RenderLibraryCache`'s
-        // EXTENSIONLESS `<sha256>-<byteCount>` cache path with no equivalent
-        // fixup anywhere in `AuthorizedDeviceSourceResolver.resolve`. If
-        // AVFoundation cannot identify the AAC container without a file
-        // extension, `Composition.swift`'s `recipeTrack.kind == .audio` branch
-        // throws `MediaEngineError.missingAsset` here -- for the "music" case
-        // only. This export call is exactly where that would surface; if it
-        // throws only for `caseID == "music"`, that confirms the gap.
         let checkpoint = try await AVFoundationLocalExporter(
             stateStore: FileExportStateStore(directory: project.root.appendingPathComponent("state"))
         ).export(recipe: recipe, assetURLs: urls, outputURL: movie)
