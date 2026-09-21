@@ -16,8 +16,6 @@ struct BrandPreviewHost: View {
             switch state {
             case "signin": SignInView()
             case "account": NavigationStack { AccountView() }
-            case "consent": CloudUploadConsentView(onConsent: {})
-            case "analysis-consent": AnalysisUploadConsentView(onConsent: {})
             case "gallery": NavigationStack { GalleryView() }
             case "projects": ProjectsDrawer(close: {}, openGallery: {})
             case "editor": NativeEditorView(project: PreviewFixtures.editorProject, initialDraft: PreviewFixtures.editorDraft, initialPlaybackURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"), onBack: {})

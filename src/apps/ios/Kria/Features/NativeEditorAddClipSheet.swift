@@ -14,21 +14,15 @@ struct NativeEditorAddClipSheet: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var showingPhotosPicker = false
     @State private var showingFileImporter = false
-    @State private var pendingConsent: PendingConsentSource?
-
-    private struct PendingConsentSource: Identifiable {
-        let id = UUID()
-        let source: UploadSource
-    }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Adds to the end of your edit.")
+                Text("Adds to the end of your edit. Kria uploads the full-quality original.")
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.mutedInk)
 
-                Button { pendingConsent = PendingConsentSource(source: .photos) } label: {
+                Button { showingPhotosPicker = true } label: {
                     Label("Choose from Photos", systemImage: "photo.on.rectangle")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
@@ -37,11 +31,11 @@ struct NativeEditorAddClipSheet: View {
                 .photosPicker(isPresented: $showingPhotosPicker, selection: $photoItem, matching: .any(of: [.videos, .images]))
                 .onChange(of: photoItem) { _, item in
                     guard let item else { return }
-                    Task { await importPhotoItem(item) }
+                    importPhotoItem(item)
                 }
                 .accessibilityIdentifier("native-editor-add-clip-photos")
 
-                Button { pendingConsent = PendingConsentSource(source: .files) } label: {
+                Button { showingFileImporter = true } label: {
                     Label("Choose from Files or iCloud", systemImage: "folder")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
@@ -50,6 +44,8 @@ struct NativeEditorAddClipSheet: View {
                 .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.movie, .image], onCompletion: importFile)
                 .accessibilityIdentifier("native-editor-add-clip-files")
 
+                // Normally invisible: the sheet closes as soon as a file is chosen. Kept for the moment
+                // before it does, so the user never sees dead buttons and no progress.
                 if session.isAddingClip {
                     HStack { Spacer(); ProgressView("Adding…"); Spacer() }
                 }
@@ -60,36 +56,52 @@ struct NativeEditorAddClipSheet: View {
                 Spacer()
             }
             .padding(20)
-            .sheet(item: $pendingConsent) { pending in
-                CloudUploadConsentView(onConsent: {
-                    switch pending.source {
-                    case .photos: showingPhotosPicker = true
-                    default: showingFileImporter = true
-                    }
-                })
-            }
             .navigationTitle("Add clip or photo")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .onChange(of: session.isAddingClip) { _, isAdding in
-                if !isAdding, session.addClipError == nil { dismiss() }
-            }
         }
         .presentationDetents([.medium])
     }
 
-    private func importPhotoItem(_ item: PhotosPickerItem) async {
-        guard let media = try? await item.loadTransferable(type: ImportedMedia.self) else {
-            session.addClipError = "This file couldn’t be read. Try Files or choose it again."
-            photoItem = nil
-            return
+    // The sheet closes the moment a file is chosen. Everything after that — fetching the file out of
+    // Photos (seconds for an iCloud asset), the upload, and minting the clip — runs on the session,
+    // which the editor owns and which therefore outlives this sheet. The editor shows progress and
+    // any error; holding the user on a spinner here is what made adding a clip feel slow.
+
+    /// Dismissing synchronously inside the picker's own completion stacks two dismissals — the race
+    /// `FootagePickerView` documents — and can leave this sheet open. Let the picker finish closing first.
+    private func dismissAfterPickerCloses() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            dismiss()
         }
+    }
+
+    private func importPhotoItem(_ item: PhotosPickerItem) {
+        let session = session
         photoItem = nil
-        await session.addClip(fileURL: media.url)
+        dismissAfterPickerCloses()
+        Task { @MainActor in
+            await session.addClip {
+                guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw AddClipSourceUnreadable() }
+                return media.url
+            }
+        }
     }
 
     private func importFile(_ result: Result<URL, any Error>) {
         guard case .success(let url) = result else { return }
-        Task { await session.addClip(fileURL: url) }
+        let session = session
+        // The importer's URL is security-scoped. Hold access until the upload is done, since the
+        // work now outlives the sheet that received it.
+        let scoped = url.startAccessingSecurityScopedResource()
+        dismissAfterPickerCloses()
+        Task { @MainActor in
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            await session.addClip(fileURL: url)
+        }
     }
 }
+
+/// Photos handed back nothing readable for the chosen item.
+struct AddClipSourceUnreadable: Error {}

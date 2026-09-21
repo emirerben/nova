@@ -20,7 +20,6 @@ struct AttachmentSheet: View {
     @State private var mutatingVisual = false
     @State private var removingMedia = false
     @State private var pendingRemoval: CreationActionIdentity?
-    @State private var recordingConsent = false
     @State private var uploadingRecording = false
     @State private var pendingRecords: [UploadRecoveryRecord] = []
     @StateObject private var recorder = CreationVoiceRecorder()
@@ -43,6 +42,15 @@ struct AttachmentSheet: View {
             let ownReservations = Set(pendingRecords.filter { $0.projectID == projectID && $0.role == .visual }.compactMap(\.visualReservationID))
             let overlap = pool?.activeReservations?.filter { ownReservations.contains($0.reservationID) }.count ?? 0
             return max(pool?.assets.count ?? 0, (pool?.occupiedAssets ?? 0) - overlap)
+        }
+    }
+    /// What is attached for the current role, so the picker can show those clips as already chosen —
+    /// and stop doing so the moment one is removed (trash button, web, or un-choosing it).
+    private var attachedMediaIDs: Set<String> {
+        switch role {
+        case .clip: Set(media.filter { $0.kind == "video" }.map(\.id))
+        case .voiceover: Set(media.filter { $0.kind == "audio" }.map(\.id))
+        case .visual: Set((pool?.assets ?? []).map(\.id))
         }
     }
     private var canRecord: Bool {
@@ -83,7 +91,7 @@ struct AttachmentSheet: View {
                     // Until the pool loads, its limit is unknown; don't show a
                     // disabled picker claiming the limit was reached.
                     if role != .visual || pool != nil {
-                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
+                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, attachedMediaIDs: attachedMediaIDs, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
                             .id(role)
                     }
                     if role == .voiceover && uploadDestination == .cloud {
@@ -94,7 +102,7 @@ struct AttachmentSheet: View {
                                 .disabled(uploadingRecording || !canRecord)
                             Button("Discard recording") { recorder.discard() }.disabled(uploadingRecording)
                         } else {
-                            Button("Record voiceover") { recordingConsent = true }.disabled(!canRecord || uploadingRecording)
+                            Button("Record voiceover") { Task { await recorder.start() } }.disabled(!canRecord || uploadingRecording)
                         }
                         if let recorderError = recorder.error { Text(recorderError).font(KriaFont.body(13)) }
                     }
@@ -141,9 +149,6 @@ struct AttachmentSheet: View {
             .navigationTitle("Add media")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(recorder.isRecording) } }
-            .sheet(isPresented: $recordingConsent) {
-                CloudUploadConsentView { Task { await recorder.start() } }
-            }
             .interactiveDismissDisabled(recorder.isRecording)
             .task {
                 guard capabilities?.visualsEnabled == true else { return }
@@ -163,6 +168,9 @@ struct AttachmentSheet: View {
                 }
             }
             .onReceive(model.uploads.$records) { pendingRecords = $0 }
+            // Un-choosing a visual in the picker removes it server-side; refresh the pool now rather
+            // than on the next poll, or the picker would keep showing it as chosen for a few seconds.
+            .onReceive(model.uploads.$photoSelections) { _ in if role == .visual { Task { await loadVisuals() } } }
             .onDisappear { recorder.discard() }
         }
     }
@@ -208,6 +216,29 @@ struct AttachmentSheet: View {
         defer { uploadingRecording = false }
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"])
         if accepted { recorder.discard() }
+    }
+}
+
+/// Thumbnail of a clip that is still being prepared or uploaded, keyed by its upload id, so it is
+/// visible from the moment the clip is chosen rather than after it has attached.
+struct CreationRecordThumbnail: View {
+    let recordID: UUID
+    /// `BackgroundUploadCoordinator.previewVersion`. Every other input here is constant, so without it
+    /// SwiftUI would never re-read the file when the thumbnail appears.
+    let version: Int
+
+    var body: some View {
+        let _ = version
+        Group {
+            if let image = UIImage(contentsOfFile: CreationMediaPreview.url(recordID: recordID).path) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Image(systemName: "video").foregroundStyle(KriaColor.zinc)
+            }
+        }
+        .frame(width: 52, height: 64).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(RoundedRectangle(cornerRadius: 8).fill(KriaColor.zinc.opacity(0.12)))
+        .accessibilityHidden(true)
     }
 }
 

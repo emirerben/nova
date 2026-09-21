@@ -327,6 +327,11 @@ struct FootageStage: View {
     let mediaCount: Int
     let maximumClipCount: Int
     let uploads: [UploadRecoveryRecord]
+    /// Clips still being prepared or chosen. They are not in `uploads` yet, but Continue must wait
+    /// for them or it would proceed with fewer clips than the user picked.
+    var preparingCount = 0
+    /// `BackgroundUploadCoordinator.previewVersion`, so thumbnails re-read from disk as they appear.
+    var previewVersion = 0
     let progress: [UUID: Double]
     let addFootage: () -> Void
     let continueWithFootage: () -> Void
@@ -334,15 +339,26 @@ struct FootageStage: View {
     var attachedMedia: [CreationAttachedMedia] = []
     var isBusy = false
     var removeMedia: (String) -> Void = { _ in }
+    /// Clips that failed to add. They are otherwise only shown inside the picker sheet, so a clip that
+    /// fails after the sheet was closed would silently leave Continue enabled with fewer clips than
+    /// the user chose.
+    var failures: [UploadFailure] = []
+    var dismissFailure: (UUID) -> Void = { _ in }
     /// Photos and videos in Visuals. A montage can be made from them alone.
     var visualCount = 0
     var continueWithVisuals: () -> Void = {}
 
     private var readiness: FootageReadiness {
-        FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count)
+        FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count + preparingCount)
+    }
+
+    /// One bar for every clip on its way. With uploads overlapping, showing only the first upload's
+    /// progress would misrepresent the rest; a clip still being prepared counts as 0.
+    private var overallProgress: Double {
+        FootageReadiness.overallProgress(uploads: uploads.map { progress[$0.id] ?? 0 }, preparingCount: preparingCount)
     }
     private var visualsReadiness: FootageReadiness {
-        FootageReadiness(attachedCount: format == .montage && mediaCount == 0 ? visualCount : 0, pendingCount: uploads.count)
+        FootageReadiness(attachedCount: format == .montage && mediaCount == 0 ? visualCount : 0, pendingCount: uploads.count + preparingCount)
     }
 
     var body: some View {
@@ -379,6 +395,23 @@ struct FootageStage: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("choose-videos")
 
+            if !failures.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(failures) { failure in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("\(failure.filename) wasn’t added. \(failure.message)")
+                                .font(KriaFont.body(12))
+                                .foregroundStyle(KriaColor.failureText)
+                            Spacer(minLength: 4)
+                            Button("Dismiss") { dismissFailure(failure.id) }
+                                .font(KriaFont.body(12).weight(.medium))
+                                .frame(minHeight: 44)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("footage-upload-failures")
+            }
+
             if readiness.attachedCount > 0 {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("\(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips") ready")
@@ -402,6 +435,21 @@ struct FootageStage: View {
                 .disabled(isBusy || !readiness.canContinue)
             }
 
+            // Each clip on its way, with its thumbnail, from the moment it is chosen.
+            if !uploads.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(uploads) { record in
+                        HStack(spacing: 10) {
+                            CreationRecordThumbnail(recordID: record.id, version: previewVersion)
+                            Text(BackgroundUploadCoordinator.displayFilename(record.filename)).font(KriaFont.body(12)).lineLimit(1)
+                            Spacer()
+                            ProgressView(value: progress[record.id] ?? 0).tint(KriaColor.ink).frame(width: 60)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("footage-uploading-clips")
+            }
+
             if visualsReadiness.attachedCount > 0 {
                 Text("\(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals") ready")
                     .font(KriaFont.body(12).weight(.medium))
@@ -417,11 +465,9 @@ struct FootageStage: View {
                     Text("Uploading \(readiness.pendingCount) \(readiness.pendingCount == 1 ? "file" : "files")…")
                         .font(KriaFont.body(12).weight(.medium))
                         .foregroundStyle(KriaColor.zinc)
-                    if let active = uploads.first {
-                        ProgressView(value: progress[active.id] ?? 0)
-                            .tint(KriaColor.ink)
-                            .frame(maxWidth: 160)
-                    }
+                    ProgressView(value: overallProgress)
+                        .tint(KriaColor.ink)
+                        .frame(maxWidth: 160)
                 }
                 .accessibilityIdentifier("footage-upload-progress")
             }
@@ -444,6 +490,14 @@ struct FootageReadiness: Equatable, Sendable {
     }
 
     var canContinue: Bool { attachedCount > 0 && pendingCount == 0 }
+
+    /// Mean progress across every clip still on its way: each upload's own fraction, and 0 for a
+    /// clip that has not started uploading yet.
+    static func overallProgress(uploads: [Double], preparingCount: Int) -> Double {
+        let total = uploads.count + max(0, preparingCount)
+        guard total > 0 else { return 0 }
+        return min(1, max(0, uploads.reduce(0, +) / Double(total)))
+    }
 }
 
 private struct FootageThumbnail: View {

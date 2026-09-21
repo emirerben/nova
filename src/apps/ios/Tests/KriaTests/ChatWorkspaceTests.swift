@@ -195,6 +195,84 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertEqual(partiallyFilled.acceptedCount(requested: 8), 2)
     }
 
+    /// KRI-125: once the picker is seeded with what is already chosen, those items occupy picker
+    /// slots, so `maxSelectionCount` is the project cap minus only what the picker CAN'T show as a
+    /// selection (Files imports, voiceover, media attached elsewhere).
+    func testPickerSelectionLimitAccountsForPreselectedClips() {
+        // 3 attached, all from Photos and all shown as chosen: room for the other 7.
+        let allFromPhotos = ClipSelectionCapacity(maximum: 10, existing: 3, reserved: 0, preselected: 3)
+        XCTAssertEqual(allFromPhotos.pickerSelectionLimit, 10)
+        XCTAssertEqual(allFromPhotos.remaining, 7)
+
+        // 3 attached but 2 came from Files: only 1 is a picker selection, so the picker may hold 8.
+        let mixed = ClipSelectionCapacity(maximum: 10, existing: 3, reserved: 0, preselected: 1)
+        XCTAssertEqual(mixed.pickerSelectionLimit, 8)
+        XCTAssertEqual(mixed.remaining, 7, "the user can still add exactly as many as before")
+
+        // Talking-to-camera (one clip): the attached clip is shown chosen, and the picker holds 1.
+        let single = ClipSelectionCapacity(maximum: 1, existing: 1, reserved: 0, preselected: 1)
+        XCTAssertEqual(single.pickerSelectionLimit, 1)
+        XCTAssertEqual(single.remaining, 0)
+    }
+
+    func testPickerSelectionLimitNeverReachesZeroOrExceedsTheCap() {
+        // PhotosUI treats a limit of 0 as "unlimited".
+        XCTAssertEqual(ClipSelectionCapacity(maximum: 0, existing: 0, reserved: 0).pickerSelectionLimit, 1)
+        XCTAssertEqual(ClipSelectionCapacity(maximum: 5, existing: 5, reserved: 0).pickerSelectionLimit, 1)
+        // More preselected than existing (a stale count) must not push the limit past the cap.
+        XCTAssertEqual(ClipSelectionCapacity(maximum: 4, existing: 1, reserved: 0, preselected: 3).pickerSelectionLimit, 4)
+    }
+
+    /// The cap can drop below what is already attached (a format switch, or capabilities falling back).
+    /// A picker limit under the seeded count would make the picker drop items, and a dropped item must
+    /// never be able to read as the user un-choosing it.
+    func testPickerSelectionLimitIsNeverBelowWhatIsSeededEvenWhenOverTheCap() {
+        let overCap = ClipSelectionCapacity(maximum: 6, existing: 8, reserved: 0, preselected: 8)
+        XCTAssertEqual(overCap.pickerSelectionLimit, 8, "must hold everything it is seeded with")
+        XCTAssertEqual(overCap.remaining, 0, "and there is no room to add more")
+
+        let partlyOver = ClipSelectionCapacity(maximum: 6, existing: 9, reserved: 0, preselected: 5)
+        XCTAssertGreaterThanOrEqual(partlyOver.pickerSelectionLimit, 5)
+    }
+
+    func testPickerSelectionLimitWithoutPhotosAccessMatchesTheOldBehavior() {
+        // No library ⇒ nothing is preselected ⇒ the limit is just the remaining room, as before.
+        let capacity = ClipSelectionCapacity(maximum: 10, existing: 3, reserved: 2)
+        XCTAssertEqual(capacity.pickerSelectionLimit, capacity.remaining)
+    }
+
+    func testClipsBeingPreparedCountAgainstTheLimitWithoutBeingDoubleCounted() {
+        // 2 attached from Files (invisible to the picker) + 3 photo picks still being prepared. The 3
+        // are in `reserved` AND shown as chosen: they must shrink the room once, not twice.
+        let preparing = ClipSelectionCapacity(maximum: 10, existing: 2, reserved: 3, preselected: 3)
+        XCTAssertEqual(preparing.remaining, 5)
+        XCTAssertEqual(preparing.pickerSelectionLimit, 8)
+    }
+
+    /// The property the arithmetic exists to guarantee: the picker may hold what it already shows as
+    /// chosen plus the room that is left — never more (server 409s at attach) and never less (the
+    /// user could not add clips they still have room for).
+    func testPickerSelectionLimitIsWhatIsChosenPlusRoomLeft() {
+        for maximum in [1, 5, 10, 20] {
+            for existing in 0...maximum {
+                for preselected in 0...existing {
+                    let capacity = ClipSelectionCapacity(maximum: maximum, existing: existing, reserved: 0, preselected: preselected)
+                    XCTAssertEqual(capacity.pickerSelectionLimit, max(1, preselected + capacity.remaining),
+                                   "max \(maximum), existing \(existing), preselected \(preselected)")
+                }
+            }
+        }
+    }
+
+    func testOverallProgressAveragesEveryClipOnItsWayAndCountsPreparingOnesAsZero() {
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [1, 0], preparingCount: 0), 0.5)
+        // Two uploads at 100% and 50%, plus two clips not yet uploading: (1 + 0.5) / 4.
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [1, 0.5], preparingCount: 2), 0.375, accuracy: 0.0001)
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [], preparingCount: 3), 0, "only preparing clips: nothing has uploaded yet")
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [], preparingCount: 0), 0, "no division by zero")
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [3], preparingCount: 0), 1, "clamped to a valid ProgressView value")
+    }
+
     func testCreationFormatFallbackClipLimitProtectsTalkingToCameraOffline() {
         XCTAssertEqual(CreationFormat.talkingToCamera.fallbackMaximumClipCount, 1)
         XCTAssertEqual(CreationFormat.montage.fallbackMaximumClipCount, 10)
