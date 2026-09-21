@@ -290,6 +290,28 @@ final class NativeVisualAuthoringTests: XCTestCase {
         XCTAssertEqual(session.document, before)
     }
 
+    func testZoomInEmphasisHoldsLongerThanAPulseAndReclampsOnStyleChange() throws {
+        let session = session()
+        session.seek(to: 1)
+        session.addCameraPulse(easing: CameraEmphasis.holdEasing)
+        let selected = try XCTUnwrap(session.selection)
+        var zoom = try XCTUnwrap(session.document.cameraEffects.first { $0.id == selected.id })
+        XCTAssertEqual(zoom.raw["easing"], .string(CameraEmphasis.holdEasing))
+        XCTAssertEqual(zoom.raw["intensity"], .number(0.06))
+        XCTAssertEqual(zoom.endS - zoom.startS, min(1.8, session.duration - 1), accuracy: 0.001)
+
+        // A hold may run to 6s where a pulse tops out at 2s...
+        session.setCameraEffectTiming(id: zoom.id, startS: 1, endS: 6)
+        zoom = try XCTUnwrap(session.document.cameraEffects.first { $0.id == selected.id })
+        XCTAssertEqual(zoom.endS - zoom.startS, 5, accuracy: 0.001)
+
+        // ...so switching it to a pulse has to pull the window back in.
+        session.setCameraEffectEasing(id: zoom.id, easing: CameraEmphasis.pulseEasing)
+        zoom = try XCTUnwrap(session.document.cameraEffects.first { $0.id == selected.id })
+        XCTAssertEqual(zoom.raw["easing"], .string(CameraEmphasis.pulseEasing))
+        XCTAssertEqual(zoom.endS - zoom.startS, 2, accuracy: 0.001)
+    }
+
     func testCaptionDisplayAndHighlightStayIndependent() async {
         let draft = NativeEditorUITestFixtures.allLanes
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(

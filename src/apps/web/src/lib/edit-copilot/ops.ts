@@ -1,7 +1,9 @@
 import { COPILOT_MAX_DURATION_S } from "./snapshot";
 import type { TextAppearanceInventory } from "./text-appearance";
 import fontRegistryJson from "@/data/font-registry.json";
+import { cameraEasingBounds, resolveCameraEasing } from "@/lib/camera-effects";
 import type { CarouselMoment, EditorTransition } from "@/lib/generative-api";
+import type { CameraEffectEasing } from "@/lib/plan-api";
 import {
   CREATOR_BLOCK_IDS,
   creatorBlockControl,
@@ -265,6 +267,7 @@ export type CopilotOp =
       start_s: number;
       end_s: number;
       intensity?: number;
+      easing?: CameraEffectEasing;
       effect_bundle_id?: string;
     }
   | {
@@ -273,6 +276,7 @@ export type CopilotOp =
       start_s?: number;
       end_s?: number;
       intensity?: number;
+      easing?: CameraEffectEasing;
     }
   | { op: "remove_camera_effect"; camera_effect_index: number }
   | {
@@ -1598,7 +1602,10 @@ export function validateCopilotOp(
       if (raw.end_s <= raw.start_s) {
         return reject("invalid_time", "camera effect end_s must be after start_s", opName);
       }
-      const intensity = raw.intensity === undefined ? 0.04 : raw.intensity;
+      const intensity =
+        raw.intensity === undefined
+          ? cameraEasingBounds(raw.easing).defaultIntensity
+          : raw.intensity;
       if (!finiteNumber(intensity)) {
         return reject("invalid_type", "camera effect intensity must be a number", opName);
       }
@@ -1611,13 +1618,16 @@ export function validateCopilotOp(
           opName,
         );
       }
+      const easing = resolveCameraEasing(raw.easing);
+      const bounds = cameraEasingBounds(easing);
       return {
         ok: true,
         op: {
           op: opName,
           start_s: startS,
-          end_s: endS,
+          end_s: Math.min(endS, startS + bounds.maxDurationS),
           intensity: clamp(intensity, 0.01, 0.08),
+          easing,
           ...(typeof raw.effect_bundle_id === "string" && raw.effect_bundle_id.trim()
             ? { effect_bundle_id: raw.effect_bundle_id.trim().slice(0, 80) }
             : {}),
@@ -1634,7 +1644,8 @@ export function validateCopilotOp(
       const hasStart = raw.start_s !== undefined;
       const hasEnd = raw.end_s !== undefined;
       const hasIntensity = raw.intensity !== undefined;
-      if (!hasStart && !hasEnd && !hasIntensity) {
+      const hasEasing = raw.easing !== undefined;
+      if (!hasStart && !hasEnd && !hasIntensity && !hasEasing) {
         return reject("missing_required", "patch_camera_effect requires a changed field", opName);
       }
       if (
@@ -1652,6 +1663,7 @@ export function validateCopilotOp(
           ...(hasStart ? { start_s: clampAtS(raw.start_s as number, snapshot) } : {}),
           ...(hasEnd ? { end_s: clampAtS(raw.end_s as number, snapshot) } : {}),
           ...(hasIntensity ? { intensity: clamp(raw.intensity as number, 0.01, 0.08) } : {}),
+          ...(hasEasing ? { easing: resolveCameraEasing(raw.easing) } : {}),
         },
       };
     }

@@ -49,7 +49,9 @@ canary section. Guard: `tests/smart_edit/test_capability.py`.
   same document + preset ⇒ identical patch (fingerprinted for shadow comparison).
 - Camera lane: semantic crop pulses compile into the EXISTING reframe filter
   chain (`reframe.py`) — no extra encode. Guard:
-  `test_semantic_crop_is_inside_existing_reframe_filter_only`.
+  `test_semantic_crop_is_inside_existing_reframe_filter_only`. See
+  "Camera emphasis (KRI-7)" below for the two shapes that lane can carry and
+  for how the moments are chosen.
 - Typewriter title reveals and their keyboard-tick SFX share one persisted absolute
   schedule (`text_overlay_skia.py` reveal + tick placements). The web preview
   normalizes that schedule against the element start, so moving/saving an element
@@ -325,6 +327,53 @@ even though the code default is `false`.
   `test_music_and_sfx_share_one_voice_safe_stream_copy_graph`,
   `test_audio_treatment_retries_full_then_sfx_only`.
 
+## Camera emphasis (KRI-7)
+
+One wire token (`semantic_crop_pulse`), two shapes, chosen by `easing`:
+
+| easing | shape | window | default intensity |
+| --- | --- | --- | --- |
+| `sine_pulse` | symmetric accent, rises and returns | 0.4–2.0s | 4% |
+| `ease_in_hold` | push in, HOLD, ease out (the zoom-in emphasis) | 0.6–6.0s | 6% |
+
+`app/pipeline/camera_effects.py` owns the curve
+(`camera_effect_amount`), the per-easing bounds and the hold's ramp constants
+(0.5s in / 0.4s out, capped at 35% / 25% of the window so a short hold is not
+all ramp). Stacked effects cap at +12% total scale.
+
+**Three renderers must agree**, or a creator approves a zoom they don't get:
+
+- export — `reframe.py` builds an ffmpeg expression from the same constants;
+- web editor preview — `src/apps/web/src/lib/camera-effects.ts`;
+- iOS editor bounds/labels — `src/apps/ios/Kria/Core/CameraEmphasis.swift`.
+
+The parity guard evaluates the GENERATED ffmpeg expression numerically against
+`camera_effect_amount` frame by frame, for both easings:
+`tests/pipeline/test_camera_emphasis_effect.py::test_export_expression_matches_the_model_frame_for_frame`.
+
+### Who places them
+
+1. **The creator.** Camera → "Zoom in" / "Pulse" in the editor's Visuals drawer
+   (web) or the visual panel (iOS) drops one at the playhead; the inspector edits
+   style, timing, length and strength; the timeline bar moves and trims it. The
+   lane rides the `camera_effects` capability, which is closed for
+   device-rendered variants (the phone compiler has no camera lane).
+2. **`nova.compose.camera_emphasis`** (`CAMERA_EMPHASIS_AI_ENABLED`, default on).
+   One Gemini call per subtitled render. It is offered every spoken phrase as an
+   indexed candidate — with the deterministic preset's picks flagged as hints —
+   and answers with candidate indexes only, never times.
+   `app/services/camera_emphasis.py` disposes: re-grounds each pick in its
+   candidate window, sizes a hold to the phrase (ceiling 4s), enforces a 1s gap,
+   caps the count at one per ~10s (max 4), and allows one "strong" per video.
+   Any failure — no key, agent error, flag off — returns the preset picks, so the
+   worst case is the pre-KRI-7 render. An empty answer is honored as an answer.
+
+AI-placed effects persist with `source: "smart_captions"`; the moment a creator
+touches one it becomes `source: "user"` and `camera_effects_from_intents` stops
+re-planning over it. A preset intent that names no easing keeps its fixed
+default window (byte-identical to pre-KRI-7); only intents that name one own
+their window.
+
 ## Shadow preset canary
 
 `CreatorStyleAssignment.shadow_preset_id`/`shadow_preset_version` (migration
@@ -360,5 +409,9 @@ separately records the subset that actually reached the burned video. Guard:
   hook-suppression eligibility.
 - `tests/smart_edit/test_capability.py` — availability resolver incl. the
   shadow pair.
+- `tests/pipeline/test_camera_emphasis_effect.py` — emphasis curve, per-easing
+  bounds, and export-vs-model parity.
+- `tests/services/test_camera_emphasis.py` — candidate grounding, spacing, caps,
+  and the kill-switch / failure fallbacks.
 - `tests/evals/test_caption_correction_evals.py` +
   `tests/evals/rubrics/caption_correction.md` — grounded-correction quality.

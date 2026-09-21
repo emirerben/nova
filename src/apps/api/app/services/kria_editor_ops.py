@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
+from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitCaptionMeta,
     EditorCommitMix,
@@ -891,12 +892,16 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             title = str(op["title"])
             changed.add("title")
         elif name == "add_camera_effect":
+            easing = resolve_easing(op.get("easing"))
             camera_effects.append(
                 {
                     "id": f"kria-{uuid.uuid4().hex}",
                     "start_s": float(op["start_s"]),
                     "end_s": float(op["end_s"]),
-                    "intensity": float(op.get("intensity", 0.04)),
+                    "intensity": float(
+                        op.get("intensity", easing_bounds(easing).default_intensity)
+                    ),
+                    "easing": easing,
                     "effect_group_id": op.get("effect_bundle_id"),
                 }
             )
@@ -909,8 +914,10 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
                 patch = {
                     key: value
                     for key, value in dict(op).items()
-                    if key in {"start_s", "end_s", "intensity"}
+                    if key in {"start_s", "end_s", "intensity", "easing"}
                 }
+                if "easing" in patch:
+                    patch["easing"] = resolve_easing(patch["easing"])
                 if not patch:
                     raise KriaEditorOpError("No portable camera effect field was supplied")
                 camera_effects[index].update(patch)

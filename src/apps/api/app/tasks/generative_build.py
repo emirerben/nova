@@ -20594,6 +20594,21 @@ def _render_subtitled_variant(
         camera_intents = (
             getattr(smart_compiled, "camera_intents", []) if smart_compiled is not None else []
         )
+        if not sc_apply:
+            # KRI-7: the emphasis planner reads the whole transcript and picks
+            # the moments that carry the point, using the preset's picks as a
+            # hint and as the fallback. Silence-cut timelines are excluded for
+            # the same reason the preset picks are below — cue times do not map
+            # onto a cut base.
+            from app.services.camera_emphasis import plan_camera_emphasis  # noqa: PLC0415
+
+            camera_intents = plan_camera_emphasis(
+                job_id=job_id,
+                cues=cues,
+                preset_intents=camera_intents,
+                duration_s=float(probe.duration_s),
+                language=detected_lang or language,
+            )
         if camera_intents and not sc_apply:
             from app.pipeline.camera_effects import camera_effects_from_intents  # noqa: PLC0415
 

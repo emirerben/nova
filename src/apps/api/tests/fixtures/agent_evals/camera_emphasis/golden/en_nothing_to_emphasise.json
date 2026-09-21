@@ -1,0 +1,21 @@
+{
+  "agent": "nova.compose.camera_emphasis",
+  "prompt_version": "2026-09-21",
+  "input": {
+    "candidates": [
+      {"index": 0, "start_s": 0.0, "end_s": 2.4, "text": "Hey guys, welcome back to the channel.", "role": "", "preset_pick": false},
+      {"index": 1, "start_s": 2.6, "end_s": 5.0, "text": "So, um, before we start, quick housekeeping.", "role": "", "preset_pick": true},
+      {"index": 2, "start_s": 5.2, "end_s": 7.4, "text": "Yeah, anyway. Let's get into it.", "role": "", "preset_pick": false}
+    ],
+    "duration_s": 8.0,
+    "max_effects": 1,
+    "visual_notes": [],
+    "language_hint": "en"
+  },
+  "raw_text": "{\"emphases\": []}",
+  "output": {"emphases": []},
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "All setup, no claim. Returning nothing is the right answer — including declining the preset's pick on pure throat-clearing. Guards the 'spend it on something' failure mode where every render gets a zoom."
+  }
+}

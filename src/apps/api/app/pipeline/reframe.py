@@ -28,6 +28,16 @@ from app.pipeline.audio_layout import (
     BODY_SLOT_AUDIO_OUT_ARGS,
     SILENT_AUDIO_INPUT_ARGS,
 )
+from app.pipeline.camera_effects import (
+    CAMERA_EFFECT_DEFAULT_INTENSITY,
+    CAMERA_EFFECT_EASING_HOLD,
+    CAMERA_EFFECT_MAX_INTENSITY,
+    CAMERA_EFFECT_MAX_STACKED_AMOUNT,
+    CAMERA_EFFECT_MIN_INTENSITY,
+    CAMERA_EFFECT_TOKEN,
+    camera_hold_ramps,
+    resolve_easing,
+)
 from app.pipeline.canvas import Canvas
 from app.pipeline.probe import probe_video
 from app.pipeline.text_overlay import FONTS_DIR
@@ -1040,26 +1050,33 @@ def _build_video_filter(
             end = float(pulse["end_s"])
         except (KeyError, TypeError, ValueError):
             continue
-        if pulse.get("token") != "semantic_crop_pulse" or end <= start:
+        if pulse.get("token") != CAMERA_EFFECT_TOKEN or end <= start:
             continue
         try:
-            intensity = float(pulse.get("intensity", 0.04))
+            intensity = float(pulse.get("intensity", CAMERA_EFFECT_DEFAULT_INTENSITY))
         except (TypeError, ValueError):
-            intensity = 0.04
-        intensity = max(0.0, min(0.08, intensity))
-        easing = str(pulse.get("easing") or "sine_pulse")
-        if easing != "sine_pulse":
-            easing = "sine_pulse"
-        valid_pulses.append((start, end, intensity, easing))
+            intensity = CAMERA_EFFECT_DEFAULT_INTENSITY
+        intensity = max(CAMERA_EFFECT_MIN_INTENSITY, min(CAMERA_EFFECT_MAX_INTENSITY, intensity))
+        valid_pulses.append((start, end, intensity, resolve_easing(pulse.get("easing"))))
     if valid_pulses:
         pulse_terms = []
-        for start, end, intensity, _easing in valid_pulses:
+        for start, end, intensity, easing in valid_pulses:
             duration = max(0.001, end - start)
-            pulse_terms.append(
-                f"{intensity:.4f}*between(t,{start:.3f},{end:.3f})"
-                f"*pow(sin(PI*(t-{start:.3f})/{duration:.3f}),2)"
-            )
-        amount = f"min(0.12,{'+'.join(pulse_terms)})"
+            window = f"between(t,{start:.3f},{end:.3f})"
+            if easing == CAMERA_EFFECT_EASING_HOLD:
+                # Punch in, hold, release — `min` of an ease-in and an ease-out
+                # curve, both saturated at 1 through the body of the window.
+                # Mirrors camera_effects.camera_effect_amount (and the web
+                # editor preview); change all three together or the export
+                # stops matching what the user approved.
+                ramp_in, ramp_out = camera_hold_ramps(duration)
+                rise = f"pow(sin(PI/2*min(1,(t-{start:.3f})/{ramp_in:.3f})),2)"
+                fall = f"pow(sin(PI/2*min(1,({end:.3f}-t)/{ramp_out:.3f})),2)"
+                shape = f"min({rise},{fall})"
+            else:
+                shape = f"pow(sin(PI*(t-{start:.3f})/{duration:.3f}),2)"
+            pulse_terms.append(f"{intensity:.4f}*{window}*{shape}")
+        amount = f"min({CAMERA_EFFECT_MAX_STACKED_AMOUNT},{'+'.join(pulse_terms)})"
         filters.append(
             f"scale=w='trunc(iw*(1+({amount}))/2)*2':h='trunc(ih*(1+({amount}))/2)*2':eval=frame"
         )

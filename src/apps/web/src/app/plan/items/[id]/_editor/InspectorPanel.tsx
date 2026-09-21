@@ -57,12 +57,19 @@ import {
 import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { formatTimecode } from "@/lib/timeline/time-format";
-import type { CameraEffect, MediaOverlay, MediaVisualBlock, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
+import type {
+  CameraEffect,
+  CameraEffectEasing,
+  MediaOverlay,
+  MediaVisualBlock,
+  PoolAsset,
+  SoundEffectPlacement,
+} from "@/lib/plan-api";
 import type { MotionPresetInstance, MotionPresetPatch } from "@nova/motion-runtime";
 import {
-  CAMERA_EFFECT_MAX_DURATION_S,
   CAMERA_EFFECT_MAX_INTENSITY,
-  CAMERA_EFFECT_MIN_DURATION_S,
+  cameraEasingBounds,
+  resolveCameraEasing,
 } from "@/lib/camera-effects";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { EditorTransition } from "@/lib/generative-api";
@@ -1356,6 +1363,14 @@ function PercentNumberInput({
   );
 }
 
+const CAMERA_STYLE_OPTIONS: ReadonlyArray<{
+  easing: CameraEffectEasing;
+  label: string;
+}> = [
+  { easing: "ease_in_hold", label: "Zoom in" },
+  { easing: "sine_pulse", label: "Pulse" },
+];
+
 function CameraInspector({
   effect,
   onPatch,
@@ -1367,18 +1382,73 @@ function CameraInspector({
   onDelete: (id: string) => void;
   onClose: () => void;
 }) {
+  const easing = resolveCameraEasing(effect.easing);
+  const bounds = cameraEasingBounds(easing);
   const duration = Math.max(
-    CAMERA_EFFECT_MIN_DURATION_S,
-    Math.min(CAMERA_EFFECT_MAX_DURATION_S, effect.end_s - effect.start_s),
+    bounds.minDurationS,
+    Math.min(bounds.maxDurationS, effect.end_s - effect.start_s),
   );
   const intensityPct = Math.round(
     Math.max(0, Math.min(CAMERA_EFFECT_MAX_INTENSITY, effect.intensity)) * 100,
   );
+  const aiPlaced = effect.source !== "user";
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-[18px] text-[#0c0c0e]">Camera</h2>
         <CloseX onClose={onClose} />
+      </div>
+
+      {aiPlaced && (
+        <p className="mt-1 text-[11px] leading-4 text-[#71717a]">
+          Placed by Kria. Move it on the timeline or change it here — your edit sticks.
+        </p>
+      )}
+
+      <div className="mt-3 border-b border-zinc-100 pb-3">
+        <p className="mb-2 text-[13px] font-bold text-[#0c0c0e]">Style</p>
+        <div
+          className="grid grid-cols-2 gap-1 rounded-lg bg-zinc-100 p-1"
+          role="group"
+          aria-label="Camera emphasis style"
+        >
+          {CAMERA_STYLE_OPTIONS.map((option) => (
+            <Button
+              key={option.easing}
+              type="button"
+              variant="ghost"
+              aria-pressed={easing === option.easing}
+              onClick={() => {
+                if (easing === option.easing) return;
+                const next = cameraEasingBounds(option.easing);
+                onPatch(effect.id, {
+                  easing: option.easing,
+                  end_s:
+                    effect.start_s +
+                    Math.max(next.minDurationS, Math.min(next.maxDurationS, duration)),
+                  // A strength the creator dialled in is theirs; only an
+                  // untouched default follows the new shape's default.
+                  intensity:
+                    effect.intensity === bounds.defaultIntensity
+                      ? next.defaultIntensity
+                      : effect.intensity,
+                });
+              }}
+              className={
+                easing === option.easing
+                  ? "min-h-9 rounded-md bg-white px-2 text-[11px] font-semibold shadow-sm"
+                  : "min-h-9 rounded-md px-2 text-[11px] text-[#71717a]"
+              }
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
+        <p className="mt-2 text-[11px] leading-4 text-[#71717a]">
+          {easing === "ease_in_hold"
+            ? "Pushes in, holds through the moment, then eases back out."
+            : "A single accent that rises and settles inside the window."}
+        </p>
       </div>
 
       <TimingSection label="Timing">
@@ -1396,10 +1466,10 @@ function CameraInspector({
         <TimingNumberInput
           label="End"
           value={effect.end_s}
-          min={effect.start_s + CAMERA_EFFECT_MIN_DURATION_S}
+          min={effect.start_s + bounds.minDurationS}
           onChange={(value) =>
             onPatch(effect.id, {
-              end_s: Math.max(effect.start_s + CAMERA_EFFECT_MIN_DURATION_S, value),
+              end_s: Math.max(effect.start_s + bounds.minDurationS, value),
             })
           }
         />
@@ -1415,8 +1485,8 @@ function CameraInspector({
         <input
           type="range"
           aria-label="Camera focus duration"
-          min={CAMERA_EFFECT_MIN_DURATION_S}
-          max={CAMERA_EFFECT_MAX_DURATION_S}
+          min={bounds.minDurationS}
+          max={bounds.maxDurationS}
           step={0.1}
           value={duration}
           onChange={(e) => {
@@ -1451,7 +1521,9 @@ function CameraInspector({
         />
       </div>
 
-      <DangerButton onClick={() => onDelete(effect.id)}>Delete camera effect</DangerButton>
+      <DangerButton onClick={() => onDelete(effect.id)}>
+        {easing === "ease_in_hold" ? "Delete zoom" : "Delete camera effect"}
+      </DangerButton>
     </div>
   );
 }
