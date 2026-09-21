@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.96.0] - 2026-09-21
+
+### Changed
+- fix(ios): residue holds no longer black out editor playback; hold the last frame instead of flashing black at cuts (KRI-128) (#1108) <!-- release-pr: 1108 -->
+
 ## [0.76.95.0] - 2026-09-21
 
 ### Changed
