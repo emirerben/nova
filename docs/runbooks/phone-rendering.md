@@ -101,7 +101,7 @@ A montage-family item (`montage`/`day_vlog`/`single_hero`) with a recorded
 voiceover resolves to the `"voiceover"` archetype (`_resolve_archetype` — same
 resolution the cloud path uses, regardless of `edit_format`) and, behind
 `settings.phone_narration_rendering_enabled` (env `PHONE_NARRATION_RENDERING
-_ENABLED`, default `false`), compiles through the SAME montage compiler as
+_ENABLED`, default `true` since the KRI-132 rollout), compiles through the SAME montage compiler as
 any other phone variant instead of failing in the worker. `app.tasks
 .generative_build._resolve_phone_voiceover_bed` re-reads the owning
 `PlanItem`'s CURRENT `voiceover_gcs_path`/`voiceover_generation`/
@@ -217,6 +217,17 @@ Flag off or narrationAudio unverified stays byte-identical to pre-KRI-132:
 --app nova-video` + `fly machine restart <id>` (api + worker) reverts to
 byte-identical pre-KRI-132 behavior — the dispatch gate rejects early again
 instead of ever compiling a narration track.
+
+**Device-build ordering.** The flag defaults to `true` and `narrationAudio`
+is already in the production `PHONE_RENDER_VERIFIED_FEATURES`, so the API
+starts compiling narration recipes as soon as this deploys — before the
+TestFlight build carrying the `"voiceover"` asset kind necessarily reaches a
+pilot phone. `RenderAssetReference`'s decoder calls `rejectUnknownAssetFields`
+and throws `RenderAssetError.invalidManifest` on both the unknown kind and the
+unknown `planItemId` field, so a pilot device still on an older build fails the
+render ("This edit couldn't finish on your iPhone") instead of refusing early
+with the typed `phone_voiceover_unavailable` reason. Use the rollback secret
+above to close that window if a pilot hits it before their app updates.
 
 ## Implemented foundations
 

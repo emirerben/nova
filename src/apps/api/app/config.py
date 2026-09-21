@@ -36,9 +36,11 @@ class Settings(BaseSettings):
     # generative_build.py) same as on the cloud, and phone rendering compiles
     # a narration audio track for them (`compile_phone_montage_plan`) instead
     # of failing closed with "Phone rendering does not yet support voiceover
-    # edits". False (default): byte-identical to pre-KRI-132 -- the dispatch
-    # gate (`content_plan_build.py`) fails closed early with a typed
-    # `phone_voiceover_unavailable` reason instead of ever queuing the job.
+    # edits". True (default since the KRI-132 rollout): the pilot cohort's
+    # montage-family voiceover edits render on the device. False: byte-identical
+    # to pre-KRI-132 -- the dispatch gate (`content_plan_build.py`) fails closed
+    # early with a typed `phone_voiceover_unavailable` reason instead of ever
+    # queuing the job.
     # Also requires "narrationAudio" in `phone_render_verified_features` (see
     # `app.services.phone_rollout.validate_phone_pilot_recipe`) -- this flag
     # alone does not skip that device-parity gate. Does NOT affect the
@@ -49,7 +51,7 @@ class Settings(BaseSettings):
     # + `fly machine restart <id>` (api + worker). See
     # docs/runbooks/phone-rendering.md and
     # docs/reviews/kri-29/capability-matrix.md ("narrationAudio").
-    phone_narration_rendering_enabled: bool = False
+    phone_narration_rendering_enabled: bool = True
     # A device recipe with no delivery (no poll, no upload) for this long is
     # presumed abandoned (app crashed, app deleted, notification never seen).
     # The reaper (app/tasks/device_render_reaper.py) flips it to

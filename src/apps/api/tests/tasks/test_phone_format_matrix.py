@@ -112,6 +112,9 @@ def test_worker_rejects_voiceover_while_narration_flag_is_off(
     gate's `voiceover_unavailable` refusal."""
 
     job, snapshot, _session, _bindings, _cloud = _phone_montage_setup(monkeypatch)
+    # The flag ships on (KRI-132 rollout), so turn it off explicitly here --
+    # this test is about the worker's own guard, not the default.
+    monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", False)
     candidates = {**job.all_candidates, "voiceover_gcs_path": "users/u/voice.m4a"}
     with pytest.raises(ValueError, match="voiceover"):
         gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)

@@ -196,8 +196,11 @@ def test_ownership_epoch_mismatch_bails_before_publishing(monkeypatch):
     session.commit.assert_not_called()
 
 
-def test_voiceover_job_is_rejected(monkeypatch):
+def test_voiceover_job_is_rejected_while_narration_flag_is_off(monkeypatch):
     job, snapshot, session, _bindings, _cloud = setup(monkeypatch)
+    # The flag ships on (KRI-132 rollout); turn it off explicitly so this
+    # keeps pinning the worker's own refusal rather than the default.
+    monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", False)
     candidates = {**job.all_candidates, "voiceover_gcs_path": "users/u/voice.m4a"}
     with pytest.raises(ValueError, match="voiceover"):
         gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
