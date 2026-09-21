@@ -2522,21 +2522,46 @@ def compile_guided_runtime_plan(
         # never leaks into a neighboring segment. The raw intent carries no
         # copy; sport text is resolved from the approved clip metadata only.
         context_intent = runtime_payload.get("context_label_intent")
-        if context_intent and canonical.narration is None:
+        # KRI-127: resolved open-vocabulary label intents take the same lane,
+        # re-grounded at this edge exactly like the first render (flag-gated).
+        grounded_intents = [
+            intent
+            for intent in (snapshot.clip_intents or [])
+            if intent.op == "label" and intent.status == "resolved"
+        ]
+        if not settings.clip_intents_enabled:
+            grounded_intents = []
+        if (context_intent or grounded_intents) and canonical.narration is None:
             from app.tasks.generative_build import (  # noqa: PLC0415
                 _canonical_context_sport_labels,
                 _compact_context_sport_text_elements,
+                _grounded_context_labels,
+                _merge_context_label_rows,
             )
 
-            labels = _canonical_context_sport_labels(
-                context_intent,
-                {ref.media_id: ref.gcs_path for ref in snapshot.media},
-                matcher_clip_metas(snapshot),
+            clip_id_to_gcs = {ref.media_id: ref.gcs_path for ref in snapshot.media}
+            labels = _merge_context_label_rows(
+                _grounded_context_labels(
+                    grounded_intents,
+                    clip_id_to_gcs,
+                    matcher_clip_metas(snapshot),
+                    media_refs=list(snapshot.media),
+                )
+                if grounded_intents
+                else None,
+                _canonical_context_sport_labels(
+                    context_intent,
+                    clip_id_to_gcs,
+                    matcher_clip_metas(snapshot),
+                )
+                if context_intent
+                else [],
             )
-            by_clip = {row["clip_id"]: row["sport"] for row in labels}
+            by_clip_row = {row["clip_id"]: row for row in labels}
             context_elements: list[dict[str, Any]] = []
             for index, moment in enumerate(moments):
-                sport = by_clip.get(str(moment.get("media_id") or ""))
+                row = by_clip_row.get(str(moment.get("media_id") or "")) or {}
+                sport = row.get("sport")
                 start_s = float(moment.get("output_start_s") or 0.0)
                 end_s = float(moment.get("output_end_s") or 0.0)
                 if not sport or end_s <= start_s:
@@ -2566,6 +2591,15 @@ def compile_guided_runtime_plan(
                             "context_label_position": "bottom_right",
                             "context_label_size": "small",
                             "source_clip_id": str(moment.get("media_id") or ""),
+                            **(
+                                {
+                                    "grounding": row.get("grounding"),
+                                    "confidence": row.get("confidence"),
+                                    "intent_id": row.get("intent_id") or "",
+                                }
+                                if row.get("grounding")
+                                else {}
+                            ),
                         },
                     ).model_dump(mode="json", exclude_none=True)
                 )

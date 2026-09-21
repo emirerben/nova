@@ -21,8 +21,10 @@ from pydantic import (
     Field,
     TypeAdapter,
     field_validator,
+    model_serializer,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.sfx_intent import (
@@ -30,6 +32,7 @@ from app.agents._schemas.sfx_intent import (
     LicensedSfxIntent,
     SfxIntent,
 )
+from app.schemas.clip_intents import MAX_CLIP_INTENTS, ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
     MAX_CREATOR_SHOT_LABELS,
@@ -343,6 +346,38 @@ class CreativeStrategy(_CreatorModel):
             "no model-authored label text."
         ),
     )
+    # KRI-127 (flag CLIP_INTENTS_ENABLED). Both default to None so stored
+    # strategies and every exclude_none hash stay byte-identical when unused.
+    # SkipJsonSchema keeps both OUT of every derived JSON schema: the Kria
+    # `apply_strategy` tool builds its argument schema from this model, and a
+    # model that saw an inert `clip_intents` there could route a sport-label
+    # request into it and lose the label while the flag is off. The creator
+    # prompt teaches the shape in prose, only when the flag is on.
+    clip_intents: SkipJsonSchema[list[ClipIntent] | None] = Field(
+        default=None,
+        max_length=MAX_CLIP_INTENTS,
+        description=(
+            "Open-vocabulary requests over the owned clips: label / group / order / "
+            "include clips by an attribute the creator described in their own words. "
+            "Carries no per-clip answers; the server resolves those."
+        ),
+    )
+    # Server-owned. Never trusted from model output: every entry point that
+    # accepts a model-authored strategy clears it; the creator route then sets
+    # it from the resolver's result (assignments, evidence, grounding).
+    resolved_clip_intents: SkipJsonSchema[list[ResolvedClipIntent] | None] = Field(
+        default=None, max_length=MAX_CLIP_INTENTS
+    )
+
+    @model_serializer(mode="wrap")
+    def _omit_unused_clip_intents(self, handler):  # noqa: ANN001, ANN202
+        # Stored strategies stay byte-identical to pre-KRI-127 when unused.
+        data = handler(self)
+        for key in ("clip_intents", "resolved_clip_intents"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
+
     image_layout: BeatLayout | None = Field(
         default=None,
         description=(
@@ -462,6 +497,35 @@ class CreativeStrategy(_CreatorModel):
         """Compatibility accessor for callers that used the early v1 draft."""
 
         return self.pacing
+
+
+def legacy_clip_intents(strategy: CreativeStrategy) -> list[ClipIntent]:
+    """Read-time only: map an old sport-labels-shaped strategy onto KRI-127.
+
+    A strategy that already carries ``clip_intents`` owns the generic path
+    already, so this returns an empty list for it (never mutates or merges).
+    Otherwise, a strategy whose coded fields still ask for the sport being
+    played (``sport_labels`` or ``context_label.kind == "sport"``) -- for
+    example one restored by the refresh-pin path from a session that
+    predates the flag -- maps onto one generic label intent so it keeps
+    reaching the resolver once ``clip_intents_enabled`` is on. This never
+    writes back to the stored strategy; callers decide whether to use the
+    result for one turn.
+    """
+
+    if strategy.clip_intents:
+        return []
+    if strategy.sport_labels or (
+        strategy.context_label is not None and strategy.context_label.kind == "sport"
+    ):
+        return [
+            ClipIntent(
+                intent_id="legacy-sport",
+                op="label",
+                attribute="the sport being played in the clip",
+            )
+        ]
+    return []
 
 
 class AskUser(_CreatorModel):
@@ -1184,6 +1248,7 @@ __all__ = [
     "MixedMediaTimingProfile",
     "DispatchRenderCommand",
     "DraftGuidedProposalCommand",
+    "legacy_clip_intents",
     "ProposeStrategy",
     "ResolvedCreatorManifest",
     "ReviewDecision",

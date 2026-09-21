@@ -1,0 +1,20 @@
+{
+  "agent": "nova.video.clip_question",
+  "prompt_version": "2026-09-21.3",
+  "input": {
+    "file_uri": "files/kri127-eval-fixture-clip",
+    "file_mime": "video/mp4",
+    "question": "Does this clip match this description: \"park clips with people not playing sports\"? Answer only \"yes\" or \"no\"."
+  },
+  "raw_text": "{\"answer\": \"no\", \"confidence\": 0.9, \"evidence\": \"several people are kicking a ball\"}",
+  "output": {
+    "answer": "no",
+    "confidence": 0.9,
+    "evidence": "several people are kicking a ball"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Confident, specific answer grounded in what's visible in the clip.",
+    "note": "KRI-127: membership checks are closed yes/no questions; negation must be read correctly."
+  }
+}

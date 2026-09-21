@@ -2308,6 +2308,17 @@ def _run_generative_job_impl(
             or raw_creator_strategy.get("contextual_labels")
             or [],
         )
+        # KRI-127 (flag CLIP_INTENTS_ENABLED): open-vocabulary label intents the
+        # chat resolver already matched to clips, still opaque JSON here — the
+        # worker-edge grounding fence (`_grounded_context_labels`) re-verifies
+        # every value against the clip's own record before anything can reach
+        # pixels. None when the flag is off keeps every downstream check inert
+        # and this render byte-identical to pre-KRI-127.
+        creator_resolved_clip_intents = (
+            raw_creator_strategy.get("resolved_clip_intents")
+            if settings.clip_intents_enabled
+            else None
+        )
         # CreativeStrategy supplies balanced/24s defaults for planning.  Those
         # defaults are not confirmed render constraints: applying them here
         # would change ordinary Creator renders. Only non-default values that
@@ -3229,6 +3240,8 @@ def _run_generative_job_impl(
                         landscape_fit=landscape_fit,
                         montage_preset=montage_preset,
                         creator_context_label=creator_context_label,
+                        creator_resolved_clip_intents=creator_resolved_clip_intents,
+                        creator_request=creator_request,
                         strict_day_vlog=True,
                     )
                 elif spec.get("archetype") == "single_hero":
@@ -3258,6 +3271,8 @@ def _run_generative_job_impl(
                         landscape_fit=landscape_fit,
                         montage_preset=montage_preset,
                         creator_context_label=creator_context_label,
+                        creator_resolved_clip_intents=creator_resolved_clip_intents,
+                        creator_request=creator_request,
                         strict_single_hero=True,
                     )
                 else:
@@ -3291,6 +3306,8 @@ def _run_generative_job_impl(
                         speech_cleanup_contract=speech_cleanup_contract,
                         speech_cleanup_fallback_reason=archetype_fallback_reason,
                         creator_context_label=creator_context_label,
+                        creator_resolved_clip_intents=creator_resolved_clip_intents,
+                        creator_request=creator_request,
                     )
                 _raise_marked_snapshot_result_failure(
                     result,
@@ -4164,6 +4181,34 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
         intent = strategy.context_label
         return intent.model_dump(mode="json") if intent is not None else None
 
+    def guided_resolved_clip_intents() -> list[Any]:
+        """KRI-127: resolved label/group/order/include intents for this job.
+
+        Mirrors ``context_label_intent()``'s dual source (the typed snapshot
+        field first, the raw confirmed strategy JSON as a fallback) and its
+        fail-closed-on-bad-JSONB contract. Always ``[]`` when the flag is off,
+        so every downstream grounded-label check stays inert and this render
+        byte-identical to pre-KRI-127.
+        """
+        if not settings.clip_intents_enabled:
+            return []
+        from app.schemas.clip_intents import ResolvedClipIntent  # noqa: PLC0415
+
+        if snapshot.clip_intents:
+            return list(snapshot.clip_intents)
+        raw_intents = (
+            raw_strategy.get("resolved_clip_intents") if isinstance(raw_strategy, dict) else None
+        )
+        if not isinstance(raw_intents, list):
+            return []
+        parsed: list[ResolvedClipIntent] = []
+        for raw_intent in raw_intents:
+            try:
+                parsed.append(ResolvedClipIntent.model_validate(raw_intent))
+            except Exception:  # noqa: BLE001 - the worker must fail closed on bad JSONB
+                continue
+        return parsed
+
     def licensed_sfx_intent():  # noqa: ANN202
         persisted_intent = getattr(snapshot, "licensed_sfx", None)
         if persisted_intent is not None:
@@ -4290,7 +4335,8 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                 job_id=job_id,
             )
         intent = context_label_intent()
-        if intent is None:
+        resolved_label_intents = guided_resolved_clip_intents()
+        if intent is None and not resolved_label_intents:
             return plan
         from app.pipeline.guided_story import matcher_clip_metas  # noqa: PLC0415
 
@@ -4313,13 +4359,28 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
             )
             resolved_plans.append({"duration_s": float(moment.get("duration_s") or 0.0)})
             previous = moment
+        clip_id_to_gcs = {ref.media_id: ref.gcs_path for ref in snapshot.media}
+        clip_metas = matcher_clip_metas(snapshot)
+        # KRI-127: grounded label intents REPLACE the legacy sport allowlist
+        # for this job entirely (only when at least one resolves) -- see the
+        # matching comment in `_process_generative_variant`.
+        grounded_rows = None
+        if any(i.op == "label" and i.status == "resolved" for i in resolved_label_intents):
+            grounded_rows = _grounded_context_labels(
+                resolved_label_intents,
+                clip_id_to_gcs,
+                clip_metas,
+                creator_request=creator_request,
+                media_refs=snapshot.media,
+            )
         elements = _context_sport_text_elements(
             intent,
             steps=steps,
             resolved_plans=resolved_plans,
-            clip_id_to_gcs={ref.media_id: ref.gcs_path for ref in snapshot.media},
-            clip_metas=matcher_clip_metas(snapshot),
+            clip_id_to_gcs=clip_id_to_gcs,
+            clip_metas=clip_metas,
             video_duration_s=float(plan.get("resolved_duration_s") or 0.0),
+            grounded_rows=grounded_rows,
         )
         return {
             **plan,
@@ -11127,6 +11188,203 @@ def _canonical_context_sport_labels(
     return accepted
 
 
+def _resolve_clip_id_for_media_id(media_id: str, clip_id_to_gcs: dict[str, str]) -> str | None:
+    """Map a resolved intent's ``media_id`` onto this render's ``clip_id`` space.
+
+    The guided-story lane's ``clip_id`` IS the confirmed proposal's
+    ``media_id`` (``matcher_clip_metas`` builds ``ClipMeta(clip_id=ref.media_id,
+    ...)`` and ``clip_id_to_gcs={ref.media_id: ref.gcs_path ...}`` off the same
+    ``EditProposalSnapshot.media`` -- see app/pipeline/guided_story.py), so a
+    direct key lookup covers it. The classic (non-guided) worker instead mints
+    positional ids (``clip_id_to_gcs = {"clip_0": gcs, ...}``,
+    ``_run_generative_job``) that have no meaning outside one render; the only
+    identifier stable across the chat turn that resolved these intents and
+    this later render is the clip's GCS path, so a reverse lookup by value
+    covers that lane. Returns None (never renders) when neither matches.
+    """
+    if media_id in clip_id_to_gcs:
+        return media_id
+    for clip_id, gcs_path in clip_id_to_gcs.items():
+        if gcs_path == media_id:
+            return clip_id
+    return None
+
+
+def _grounded_context_labels(
+    resolved_intents: list[Any],
+    clip_id_to_gcs: dict[str, str],
+    clip_metas: list | None,
+    *,
+    creator_request: str = "",
+    media_refs: list[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Worker-edge re-verification for KRI-127 open-vocabulary context labels.
+
+    This is the ONLY place resolved clip intents may become on-screen text: a
+    stored ``ClipAssignment`` is untrusted JSONB (its ``grounding``/``value``
+    were computed by an earlier chat turn, possibly against stale clip data or
+    a resolver bug) so every assignment is re-run through
+    ``app.schemas.clip_intents.ground_label`` against a FRESH projection of
+    THAT clip's own record. ``media_refs`` (the guided lane's
+    ``EditProposalSnapshot.media`` -- objects with ``.media_id``/``.analysis``/
+    ``.kind``) wins when given: it is the clip's real PERSISTED analysis, read
+    through ``app.services.clip_understanding.clip_record`` exactly like any
+    other reader of the shared record, including its cached ``answers``. The
+    classic non-guided lane has no such persisted dict at render time --
+    ``clip_metas`` (ephemeral, render-time ``ClipMeta`` rows) is the fallback,
+    projected through ``understanding_payload`` the same way the analyzer
+    would persist it, but with no cached vision answers (so that lane can only
+    ground via ``creator_text``/``record_span``, never ``vision_verified``,
+    until a future lane threads its real analysis dict through too).
+    Anything that fails to re-ground is silently omitted; this never raises.
+
+    Row shape matches ``_canonical_context_sport_labels`` exactly
+    (``{"clip_id":..., "sport": <text>}``, consumed by
+    ``_context_sport_text_elements``'s ``by_clip_row``) plus provenance keys
+    that function reads when ``row["source"] == "grounded_label"``:
+    ``grounding``, ``confidence``, ``intent_id``.
+
+    At most one label renders per clip: the FIRST ``resolved_intents`` entry
+    (op == "label", status == "resolved") that names a clip via any assignment
+    claims that clip for the whole call, even if that specific assignment then
+    fails to ground -- a later intent's assignment for the same clip is never
+    consulted. This mirrors "first resolved intent wins" literally at intent
+    selection, not at grounding success, so a creator's later, more specific
+    label request never silently overrides an earlier one mid-render.
+    """
+    if not resolved_intents:
+        return []
+    from app.schemas.clip_intents import ground_label  # noqa: PLC0415
+    from app.services.clip_intent_resolution import ANSWERS_KEY  # noqa: PLC0415
+    from app.services.clip_understanding import (  # noqa: PLC0415
+        clip_record,
+        understanding_payload,
+    )
+
+    meta_by_clip_id: dict[str, Any] = {}
+    for meta in clip_metas or []:
+        clip_id = str(getattr(meta, "clip_id", "") or "")
+        if clip_id:
+            meta_by_clip_id[clip_id] = meta
+    media_ref_by_clip_id: dict[str, Any] = {}
+    for ref in media_refs or []:
+        media_id = str(getattr(ref, "media_id", "") or "")
+        if media_id:
+            media_ref_by_clip_id[media_id] = ref
+
+    claimed: dict[str, str] = {}  # clip_id -> intent_id that claimed it (first wins)
+    accepted: dict[str, dict[str, Any]] = {}
+    for intent in resolved_intents:
+        if intent.op != "label" or intent.status != "resolved":
+            continue
+        for assignment in intent.assignments:
+            clip_id = _resolve_clip_id_for_media_id(assignment.media_id, clip_id_to_gcs)
+            if clip_id is None:
+                continue
+            existing_claim = claimed.get(clip_id)
+            if existing_claim is not None and existing_claim != intent.intent_id:
+                continue  # a strictly earlier intent already claimed this clip
+            claimed.setdefault(clip_id, intent.intent_id)
+            if clip_id in accepted:
+                continue
+
+            media_ref = media_ref_by_clip_id.get(clip_id)
+            cached_answers: Any = None
+            if media_ref is not None:
+                stored_analysis = getattr(media_ref, "analysis", None) or {}
+                record = clip_record(
+                    stored_analysis, kind=str(getattr(media_ref, "kind", "video") or "video")
+                )
+                if isinstance(stored_analysis, dict):
+                    cached_answers = stored_analysis.get(ANSWERS_KEY)
+            else:
+                meta = meta_by_clip_id.get(clip_id)
+                if meta is None:
+                    continue
+                record = clip_record(
+                    {
+                        "understanding": understanding_payload(
+                            meta, best_moments=getattr(meta, "best_moments", None) or []
+                        )
+                    },
+                    kind="video",
+                )
+                # `ClipMeta` (the classic lane's ephemeral, render-time
+                # analysis) never carries the persisted `answers` cache.
+                cached_answers = getattr(meta, ANSWERS_KEY, None)
+
+            # Never trust a stored `assignment.grounding` tag -- only a cached
+            # vision answer this worker can independently re-check grounds
+            # `vision_verified`.
+            vision_candidates: list[tuple[str | None, float | None]] = [(None, None)]
+            if isinstance(cached_answers, dict):
+                for cached in cached_answers.values():
+                    if not isinstance(cached, dict):
+                        continue
+                    vision_candidates.append((cached.get("answer"), cached.get("confidence")))
+
+            grounded = None
+            for vision_answer, vision_confidence in vision_candidates:
+                grounded = ground_label(
+                    media_id=clip_id,
+                    value=assignment.value,
+                    confidence=assignment.confidence,
+                    creator_request=creator_request,
+                    record=record,
+                    vision_answer=vision_answer,
+                    vision_confidence=vision_confidence,
+                    intent_id=intent.intent_id,
+                )
+                if grounded is not None:
+                    break
+
+            if grounded is None and not (creator_request or "").strip() and intent.creator_text:
+                # `creator_request` is unreachable at this call site (a lane
+                # that has not threaded it through yet): the ONLY grounding
+                # still allowed is this exact intent's own creator_text, on an
+                # exact match-key equality -- never the substring test
+                # `ground_label`'s creator_text branch performs against a
+                # real creator_request.
+                from app.schemas.clip_intents import (  # noqa: PLC0415
+                    _match_key,  # type: ignore[attr-defined]
+                    clean_label_text,
+                )
+
+                cleaned = clean_label_text(assignment.value)
+                if cleaned is not None and _match_key(cleaned) == _match_key(intent.creator_text):
+                    from app.schemas.clip_intents import GroundedLabel  # noqa: PLC0415
+
+                    grounded = GroundedLabel(
+                        media_id=clip_id,
+                        text=cleaned,
+                        grounding="creator_text",
+                        confidence=1.0,
+                        intent_id=intent.intent_id,
+                    )
+
+            if grounded is not None:
+                accepted[clip_id] = {
+                    "clip_id": clip_id,
+                    "sport": grounded.text,
+                    "source": "grounded_label",
+                    "grounding": grounded.grounding,
+                    "confidence": grounded.confidence,
+                    "intent_id": grounded.intent_id,
+                }
+    return list(accepted.values())
+
+
+def _merge_context_label_rows(
+    grounded_rows: list[dict[str, Any]] | None,
+    legacy_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Grounded rows win per clip; legacy (allowlist-fenced) rows fill the rest."""
+    if grounded_rows is None:
+        return legacy_rows
+    grounded_clip_ids = {row["clip_id"] for row in grounded_rows}
+    return [*grounded_rows, *(r for r in legacy_rows if r["clip_id"] not in grounded_clip_ids)]
+
+
 def _context_sport_text_elements(
     raw_labels: object,
     *,
@@ -11135,17 +11393,27 @@ def _context_sport_text_elements(
     clip_id_to_gcs: dict[str, str],
     clip_metas: list | None = None,
     video_duration_s: float,
+    grounded_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict]:
     """Build timed TextElement snapshots for constrained per-slot sport labels.
 
     Times are derived from the post-resolution plans in the same order as the
     assembled steps. Labels repeat when a source clip is used in multiple slots;
     no slot duration or downstream timeline is modified.
+
+    ``grounded_rows`` (KRI-127, flag CLIP_INTENTS_ENABLED): rows already
+    re-verified by ``_grounded_context_labels``. They win PER CLIP; every other
+    clip keeps whatever the legacy allowlist resolves for it, so a new intent
+    that fails to ground can never erase a good label on an unrelated clip.
+    ``None`` (the default, and always the value when the flag is off)
+    preserves the exact legacy behavior.
     """
-    labels = _canonical_context_sport_labels(raw_labels, clip_id_to_gcs, clip_metas)
+    labels = _merge_context_label_rows(
+        grounded_rows, _canonical_context_sport_labels(raw_labels, clip_id_to_gcs, clip_metas)
+    )
     if not labels or len(steps) != len(resolved_plans):
         return []
-    by_clip = {row["clip_id"]: row["sport"] for row in labels}
+    by_clip_row = {row["clip_id"]: row for row in labels}
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
 
     elements: list[dict] = []
@@ -11159,8 +11427,40 @@ def _context_sport_text_elements(
         if duration_s <= 0:
             continue
         clip_id = str(getattr(step, "clip_id", "") or "")
-        sport = by_clip.get(clip_id)
+        row = by_clip_row.get(clip_id)
+        sport = row.get("sport") if row else None
         if sport:
+            # `source_params["source"]` stays the literal "context_sport" for
+            # BOTH lanes -- it is the identity token
+            # `text_element_source_identity()` uses to merge/pin these
+            # elements across re-renders (see app/agents/_schemas/text_element.py
+            # and the guided_story.py editor-revision replay), and nothing
+            # downstream discriminates render-time provenance by its value.
+            # The grounded lane (`row["source"] == "grounded_label"`, an
+            # internal marker never itself written into source_params) adds
+            # its provenance ALONGSIDE the legacy keys instead of replacing them.
+            source_params: dict[str, Any] = {
+                "source": "context_sport",
+                "key": f"{clip_id}:{slot_index}:{start_s:.3f}:{end_s:.3f}",
+                "identity": (f"context_sport:{clip_id}:{slot_index}:{start_s:.3f}:{end_s:.3f}"),
+                "source_clip_id": clip_id,
+            }
+            if row.get("source") == "grounded_label":
+                source_params.update(
+                    {
+                        "grounding": row.get("grounding"),
+                        "confidence": row.get("confidence"),
+                        "intent_id": row.get("intent_id") or "",
+                    }
+                )
+            else:
+                source_params.update(
+                    {
+                        "context_label_source": "detected_sport",
+                        "context_label_position": "bottom_right",
+                        "context_label_size": "small",
+                    }
+                )
             element = TextElement(
                 text=sport,
                 start_s=max(0.0, start_s),
@@ -11178,15 +11478,7 @@ def _context_sport_text_elements(
                 alignment="right",
                 effect="static",
                 z=8,
-                source_params={
-                    "source": "context_sport",
-                    "key": f"{clip_id}:{slot_index}:{start_s:.3f}:{end_s:.3f}",
-                    "identity": (f"context_sport:{clip_id}:{slot_index}:{start_s:.3f}:{end_s:.3f}"),
-                    "context_label_source": "detected_sport",
-                    "context_label_position": "bottom_right",
-                    "context_label_size": "small",
-                    "source_clip_id": clip_id,
-                },
+                source_params=source_params,
             )
             if element.end_s > element.start_s:
                 elements.append(element.model_dump(exclude_none=True))
@@ -12042,6 +12334,19 @@ def _run_regenerate_variant(
             or raw_creator_strategy.get("contextual_labels")
             or [],
         )
+        # KRI-127 (flag CLIP_INTENTS_ENABLED): see the matching comment in
+        # `_run_generative_job` — same opaque-JSON-until-the-grounding-fence
+        # contract, None when the flag is off keeps re-renders byte-identical.
+        creator_resolved_clip_intents = (
+            raw_creator_strategy.get("resolved_clip_intents")
+            if settings.clip_intents_enabled
+            else None
+        )
+        creator_request_regen = str(
+            (job.all_candidates or {}).get("creator_request")
+            or ((job.all_candidates or {}).get("brief") or {}).get("creator_request")
+            or ""
+        )[:1000]
         raw_target_duration_s = raw_creator_strategy.get("target_duration_s")
         creator_target_duration_s = (
             float(raw_target_duration_s)
@@ -12975,6 +13280,8 @@ def _run_regenerate_variant(
                 speech_cleanup_fallback_reason=speech_cleanup_fallback_reason_regen,
                 behind_subject_override=text_behind_subject,
                 creator_context_label=creator_context_label,
+                creator_resolved_clip_intents=creator_resolved_clip_intents,
+                creator_request=creator_request_regen,
                 lyrics_enabled=inherited_lyrics_enabled,
                 lyric_line_overrides=inherited_lyric_line_overrides,
                 orientation=effective_orientation,
@@ -15580,6 +15887,8 @@ def _decide_generative_variant(
     speech_cleanup_contract: str = "legacy_auto",
     speech_cleanup_fallback_reason: str | None = None,
     creator_context_label: dict | list[dict] | None = None,
+    creator_resolved_clip_intents: list[dict] | None = None,
+    creator_request: str | None = None,
     behind_subject_override: bool | None = None,
     lyrics_enabled: bool | None = None,
     lyric_line_overrides: dict | None = None,
@@ -16163,11 +16472,13 @@ def _decide_generative_variant(
             base["intro_placement"] = _intro_placement_from_params(
                 _at_params, has_candidates=bool(text_placement_candidates)
             )
-        elif text_mode == "agent_text" and creator_context_label:
+        elif text_mode == "agent_text" and (creator_context_label or creator_resolved_clip_intents):
             # A context-label request must still have a real text-free base even
             # when the optional intro writer returns no title. The burn stage
             # uses this inert linear params object to skip title generation and
-            # append only the validated per-slot labels below.
+            # append only the validated per-slot labels below. KRI-127: a
+            # resolved-clip-intents-only job (no legacy context_label) must take
+            # this same base path so the grounded labels below still burn.
             _at_params = {
                 "text": "",
                 "effect": "static",
@@ -16450,6 +16761,8 @@ def _process_generative_variant(
     speech_cleanup_contract: str = "legacy_auto",
     speech_cleanup_fallback_reason: str | None = None,
     creator_context_label: dict | list[dict] | None = None,
+    creator_resolved_clip_intents: list[dict] | None = None,
+    creator_request: str | None = None,
     behind_subject_override: bool | None = None,
     lyrics_enabled: bool | None = None,
     lyric_line_overrides: dict | None = None,
@@ -16778,6 +17091,30 @@ def _process_generative_variant(
     # Materialize confirmed contextual labels only after the final matcher
     # steps and post-resolution durations are known. This keeps each label
     # attached to the exact output slot without changing the AI timeline.
+    #
+    # KRI-127 (flag CLIP_INTENTS_ENABLED): when the flag is on AND the job has
+    # at least one resolved "label" clip intent, those grounded rows REPLACE
+    # the legacy sport-allowlist rows entirely for this variant -- the two
+    # lanes never mix on one clip. `creator_resolved_clip_intents` is already
+    # forced to None at every call site when the flag is off, so this whole
+    # block is inert and the render stays byte-identical pre-KRI-127.
+    _grounded_context_rows: list[dict[str, Any]] | None = None
+    if creator_resolved_clip_intents:
+        from app.schemas.clip_intents import ResolvedClipIntent  # noqa: PLC0415
+
+        _parsed_clip_intents: list[ResolvedClipIntent] = []
+        for _raw_clip_intent in creator_resolved_clip_intents:
+            try:
+                _parsed_clip_intents.append(ResolvedClipIntent.model_validate(_raw_clip_intent))
+            except Exception:  # noqa: BLE001 - untrusted JSONB fails closed per-intent
+                continue
+        if any(i.op == "label" and i.status == "resolved" for i in _parsed_clip_intents):
+            _grounded_context_rows = _grounded_context_labels(
+                _parsed_clip_intents,
+                clip_id_to_gcs,
+                clip_metas,
+                creator_request=creator_request or "",
+            )
     context_label_elements = _context_sport_text_elements(
         creator_context_label,
         clip_metas=clip_metas,
@@ -16785,6 +17122,7 @@ def _process_generative_variant(
         resolved_plans=resolved_plans,
         clip_id_to_gcs=clip_id_to_gcs,
         video_duration_s=sum(float(p.get("duration_s") or 0.0) for p in resolved_plans),
+        grounded_rows=_grounded_context_rows,
     )
     if context_label_elements:
         base["context_label_text_elements"] = context_label_elements
@@ -16809,7 +17147,9 @@ def _process_generative_variant(
     # For agent_text variants: upload the text-free base for fast-reburn, then
     # burn text on top to produce the final output. Lyrics variants cache the
     # lyric-burned, user-text-free base so user TextElements can layer above it.
-    if text_mode == "agent_text" and (agent_text is not None or creator_context_label):
+    if text_mode == "agent_text" and (
+        agent_text is not None or creator_context_label or creator_resolved_clip_intents
+    ):
         from app.pipeline.generative_overlays import (  # noqa: PLC0415
             build_persistent_intro_overlays,
         )

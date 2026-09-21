@@ -66,7 +66,12 @@ def adapt_creator_action(action: AskUser | ProposeStrategy | ReviewDecision) -> 
                 "tool_name": "draft.apply_strategy",
                 "tool_version": 1,
                 "arguments": {
-                    "strategy": action.strategy.model_dump(mode="json", exclude_none=True),
+                    # KRI-127: this path has no clip-intent resolver, and the
+                    # resolved field is server-owned -- never carry either from
+                    # model output into a draft.
+                    "strategy": action.strategy.model_copy(
+                        update={"clip_intents": None, "resolved_clip_intents": None}
+                    ).model_dump(mode="json", exclude_none=True),
                     "summary": summary,
                 },
             },

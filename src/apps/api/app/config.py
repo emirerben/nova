@@ -315,6 +315,19 @@ class Settings(BaseSettings):
     # verified end-to-end.
     edit_format_talking_head_enabled: bool = False
 
+    # KRI-127 kill switch for open-vocabulary clip intents: the chat agent emits
+    # generic label/group/order/include intents, a resolver matches them to clips
+    # from the shared understanding record (with a capped vision re-query), and
+    # on-screen labels must pass the grounding fence in app/schemas/clip_intents.py.
+    # False (default) => legacy sport_labels/context_label path, byte-identical.
+    # See docs/pipelines/clip-understanding.md. Apply: `fly secrets set
+    # CLIP_INTENTS_ENABLED=true --app nova-video` + restart api + worker.
+    clip_intents_enabled: bool = False
+    # Chat-turn budget for the on-demand vision re-query (download + File API
+    # upload per clip). Over the cap or the deadline => ask the creator instead.
+    clip_intents_max_vision_requeries: int = Field(default=4, ge=0, le=12)
+    clip_intents_vision_deadline_s: float = Field(default=25.0, gt=0, le=60)
+
     # Kill switch for the narrated walkthrough archetype. When False, a job
     # whose plan declares edit_format="narrated" follows the existing voiceover
     # or montage path. When True, eligible voiceover + filming-guide jobs align

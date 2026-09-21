@@ -1262,6 +1262,7 @@ def _run_draft_attempt(
         EditProposalAgentInput,
         EditProposalMedia,
     )
+    from app.config import settings  # noqa: PLC0415
     from app.services.edit_direction_planner import (  # noqa: PLC0415
         CreatorTextInfeasibleError,
         deterministic_fast_cuts,
@@ -1269,6 +1270,13 @@ def _run_draft_attempt(
         deterministic_labeled_beats,
     )
     from app.services.edit_proposals import approve_proposal  # noqa: PLC0415
+
+    def _resolved_clip_intents(proposal_brief):
+        # KRI-127 Lane P: only surface the chat turn's resolved clip intents
+        # to the planner when the kill switch is on; None keeps the
+        # planner's prompt, parsing, and validation byte-identical to
+        # pre-KRI-127.
+        return proposal_brief.clip_intents if settings.clip_intents_enabled else None
 
     try:
         with sync_session() as db:
@@ -1706,6 +1714,7 @@ def _run_draft_attempt(
                     shot_labels=brief.shot_labels,
                     closing_title=brief.closing_title,
                     media=agent_media,
+                    clip_intents=_resolved_clip_intents(brief),
                 ),
                 ctx=RunContext(
                     creator_id=str(owner_id),
@@ -1769,6 +1778,7 @@ def _run_draft_attempt(
                             shot_labels=brief.shot_labels,
                             closing_title=brief.closing_title,
                             media=agent_media,
+                            clip_intents=_resolved_clip_intents(brief),
                         ),
                         ctx=RunContext(
                             creator_id=str(owner_id),
@@ -1903,6 +1913,8 @@ def _run_draft_attempt(
                 else None
             )
         snapshot = EditProposalSnapshot(
+            # KRI-127: the render worker re-grounds every label from these.
+            clip_intents=_resolved_clip_intents(brief),
             direction=brief.direction,
             goal=brief.goal,
             pace=brief.pace,

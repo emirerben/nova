@@ -156,7 +156,7 @@ Rules:
   DAY 2 · ART, DAY 3 · NIGHTS). End on 'SEE YOU MONDAY'." => opening_title "ROME IN 3 DAYS",
   opening_title_duration_s 2, shot_labels ["DAY 1 · FOOD", "DAY 2 · ART", "DAY 3 · NIGHTS"],
   closing_title "SEE YOU MONDAY", with each evidence excerpt copied from that request.
-
+$clip_intents_section
 
 Return ONLY JSON in this envelope:
 {

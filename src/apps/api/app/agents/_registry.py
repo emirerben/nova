@@ -124,6 +124,13 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "app.agents.conformance_feedback",
         "ConformanceFeedbackAgent",
     ),
+    # KRI-127 Lane C: open-vocabulary clip-intent resolution.
+    (
+        "nova.plan.clip_request_resolver",
+        "app.agents.clip_request_resolver",
+        "ClipRequestResolverAgent",
+    ),
+    ("nova.video.clip_question", "app.agents.clip_question", "ClipQuestionAgent"),
 )
 
 

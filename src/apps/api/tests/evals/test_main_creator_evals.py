@@ -69,6 +69,28 @@ def test_main_creator_eval(
         assert validated.opening_title == expected["title"]
         assert validated.text_color == expected["color"]
 
+    clip_intents_meta = fixture.meta.get("clip_intents")
+    if clip_intents_meta:
+        # Structural-only: the eval cassette ignores the rendered prompt (see
+        # CassetteModelClient), so this fixture does not exercise
+        # `settings.clip_intents_enabled` -- it pins that a model response
+        # using the new open-vocabulary `clip_intents` shape (for a request
+        # the coded sport/participant/score fields cannot express) still
+        # parses under the current `CreativeStrategy` contract, and that no
+        # per-clip answer or resolved assignment ever appears in raw model
+        # output.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy.get("resolved_clip_intents") is None
+        intents = strategy.get("clip_intents") or []
+        assert [intent["op"] for intent in intents] == clip_intents_meta["ops"]
+        assert [intent["attribute"] for intent in intents] == clip_intents_meta["attributes"]
+        for intent in intents:
+            assert "assignments" not in intent
+            assert "media_id" not in intent
+
     exact_copy = fixture.meta.get("exact_copy_intent")
     if exact_copy:
         from app.agents._schemas.creator_agent import (
