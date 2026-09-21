@@ -247,6 +247,25 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
                 }
             }.value
         }
+        // Library music/sound-effect beds and a recorded voiceover need the
+        // same playable-extension fixup: the verified cache stores every
+        // download at an extensionless content address, and AVFoundation
+        // refuses to open one (KRI-132).
+        let playableAudio = project.appending(path: "playable-audio", directoryHint: .isDirectory)
+        for asset in manifest.assets {
+            let isAudioAsset: Bool
+            switch asset.source {
+            case .library(let catalog, _, _): isAudioAsset = catalog == .music || catalog == .soundEffect
+            case .voiceover: isAudioAsset = true
+            default: isAudioAsset = false
+            }
+            guard isAudioAsset, let verified = urls[asset.id] else { continue }
+            try Task.checkCancellation()
+            let fingerprint = asset.fingerprint
+            urls[asset.id] = try await Task.detached {
+                try PlayableAudioFile.prepare(source: verified, fingerprint: fingerprint, directory: playableAudio)
+            }.value
+        }
         return urls
     }
 

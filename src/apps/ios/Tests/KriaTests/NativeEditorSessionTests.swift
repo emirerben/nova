@@ -63,6 +63,16 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(sent["playback_rate"], .null)
     }
 
+    /// KRI-132 journey fix: a device-rendered edit's Add-clip control is silently
+    /// disabled (`NativeEditorTimelineView.canAddClip`) -- the session exposes why,
+    /// mirroring `visualImportUnavailableMessage`'s `rendersOnDevice` case.
+    func testAddClipUnavailableMessageExplainsDeviceRenderedEditsOnly() async throws {
+        let (device, _) = await Self.footageSession(destination: "device", operationsEditable: false)
+        XCTAssertNotNil(device.addClipUnavailableMessage)
+        let (cloud, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        XCTAssertNil(cloud.addClipUnavailableMessage)
+    }
+
     func testCloudVariantKeepsCropSpeedAndLookEditable() async throws {
         let (session, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
         XCTAssertFalse(session.rendersOnDevice)

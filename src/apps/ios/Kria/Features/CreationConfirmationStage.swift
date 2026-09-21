@@ -65,7 +65,26 @@ extension CreationThread {
         }
         return "\(text(creatorAgent?["version"]))|\(text(creatorAgent?["plan_hash"]))"
     }
+
+    /// The structured `code`/`message` the server attached to the most recent
+    /// `assistant_error` chat event (KRI-132) -- `_creator_agent_projection`
+    /// doesn't expose `CreatorAgentSession.last_error` directly, so this reads
+    /// it off the event log the client already has. Nil for a thread with no
+    /// such event, or an older event shaped before the code was added.
+    var lastAssistantErrorCode: String? {
+        events.last(where: { $0.eventType == "assistant_error" })?.payload?["code"]?.stringValue
+    }
+    var lastAssistantErrorMessage: String? {
+        events.last(where: { $0.eventType == "assistant_error" })?.payload?["message"]?.stringValue
+    }
 }
+
+/// Non-transient phone-gate rejections (`app.tasks.content_plan_build.PHONE_GATE_MESSAGES`
+/// on the server): confirming again fails identically until something about the
+/// project changes, so "Retry generation" is misleading here (KRI-132).
+let nonRetryablePhoneGateErrorCodes: Set<String> = [
+    "phone_not_enrolled", "phone_plan_unapproved", "phone_format_unavailable", "phone_voiceover_unavailable",
+]
 
 struct CreationConfirmationStage: View {
     let thread: CreationThread
@@ -79,6 +98,12 @@ struct CreationConfirmationStage: View {
     private var hasCleanup: Bool { cleanup["applicable"]?.booleanValue == true }
     private var isFailure: Bool { thread.summary.status == .failed }
     private var hasVideo: Bool { attachedVideoClipCount(in: thread.state ?? [:]) > 0 }
+    /// KRI-132: a phone-gate rejection is structural, not a transient failure --
+    /// retrying without changing the project (a different format, a voiceover
+    /// removed, re-enrolling) fails the exact same way.
+    private var isNonRetryablePhoneGateFailure: Bool {
+        isFailure && thread.lastAssistantErrorCode.map(nonRetryablePhoneGateErrorCodes.contains) == true
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -99,14 +124,29 @@ struct CreationConfirmationStage: View {
                 if let identifier = analysis["id"]?.stringValue { cleanupActions(identifier: identifier) }
                 else { ProgressView("Preparing the speech check…") }
             } else {
-                Button(isFailure ? "Retry generation" : "Create this video") {
-                    action(isFailure ? "retry" : "generate", [:])
-                }.buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
+                retryOrCreateButton(payload: [:])
             }
             Text("You can also send a message to change the direction.")
                 .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
         }
         .accessibilityIdentifier("creation-confirmation")
+    }
+
+    /// "Retry generation" for an ordinary failure; for a non-transient phone-gate
+    /// rejection, the server's own message and no button that implies retrying
+    /// could work (KRI-132) -- confirming again dispatches the identical request.
+    @ViewBuilder private func retryOrCreateButton(payload: [String: JSONValue]) -> some View {
+        if isNonRetryablePhoneGateFailure {
+            Text(thread.lastAssistantErrorMessage ?? "This edit can’t render on your iPhone yet. Your project is saved.")
+                .font(KriaFont.body(13))
+                .foregroundStyle(KriaColor.failureText)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("creation-confirmation-phone-gate")
+        } else {
+            Button(isFailure ? "Retry generation" : "Create this video") {
+                action(isFailure ? "retry" : "generate", payload)
+            }.buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
+        }
     }
 
     private func conflictNotice(_ conflict: CreationConfirmationConflict) -> some View {
@@ -155,9 +195,7 @@ struct CreationConfirmationStage: View {
                     action("generate", payload.merging(["speech_cleanup_choice": .string("keep_original")]) { _, new in new })
                 }.disabled(isBusy || !hasVideo)
             } else {
-                Button(isFailure ? "Retry generation" : "Create this video") {
-                    action(isFailure ? "retry" : "generate", payload)
-                }.buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
+                retryOrCreateButton(payload: payload)
             }
         default:
             Text("The speech check is unavailable. Reopen the project to refresh it.")
