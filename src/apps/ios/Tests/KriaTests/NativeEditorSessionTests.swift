@@ -1,4 +1,5 @@
 import AVFoundation
+import UIKit
 import XCTest
 @testable import Kria
 
@@ -1393,6 +1394,61 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.clips.count, 2)
     }
 
+    /// iOS terminates an app whose background-task expiration handler does not end the task. With the
+    /// sheet gone the user backgrounds the app mid-upload, so a handler that only "reports" would kill
+    /// it and lose the editor's unsaved timeline. The handler must end the assertion, exactly once.
+    func testAddClipsExpirationHandlerEndsTheBackgroundAssertionExactlyOnce() async throws {
+        let threadID = UUID(); let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        let activity = RecordingEditorActivity()
+        session.backgroundActivity = activity
+        let tempURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("clip-bytes".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        fake.reserveUploadResult = UploadReservation(uploadURL: URL(string: "https://storage.example/signed-put")!, gcsPath: "users/u/generative/abc123def456/clip.mp4", kind: "video", contentType: "video/mp4", uploadHeaders: [:], purpose: nil, reservationID: nil, retentionExpiresAt: nil)
+        fake.addClipResult = AddClipResult(jobID: jobID.uuidString, clipIndex: 1, kind: "video")
+        let latch = FetchLatch()
+
+        let adding = Task { @MainActor in await session.addClip { await latch.wait(); return tempURL } }
+        while !latch.isWaiting { await Task.yield() }
+        XCTAssertEqual(activity.beginCount, 1)
+        XCTAssertEqual(activity.endCount, 0)
+
+        activity.expire()
+        XCTAssertEqual(activity.endCount, 1, "the handler must end the assertion or iOS terminates the app")
+
+        latch.open()
+        await adding.value
+        XCTAssertEqual(activity.endCount, 1, "the normal exit must not end it a second time")
+    }
+
+    func testAddClipBalancesItsBackgroundAssertionOnEveryExit() async throws {
+        let threadID = UUID(); let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        let activity = RecordingEditorActivity()
+        session.backgroundActivity = activity
+
+        await session.addClip { throw AddClipSourceUnreadable() }   // fails before any upload
+
+        XCTAssertEqual(activity.beginCount, 1)
+        XCTAssertEqual(activity.endCount, 1)
+    }
+
+    /// The sheet is dismissed before `addClip` runs, so a silent early return would drop the user's pick
+    /// with no signal at all.
+    func testAddClipReportsWhyItCannotProceedInsteadOfSilentlyDroppingThePick() async throws {
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        // Never loaded: no API, no job. `canEditTimeline` is false.
+        await session.addClip { URL(fileURLWithPath: "/nonexistent.mp4") }
+
+        XCTAssertNotNil(session.addClipError, "a dropped pick must say so")
+        XCTAssertFalse(session.isAddingClip)
+    }
+
     func testAddClipExplainsAnUnreadablePhotoWithoutTouchingTheTimeline() async throws {
         let threadID = UUID(); let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
@@ -2416,6 +2472,20 @@ private final class DelayedSeekPlayer: AVPlayer, @unchecked Sendable {
         guard !completions.isEmpty else { return }
         completions.removeFirst()(finished)
     }
+}
+
+/// Records background-task begin/end and lets a test fire the expiration handler.
+@MainActor private final class RecordingEditorActivity: BackgroundActivityAssertion, @unchecked Sendable {
+    private(set) var beginCount = 0
+    private(set) var endCount = 0
+    private var handler: (@Sendable () -> Void)?
+    func begin(name: String, expirationHandler: @escaping @Sendable () -> Void) -> UIBackgroundTaskIdentifier {
+        beginCount += 1
+        handler = expirationHandler
+        return UIBackgroundTaskIdentifier(rawValue: 7)
+    }
+    func end(_ identifier: UIBackgroundTaskIdentifier) { endCount += 1 }
+    func expire() { handler?() }
 }
 
 /// Holds a simulated Photos export open so a test can observe the session while the file is still

@@ -282,6 +282,7 @@ private struct CreationWorkspaceView: View {
     /// be enabled while chosen clips were still on their way.
     @State private var uploadInFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
     @State private var photoSelections: [String: ProjectPhotoSelection] = [:]
+    @State private var uploadFailures: [UploadFailure] = []
     @State private var maximumClipsByFormat: [CreationFormat: Int] = [:]
     @State private var capabilitiesAreAuthoritative = false
     @State private var isChoosingFormat = false
@@ -451,6 +452,7 @@ private struct CreationWorkspaceView: View {
         .onReceive(model.uploads.$records) { uploadRecords = $0 }
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0 }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0 }
+        .onReceive(model.uploads.$failures) { uploadFailures = $0 }
         .onReceive(model.uploads.$progress) { uploadProgress = $0 }
         .onReceive(model.uploads.$attachedThreads) { threads in
             guard let thread = threads[project.id] else { return }
@@ -541,7 +543,9 @@ private struct CreationWorkspaceView: View {
                     changeFormat: { isChoosingFormat = true },
                     attachedMedia: CreationAttachedMedia.parse(threadState),
                     isBusy: isSending || isActing,
-                    removeMedia: { mediaID in performAction("remove_media", payload: ["media_id": .string(mediaID)]) }
+                    removeMedia: { mediaID in performAction("remove_media", payload: ["media_id": .string(mediaID)]) },
+                    failures: uploadFailures.filter { $0.projectID == project.id && $0.role == .clip },
+                    dismissFailure: { model.uploads.dismissFailure(id: $0) }
                 )
                 .id("upload-prompt")
             }

@@ -37,7 +37,8 @@ import UIKit
         }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [UploadRetryProtocol.self]
-        UploadRetryProtocol.handler = { transport in transport.finish(500, Data()) }
+        var reservationRequests = 0
+        UploadRetryProtocol.handler = { transport in reservationRequests += 1; transport.finish(500, Data()) }
         let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
         let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration)
 
@@ -53,8 +54,13 @@ import UIKit
         XCTAssertEqual(remaining.first?.state, .retryLater)
         XCTAssertNotEqual(remaining.first?.launchToken, entry.launchToken, "launchToken must be rerolled so a later recovery pass sees this as orphaned again")
         XCTAssertTrue(coordinator.records.isEmpty, "reserve failed, so this never became a real upload task")
+        // The reservation is only attempted after `prepare()` succeeds, so this proves the import step
+        // actually ran against the staged file (which the pre-fix unconditional delete could never do).
+        XCTAssertEqual(reservationRequests, 1, "prepare() must have run, and the failure must have come from the reservation")
+        // The failed attempt's import is discarded: the retry re-imports from the staged file under a
+        // fresh asset id, so leaving this one would strand a full-size copy that nothing references.
         let importedFiles = (try? FileManager.default.contentsOfDirectory(at: projectDirectory.originals, includingPropertiesForKeys: nil)) ?? []
-        XCTAssertEqual(importedFiles.count, 1, "prepare()'s import step must have actually run against the staged file")
+        XCTAssertTrue(importedFiles.isEmpty, "a failed attempt must not leave its imported original behind")
     }
 
     /// KRI-114 P0-4 review follow-up: a DEFINITIVE rejection (here, a 409 the
@@ -468,16 +474,21 @@ private let reservationResponse = Data(#"[{"media_id":"clip-1","upload_url":"htt
     }
 
     @discardableResult
-    func select(_ identifier: String, debounce: Duration = .zero, attached: Set<String> = []) throws -> URL {
+    func select(_ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, debounce: Duration = .zero, attached: Set<String> = []) throws -> URL {
         let file = FileManager.default.temporaryDirectory.appending(path: "pick-\(UUID().uuidString).mp4")
         try Data("clip \(identifier)".utf8).write(to: file)
-        coordinator.select(.init(assetIdentifier: identifier, projectID: projectID, role: .clip, purpose: .cloudRenderSource, itemID: nil, limit: nil, attachedMediaIDs: attached), debounce: debounce) { file }
+        coordinator.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: attached), debounce: debounce) { file }
         return file
     }
 
-    func deselect(_ identifier: String) async -> DeselectOutcome {
-        await coordinator.deselect(assetIdentifier: identifier, projectID: projectID, role: .clip, itemID: nil)
+    func deselect(_ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil) async -> DeselectOutcome {
+        await coordinator.deselect(assetIdentifier: identifier, projectID: projectID, role: role, itemID: itemID)
     }
+}
+
+/// The persisted `PreparingUpload` entries under `key`, as `recoverInterruptedPreparations` sees them.
+private func persistedPreparing(_ key: String) -> [PreparingUpload] {
+    (UserDefaults.standard.data(forKey: "\(key).preparing").flatMap { try? JSONDecoder().decode([PreparingUpload].self, from: $0) }) ?? []
 }
 
 /// KRI-125: uploads start while the user is still choosing, and un-choosing unwinds them.
@@ -529,8 +540,7 @@ extension BackgroundUploadRetryTests {
     func testChoosingAnAssetWhoseClipWasRemovedElsewhereUploadsItAgain() async throws {
         let key = "kria.test.select.\(UUID().uuidString)"
         let projectID = UUID()
-        let stale = [projectID.uuidString: ProjectPhotoSelection(byIdentifier: ["asset-1": PhotoSelectionEntry(recordID: UUID(), mediaID: "media-1", role: .clip)])]
-        UserDefaults.standard.set(try JSONEncoder().encode(stale), forKey: "\(key).photo-selection")
+        try seedLedger(key: key, projectID: projectID, PhotoSelectionEntry(assetIdentifier: "asset-1", recordID: UUID(), mediaID: "media-1", role: .clip, itemID: nil, boundAt: nil))
         let h = harness(key: key, projectID: projectID)
 
         try h.select("asset-1", attached: ["media-1"])   // media-1 is still attached: a genuine duplicate
@@ -638,6 +648,98 @@ extension BackgroundUploadRetryTests {
         XCTAssertEqual(h.coordinator.failures.map(\.role), [.visual], "a footage batch must not wipe a visual's failure")
     }
 
+    /// B-roll of your own footage: one video chosen as a clip AND as a visual. Un-choosing one must not
+    /// touch the other, and choosing the second must not be swallowed by the first.
+    func testTheSameAssetChosenAsAClipAndAsAVisualAreIndependent() async throws {
+        let h = harness()
+        try h.select("shared", role: .clip, debounce: .seconds(30))
+        try h.select("shared", role: .visual, itemID: "item-1", debounce: .seconds(30))
+        XCTAssertEqual(h.coordinator.photoSelections[h.projectID.uuidString]?.entries.count, 2, "two choices, not one overwriting the other")
+
+        let outcome = await h.deselect("shared", role: .clip)
+
+        XCTAssertEqual(outcome, .discarded)
+        XCTAssertEqual(h.coordinator.preselectedIdentifiers(projectID: h.projectID, role: .clip, attachedMediaIDs: []), [])
+        XCTAssertEqual(h.coordinator.preselectedIdentifiers(projectID: h.projectID, role: .visual, itemID: "item-1", attachedMediaIDs: []), ["shared"],
+                       "un-choosing the clip must leave the visual chosen")
+        _ = await h.deselect("shared", role: .visual, itemID: "item-1")   // don't leave a 30 s debounce running
+    }
+
+    /// The moment between "attached" and "visible in the attached list" (a network refresh for visuals):
+    /// the picker's still-ticked asset must not look newly chosen and upload a second time.
+    func testAnAssetJustAttachedIsNotUploadedAgainBeforeTheAttachedListCatchesUp() async throws {
+        let key = "kria.test.select.\(UUID().uuidString)"
+        let projectID = UUID()
+        try seedLedger(key: key, projectID: projectID, PhotoSelectionEntry(assetIdentifier: "asset-1", recordID: UUID(), mediaID: "media-1", role: .clip, itemID: nil, boundAt: Date()))
+        let h = harness(key: key, projectID: projectID)
+
+        try h.select("asset-1", attached: [])   // attached list has not caught up yet
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(h.received, 0, "a duplicate upload is exactly the bug this ticket is about")
+    }
+
+    /// A claim whose upload can no longer resume (its staged file is gone) must be released, or it
+    /// counts as pending forever and keeps Continue disabled with no way out.
+    func testARecoveredUploadWhoseStagedFileIsGoneReleasesItsClaim() throws {
+        let key = "kria.test.select.\(UUID().uuidString)"
+        let projectID = UUID()
+        let recordID = UUID()
+        try seedLedger(key: key, projectID: projectID, PhotoSelectionEntry(assetIdentifier: "asset-1", recordID: recordID, mediaID: nil, role: .clip, itemID: nil, boundAt: nil))
+        let staged = PreparingUpload(id: recordID, projectID: projectID, localFilePath: "/nonexistent/\(UUID().uuidString).mp4", filename: "x.mp4", source: .photos, purpose: .cloudRenderSource, role: .clip, itemID: nil, launchToken: UUID())
+        UserDefaults.standard.set(try JSONEncoder().encode([staged]), forKey: "\(key).preparing")
+        let h = harness(key: key, projectID: projectID)
+        XCTAssertEqual(h.coordinator.reservedCount(projectID: projectID, role: .clip), 1, "kept at launch: its staged entry was still there")
+
+        _ = h.coordinator.recoverInterruptedPreparations()
+
+        XCTAssertEqual(h.coordinator.reservedCount(projectID: projectID, role: .clip), 0, "nothing left to resume, so nothing is pending")
+        XCTAssertTrue(h.coordinator.photoSelections.isEmpty)
+    }
+
+    /// After a relaunch there is no selection task to cancel, only a staged upload waiting to be resumed.
+    /// Un-choosing must remove it, or it would be resumed later and attach a clip the user un-ticked.
+    func testUnchoosingAfterARelaunchRemovesTheStagedUploadSoItIsNeverResumed() async throws {
+        let key = "kria.test.select.\(UUID().uuidString)"
+        let projectID = UUID()
+        let recordID = UUID()
+        let stagedFile = FileManager.default.temporaryDirectory.appending(path: "staged-\(UUID().uuidString).mp4")
+        try Data("staged".utf8).write(to: stagedFile)
+        try seedLedger(key: key, projectID: projectID, PhotoSelectionEntry(assetIdentifier: "asset-1", recordID: recordID, mediaID: nil, role: .clip, itemID: nil, boundAt: nil))
+        let staged = PreparingUpload(id: recordID, projectID: projectID, localFilePath: stagedFile.path, filename: "x.mp4", source: .photos, purpose: .cloudRenderSource, role: .clip, itemID: nil, launchToken: UUID())
+        UserDefaults.standard.set(try JSONEncoder().encode([staged]), forKey: "\(key).preparing")
+        let h = harness(key: key, projectID: projectID)
+
+        let outcome = await h.deselect("asset-1")
+
+        XCTAssertEqual(outcome, .discarded)
+        XCTAssertTrue(persistedPreparing(key).isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagedFile.path))
+        XCTAssertTrue(h.coordinator.recoverInterruptedPreparations().isEmpty, "nothing left to resume")
+        XCTAssertEqual(h.received, 0)
+    }
+
+    /// A clip queued behind the gate is already staged (durable) but not yet running; un-choosing it must
+    /// unwind that, leaving the running clip alone.
+    func testUnchoosingAClipQueuedBehindTheGateRemovesItsStagedUpload() async throws {
+        let key = "kria.test.select.\(UUID().uuidString)"
+        let h = harness(key: key, cloudSlots: 1, answerImmediately: false)
+        try h.select("running")
+        let running = await waitUntil { h.received == 1 }   // holds the only slot, waiting on its reservation
+        XCTAssertTrue(running)
+        try h.select("queued")
+        let queued = await waitUntil { persistedPreparing(key).count == 2 }   // staged, then waiting for the slot
+        XCTAssertTrue(queued)
+
+        let outcome = await h.deselect("queued")
+
+        XCTAssertEqual(outcome, .discarded)
+        XCTAssertEqual(persistedPreparing(key).count, 1, "only the running clip stays staged")
+        XCTAssertEqual(h.coordinator.inFlight.count, 1)
+        XCTAssertEqual(h.received, 1, "the queued clip never reached the server")
+        h.answerPending(1)   // let the running one finish so nothing lingers past the test
+    }
+
     func testUnchoosingAnAssetTheCoordinatorNeverHeardOfIsHarmless() async {
         let h = harness()
         let outcome = await h.deselect("never-chosen")
@@ -680,16 +782,22 @@ extension BackgroundUploadRetryTests {
     func testStaleClaimsAreDroppedOnRelaunchButAttachedOnesSurvive() throws {
         let key = "kria.test.select.\(UUID().uuidString)"
         let projectID = UUID()
-        let ledger = [projectID.uuidString: ProjectPhotoSelection(byIdentifier: [
-            "ghost": PhotoSelectionEntry(recordID: UUID(), mediaID: nil, role: .clip),      // its upload died with the process
-            "attached": PhotoSelectionEntry(recordID: UUID(), mediaID: "media-1", role: .clip),
-        ])]
-        UserDefaults.standard.set(try JSONEncoder().encode(ledger), forKey: "\(key).photo-selection")
+        try seedLedger(key: key, projectID: projectID,
+                       PhotoSelectionEntry(assetIdentifier: "ghost", recordID: UUID(), mediaID: nil, role: .clip, itemID: nil, boundAt: nil),   // its upload died with the process
+                       PhotoSelectionEntry(assetIdentifier: "attached", recordID: UUID(), mediaID: "media-1", role: .clip, itemID: nil, boundAt: nil))
 
         let h = harness(key: key, projectID: projectID)
 
-        let restored = h.coordinator.photoSelections[projectID.uuidString]?.byIdentifier
-        XCTAssertNil(restored?["ghost"], "a claim with no upload behind it would block re-choosing that asset")
-        XCTAssertNotNil(restored?["attached"], "an attached clip must still show as chosen after a relaunch")
+        let restored = h.coordinator.photoSelections[projectID.uuidString]?.entries.values.map(\.assetIdentifier) ?? []
+        XCTAssertFalse(restored.contains("ghost"), "a claim with no upload behind it would block re-choosing that asset")
+        XCTAssertTrue(restored.contains("attached"), "an attached clip must still show as chosen after a relaunch")
+    }
+
+    private func seedLedger(key: String, projectID: UUID, _ entries: PhotoSelectionEntry...) throws {
+        var selection = ProjectPhotoSelection()
+        for entry in entries {
+            selection.entries[ProjectPhotoSelection.key(role: entry.role, itemID: entry.itemID, assetIdentifier: entry.assetIdentifier)] = entry
+        }
+        UserDefaults.standard.set(try JSONEncoder().encode([projectID.uuidString: selection]), forKey: "\(key).photo-selection")
     }
 }

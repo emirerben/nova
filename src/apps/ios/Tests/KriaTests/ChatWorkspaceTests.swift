@@ -223,6 +223,18 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertEqual(ClipSelectionCapacity(maximum: 4, existing: 1, reserved: 0, preselected: 3).pickerSelectionLimit, 4)
     }
 
+    /// The cap can drop below what is already attached (a format switch, or capabilities falling back).
+    /// A picker limit under the seeded count would make the picker drop items, and a dropped item must
+    /// never be able to read as the user un-choosing it.
+    func testPickerSelectionLimitIsNeverBelowWhatIsSeededEvenWhenOverTheCap() {
+        let overCap = ClipSelectionCapacity(maximum: 6, existing: 8, reserved: 0, preselected: 8)
+        XCTAssertEqual(overCap.pickerSelectionLimit, 8, "must hold everything it is seeded with")
+        XCTAssertEqual(overCap.remaining, 0, "and there is no room to add more")
+
+        let partlyOver = ClipSelectionCapacity(maximum: 6, existing: 9, reserved: 0, preselected: 5)
+        XCTAssertGreaterThanOrEqual(partlyOver.pickerSelectionLimit, 5)
+    }
+
     func testPickerSelectionLimitWithoutPhotosAccessMatchesTheOldBehavior() {
         // No library ⇒ nothing is preselected ⇒ the limit is just the remaining room, as before.
         let capacity = ClipSelectionCapacity(maximum: 10, existing: 3, reserved: 2)

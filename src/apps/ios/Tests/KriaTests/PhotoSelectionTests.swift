@@ -20,29 +20,74 @@ import XCTest
 
     // MARK: ledger reconciliation
 
-    private func entry(_ mediaID: String?, role: CreationMediaRole = .clip) -> PhotoSelectionEntry {
-        PhotoSelectionEntry(recordID: UUID(), mediaID: mediaID, role: role)
+    private func entry(_ id: String, _ mediaID: String?, role: CreationMediaRole = .clip, itemID: String? = nil, boundAt: Date? = nil) -> PhotoSelectionEntry {
+        PhotoSelectionEntry(assetIdentifier: id, recordID: UUID(), mediaID: mediaID, role: role,
+                            itemID: ProjectPhotoSelection.scopedItemID(role: role, itemID: itemID), boundAt: boundAt)
+    }
+
+    private func ledger(_ entries: PhotoSelectionEntry...) -> ProjectPhotoSelection {
+        var selection = ProjectPhotoSelection()
+        for entry in entries {
+            selection.entries[ProjectPhotoSelection.key(role: entry.role, itemID: entry.itemID, assetIdentifier: entry.assetIdentifier)] = entry
+        }
+        return selection
     }
 
     func testPreselectedIncludesInFlightAndStillAttachedButNotRemovedMedia() {
-        let selection = ProjectPhotoSelection(byIdentifier: [
-            "uploading": entry(nil),
-            "attached": entry("media-1"),
-            "removed-on-web": entry("media-2"),
-        ])
+        let selection = ledger(entry("uploading", nil), entry("attached", "media-1"), entry("removed-on-web", "media-2"))
         XCTAssertEqual(selection.preselected(role: .clip, attachedMediaIDs: ["media-1"]), ["attached", "uploading"],
                        "an entry whose clip is gone must stop counting, or it could never be added again")
     }
 
     func testPreselectedIsScopedToTheRole() {
-        let selection = ProjectPhotoSelection(byIdentifier: ["clip": entry(nil, role: .clip), "visual": entry(nil, role: .visual)])
+        let selection = ledger(entry("clip", nil, role: .clip), entry("visual", nil, role: .visual))
         XCTAssertEqual(selection.preselected(role: .visual, attachedMediaIDs: []), ["visual"])
     }
 
+    /// B-roll of your own footage: the same video is a clip and a visual. Those are two choices; one
+    /// must not overwrite or hide the other.
+    func testTheSameAssetAsAClipAndAsAVisualAreIndependentChoices() {
+        let selection = ledger(entry("shared", "clip-media", role: .clip), entry("shared", nil, role: .visual, itemID: "item-1"))
+        XCTAssertEqual(selection.entries.count, 2)
+        XCTAssertEqual(selection.preselected(role: .clip, attachedMediaIDs: ["clip-media"]), ["shared"])
+        XCTAssertEqual(selection.preselected(role: .visual, itemID: "item-1", attachedMediaIDs: []), ["shared"])
+    }
+
+    func testVisualsAreScopedToTheirPlanItemButClipsAreNot() {
+        let selection = ledger(entry("v", nil, role: .visual, itemID: "item-1"), entry("c", nil, role: .clip, itemID: "item-1"))
+        XCTAssertEqual(selection.preselected(role: .visual, itemID: "item-2", attachedMediaIDs: []), [], "another item's visual pool")
+        XCTAssertEqual(selection.preselected(role: .visual, itemID: "item-1", attachedMediaIDs: []), ["v"])
+        XCTAssertEqual(selection.preselected(role: .clip, itemID: "anything", attachedMediaIDs: []), ["c"], "clips belong to the project")
+    }
+
+    /// Between "bound" and "visible in the attached list" (fetched separately, over the network for
+    /// visuals) the picker's still-ticked asset would look newly chosen and the next tap would upload
+    /// it a second time.
+    func testABoundAssetKeepsCountingAsChosenBrieflyWhileTheAttachedListCatchesUp() {
+        let now = Date()
+        let justBound = entry("a", "media-1", boundAt: now.addingTimeInterval(-5))
+        XCTAssertTrue(justBound.isLive(attachedMediaIDs: [], now: now), "attached list hasn't caught up yet")
+        let longAgo = entry("a", "media-1", boundAt: now.addingTimeInterval(-(ProjectPhotoSelection.bindGrace + 1)))
+        XCTAssertFalse(longAgo.isLive(attachedMediaIDs: [], now: now), "past the grace window, absence means it was removed")
+        XCTAssertTrue(longAgo.isLive(attachedMediaIDs: ["media-1"], now: now), "and being attached always counts")
+        XCTAssertFalse(entry("a", "media-1", boundAt: nil).isLive(attachedMediaIDs: [], now: now), "never bound recently")
+    }
+
     func testLedgerRoundTripsThroughJSON() throws {
-        let original = ProjectPhotoSelection(byIdentifier: ["asset": entry("media-1")])
+        let original = ledger(entry("asset", "media-1", boundAt: Date(timeIntervalSince1970: 1_700_000_000)))
         let decoded = try JSONDecoder().decode(ProjectPhotoSelection.self, from: JSONEncoder().encode(original))
         XCTAssertEqual(decoded, original)
+    }
+
+    // MARK: display name
+
+    func testDisplayFilenameStripsThePhotosExportPrefix() {
+        let name = "\(UUID().uuidString)-IMG_0042.MOV"
+        XCTAssertEqual(BackgroundUploadCoordinator.displayFilename(name), "IMG_0042.MOV")
+        XCTAssertEqual(BackgroundUploadCoordinator.displayFilename("IMG_0042.MOV"), "IMG_0042.MOV")
+        XCTAssertEqual(BackgroundUploadCoordinator.displayFilename("my-holiday-video.mov"), "my-holiday-video.mov", "a dash alone is not a prefix")
+        let bare = UUID().uuidString
+        XCTAssertEqual(BackgroundUploadCoordinator.displayFilename(bare), bare, "a bare UUID with no name after it is left alone")
     }
 
     // MARK: admission gate

@@ -12,6 +12,8 @@ import Foundation
 /// Privacy: a PHAsset identifier is durable personal data about the user's library. It lives
 /// only in on-device UserDefaults and is never placed in a request body.
 struct PhotoSelectionEntry: Codable, Sendable, Equatable {
+    /// The PHAsset local identifier (`PhotosPickerItem.itemIdentifier`).
+    var assetIdentifier: String
     /// The `enqueue` / `PreparingUpload` / `UploadRecoveryRecord` id this asset became.
     var recordID: UUID
     /// The server's id for the attached media (`visualReservationID` for `.visual`). `nil` until
@@ -19,24 +21,52 @@ struct PhotoSelectionEntry: Codable, Sendable, Equatable {
     /// on attach, so an attached clip still shows as chosen the next time the picker opens.
     var mediaID: String?
     var role: CreationMediaRole
+    /// Visual pools belong to a plan item, so a visual is scoped to it. Clips and voiceover are
+    /// scoped to the project alone (`nil`).
+    var itemID: String?
+    /// When `mediaID` was set. See `ProjectPhotoSelection.bindGrace`.
+    var boundAt: Date?
+
+    /// Still counts as chosen? An entry with no `mediaID` is on its way; a bound one counts while
+    /// the media is attached — or, briefly, while the attached list has yet to catch up.
+    func isLive(attachedMediaIDs: Set<String>, now: Date = Date()) -> Bool {
+        guard let mediaID else { return true }
+        if attachedMediaIDs.contains(mediaID) { return true }
+        guard let boundAt else { return false }
+        return now.timeIntervalSince(boundAt) < ProjectPhotoSelection.bindGrace
+    }
 }
 
 struct ProjectPhotoSelection: Codable, Sendable, Equatable {
-    var byIdentifier: [String: PhotoSelectionEntry] = [:]
+    /// Keyed by `key(role:itemID:assetIdentifier:)`, NOT the bare identifier: the same asset can be
+    /// chosen as a clip and as a visual (B-roll of your own footage), and those are different
+    /// things that must not overwrite or block each other.
+    var entries: [String: PhotoSelectionEntry] = [:]
+
+    /// How long an attached asset keeps counting as chosen while the list of attached media (fetched
+    /// separately, for visuals over the network) has not caught up. Without it, the moment between
+    /// "bound" and "visible in the attached list" makes the picker's still-ticked asset look newly
+    /// chosen, and the next tap uploads it a second time.
+    static let bindGrace: TimeInterval = 30
+
+    static func key(role: CreationMediaRole, itemID: String?, assetIdentifier: String) -> String {
+        "\(role.rawValue)|\(scopedItemID(role: role, itemID: itemID) ?? "")|\(assetIdentifier)"
+    }
+
+    static func scopedItemID(role: CreationMediaRole, itemID: String?) -> String? {
+        role == .visual ? itemID : nil
+    }
 
     /// Identifiers the picker should show as already chosen: assets still on their way to the
     /// server, plus attached ones **that are still attached**. Reconciling against the live media
     /// is the point: if the user removes a clip via the trash button (or on the web) its entry
     /// must stop counting, or the picker would preselect something that isn't there and the user
     /// could never add it again.
-    func preselected(role: CreationMediaRole, attachedMediaIDs: Set<String>) -> [String] {
-        byIdentifier
-            .filter { _, entry in
-                guard entry.role == role else { return false }
-                guard let mediaID = entry.mediaID else { return true }
-                return attachedMediaIDs.contains(mediaID)
-            }
-            .map(\.key)
+    func preselected(role: CreationMediaRole, itemID: String? = nil, attachedMediaIDs: Set<String>, now: Date = Date()) -> [String] {
+        let scope = Self.scopedItemID(role: role, itemID: itemID)
+        return entries.values
+            .filter { $0.role == role && $0.itemID == scope && $0.isLive(attachedMediaIDs: attachedMediaIDs, now: now) }
+            .map(\.assetIdentifier)
             .sorted()
     }
 }

@@ -50,6 +50,11 @@ struct NativeEditorAddClipSheet: View {
                 .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.movie, .image], onCompletion: importFile)
                 .accessibilityIdentifier("native-editor-add-clip-files")
 
+                // Normally invisible: the sheet closes as soon as a file is chosen. Kept for the moment
+                // before it does, so the user never sees dead buttons and no progress.
+                if session.isAddingClip {
+                    HStack { Spacer(); ProgressView("Adding…"); Spacer() }
+                }
                 if let error = session.addClipError {
                     Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.failureText)
                         .accessibilityIdentifier("native-editor-add-clip-error")
@@ -77,10 +82,19 @@ struct NativeEditorAddClipSheet: View {
     // which the editor owns and which therefore outlives this sheet. The editor shows progress and
     // any error; holding the user on a spinner here is what made adding a clip feel slow.
 
+    /// Dismissing synchronously inside the picker's own completion stacks two dismissals — the race
+    /// `FootagePickerView` documents — and can leave this sheet open. Let the picker finish closing first.
+    private func dismissAfterPickerCloses() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            dismiss()
+        }
+    }
+
     private func importPhotoItem(_ item: PhotosPickerItem) {
         let session = session
         photoItem = nil
-        dismiss()
+        dismissAfterPickerCloses()
         Task { @MainActor in
             await session.addClip {
                 guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw AddClipSourceUnreadable() }
@@ -95,7 +109,7 @@ struct NativeEditorAddClipSheet: View {
         // The importer's URL is security-scoped. Hold access until the upload is done, since the
         // work now outlives the sheet that received it.
         let scoped = url.startAccessingSecurityScopedResource()
-        dismiss()
+        dismissAfterPickerCloses()
         Task { @MainActor in
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             await session.addClip(fileURL: url)

@@ -34,6 +34,9 @@ struct FootagePickerView: View {
     @State private var consentSelection: UploadConsentSelection?
     @State private var consentedPurpose: UploadPurpose = .cloudRenderSource
     @State private var libraryAuthorized = false
+    /// How many of the chosen assets the library can still show. Fetched when the set changes, not
+    /// per render: the picker's limit must count what it will actually display.
+    @State private var showablePreselectedCount = 0
     @State private var selectionMessage: String?
 
     init(
@@ -59,7 +62,7 @@ struct FootagePickerView: View {
     }
 
     private var preselectedIdentifiers: [String] {
-        uploads.preselectedIdentifiers(projectID: projectID, role: role, attachedMediaIDs: attachedMediaIDs)
+        uploads.preselectedIdentifiers(projectID: projectID, role: role, itemID: itemID, attachedMediaIDs: attachedMediaIDs)
     }
 
     private var selectionCapacity: ClipSelectionCapacity {
@@ -67,8 +70,24 @@ struct FootagePickerView: View {
             maximum: maximumClipCount,
             existing: attachedClipCount + pendingUploadCount,
             reserved: uploads.reservedCount(projectID: projectID, role: role),
-            preselected: libraryAuthorized ? preselectedIdentifiers.count : 0
+            preselected: libraryAuthorized ? showablePreselectedCount : 0
         )
+    }
+
+    /// The subset of `ids` the library can still resolve. A clip attached from a photo the user has
+    /// since deleted has no tick the picker can show, and the picker dropping it must never be read as
+    /// the user un-choosing it — that would delete the clip from the project.
+    private static func resolvable(_ ids: [String]) -> [String] {
+        guard !ids.isEmpty else { return [] }
+        var present = Set<String>()
+        PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil).enumerateObjects { asset, _, _ in
+            present.insert(asset.localIdentifier)
+        }
+        return ids.filter(present.contains)
+    }
+
+    private func refreshShowablePreselected() {
+        showablePreselectedCount = libraryAuthorized ? Self.resolvable(preselectedIdentifiers).count : 0
     }
 
     private var pendingUploadCount: Int {
@@ -160,7 +179,11 @@ struct FootagePickerView: View {
             if let error = uploads.lastError, failures.isEmpty { Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
         }
         .accessibilityElement(children: .contain)
-        .task { libraryAuthorized = PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized }
+        .task {
+            libraryAuthorized = PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
+            refreshShowablePreselected()
+        }
+        .onChange(of: preselectedIdentifiers) { _, _ in refreshShowablePreselected() }
     }
 
     private func requestConsent(source: UploadSource) {
@@ -183,9 +206,17 @@ struct FootagePickerView: View {
     /// user actually asks for Photos. Stacking a system alert on a live `.sheet` in the same
     /// gesture is a known SwiftUI dismissal race.
     private func presentPhotosPicker() async {
+        let wasAuthorized = libraryAuthorized
         libraryAuthorized = await Self.photoLibraryAuthorized()
+        refreshShowablePreselected()
         // Seed with what is already chosen, so those clips render as selected and can't be re-picked.
-        photoItems = libraryAuthorized ? preselectedIdentifiers.map { PhotosPickerItem(itemIdentifier: $0) } : []
+        // Only assets the library can still show: seeding one it can't resolve would have the picker
+        // drop it, and that must not be able to look like the user un-choosing it.
+        photoItems = libraryAuthorized ? Self.resolvable(preselectedIdentifiers).map { PhotosPickerItem(itemIdentifier: $0) } : []
+        // The first time access is granted, the picker modifier below swaps to the library-backed
+        // variant. Presenting in the same pass as that swap can silently fail to present, so give the
+        // new modifier a moment to install. Happens once per permission grant, not per presentation.
+        if libraryAuthorized != wasAuthorized { try? await Task.sleep(for: .milliseconds(150)) }
         showingPhotosPicker = true
     }
 
@@ -216,7 +247,11 @@ struct FootagePickerView: View {
                 return media.url
             }
         }
-        for identifier in diff.removed { Task { await unchoose(identifier) } }
+        // Only what the library can still show can have been un-ticked. Anything else was dropped by the
+        // picker (a deleted photo, an over-limit seed), which must never be treated as the user's
+        // decision: it would remove the clip from the project.
+        let removable = Set(Self.resolvable(diff.removed))
+        for identifier in diff.removed where removable.contains(identifier) { Task { await unchoose(identifier) } }
     }
 
     private func unchoose(_ identifier: String) async {
@@ -328,7 +363,10 @@ struct ClipSelectionCapacity: Equatable, Sendable {
     /// project cap minus everything that is invisible to the picker as a selection.
     /// `max(1, …)` because PhotosUI treats 0 as "unlimited".
     var pickerSelectionLimit: Int {
-        max(1, min(maximum, maximum - max(0, existing + reserved - preselected)))
+        // Never below what is already seeded: a limit under the seed would make the picker drop items,
+        // which reads as un-choosing them. Reachable when the cap drops under what is attached (a
+        // format switch, or capabilities falling back), and then there is simply no room to add more.
+        max(1, preselected, min(maximum, maximum - max(0, existing + reserved - preselected)))
     }
 
     func acceptedCount(requested: Int) -> Int {

@@ -337,6 +337,11 @@ struct FootageStage: View {
     var attachedMedia: [CreationAttachedMedia] = []
     var isBusy = false
     var removeMedia: (String) -> Void = { _ in }
+    /// Clips that failed to add. They are otherwise only shown inside the picker sheet, so a clip that
+    /// fails after the sheet was closed would silently leave Continue enabled with fewer clips than
+    /// the user chose.
+    var failures: [UploadFailure] = []
+    var dismissFailure: (UUID) -> Void = { _ in }
 
     private var readiness: FootageReadiness {
         FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count + preparingCount)
@@ -381,6 +386,23 @@ struct FootageStage: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("choose-videos")
+
+            if !failures.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(failures) { failure in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("\(failure.filename) wasn’t added. \(failure.message)")
+                                .font(KriaFont.body(12))
+                                .foregroundStyle(KriaColor.failureText)
+                            Spacer(minLength: 4)
+                            Button("Dismiss") { dismissFailure(failure.id) }
+                                .font(KriaFont.body(12).weight(.medium))
+                                .frame(minHeight: 44)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("footage-upload-failures")
+            }
 
             if readiness.attachedCount > 0 {
                 VStack(alignment: .leading, spacing: 10) {

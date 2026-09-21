@@ -10,6 +10,20 @@ enum NativeSourcePreviewState: Equatable {
 
 enum NativeTrimEdge: Sendable { case leading, trailing }
 
+/// Lets a background-task expiration handler end the very assertion it belongs to. The identifier only
+/// exists after `begin` returns, but the handler is created before that.
+@MainActor final class BackgroundAssertionHandle {
+    private var identifier: UIBackgroundTaskIdentifier = .invalid
+    func set(_ identifier: UIBackgroundTaskIdentifier) { self.identifier = identifier }
+    /// Ends the assertion once; later calls are no-ops, so the handler and the normal exit can't double-end.
+    func end(using activity: any BackgroundActivityAssertion) {
+        guard identifier != .invalid else { return }
+        let ending = identifier
+        identifier = .invalid
+        activity.end(ending)
+    }
+}
+
 enum NativeEditorSaveState: Equatable, Sendable {
     case idle
     case saving
@@ -370,6 +384,8 @@ struct NativeEditorTemporaryVideo {
     @Published private(set) var isAddingVisual = false
     @Published var visualError: String?
     @Published private(set) var isAddingClip = false
+    /// Seam over `UIApplication.beginBackgroundTask` so a test can drive expiration.
+    var backgroundActivity: any BackgroundActivityAssertion = UIKitBackgroundActivityAssertion()
     @Published var addClipError: String?
     /// Default window given to a freshly added timeline clip/photo. The server
     /// has never probed this source, so it can't bound the window itself — see
@@ -2023,15 +2039,29 @@ struct NativeEditorTemporaryVideo {
     func addClip(source: @MainActor () async throws -> URL) async {
         // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
         // no-op instead of a round trip that would 422 anyway.
-        guard canEditTimeline, !isAddingClip, let api, let jobID, draft.clips.count < 20 else { return }
+        guard !isAddingClip else { return }
+        // The sheet is already gone by now, so a silent return would drop the user's pick with no signal.
+        guard canEditTimeline, let api, let jobID else {
+            addClipError = "The timeline can’t be edited right now. Try adding it again in a moment."
+            return
+        }
+        guard draft.clips.count < 20 else {
+            addClipError = "This edit already has the maximum number of clips."
+            return
+        }
         isAddingClip = true
         addClipError = nil
         defer { isAddingClip = false }
         // With the sheet gone the user will background the app while this uploads, and `uploadFile`
-        // is a foreground request. Ask for time to finish; if it runs out the failure is reported below.
-        let activity = UIKitBackgroundActivityAssertion()
-        let assertion = activity.begin(name: "com.kria.app.editor-add-clip") {}
-        defer { activity.end(assertion) }
+        // is a foreground request, so ask for time to finish. If that time runs out the handler MUST end
+        // the assertion: iOS terminates an app whose expiration handler doesn't, taking the editor's
+        // unsaved timeline with it. The suspended request then fails and is reported below.
+        let activity = backgroundActivity
+        let handle = BackgroundAssertionHandle()
+        handle.set(activity.begin(name: "com.kria.app.editor-add-clip") {
+            MainActor.assumeIsolated { handle.end(using: activity) }
+        })
+        defer { handle.end(using: activity) }
         do {
             let fileURL = try await source()
             let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
@@ -2040,7 +2070,12 @@ struct NativeEditorTemporaryVideo {
             let reservation = try await api.reserveUpload(filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), purpose: nil)
             try await api.uploadFile(to: reservation, fileURL: fileURL)
             let result = try await api.addClip(jobID: jobID, gcsPath: reservation.gcsPath)
-            guard canEditTimeline else { return }
+            guard canEditTimeline else {
+                // The clip uploaded and was minted into the job's pool, but the timeline is no longer
+                // editable (a save or render began). Say so rather than silently discarding it.
+                addClipError = "The clip uploaded, but the timeline changed while it was uploading. Add it again."
+                return
+            }
             transactDocument(section: .timeline) { doc in
                 doc.clips.append(EditorTimelineSlot(clipIndex: result.clipIndex, inS: 0, durationS: Self.addedClipDurationS))
             }

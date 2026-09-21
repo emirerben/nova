@@ -202,6 +202,12 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// One per asset the user is currently choosing (debounce → load → enqueue), so un-choosing it
     /// can cancel the work. Keyed `"<projectID>|<assetIdentifier>"`.
     private var selectionTasks: [String: Task<Void, Never>] = [:]
+    /// Crash-resume tasks, so un-choosing a clip that a relaunch is resuming can stop it. Without this
+    /// the resumed upload would carry on and attach a clip the user had already un-ticked.
+    private var resumeTasks: [UUID: Task<Void, Never>] = [:]
+    /// Bounds concurrent Photos exports (each a full tmp copy). Network-bound iCloud downloads
+    /// overlap well, so this is wider than the preparation gates.
+    private let loadGate = UploadAdmissionGate(limit: 3)
     /// Assets whose `deselect` is still running. The picker's `onChange` can fire again before it
     /// finishes; a second concurrent `remove_media` would be answered "no longer attached", read as
     /// a refusal, and wrongly put the clip back.
@@ -369,9 +375,18 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             // tell the user something broke when they did exactly what they meant to.
             if error is CancellationError || Task.isCancelled { return false }
             lastError = error.localizedDescription
-            recordFailure(id: recordID, projectID: projectID, role: role, filename: fileURL.lastPathComponent, message: error.localizedDescription)
+            recordFailure(id: recordID, projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), message: error.localizedDescription)
             return false
         }
+    }
+
+    /// Photos exports are named `<UUID>-<original>` (see `ImportedMedia`), which is what the user would
+    /// otherwise read in an error. Shows the name they know.
+    static func displayFilename(_ name: String) -> String {
+        guard name.count > 37,
+              UUID(uuidString: String(name.prefix(36))) != nil,
+              name[name.index(name.startIndex, offsetBy: 36)] == "-" else { return name }
+        return String(name.dropFirst(37))
     }
 
     /// Wipes the global error line. Called once per batch by the picker, in place of every
@@ -418,10 +433,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// The work lives here, not in the view, because `AttachmentSheet` applies `.id(role)` to the
     /// picker: switching Footage↔Visuals destroys the view and any `Task` it owned mid-upload.
     func select(_ request: PhotoSelectionRequest, debounce: Duration = .milliseconds(500), loadFile: @escaping @MainActor () async throws -> URL) {
-        let key = Self.selectionKey(request.projectID, request.assetIdentifier)
+        let key = Self.selectionKey(request.projectID, request.role, request.itemID, request.assetIdentifier)
         guard selectionTasks[key] == nil else { return }
-        if let existing = photoSelections[request.projectID.uuidString]?.byIdentifier[request.assetIdentifier],
-           existing.mediaID == nil || request.attachedMediaIDs.contains(existing.mediaID ?? "") {
+        if let existing = photoSelections[request.projectID.uuidString]?.entries[Self.ledgerKey(request.role, request.itemID, request.assetIdentifier)],
+           existing.isLive(attachedMediaIDs: request.attachedMediaIDs) {
             return
         }
         let recordID = UUID()
@@ -432,7 +447,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             var loaded: URL?
             do {
                 try await Task.sleep(for: debounce)
-                loaded = try await loadFile()
+                // Photos exports each asset to a full tmp copy, and ticking several iCloud videos at
+                // once would start them all together: the same disk burst `cloudGate` bounds later.
+                try await loadGate.acquire()
+                do { loaded = try await loadFile() } catch { loadGate.release(); throw error }
+                loadGate.release()
                 guard let url = loaded else { throw CancellationError() }
                 // Un-chosen while Photos was still handing the file over: don't start anything.
                 try Task.checkCancellation()
@@ -456,13 +475,20 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// - already attached (or finished uploading): detach it, deleting its file.
     func deselect(assetIdentifier: String, projectID: UUID, role: CreationMediaRole, itemID: String?) async -> DeselectOutcome {
         let pid = projectID.uuidString
-        guard let entry = photoSelections[pid]?.byIdentifier[assetIdentifier] else { return .notTracked }
-        let key = Self.selectionKey(projectID, assetIdentifier)
+        let ledgerKey = Self.ledgerKey(role, itemID, assetIdentifier)
+        guard let entry = photoSelections[pid]?.entries[ledgerKey] else { return .notTracked }
+        let key = Self.selectionKey(projectID, role, itemID, assetIdentifier)
         guard deselecting.insert(key).inserted else { return .alreadyInProgress }   // the first call decides
         defer { deselecting.remove(key) }
         if let task = selectionTasks[key] {
             task.cancel()
             await task.value
+        }
+        // After a relaunch there is no selection task, but the crash-resume one may be running (or
+        // waiting on the gate). Stop it, or it would carry on and attach a clip the user un-ticked.
+        if let resume = resumeTasks[entry.recordID] {
+            resume.cancel()
+            await resume.value
         }
         // A cancelled task can still have crossed the last checkpoint (just before `reserve`) and
         // started a real upload, so look again rather than assuming it unwound.
@@ -479,8 +505,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 return .cancelledUpload
             }
         }
-        guard let current = photoSelections[pid]?.byIdentifier[assetIdentifier] else { return .discarded }
+        guard let current = photoSelections[pid]?.entries[ledgerKey] else { return .discarded }
         guard let mediaID = current.mediaID else {
+            // A staged upload can outlive its task (a relaunch resumes it only after a backoff): drop
+            // it too, or it would be resumed later and attach a clip the user has un-chosen.
+            Self.clearPreparingUpload(id: current.recordID, key: defaultsKey, deleteLocalFile: true)
             releaseSelection(recordID: current.recordID, projectID: projectID)
             return .discarded
         }
@@ -533,8 +562,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private final class ResultBox<T>: @unchecked Sendable { var value: T? }
 
     /// Identifiers the picker should show as already chosen for this project and role.
-    func preselectedIdentifiers(projectID: UUID, role: CreationMediaRole, attachedMediaIDs: Set<String>) -> [String] {
-        photoSelections[projectID.uuidString]?.preselected(role: role, attachedMediaIDs: attachedMediaIDs) ?? []
+    func preselectedIdentifiers(projectID: UUID, role: CreationMediaRole, itemID: String? = nil, attachedMediaIDs: Set<String>) -> [String] {
+        photoSelections[projectID.uuidString]?.preselected(role: role, itemID: itemID, attachedMediaIDs: attachedMediaIDs) ?? []
     }
 
     /// Clips that occupy a slot but aren't in `records` or attached yet: mid-prepare uploads, and
@@ -551,7 +580,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         func matches(_ candidate: CreationMediaRole) -> Bool { role == nil || candidate == role }
         let flying = Set(inFlight.filter { $0.value.projectID == projectID && matches($0.value.role) }.keys)
         let recorded = Set(records.filter { $0.projectID == projectID && matches($0.role) }.map(\.id))
-        let entries: [PhotoSelectionEntry] = selections[projectID.uuidString].map { Array($0.byIdentifier.values) } ?? []
+        let entries: [PhotoSelectionEntry] = selections[projectID.uuidString].map { Array($0.entries.values) } ?? []
         let choosing = entries.filter {
             matches($0.role) && $0.mediaID == nil && !flying.contains($0.recordID) && !recorded.contains($0.recordID)
         }
@@ -572,11 +601,22 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     // MARK: Ledger
 
-    private static func selectionKey(_ projectID: UUID, _ assetIdentifier: String) -> String { "\(projectID.uuidString)|\(assetIdentifier)" }
+    /// Per asset AND role AND (for visuals) plan item: the same asset can be footage and a visual, and
+    /// those are separate choices that must not cancel, overwrite or dedupe each other.
+    private static func selectionKey(_ projectID: UUID, _ role: CreationMediaRole, _ itemID: String?, _ assetIdentifier: String) -> String {
+        "\(projectID.uuidString)|\(ledgerKey(role, itemID, assetIdentifier))"
+    }
+
+    private static func ledgerKey(_ role: CreationMediaRole, _ itemID: String?, _ assetIdentifier: String) -> String {
+        ProjectPhotoSelection.key(role: role, itemID: itemID, assetIdentifier: assetIdentifier)
+    }
 
     private func claim(_ request: PhotoSelectionRequest, recordID: UUID) {
         var selection = photoSelections[request.projectID.uuidString] ?? ProjectPhotoSelection()
-        selection.byIdentifier[request.assetIdentifier] = PhotoSelectionEntry(recordID: recordID, mediaID: nil, role: request.role)
+        selection.entries[Self.ledgerKey(request.role, request.itemID, request.assetIdentifier)] = PhotoSelectionEntry(
+            assetIdentifier: request.assetIdentifier, recordID: recordID, mediaID: nil, role: request.role,
+            itemID: ProjectPhotoSelection.scopedItemID(role: request.role, itemID: request.itemID), boundAt: nil
+        )
         photoSelections[request.projectID.uuidString] = selection
         persistPhotoSelections()
     }
@@ -584,8 +624,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private func bindSelection(recordID: UUID, projectID: UUID, mediaID: String) {
         let pid = projectID.uuidString
         guard var selection = photoSelections[pid],
-              let identifier = selection.byIdentifier.first(where: { $0.value.recordID == recordID })?.key else { return }
-        selection.byIdentifier[identifier]?.mediaID = mediaID
+              let key = selection.entries.first(where: { $0.value.recordID == recordID })?.key else { return }
+        selection.entries[key]?.mediaID = mediaID
+        selection.entries[key]?.boundAt = Date()
         photoSelections[pid] = selection
         persistPhotoSelections()
     }
@@ -593,9 +634,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private func releaseSelection(recordID: UUID, projectID: UUID) {
         let pid = projectID.uuidString
         guard var selection = photoSelections[pid],
-              let identifier = selection.byIdentifier.first(where: { $0.value.recordID == recordID })?.key else { return }
-        selection.byIdentifier[identifier] = nil
-        photoSelections[pid] = selection.byIdentifier.isEmpty ? nil : selection
+              let key = selection.entries.first(where: { $0.value.recordID == recordID })?.key else { return }
+        selection.entries[key] = nil
+        photoSelections[pid] = selection.entries.isEmpty ? nil : selection
         persistPhotoSelections()
     }
 
@@ -605,11 +646,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         let live = Set(records.map(\.id)).union(Self.restorePreparingUploads(key: defaultsKey).map(\.id))
         var changed = false
         for (pid, var selection) in photoSelections {
-            for (identifier, entry) in selection.byIdentifier where entry.mediaID == nil && !live.contains(entry.recordID) {
-                selection.byIdentifier[identifier] = nil
+            for (key, entry) in selection.entries where entry.mediaID == nil && !live.contains(entry.recordID) {
+                selection.entries[key] = nil
                 changed = true
             }
-            photoSelections[pid] = selection.byIdentifier.isEmpty ? nil : selection
+            photoSelections[pid] = selection.entries.isEmpty ? nil : selection
         }
         if changed { persistPhotoSelections() }
     }
@@ -680,6 +721,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             }
             guard FileManager.default.fileExists(atPath: entry.localFilePath) else {
                 missingStagedFile = true
+                // Nothing left to resume, so the asset is no longer on its way: release its claim, or it
+                // would count as pending forever and keep Continue disabled with no way out.
+                releaseSelection(recordID: entry.id, projectID: entry.projectID)
                 continue
             }
             guard now.timeIntervalSince(entry.lastHeartbeatAt) >= Self.resumeBackoffInterval else {
@@ -715,18 +759,22 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             Task { @MainActor in self?.markPreparationExpired(recordID: recordID) }
         }
         let gate = entry.purpose == .analysisProxy ? proxyGate : cloudGate
-        return Task { @MainActor [weak self] in
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
                 self.activePreparationIDs.remove(recordID)
                 self.inFlight[recordID] = nil
+                self.resumeTasks[recordID] = nil
                 self.backgroundActivity.end(backgroundTaskID)
             }
             // A relaunch can resume many interrupted clips at once; share the live-upload limit.
+            // Cancelled while queued means the user un-chose it: `deselect` clears the staged upload.
             guard (try? await gate.acquire()) != nil else { return }
             defer { gate.release() }
             await self.performResume(entry)
         }
+        resumeTasks[recordID] = task
+        return task
     }
 
     private func performResume(_ entry: PreparingUpload) async {
@@ -739,8 +787,12 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         // transient failure will re-run `prepare()` from `stagedURL` again next
         // attempt, a definitive one drops everything), it just shouldn't leak.
         var recoveryCopy: URL?
+        var preparedToDiscard: (URL, MediaAsset?)?
         do {
             let prepared = try await prepare(fileURL: stagedURL, projectID: entry.projectID, purpose: entry.purpose, recordID: recordID)
+            preparedToDiscard = (prepared.0, prepared.1)
+            // Same two checkpoints as `enqueue`: an un-chosen clip must not reach the server.
+            try Task.checkCancellation()
             try Self.validateProjectUploadPurpose(entry.purpose, contract: prepared.2)
             let preparedURL = prepared.0
             let localURL = try Self.linkIntoRecoveryDirectory(preparedURL)
@@ -750,10 +802,12 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
             guard entry.role.accepts(contentType) else { throw CreationUploadError.unsupportedType }
             let clientUploadID = "ios-\(recordID.uuidString)"
+            try Task.checkCancellation()
             let (reservation, visualReservationID) = try await reserve(
                 projectID: entry.projectID, itemID: entry.itemID, role: entry.role, clientUploadID: clientUploadID,
                 filename: entry.filename, contentType: contentType, size: Int64(size), contract: prepared.2
             )
+            preparedToDiscard = nil   // the upload owns these files from here on
             if let original = prepared.1 {
                 try SourceAssetStore(project: Self.projectDirectory(entry.projectID)).bind(mediaID: reservation.mediaID, original: original)
             }
@@ -771,6 +825,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             )
         } catch {
             if let recoveryCopy { try? FileManager.default.removeItem(at: recoveryCopy) }
+            if let preparedToDiscard { Self.discardPrepared(preparedToDiscard.0, asset: preparedToDiscard.1, project: entry.projectID) }
+            // The user un-chose it while it was being resumed. Not a failure: drop the staged upload
+            // (`deselect` released the claim) and stay silent.
+            if error is CancellationError {
+                Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true)
+                return
+            }
             // A TRANSIENT failure (offline, a 5xx/429-shaped server error, or any
             // transport/timeout) must never destroy the staged original -- that's
             // exactly the data loss this lane exists to prevent. Only a
@@ -783,6 +844,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             } else {
                 lastError = "The original upload could not be resumed. Choose the file again."
                 Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true)
+                // Otherwise the claim survives with nothing behind it: it keeps counting as pending
+                // (Continue stays disabled) and the picker keeps showing the asset as chosen.
+                releaseSelection(recordID: recordID, projectID: entry.projectID)
+                recordFailure(id: recordID, projectID: entry.projectID, role: entry.role, filename: Self.displayFilename(entry.filename), message: "It couldn’t be resumed. Choose it again.")
             }
         }
     }
@@ -858,6 +923,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 await retry(record)
             case .chooseFileAgain:
                 lastError = "The original file is no longer available. Choose it again."
+                releaseSelection(recordID: record.id, projectID: record.projectID)
                 remove(record.id, deleteLocalFile: false)
             case .keepForManualRetry:
                 continue
@@ -899,7 +965,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     }
 
     private func completed(taskIdentifier: Int, status: Int?, error: (any Error)?) async {
-        guard let record = records.first(where: { $0.taskIdentifier == taskIdentifier }) else { return }
+        // `cancel` suspends while it looks up the URLSession task, and this can fire in that window.
+        // Letting it through would start an attach for an upload the user has just un-chosen.
+        guard let record = records.first(where: { $0.taskIdentifier == taskIdentifier }), !cancellingRecords.contains(record.id) else { return }
         // Creation upload keys are unique to the persisted client upload id and
         // GCS writes are atomic. A retry after an app crash can therefore see
         // 412 from `if-generation-match: 0` only when our prior PUT already
@@ -937,6 +1005,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         let localURL = URL(fileURLWithPath: record.localFilePath)
         guard FileManager.default.fileExists(atPath: localURL.path) else {
             lastError = "The original file is no longer available. Choose it again."
+            releaseSelection(recordID: record.id, projectID: record.projectID)
             remove(record.id, deleteLocalFile: false)
             return
         }
@@ -991,7 +1060,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private func performAttachment(_ record: UploadRecoveryRecord) async {
         // No `lastError = nil` here: attaches now run concurrently with later enqueues, so a
         // success would erase a sibling clip's failure. Per-clip failures live in `failures`.
-        guard records.contains(where: { $0.id == record.id }) else { return }
+        guard records.contains(where: { $0.id == record.id }), !cancellingRecords.contains(record.id) else { return }
         if record.role == .visual {
             do {
                 guard let itemID = record.itemID, let reservationID = record.visualReservationID,
@@ -1098,23 +1167,32 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         let asset = try await AssetImportCoordinator(project: project).importAsset(from: fileURL, preferLink: Self.isAppOwned(fileURL))
         updatePreparationHeartbeat(recordID: recordID) // import done
         let original = project.root.appending(path: asset.relativePath)
+        // The import above already wrote the original into the project tree. If anything after it
+        // throws — the un-chosen cancel, a bad proxy, the contract build — nothing will ever
+        // reference these files, and a 4 GB clip would stay on disk for good.
+        var proxyURL: URL?
+        var succeeded = false
+        defer {
+            if !succeeded {
+                try? FileManager.default.removeItem(at: original)
+                if let proxyURL { try? FileManager.default.removeItem(at: proxyURL) }
+            }
+        }
+        // `importAsset` can't be interrupted, so this is the earliest a cancel can take effect; it
+        // also stops an already-cancelled clip from starting a full transcode.
+        try Task.checkCancellation()
         if purpose == .analysisProxy {
             updatePreparationHeartbeat(recordID: recordID) // transcode started
             let proxy = project.proxies.appendingPathComponent("\(asset.id).mp4")
-            let result: URL
-            do {
-                result = try await AVFoundationProxyGenerator(preset: ProxyPreset(width: 640, height: 360)).makeProxy(for: original, destination: proxy)
-            } catch is CancellationError {
-                // Un-chosen mid-transcode: the export stopped, but the import above already wrote
-                // the original into the project tree and nothing else will ever reference it.
-                try? FileManager.default.removeItem(at: original)
-                throw CancellationError()
-            }
+            proxyURL = proxy
+            let result = try await AVFoundationProxyGenerator(preset: ProxyPreset(width: 640, height: 360)).makeProxy(for: original, destination: proxy)
             updatePreparationHeartbeat(recordID: recordID) // transcode done
             guard let fingerprint = asset.fingerprint else { throw APIError.invalidResponse }
             let contract = try await ProjectMediaUploadContract.analysisProxy(original: original, proxy: result, fingerprint: fingerprint)
+            succeeded = true
             return (result, asset, contract)
         }
+        succeeded = true
         return (original, asset, nil)
     }
 

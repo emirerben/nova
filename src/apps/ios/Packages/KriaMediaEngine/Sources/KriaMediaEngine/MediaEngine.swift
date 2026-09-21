@@ -174,6 +174,9 @@ public protocol WaveformExtracting: Sendable { func extract(asset: URL, bucketCo
     public let preset: ProxyPreset
     public init(preset: ProxyPreset = .default) { self.preset = preset }
     public func makeProxy(for asset: URL, destination: URL, progress: (@Sendable (Double) -> Void)? = nil) async throws -> URL {
+        // An already-cancelled caller must not start a full transcode: `cancelExport()` issued before
+        // `export()` begins is not guaranteed to stop the export that follows.
+        try Task.checkCancellation()
         let avAsset = AVURLAsset(url: asset)
         guard let session = AVAssetExportSession(asset: avAsset, presetName: AVAssetExportPresetMediumQuality) else { throw MediaEngineError.exportUnavailable }
         if let sourceTrack = try await avAsset.loadTracks(withMediaType: .video).first {
