@@ -282,7 +282,7 @@
   },
   "outro": {
     "kria-outro-paper.mp4": {
-      "bytes": 43619,
+      "bytes": 37181,
       "duration_s": 1.6,
       "streams": [
         {
@@ -308,7 +308,7 @@
       ]
     },
     "kria-outro-overlay.webm": {
-      "bytes": 74438,
+      "bytes": 61316,
       "duration_s": 1.6,
       "streams": [
         {
@@ -316,19 +316,6 @@
           "width": 1080,
           "height": 1920,
           "pix_fmt": "yuv420p",
-          "r_frame_rate": "30/1"
-        }
-      ]
-    },
-    "kria-outro-overlay.mov": {
-      "bytes": 7363016,
-      "duration_s": 1.6,
-      "streams": [
-        {
-          "codec_name": "prores",
-          "width": 1080,
-          "height": 1920,
-          "pix_fmt": "yuva444p12le",
           "r_frame_rate": "30/1"
         }
       ]

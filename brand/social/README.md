@@ -115,7 +115,7 @@ top-left with the frame's own margins — do not eyeball a different size.
 ## 3. Outro
 
 1.6 s, 1080×1920, 30 fps. The letters land in the approved `k · r · i · a`
-rhythm, then `usekria.com` fades in.
+rhythm and hold. The mark carries the card on its own — no URL, no tagline.
 
 | file | use |
 | --- | --- |

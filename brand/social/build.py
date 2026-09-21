@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import verify  # noqa: E402
 from kria_brand import (  # noqa: E402
-    BUTTER, alpha_bbox, FPS, H, INK, INK2, PAPER, SKY, TEXT_SAFE, W,
+    BUTTER, alpha_bbox, FPS, H, INK, PAPER, SKY, TEXT_SAFE, W,
     draw_rgba, ease_out_cubic, font, hex_to_color, save_png, shadow_filter,
     soft_shadow,
     wordmark, wrap,
@@ -149,7 +149,9 @@ def _outro_frame(i: int, overlay: bool) -> skia.Surface:
     mark = wordmark(MARK_W_OUTRO, fill=ink)
     mw, mh = mark.size
     x0 = (W - mw) / 2
-    y0 = 860 - mh / 2
+    # Optically centred: the mark carries the card alone, and dead-centre
+    # reads low on a 9:16 frame.
+    y0 = 900 - mh / 2
 
     with surface as canvas:
         if overlay:
@@ -179,21 +181,6 @@ def _outro_frame(i: int, overlay: bool) -> skia.Surface:
             skia.SamplingOptions(skia.FilterMode.kLinear, skia.MipmapMode.kNone),
             soft_shadow(dy=4, sigma=14, opacity=0.38) if overlay
             else skia.Paint(AntiAlias=True))
-
-        url_t = ease_out_cubic((i - 22) / 9.0)
-        if url_t > 0:
-            f = font("Inter-Medium", 46)
-            text = "usekria.com"
-            tw = f.measureText(text)
-            tp = skia.Paint(
-                AntiAlias=True,
-                Color=hex_to_color(PAPER if overlay else INK2,
-                                   url_t * (0.95 if overlay else 1.0)),
-            )
-            if overlay:
-                tp.setImageFilter(shadow_filter(dy=2, sigma=8, opacity=0.4))
-            canvas.drawString(text, (W - tw) / 2,
-                              y0 + mh + 96 + (1.0 - url_t) * 14.0, f, tp)
     return surface
 
 
