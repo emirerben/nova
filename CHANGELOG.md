@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.100.0] - 2026-09-21
+
+### Changed
+- feat(editor): contextual zoom-in emphasis, by hand or placed by Kria (KRI-7) (#1112) <!-- release-pr: 1112 -->
+
 ## [0.76.99.0] - 2026-09-21
 
 ### Changed
