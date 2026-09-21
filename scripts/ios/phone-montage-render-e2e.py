@@ -14,13 +14,20 @@ binding shapes `tests/pipeline/test_phone_montage_plan.py` uses (`_binding`/
 device receives so `DeviceMontageRenderE2ETests` can render it through the
 production device resolver and exporter on the simulator.
 
-Three cases exercise three distinct compiler branches:
+Four cases exercise four distinct compiler branches:
   - `cuts_text`   -- plain cuts, preserved original audio, an agent-text intro
                      (basicComposition/positionedText/animatedText).
   - `crossfade`   -- a crossfade transition between two clips, no text/music
                      (basicComposition/crossfade).
   - `music`       -- a licensed music bed replaces the original audio, no
                      text/transition (basicComposition/audioMix/musicBed).
+  - `narration`   -- a recorded voiceover (KRI-132), mixed under the clips'
+                     own audio at mix=0.4, through the SAME per-asset grant
+                     as the music case's `.library` asset (a `.voiceover`
+                     asset now, see `app.kria.render_assets
+                     .VoiceoverRenderAsset`), with a source tone longer than
+                     the video timeline to prove the compiler's duration
+                     clamp (basicComposition/audioMix/narrationAudio).
 
 `day_vlog`/`single_hero` are deliberately NOT separate cases: read
 `app/pipeline/phone_montage_plan.py` in full -- neither `resolved_archetype`
@@ -75,7 +82,7 @@ from app.pipeline.generative_decision import (
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_montage_plan import compile_phone_montage_plan
-from app.pipeline.phone_recipe_shared import PhoneMusicBed
+from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding
 
@@ -157,6 +164,9 @@ def _decision(
     intro_overlay_params: dict | None,
     music_track_id: str | None = None,
     music_start_s: float | None = None,
+    mix: float | None = None,
+    voiceover_gcs_path: str | None = None,
+    voiceover_target_s: float | None = None,
 ) -> GenerativeVariantDecision:
     extras = {
         "base": {},
@@ -170,6 +180,9 @@ def _decision(
         "clip_id_to_media_id": clip_id_to_media_id,
         "intro_overlay_params": intro_overlay_params,
     }
+    if voiceover_gcs_path:
+        extras["voiceover_gcs_path"] = voiceover_gcs_path
+        extras["voiceover_target_s"] = voiceover_target_s
     return GenerativeVariantDecision(
         variant_id=variant_id,
         rank=1,
@@ -180,6 +193,7 @@ def _decision(
         assembly_steps=steps,
         music_track_id=music_track_id,
         music_start_s=music_start_s,
+        mix=mix,
         extras=extras,
     )
 
@@ -200,21 +214,30 @@ def main() -> None:
         "crossfade-c0": ("blue", 523),
         "crossfade-c1": ("yellow", 587),
         "music-c0": ("cyan", 659),
-        "music-c1": ("magenta", 698),
+        "music-c1": ("white", 698),
+        "narration-c0": ("orange", 349),
+        "narration-c1": ("purple", 392),
     }
     for name, (color, freq) in clips.items():
         _color_clip(out / f"{name}.mp4", color, freq)
     tone_path = out / "music-bed.m4a"
     _tone(tone_path, 880, duration=8.0)
+    # Longer than the two narration clips' combined 6s timeline, to prove the
+    # compiler clamps the narration track's `source_duration` to the video
+    # timeline rather than the voiceover's own (longer) length.
+    voice_path = out / "voiceover.m4a"
+    _tone(voice_path, 1046, duration=10.0)
 
     bindings = {name: _binding(out / f"{name}.mp4", name) for name in clips}
 
     recipes: dict[str, object] = {}
     compile_errors: dict[str, str] = {}
 
-    def _compile(case_id: str, decision, case_bindings, *, music=None) -> None:
+    def _compile(case_id: str, decision, case_bindings, *, music=None, narration=None) -> None:
         try:
-            recipes[case_id] = compile_phone_montage_plan(decision, case_bindings, music=music)
+            recipes[case_id] = compile_phone_montage_plan(
+                decision, case_bindings, music=music, narration=narration
+            )
         except (UnsupportedPhonePlan, ValueError) as exc:
             compile_errors[case_id] = f"{type(exc).__name__}: {exc}"
 
@@ -267,6 +290,29 @@ def main() -> None:
         intro_overlay_params=None,
     )
     _compile("crossfade", crossfade_decision, (bindings["crossfade-c0"], bindings["crossfade-c1"]))
+
+    # --- case (d): recorded voiceover mixed under the clips' own audio -
+    voice_sha, voice_bytes = _fingerprint(voice_path)
+    narration_bed = PhoneNarrationBed(
+        plan_item_id="e2e-item",
+        generation="9",
+        fingerprint=RenderFingerprint(sha256=voice_sha, byte_count=voice_bytes),
+        duration_s=10.0,
+    )
+    narration_decision = _decision(
+        "narration",
+        [_step("narration-c0"), _step("narration-c1")],
+        {"narration-c0": "narration-c0", "narration-c1": "narration-c1"},
+        text_mode="none",
+        intro_overlay_params=None,
+        mix=0.4,
+        voiceover_gcs_path="voiceover-uploads/direct/u/e2e-item/voice.m4a",
+        voiceover_target_s=None,  # falls back to narration_bed.duration_s (10s), then clamps to the 6s video timeline
+    )
+    _compile(
+        "narration", narration_decision, (bindings["narration-c0"], bindings["narration-c1"]),
+        narration=narration_bed,
+    )
 
     if compile_errors:
         print("compile_phone_montage_plan REJECTED:")
@@ -336,7 +382,7 @@ def main() -> None:
                 "expects_music_audio": True,
                 "samples": [
                     {"name": "c0", "t": 1.5, "x": 540, "y": 960, "rgb": [0, 255, 255]},
-                    {"name": "c1", "t": 4.5, "x": 540, "y": 960, "rgb": [255, 0, 255]},
+                    {"name": "c1", "t": 4.5, "x": 540, "y": 960, "rgb": [255, 255, 255]},
                 ],
             },
             "crossfade": {
@@ -357,6 +403,29 @@ def main() -> None:
                     {"name": "c1", "t": 5.0, "x": 540, "y": 960, "rgb": [255, 255, 0]},
                 ],
                 "blend_sample": {"t": 2.85, "x": 540, "y": 960},
+            },
+            "narration": {
+                "status_file": "status-narration.json",
+                "duration_s": recipes["narration"].duration,
+                "required_capabilities": sorted(recipes["narration"].required_capabilities),
+                "drop_capability": "narrationAudio",
+                "clips": [
+                    {"media_id": "narration-c0", "file": "narration-c0.mp4"},
+                    {"media_id": "narration-c1", "file": "narration-c1.mp4"},
+                ],
+                "music_asset_id": None,
+                "music_file": None,
+                "voiceover_asset_id": f"voiceover-{narration_bed.plan_item_id}",
+                "voiceover_file": voice_path.name,
+                # mix=0.4 mixes the clips' own audio in under the voice (never silences
+                # it) -- unlike the "music" case, which replaces source audio entirely.
+                "expects_source_audio": True,
+                "expects_music_audio": False,
+                "expects_narration_audio": True,
+                "samples": [
+                    {"name": "c0", "t": 1.5, "x": 540, "y": 960, "rgb": [255, 165, 0]},
+                    {"name": "c1", "t": 4.5, "x": 540, "y": 960, "rgb": [128, 0, 128]},
+                ],
             },
         },
     }

@@ -15,15 +15,15 @@ Scenarios (mirrors `_run_phone_dispatch`'s kwargs):
                        approved proposal. Only changes behavior for
                        GUIDED_EDIT_FORMATS (montage/day_vlog/single_hero) --
                        see the comment on _UNSUPPORTED_* below for why.
-  "voiceover"       - item has audio_mode="voiceover" + voiceover_gcs_path.
+  "voiceover"       - item has audio_mode="voiceover" + voiceover_gcs_path,
+                       rollout flag off (the default).
+  "voiceover_enabled" - same item with PHONE_NARRATION_RENDERING_ENABLED on
+                       and narrationAudio in PHONE_RENDER_VERIFIED_FEATURES.
 
 `works_on_phone` is the important field: it answers "does this actually
 render end to end on the device today", which is NOT the same question as
-"does `_dispatch_item_render` return outcome == 'dispatched'". The
-montage/day_vlog/single_hero + voiceover row dispatches (binds phone sources,
-mints a Job) but the WORKER unconditionally rejects it once picked up -- see
-`_GUIDED_VOICEOVER` below. A row is only `works_on_phone=True` when nothing
-downstream of dispatch is known to reject it.
+"does `_dispatch_item_render` return outcome == 'dispatched'". A row is only
+`works_on_phone=True` when nothing downstream of dispatch is known to reject it.
 """
 
 from __future__ import annotations
@@ -72,44 +72,33 @@ _GUIDED_APPROVED = PhoneFormatExpectation(
 )
 
 _GUIDED_VOICEOVER = PhoneFormatExpectation(
-    outcome="dispatched",
-    phone_gate=None,
+    outcome="invalid_clips",
+    phone_gate="voiceover_unavailable",
     works_on_phone=False,
     worker_note=(
-        "has_voiceover=True makes render_program_for_intent() return 'native' "
-        "unconditionally (app/agents/_schemas/edit_format.py: `if has_voiceover: "
-        'return "native"` is checked before the format lookup), so '
-        "guided_edit_applicable() is False regardless of format. The dispatch "
-        "gate then falls into its NON-guided branch and checks "
-        "PHONE_RENDER_SUPPORTED_FORMATS (app/tasks/content_plan_build.py:1472-1476) "
-        "instead of requiring proposal approval -- and montage/day_vlog/single_hero "
-        "are already in that allowlist, so it binds phone sources and dispatches "
-        "with NO approved proposal at all. The worker then picks the job up as a "
-        "non-guided snapshot (no `guided_edit` key) and routes to "
-        "_run_phone_montage_job (app/tasks/generative_build.py:2174-2180), whose "
-        "very first content check is "
-        "`if all_candidates.get('voiceover_gcs_path'): raise ValueError('Phone "
-        "rendering does not yet support voiceover edits')` "
-        "(app/tasks/generative_build.py:3906-3907). Net effect: dispatch succeeds, "
-        "the worker always fails. Confirmed against the real "
-        "`_run_phone_montage_job` in test_phone_format_matrix.py."
+        "Rollout flag off (the default). has_voiceover=True makes "
+        "guided_edit_applicable() False, so the gate takes its non-guided "
+        "branch; montage/day_vlog/single_hero are in "
+        "PHONE_RENDER_SUPPORTED_FORMATS, but without "
+        "PHONE_NARRATION_RENDERING_ENABLED + a verified narrationAudio the gate "
+        "now refuses here with a typed reason instead of minting a Job that "
+        "_run_phone_montage_job would reject on pickup."
     ),
 )
 
-# --- talking_head / subtitled / narrated* / slides -------------------------
-# None of these are in GUIDED_EDIT_FORMATS, so guided_edit_applicable() is
-# False in every scenario (voiceover or not) and the `elif guided_applicable
-# and (...)` branch that calls validate_approved_proposal_media_sync
-# (app/tasks/content_plan_build.py:1200-1213) is never entered. That means an
-# "approved" guided proposal is simply never looked at for these formats --
-# approval is a no-op and all three scenarios collapse to the same outcome.
-# Also confirmed empirically that clip_gcs_paths is always non-empty in these
-# scenarios (the test item always sets it), so the item never falls into the
-# `not clip_paths and edit_format == "slides"` branch
-# (app/tasks/content_plan_build.py:1381-1409) or exits early via
-# `speech_cleanup_unavailable` (contract_for_item raises only when
-# `item.speech_cleanup_enabled` is True, which these fixtures never set) --
-# every one of these formats really does reach the phone gate itself.
+_GUIDED_VOICEOVER_ENABLED = PhoneFormatExpectation(
+    outcome="dispatched",
+    phone_gate=None,
+    works_on_phone=True,
+    worker_note=(
+        "Flag on + narrationAudio verified: binds phone sources and dispatches "
+        "with no guided proposal (voiceover is never guided-applicable). The "
+        "worker routes to _run_phone_montage_job, which compiles the voiceover "
+        "as a narration audio track (compile_phone_montage_plan). Rendered on "
+        "the simulator by DeviceMontageRenderE2ETests."
+    ),
+)
+
 
 _UNSUPPORTED = PhoneFormatExpectation(
     outcome="invalid_clips",
@@ -125,7 +114,7 @@ _UNSUPPORTED = PhoneFormatExpectation(
     ),
 )
 
-SCENARIOS: tuple[str, ...] = ("plain", "guided_approved", "voiceover")
+SCENARIOS: tuple[str, ...] = ("plain", "guided_approved", "voiceover", "voiceover_enabled")
 
 _ALL_FORMATS: tuple[str, ...] = (
     "montage",
@@ -145,6 +134,7 @@ _BY_SCENARIO_FOR_GUIDED = {
     "plain": _GUIDED_PLAIN,
     "guided_approved": _GUIDED_APPROVED,
     "voiceover": _GUIDED_VOICEOVER,
+    "voiceover_enabled": _GUIDED_VOICEOVER_ENABLED,
 }
 
 EXPECTATIONS: dict[tuple[str, str], PhoneFormatExpectation] = {

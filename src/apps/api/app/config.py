@@ -31,6 +31,27 @@ class Settings(BaseSettings):
     # docs/reviews/kri-29/capability-matrix.md ("Font/authored-text
     # qualification is per-instance").
     phone_font_qualification_strict: bool = False
+    # KRI-132: montage/day_vlog/single_hero items with a recorded voiceover
+    # resolve to the "voiceover" archetype (`_resolve_archetype` in
+    # generative_build.py) same as on the cloud, and phone rendering compiles
+    # a narration audio track for them (`compile_phone_montage_plan`) instead
+    # of failing closed with "Phone rendering does not yet support voiceover
+    # edits". True (default since the KRI-132 rollout): the pilot cohort's
+    # montage-family voiceover edits render on the device. False: byte-identical
+    # to pre-KRI-132 -- the dispatch gate (`content_plan_build.py`) fails closed
+    # early with a typed `phone_voiceover_unavailable` reason instead of ever
+    # queuing the job.
+    # Also requires "narrationAudio" in `phone_render_verified_features` (see
+    # `app.services.phone_rollout.validate_phone_pilot_recipe`) -- this flag
+    # alone does not skip that device-parity gate. Does NOT affect the
+    # `narrated`/`narrated_*` archetypes (side-chain-ducked original-audio
+    # bed) or the guided-story `.narration` plan lane, both of which remain
+    # cloud-only regardless of this flag. Rollback:
+    # `fly secrets set PHONE_NARRATION_RENDERING_ENABLED=false --app nova-video`
+    # + `fly machine restart <id>` (api + worker). See
+    # docs/runbooks/phone-rendering.md and
+    # docs/reviews/kri-29/capability-matrix.md ("narrationAudio").
+    phone_narration_rendering_enabled: bool = True
     # A device recipe with no delivery (no poll, no upload) for this long is
     # presumed abandoned (app crashed, app deleted, notification never seen).
     # The reaper (app/tasks/device_render_reaper.py) flips it to

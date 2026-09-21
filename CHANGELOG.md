@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.103.0] - 2026-09-21
+
+### Changed
+- feat(kri-132): reland voiceover on iPhone renders onto main (#1115 landed on the wrong base), on by default (#1116) <!-- release-pr: 1116 -->
+
 ## [0.76.102.0] - 2026-09-21
 
 ### Changed

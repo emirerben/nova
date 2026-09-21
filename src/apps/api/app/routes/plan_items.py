@@ -2861,6 +2861,15 @@ async def _respond_to_dispatch_result(
             detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
         )
     if result.outcome == "invalid_clips":
+        from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
+
+        phone_gate_reason = getattr(result, "reason", None)
+        if phone_gate_reason in PHONE_GATE_MESSAGES:
+            code, message = PHONE_GATE_MESSAGES[phone_gate_reason]
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{code}:{message}",
+            )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Your clips couldn't be validated — re-upload them and try again",

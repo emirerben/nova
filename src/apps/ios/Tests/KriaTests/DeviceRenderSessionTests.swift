@@ -54,6 +54,8 @@ private actor SessionRequest {
                             recipe: KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])]))
     }
     private let enabled = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+    /// KRI-132: every feature except `narrationAudio`, for the "not yet verified" voiceover cases.
+    private let enabledWithoutNarration = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.filter { $0 != .narrationAudio }.map(\.rawValue))
 
     func testDisabledGateNeverStartsExport() async throws {
         let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -147,7 +149,8 @@ private actor SessionRequest {
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [], role: .clip), .phone)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: nil, sourcePurposes: [phone], role: .clip), .paused)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: .disabled, sourcePurposes: [phone], role: .clip), .paused)
-        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .voiceover), .voiceoverUnavailableOnPhone)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabledWithoutNarration, sourcePurposes: [phone], role: .voiceover), .voiceoverUnavailableOnPhone)
+        XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .voiceover), .phone)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone], role: .visual), .phoneVisuals([.image, .video]))
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [cloud], role: .clip), .cloud)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [phone, cloud], role: .clip), .mixed)
@@ -209,18 +212,33 @@ private actor SessionRequest {
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: nil, sourcePurposes: [], role: .clip), .cloud)
     }
 
-    /// Voiceover has no on-device path yet. An account that renders on iPhone is
-    /// told so; it never starts a project the cloud would render instead.
+    /// Until `narrationAudio` is verified, an account that renders on iPhone is
+    /// told voiceover is unavailable rather than silently sent to the cloud.
+    /// Once it's verified, voiceover attach unlocks a `.phone` destination --
+    /// the voiceover itself still uploads through the unchanged cloud contract
+    /// (see `UploadViews.uploadPurpose` and `sourcePurposes`), so this only
+    /// gates the recorder/attach UI, never footage's own routing (KRI-132).
     func testVoiceoverNeverMovesAPhoneAccountToTheCloud() {
         let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
         for sources in [[], [phone]] {
-            XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: sources, role: .voiceover), .voiceoverUnavailableOnPhone)
+            XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabledWithoutNarration, sourcePurposes: sources, role: .voiceover), .voiceoverUnavailableOnPhone)
+            XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: sources, role: .voiceover), .phone)
         }
         XCTAssertFalse(ProjectUploadDestination.voiceoverUnavailableOnPhone.canUpload)
         XCTAssertFalse(ProjectUploadDestination.voiceoverUnavailableOnPhone.message?.localizedCaseInsensitiveContains("cloud") ?? true)
+        XCTAssertTrue(ProjectUploadDestination.phone.canUpload)
         // Accounts without iPhone rendering, and projects already in the cloud, keep voiceover.
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: nil, sourcePurposes: [], role: .voiceover), .cloud)
         XCTAssertEqual(ProjectUploadDestination.resolve(capabilities: enabled, sourcePurposes: [cloud], role: .voiceover), .cloud)
+        // A recorded voiceover's own upload record (always `cloudRenderSource`,
+        // see `finishRecording()`) must not flip a phone project to `.mixed`.
+        let project = UUID()
+        XCTAssertEqual(ProjectUploadDestination.sourcePurposes(
+            media: [], records: [UploadRecoveryRecord(
+                id: UUID(), projectID: project, localFilePath: "/tmp/voice", filename: "voice.m4a",
+                source: .files, purpose: .cloudRenderSource, taskIdentifier: 1, retryCount: 0, mediaRole: .voiceover
+            )], projectID: project
+        ), [])
     }
 
     func testPendingUploadsDecideTheDestinationByRole() throws {
@@ -307,6 +325,23 @@ private actor SessionRequest {
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .needsAttention), "Needs attention")
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .cancelled), "Render stopped")
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .superseded), "Newer edit available")
+    }
+
+    /// KRI-132 journey fix: `unsupported_recipe` is structural (the compiled
+    /// recipe itself is outside what this renderer can produce), so a blind
+    /// "Try again" is hidden and the copy says what to do instead. Every
+    /// other `needsAttention` reason stays transient and retryable.
+    func testUnsupportedRecipeHidesRetryWithGuidanceCopyOtherReasonsStayRetryable() {
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "unsupported_recipe"))
+        let message = DeviceRenderAttentionCopy.message(phase: .needsAttention, reasonCode: "unsupported_recipe", fallback: nil)
+        XCTAssertTrue(message?.localizedCaseInsensitiveContains("start a new edit") ?? false)
+        for code in ["thermal", "insufficient_storage", "export_failed", "cancelled_by_user"] {
+            XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: code), code)
+        }
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: nil))
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .cancelled, reasonCode: nil))
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .localReady, reasonCode: nil))
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .rendering, reasonCode: nil))
     }
 
 }

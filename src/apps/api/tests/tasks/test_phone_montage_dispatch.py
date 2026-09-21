@@ -196,12 +196,133 @@ def test_ownership_epoch_mismatch_bails_before_publishing(monkeypatch):
     session.commit.assert_not_called()
 
 
-def test_voiceover_job_is_rejected(monkeypatch):
+def test_voiceover_job_is_rejected_while_narration_flag_is_off(monkeypatch):
     job, snapshot, session, _bindings, _cloud = setup(monkeypatch)
+    # The flag ships on (KRI-132 rollout); turn it off explicitly so this
+    # keeps pinning the worker's own refusal rather than the default.
+    monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", False)
     candidates = {**job.all_candidates, "voiceover_gcs_path": "users/u/voice.m4a"}
     with pytest.raises(ValueError, match="voiceover"):
         gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
     session.commit.assert_not_called()
+
+
+def _fake_narration_bed(_job_id, decision):
+    if not decision.extras.get("voiceover_gcs_path"):
+        return None
+    from app.kria.render_assets import RenderFingerprint
+    from app.pipeline.phone_recipe_shared import PhoneNarrationBed
+
+    return PhoneNarrationBed(
+        plan_item_id="item-1",
+        generation="9",
+        fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=999),
+        duration_s=20.0,
+    )
+
+
+def test_voiceover_job_dispatches_when_flag_and_capability_verified(monkeypatch):
+    """KRI-132: flag on + narrationAudio verified compiles the "voiceover"
+    archetype through the SAME montage compiler/device pin path as any other
+    phone variant -- it never enters the cloud renderer."""
+    voiceover_path = "voiceover-uploads/direct/u/i/voice.m4a"
+    job, snapshot, session, _bindings, cloud = setup(
+        monkeypatch,
+        archetype="voiceover",
+        spec={
+            "variant_id": "voiceover_only",
+            "text_mode": "none",
+            "track": None,
+            "archetype": "voiceover",
+            "voiceover_gcs_path": voiceover_path,
+            "mix": 1.0,
+        },
+    )
+    candidates = {**job.all_candidates, "voiceover_gcs_path": voiceover_path}
+    monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [
+            "basicComposition",
+            "local1080Export",
+            "crossfade",
+            "audioMix",
+            "musicBed",
+            "narrationAudio",
+        ],
+    )
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", _fake_narration_bed, raising=False)
+    # The REAL decide phase (`_patch_decide_phase` only stubs the matcher/
+    # recipe pieces) downloads the voiceover itself to size the footage
+    # montage -- stub the storage/ffprobe calls, not the decide phase.
+    monkeypatch.setattr("app.storage.download_to_file", lambda *a, **k: None)
+    monkeypatch.setattr("app.tasks.template_orchestrate._probe_duration", lambda *a, **k: 20.0)
+
+    gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert variant["variant_id"] == "voiceover_only"
+    assert variant["resolved_archetype"] == "voiceover"
+    status = device_status(job, "voiceover_only")
+    audio = status.request.recipe.audio
+    assert audio.narration_asset_id == "voiceover-item-1"
+    cloud.assert_not_called()
+
+
+def test_voiceover_job_rejects_when_capability_not_verified(monkeypatch):
+    """The rollout flag alone is not enough -- `validate_phone_pilot_recipe`
+    still refuses a recipe requiring an unverified capability."""
+    voiceover_path = "voiceover-uploads/direct/u/i/voice.m4a"
+    job, snapshot, session, _bindings, cloud = setup(
+        monkeypatch,
+        archetype="voiceover",
+        spec={
+            "variant_id": "voiceover_only",
+            "text_mode": "none",
+            "track": None,
+            "archetype": "voiceover",
+            "voiceover_gcs_path": voiceover_path,
+            "mix": 1.0,
+        },
+    )
+    candidates = {**job.all_candidates, "voiceover_gcs_path": voiceover_path}
+    monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", True)
+    # narrationAudio deliberately absent from the verified feature list.
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", _fake_narration_bed, raising=False)
+    monkeypatch.setattr("app.storage.download_to_file", lambda *a, **k: None)
+    monkeypatch.setattr("app.tasks.template_orchestrate._probe_duration", lambda *a, **k: 20.0)
+
+    with pytest.raises(ValueError, match="capability"):
+        gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+    session.commit.assert_not_called()
+    cloud.assert_not_called()
+
+
+def test_narrated_archetype_still_rejected_on_the_phone(monkeypatch):
+    """The montage-family voiceover allowlist is a local addition, not a
+    widening of GUIDED_EDIT_FORMATS -- "narrated" (side-chain-ducked
+    original-audio bed) must stay cloud-only regardless of the flag."""
+    job, snapshot, session, _bindings, cloud = setup(monkeypatch, archetype="narrated")
+    candidates = {
+        **job.all_candidates,
+        "voiceover_gcs_path": "voiceover-uploads/direct/u/i/voice.m4a",
+    }
+    monkeypatch.setattr(gb.settings, "phone_narration_rendering_enabled", True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [*gb.settings.phone_render_verified_features, "narrationAudio"],
+    )
+    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", _fake_narration_bed, raising=False)
+
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+
+    with pytest.raises(UnsupportedPhonePlan, match="cannot render archetype"):
+        gb._run_phone_montage_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+    session.commit.assert_not_called()
+    cloud.assert_not_called()
 
 
 def test_deferred_specs_are_recorded_and_not_lost(monkeypatch):

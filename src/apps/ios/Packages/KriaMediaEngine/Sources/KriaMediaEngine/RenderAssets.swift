@@ -47,6 +47,11 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         /// A photo or video from the creator's Visuals pool, pinned to one storage
         /// generation. Downloaded through the same per-asset grant as library bytes.
         case visual(visualID: String, generation: String, mediaKind: VisualMediaKind = .image)
+        /// A creator's recorded/uploaded voiceover for one content-plan item, pinned to
+        /// one storage generation (KRI-132). Private, owner-scoped media addressed by
+        /// plan item rather than a catalog id; downloaded through the same per-asset
+        /// grant. See `app.kria.render_assets.VoiceoverRenderAsset` on the backend.
+        case voiceover(planItemID: String, generation: String)
     }
     public let id: String
     public let fingerprint: RenderFingerprint
@@ -54,27 +59,31 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
     public init(id: String, fingerprint: RenderFingerprint, source: Source) {
         self.id = id; self.fingerprint = fingerprint; self.source = source
     }
-    private enum CodingKeys: String, CodingKey { case kind, id, fingerprint, mediaId, catalog, catalogId, generation, visualId, mediaKind }
+    private enum CodingKeys: String, CodingKey { case kind, id, fingerprint, mediaId, catalog, catalogId, generation, visualId, mediaKind, planItemId }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["kind", "id", "fingerprint", "mediaId", "catalog", "catalogId", "generation", "visualId", "mediaKind"])
+        try rejectUnknownAssetFields(decoder, allowed: ["kind", "id", "fingerprint", "mediaId", "catalog", "catalogId", "generation", "visualId", "mediaKind", "planItemId"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         fingerprint = try c.decode(RenderFingerprint.self, forKey: .fingerprint)
         switch try c.decode(String.self, forKey: .kind) {
         case "original":
-            guard !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.generation), !c.contains(.visualId), !c.contains(.mediaKind) else { throw RenderAssetError.invalidManifest }
+            guard !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.generation), !c.contains(.visualId), !c.contains(.mediaKind), !c.contains(.planItemId) else { throw RenderAssetError.invalidManifest }
             source = .original(mediaID: try c.decode(String.self, forKey: .mediaId))
         case "library":
-            guard !c.contains(.mediaId), !c.contains(.visualId), !c.contains(.mediaKind) else { throw RenderAssetError.invalidManifest }
+            guard !c.contains(.mediaId), !c.contains(.visualId), !c.contains(.mediaKind), !c.contains(.planItemId) else { throw RenderAssetError.invalidManifest }
             source = .library(catalog: try c.decode(RenderAssetCatalog.self, forKey: .catalog),
                               catalogID: try c.decode(String.self, forKey: .catalogId),
                               generation: try c.decode(String.self, forKey: .generation))
         case "visual":
-            guard !c.contains(.mediaId), !c.contains(.catalog), !c.contains(.catalogId) else { throw RenderAssetError.invalidManifest }
+            guard !c.contains(.mediaId), !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.planItemId) else { throw RenderAssetError.invalidManifest }
             // The server omits the kind for photos so their manifests keep one shape.
             source = .visual(visualID: try c.decode(String.self, forKey: .visualId),
                              generation: try c.decode(String.self, forKey: .generation),
                              mediaKind: try c.decodeIfPresent(VisualMediaKind.self, forKey: .mediaKind) ?? .image)
+        case "voiceover":
+            guard !c.contains(.mediaId), !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.visualId), !c.contains(.mediaKind) else { throw RenderAssetError.invalidManifest }
+            source = .voiceover(planItemID: try c.decode(String.self, forKey: .planItemId),
+                                generation: try c.decode(String.self, forKey: .generation))
         default: throw RenderAssetError.invalidManifest
         }
         try validate()
@@ -93,6 +102,9 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
             try c.encode("visual", forKey: .kind); try c.encode(visualID, forKey: .visualId)
             try c.encode(generation, forKey: .generation)
             if mediaKind != .image { try c.encode(mediaKind, forKey: .mediaKind) }
+        case .voiceover(let planItemID, let generation):
+            try c.encode("voiceover", forKey: .kind); try c.encode(planItemID, forKey: .planItemId)
+            try c.encode(generation, forKey: .generation)
         }
     }
     public func validate() throws {
@@ -102,6 +114,7 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         case .original(let mediaID): identifiers = [id, mediaID]
         case .library(_, let catalogID, let generation): identifiers = [id, catalogID, generation]
         case .visual(let visualID, let generation, _): identifiers = [id, visualID, generation]
+        case .voiceover(let planItemID, let generation): identifiers = [id, planItemID, generation]
         }
         guard identifiers.allSatisfy({ !$0.isEmpty && $0.count <= 160 && $0.rangeOfCharacter(from: .whitespacesAndNewlines) == nil }) else {
             throw RenderAssetError.invalidManifest
@@ -225,7 +238,7 @@ public struct PortableAssetResolver: Sendable {
             try Task.checkCancellation()
             switch asset.source {
             case .original(let mediaID): result[asset.id] = originalURLs[mediaID]
-            case .library, .visual: result[asset.id] = try await library.resolve(asset)
+            case .library, .visual, .voiceover: result[asset.id] = try await library.resolve(asset)
             }
         }
         return result
