@@ -68,8 +68,27 @@ class VisualRenderAsset(_AssetModel):
         return payload
 
 
+class VoiceoverRenderAsset(_AssetModel):
+    """A creator's recorded/uploaded voiceover for one content-plan item,
+    pinned to one storage generation (KRI-132).
+
+    Unlike ``LibraryRenderAsset``'s shared, published catalog, a voiceover is
+    private creator media addressed by its owning plan item, not a catalog
+    id. The grant re-checks that the job's own plan item still carries this
+    exact ``(path, generation)`` before signing; the device re-hashes the
+    downloaded bytes against ``fingerprint``.
+    """
+
+    kind: Literal["voiceover"] = "voiceover"
+    id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    plan_item_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    fingerprint: RenderFingerprint
+
+
 RenderAsset = Annotated[
-    OriginalRenderAsset | LibraryRenderAsset | VisualRenderAsset, Field(discriminator="kind")
+    OriginalRenderAsset | LibraryRenderAsset | VisualRenderAsset | VoiceoverRenderAsset,
+    Field(discriminator="kind"),
 ]
 
 
@@ -87,6 +106,8 @@ class RenderAssetManifest(_AssetModel):
                 key = ("original", asset.media_id)
             elif isinstance(asset, VisualRenderAsset):
                 key = ("visual", asset.visual_id, asset.generation)
+            elif isinstance(asset, VoiceoverRenderAsset):
+                key = ("voiceover", asset.plan_item_id, asset.generation)
             else:
                 key = ("library", asset.catalog, asset.catalog_id, asset.generation)
             if key in sources and sources[key] != asset.fingerprint:

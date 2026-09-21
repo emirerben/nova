@@ -652,10 +652,70 @@ class DispatchResult:
                        flipped to processing_failed/dispatch_publish_failed so it
                        can never sit as a forever-"queued" ghost (the reaper
                        deliberately never reaps `queued` — see tasks/reaper.py)
+
+    reason: set ONLY when `outcome == "invalid_clips"` because the analysis-
+      proxy phone-source fence rejected the dispatch (the local `phone_gate`
+      value inside `_dispatch_item_render`, one of `PHONE_GATE_MESSAGES`'s
+      keys) — an ordinary clip-validation failure (bad/missing clip paths)
+      leaves this `None`. Both HTTP (`routes/plan_items.py
+      ._respond_to_dispatch_result`) and chat (`routes/creator_agent.py
+      .confirm_creator_plan_controller`) branch on it so a phone-gate
+      rejection surfaces its own truthful code/message instead of the
+      generic "re-upload your clips" 422 / chat "execution_failed" dead end
+      (2026-09 fix — neither caller could previously distinguish the two).
     """
 
     outcome: DispatchOutcome
     job_id: str | None = None
+    reason: str | None = None
+
+
+# `(code, message)` pairs for every `phone_gate` value `_dispatch_item_render`
+# can set — the single source of truth both the HTTP and chat dispatch
+# consumers surface for a `DispatchResult("invalid_clips", reason=...)`, so a
+# phone-gate rejection reads identically everywhere. The `unsupported_format`/
+# `voiceover_unavailable` copy matches (deliberately duplicated, not
+# imported — `app.routes.creator_agent` sits above this task module in the
+# import graph) `_PHONE_VOICEOVER_UNAVAILABLE_MESSAGE` and the
+# `PhoneFormatUnavailableError(voiceover=False)` branch in
+# `routes/creator_agent.py._record_media_unavailable`, which a SEPARATE,
+# earlier policy layer (`app.agents._schemas.creator_policy
+# .effective_render_program`) already raises for a proposed strategy before
+# a Job ever exists. Keep the two in sync if either wording changes.
+PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
+    "not_enrolled": (
+        "phone_not_enrolled",
+        "This project's footage lives on your iPhone and can't be rendered from "
+        "this account right now.",
+    ),
+    "unapproved_guided": (
+        "phone_plan_unapproved",
+        "This edit plan needs approving again before it can render on your iPhone.",
+    ),
+    "unsupported_format": (
+        "phone_format_unavailable",
+        "Only Montage videos can render on your iPhone right now, not talking or "
+        "narrated ones. Choose Montage to render on this iPhone. No fallback edit "
+        "was rendered.",
+    ),
+    "voiceover_unavailable": (
+        "phone_voiceover_unavailable",
+        "A voiceover can't render on your iPhone yet, and this project's videos "
+        "render on this iPhone. Ask for this edit without a voiceover. No fallback "
+        "edit was rendered.",
+    ),
+    # The guided-story narration lane (`GUIDED_VOICEOVER_CONTRACT`) has no
+    # phone compiler and no rollout flag — reuses the same user-facing
+    # code/copy as the plain montage-family voiceover case above since the
+    # distinction (which internal compiler would have rejected it) is not
+    # something the creator needs to know.
+    "guided_voiceover_unavailable": (
+        "phone_voiceover_unavailable",
+        "A voiceover can't render on your iPhone yet, and this project's videos "
+        "render on this iPhone. Ask for this edit without a voiceover. No fallback "
+        "edit was rendered.",
+    ),
+}
 
 
 def _speech_cleanup_dispatch_snapshot(
@@ -1465,6 +1525,22 @@ def _dispatch_item_render(
             if not settings.phone_rendering_for(plan.user_id):
                 phone_gate = "not_enrolled"
                 raise ValueError("phone rendering is unavailable for this account")
+            if guided_voiceover:
+                # KRI-132 follow-up: the guided-story narration lane
+                # (`GUIDED_VOICEOVER_CONTRACT`) has no phone compiler --
+                # `compile_phone_guided_plan`'s `_UNSUPPORTED_PHONE_LANE_
+                # CAPABILITY` rejects its "narration" plan lane
+                # unconditionally. `guided_voiceover` forces
+                # `guided_applicable = True` above, so without this check an
+                # APPROVED guided-voiceover proposal would fall straight
+                # through to `bind_phone_sources` + `_run_phone_guided_job`
+                # and only fail once the worker tries to compile it. Reject
+                # here instead, before a Job is even minted -- independent of
+                # `PHONE_NARRATION_RENDERING_ENABLED`, which only covers the
+                # separate montage-family (non-guided) voiceover archetype
+                # checked further below.
+                phone_gate = "guided_voiceover_unavailable"
+                raise ValueError("phone rendering does not yet support guided-story narration")
             if guided_applicable:
                 if approved_proposal is None:
                     phone_gate = "unapproved_guided"
@@ -1474,6 +1550,19 @@ def _dispatch_item_render(
                 if fmt not in PHONE_RENDER_SUPPORTED_FORMATS:
                     phone_gate = "unsupported_format"
                     raise ValueError(f"analysis proxies cannot render '{fmt}' on iPhone yet")
+            # KRI-132: a recorded voiceover must never dispatch a phone job
+            # doomed to fail in the worker (`_run_phone_montage_job` raises
+            # "Phone rendering does not yet support voiceover edits" when the
+            # flag is off, or when the compiled recipe needs a capability the
+            # device hasn't verified). Fail closed HERE instead, before a Job
+            # is even minted — same fail-closed-early pattern as the other
+            # phone_gate checks above.
+            if audio_mode == "voiceover" and item.voiceover_gcs_path:
+                if not settings.phone_narration_rendering_enabled or "narrationAudio" not in (
+                    settings.phone_render_verified_features
+                ):
+                    phone_gate = "voiceover_unavailable"
+                    raise ValueError("phone rendering does not yet support voiceover edits")
             phone_sources = bind_phone_sources(list(item.clip_assignments or []), clip_paths)
         job = build_generative_job(
             user_id=plan.user_id,
@@ -1569,7 +1658,7 @@ def _dispatch_item_render(
             error=str(exc),
             phone_gate=phone_gate,
         )
-        return DispatchResult("invalid_clips")
+        return DispatchResult("invalid_clips", reason=phone_gate)
     if approved_proposal is not None and guided_applicable:
         snapshot = dict(job.assembly_plan or {})
         proposal_state = item.edit_proposal if isinstance(item.edit_proposal, dict) else {}

@@ -2312,6 +2312,15 @@ struct NativeEditorTemporaryVideo {
         return nil
     }
 
+    /// KRI-132 journey fix: the timeline's Add-clip control (`NativeEditorTimelineView
+    /// .canAddClip`) disables silently for an edit rendered on this iPhone -- adding a
+    /// clip would need a full original upload to the cloud for an edit the phone can
+    /// never save. Same reasoning as `visualImportUnavailableMessage`'s `rendersOnDevice`
+    /// case, surfaced separately since the timeline and Visuals import gate independently.
+    var addClipUnavailableMessage: String? {
+        rendersOnDevice ? "Adding a clip isn’t available yet for edits rendered on this iPhone. Add or swap footage before you generate." : nil
+    }
+
     func addLibraryVisual(_ asset: CreationVisual) async {
         guard canAuthorVisuals, !isAddingVisual, document.visualBlocks.count < 20,
               let window = NativeVisualAuthoring.window(at: currentTime, duration: duration, projection: timelineProjection,

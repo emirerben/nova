@@ -106,7 +106,18 @@ def effective_render_program(
                     voiceover=True,
                 )
             raise MixedMediaTimingUnavailableError(phone.reason or "phone rendering is unavailable")
-        if manifest.has_voiceover or strategy.audio_strategy == "voiceover":
+        # `phone.available` already reflects whether THIS project's recorded
+        # voiceover may render on the phone (`CAPABILITY_PHONE_SOURCE_AUDIO`
+        # in `app.services.creator_capabilities.resolve_creator_manifest`,
+        # KRI-132's montage-family rollout flag + verified narrationAudio
+        # gate; the guided-story narration lane stays hard-blocked via a
+        # SEPARATE, unconditional `CAPABILITY_GUIDED_VOICEOVER` there) — so
+        # reaching here with a voiceover already on the manifest is no
+        # longer necessarily a hard block. A strategy asking to newly SWITCH
+        # audio_strategy to "voiceover" with none attached yet is a
+        # different, still-unsupported request the capability above never
+        # considered, so that half of the check remains unconditional.
+        if not manifest.has_voiceover and strategy.audio_strategy == "voiceover":
             raise PhoneFormatUnavailableError(
                 "phone rendering does not support voiceover audio", voiceover=True
             )
@@ -200,6 +211,51 @@ def effective_render_program(
             )
         return "guided"
     if phone is not None:
+        if manifest.has_voiceover:
+            # KRI-132: reaching here with `manifest.has_voiceover` true
+            # already means `phone.available` (checked at the top of this
+            # function) implies the montage-family rollout flag is on,
+            # narrationAudio is verified, and `strategy_format` is a
+            # montage-family format (`guided_edit_applicable(strategy_format,
+            # has_voiceover=False)`, checked a few lines above). We are also
+            # past every earlier voiceover-specific guided-only gate above
+            # (`guided_voiceover_requested`'s return, the has_voiceover +
+            # mixed_media_timing/all-media-scope guided_voiceover_v1
+            # requirement, and the plain `media_scope == "all"` branch), so
+            # this is neither a guided-story voiceover request nor an
+            # all-media/mixed-media-timing strategy. Resolve "native",
+            # mirroring `_dispatch_item_render`'s own
+            # `guided_applicable = guided_edit_applicable(strategy_format,
+            # has_voiceover=True)` (always False for a voiceover item) and
+            # `routes/creator_agent.py`'s `bypass_guided_edit_gate =
+            # render_program == "native"` a few lines after this resolves.
+            #
+            # The montage-family phone compiler
+            # (`app.pipeline.phone_montage_plan.compile_phone_montage_plan`)
+            # only ever binds clip-lane sources bound to the device
+            # (`PhoneSourceBinding`) — it has no Visuals-pool asset support
+            # at all, unlike the guided-story compiler. An explicit
+            # selection of Visuals-pool ("asset-*") media alongside a
+            # voiceover must therefore fail closed here rather than silently
+            # resolving to a native plan that drops it.
+            selected_pool_media = {
+                media.media_id
+                for media in manifest.media
+                if media.media_id.startswith("asset-") and media.media_id in selected_ids
+            }
+            if selected_pool_media:
+                # Mirrors the wording `_phone_media_unavailable_message` in
+                # `routes/creator_agent.py` renders for the no-capability
+                # case — accurate here regardless of whether stillImages/
+                # visualVideos happen to be verified, since THIS render
+                # program (montage-family voiceover) cannot use Visuals
+                # media either way.
+                raise PhoneMediaUnavailableError(
+                    "phone voiceover rendering only uses this project's own footage, not Visuals",
+                    still_images_available=False,
+                    visual_videos_available=False,
+                )
+            return "native"
         if not (guided and guided.available):
             raise MixedMediaTimingUnavailableError(
                 "phone rendering requires the guided proposal capability"

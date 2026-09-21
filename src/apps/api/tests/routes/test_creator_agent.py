@@ -5391,6 +5391,131 @@ async def test_chat_cleanup_recovery_reaches_dispatch_without_rescheduling_analy
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason", ["not_enrolled", "unapproved_guided", "unsupported_format", "voiceover_unavailable"]
+)
+async def test_chat_dispatch_phone_gate_rejection_surfaces_typed_code(
+    monkeypatch, reason: str
+) -> None:
+    """A phone_gate-tagged invalid_clips dispatch result must surface its own
+    typed code/message, not fall into the blanket 'execution_failed' dead end
+    (2026-09 fix — the iOS Retry affordance could never recover from that).
+
+    Mirrors `test_chat_cleanup_recovery_reaches_dispatch_without_rescheduling
+    _analysis`'s harness (same mocked collaborators), minus the speech-cleanup
+    recovery kwargs -- an ordinary confirm still reaches the same dispatch-
+    outcome handling block in `confirm_creator_plan_controller`.
+    """
+    from app.tasks import content_plan_build
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id = uuid.uuid4()
+    manifest = _manifest(monkeypatch)
+    strategy = CreativeStrategy(
+        direction="fast_montage",
+        edit_format="montage",
+        audio_strategy="licensed_music",
+        render_program="native",
+        selected_media_ids=["clip-1"],
+    )
+    edit_plan = compile_strategy_to_plan(manifest, strategy)
+    active = {
+        "version": 1,
+        "plan_hash": "a" * 64,
+        "creator_request": "Make a clean montage",
+        "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+    }
+    item = SimpleNamespace(id=item_id, current_job_id=None)
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item_id,
+        status="awaiting_confirmation",
+        revision=3,
+        ownership_epoch=4,
+        manifest_hash=manifest.manifest_hash,
+        active_plan=active,
+        render_attempts=1,
+        max_render_attempts=3,
+        iteration_count=1,
+        target_variant_id=None,
+        target_job_id=None,
+        last_error=None,
+    )
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    receipt_holder: dict[str, CreatorAgentExecution] = {}
+    db = AsyncMock()
+    db.execute.return_value = receipt_result
+
+    def add(row) -> None:
+        if isinstance(row, CreatorAgentExecution):
+            row.id = uuid.uuid4()
+            receipt_holder["receipt"] = row
+
+    async def get(model, _identifier, **_kwargs):
+        if model is CreatorAgentExecution:
+            return receipt_holder.get("receipt")
+        return None
+
+    db.add = MagicMock(side_effect=add)
+    db.get.side_effect = get
+    dispatch = MagicMock(
+        return_value=SimpleNamespace(outcome="invalid_clips", job_id=None, reason=reason)
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "_apply_plan_intent", MagicMock())
+    monkeypatch.setattr(
+        creator_routes,
+        "_previous_creator_clip_order",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    response = SimpleNamespace(status="failed")
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+    monkeypatch.setattr(content_plan_build, "dispatch_item_render_for", dispatch)
+
+    returned = await creator_routes.confirm_creator_plan_controller(
+        str(item_id),
+        ConfirmBody(
+            session_id=session.id,
+            expected_revision=3,
+            plan_version=1,
+            plan_hash="a" * 64,
+            client_event_id="phone-gate-1",
+        ),
+        user,
+        db,
+        allow_chat=True,
+    )
+
+    assert returned is response
+    dispatch.assert_called_once()
+    code, message = PHONE_GATE_MESSAGES[reason]
+    assert session.status == "failed"
+    assert session.last_error == {"code": code, "message": message}
+    receipt = receipt_holder["receipt"]
+    assert receipt.status == "failed"
+    assert receipt.error == {"code": code, "message": message}
+    # The confirm flow may emit an earlier progress event before dispatch;
+    # only the LAST one (the failure) needs to carry the typed code.
+    _args, kwargs = creator_routes.append_event.await_args
+    assert kwargs["payload"] == {"message": message, "code": code}
+
+
+@pytest.mark.asyncio
 async def test_chat_cleanup_publish_failure_crash_replay_refunds_once(
     monkeypatch,
 ) -> None:

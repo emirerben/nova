@@ -1046,6 +1046,11 @@ struct NativeMiniStrip: View {
     var body: some View {
         VStack(spacing: 6) {
             controls
+            if let message = session.addClipUnavailableMessage {
+                Text(message).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("native-editor-add-clip-unavailable")
+            }
             GeometryReader { viewport in
                 ScrollView(.vertical, showsIndicators: laneCount > 4) {
                     HStack(alignment: .top, spacing: 6) {

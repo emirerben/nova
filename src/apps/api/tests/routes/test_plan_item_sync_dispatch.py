@@ -36,6 +36,7 @@ from app.models import (
     PlanItemAsset,
     User,
 )
+from app.routes.plan_items import _respond_to_dispatch_result
 from app.schemas.edit_proposal import (
     ApprovedProposalSnapshot,
     DirectionHypothesis,
@@ -49,7 +50,7 @@ from app.schemas.edit_proposal import (
     canonical_media_digest,
 )
 from app.storage import ObjectMetadata
-from app.tasks.content_plan_build import dispatch_item_render_for
+from app.tasks.content_plan_build import DispatchResult, dispatch_item_render_for
 
 _ENQUEUE = "app.services.job_dispatch.enqueue_orchestrator_sync"
 
@@ -498,6 +499,36 @@ def test_generate_item_invalid_clips_422(client: TestClient) -> None:
     assert resp.status_code == 422
     enqueue.assert_not_called()
     assert _jobs_for(item_id) == []
+
+
+@pytest.mark.parametrize(
+    "reason", ["not_enrolled", "unapproved_guided", "unsupported_format", "voiceover_unavailable"]
+)
+async def test_respond_to_dispatch_result_surfaces_phone_gate_reason(reason: str) -> None:
+    """A phone_gate-tagged invalid_clips result gets its own typed 422, not
+    the generic 'Your clips couldn't be validated' dead end (2026-09 fix).
+    """
+    from fastapi import HTTPException
+
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES
+
+    result = DispatchResult("invalid_clips", reason=reason)
+    with pytest.raises(HTTPException) as exc:
+        await _respond_to_dispatch_result(result, "item-id", uuid.uuid4(), db=None)
+    assert exc.value.status_code == 422
+    code, message = PHONE_GATE_MESSAGES[reason]
+    assert exc.value.detail == f"{code}:{message}"
+
+
+async def test_respond_to_dispatch_result_invalid_clips_without_phone_gate_stays_generic() -> None:
+    """An ordinary (non-phone) clip-validation failure keeps its original copy."""
+    from fastapi import HTTPException
+
+    result = DispatchResult("invalid_clips")
+    with pytest.raises(HTTPException) as exc:
+        await _respond_to_dispatch_result(result, "item-id", uuid.uuid4(), db=None)
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "Your clips couldn't be validated — re-upload them and try again"
 
 
 def test_task_side_enforcement_rejects_missing_proposal(
