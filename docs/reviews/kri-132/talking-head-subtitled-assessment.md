@@ -6,6 +6,28 @@ Both formats are cloud-only today with no phone compiler. Unlike montage/day_vlo
 
 All line numbers verified against `origin/main` at commit `88eb0e5` (2026-09-21).
 
+> **Update — talking-to-camera + narrated PR.** This assessment's §4 ("Captions
+> schema: confirmed absent") is now stale: `app.pipeline.phone_captions
+> .compile_caption_layers` compiles cloud caption cues into native
+> `PortableTextLayer`s (no new recipe-schema field was needed after all — it
+> reuses the existing `text_layers` lane the same way any other text overlay
+> does), and `subtitled` now HAS a phone compiler
+> (`app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`), landing
+> the §6(a)/(c) work this doc scoped as greenfield for `subtitled`, without
+> needing §3's `TimelineClip` crop/reframe work at all (the compiler rejects a
+> non-portrait source clip instead of cropping it — see that module's
+> docstring). `narrated`/`narrated_planned`/`narrated_ready` WITH a recorded
+> voiceover also shipped (`app.pipeline.phone_narrated_plan
+> .compile_phone_narrated_plan`) via the SAME captions mechanism, reusing the
+> existing single-track-per-step timeline rather than talking_head's
+> audio-spine + B-roll-cutaway shape. **`talking_head` itself is unaffected by
+> this PR** — everything in §1 (no pure decision object splitting
+> `select_spine`/`schedule_broll` from real FFmpeg/Whisper work) and §3 (no
+> phone-side crop/reframe compiler) remains exactly as described below; a
+> narrated item with NO voiceover only reaches the phone through a
+> single-clip self-narration exception that can never resolve to
+> `talking_head` (2+ clips) — that path fails closed instead.
+
 ## 1. talking_head: no pure decision object
 
 `assemble_talking_head()` (`app/pipeline/talking_head_assembler.py:477`) is the cloud entry point. It calls two genuinely pure helpers — `select_spine()` (line 139, ranks candidate clips to pick the spine) and `schedule_broll()` (line 344, computes cutaway windows) — but interleaves them with real media I/O in the same function body:

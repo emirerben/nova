@@ -39,8 +39,29 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
 /// treats every montage-family archetype identically, so a format-specific
 /// phone case would just be a relabeled `cuts_text`/`crossfade` case, not a
 /// new branch. See the script's module docstring for the full writeup.
+///
+/// Three more cases exercise the OTHER two KRI-132 phone compilers, neither
+/// of which goes through `compile_phone_montage_plan`:
+///   - `subtitled_sentence`/`subtitled_word` -- `app.pipeline
+///     .phone_subtitled_plan.compile_phone_subtitled_plan` ("Talking to
+///     camera"): one portrait clip, its own audio, sentence (`pop-in`) or
+///     word (`karaoke-line`) captions.
+///   - `narrated` -- `app.pipeline.phone_narrated_plan
+///     .compile_phone_narrated_plan`: two clips tiled onto narration step
+///     windows; the second clip is shorter than its step, exercising
+///     `TimelineClip.rate < 1` (slow-down, never freeze-hold).
+/// All three additionally carry a `caption_samples` list in `e2e.json`
+/// (region derived from the compiled recipe's own text-layer geometry, see
+/// the script's `_caption_region`), asserted in `assertCase` below via
+/// `nearWhiteTextPixelCount`.
 @MainActor final class DeviceMontageRenderE2ETests: XCTestCase {
     private typealias RGB = [Int]
+    // Caption fill is white with a black outline (`_CAPTION_TEXT_COLOR` in
+    // `phone_captions.py`); these only need to separate "some caption glyphs
+    // rendered" from "none did" over a generously-padded region, not measure
+    // exact coverage -- see `nearWhiteTextPixelCount`.
+    private let captionPixelPresenceThreshold = 40
+    private let captionPixelAbsenceCeiling = 5
     override func tearDown() { NativeEditorURLProtocol.handler = nil; super.tearDown() }
 
     func testPlainCutsWithOriginalAudioAndTextIntroRendersOnTheIPhone() async throws {
@@ -63,6 +84,29 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     /// also proves the compiler's narration-duration clamp end to end).
     func testVoiceoverNarrationRendersOnTheIPhone() async throws {
         try await assertCase("narration")
+    }
+
+    /// KRI-132: "Talking to camera" (subtitled) phone compiler --
+    /// `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan` --
+    /// sentence-style (`pop-in`) captions over the source clip's own audio.
+    func testSubtitledSentenceCaptionsRenderOnTheIPhone() async throws {
+        try await assertCase("subtitled_sentence")
+    }
+
+    /// Same compiler, `caption_style="word"` -- per-word timings compile to
+    /// the karaoke-line highlight sweep instead of plain pop-in blocks.
+    func testSubtitledWordCaptionsRenderOnTheIPhone() async throws {
+        try await assertCase("subtitled_word")
+    }
+
+    /// KRI-132: the narrated-walkthrough phone compiler --
+    /// `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan` --
+    /// two clips tiled onto narration step windows; the second clip is
+    /// shorter than its step so its `TimelineClip.rate` is exercised < 1
+    /// (slow-down, never freeze-hold), captions on top, footage bed audible
+    /// under the voice.
+    func testNarratedWalkthroughRendersOnTheIPhone() async throws {
+        try await assertCase("narrated")
     }
 
     // MARK: -
@@ -225,6 +269,27 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             // `DevicePhotoRenderE2ETests`'s own crossfade-blend assertion style.
             XCTAssertTrue(value[2] > 40 && (value[0] > 40 || value[1] > 40), "\(caseID) crossfade blend: \(value)")
         }
+        if let captionSamples = caseMeta["caption_samples"] as? [[String: Any]] {
+            for sample in captionSamples {
+                let name = try XCTUnwrap(sample["name"] as? String)
+                let t = try XCTUnwrap(sample["t"] as? Double)
+                let region = try XCTUnwrap(sample["region"] as? [Int])
+                let expectText = try XCTUnwrap(sample["expect_text"] as? Bool)
+                let image = try await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image
+                let count = try nearWhiteTextPixelCount(image, region: region)
+                if expectText {
+                    XCTAssertGreaterThan(
+                        count, captionPixelPresenceThreshold,
+                        "\(caseID)/\(name) at \(t)s: expected caption pixels in \(region), found \(count)"
+                    )
+                } else {
+                    XCTAssertLessThanOrEqual(
+                        count, captionPixelAbsenceCeiling,
+                        "\(caseID)/\(name) at \(t)s: expected no caption pixels in \(region), found \(count)"
+                    )
+                }
+            }
+        }
     }
 
     private func inputDirectory() throws -> URL {
@@ -270,5 +335,30 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
                                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
         return rgba.prefix(3).map(Int.init)
+    }
+
+    /// Counts pixels within `region` (`[x0, y0, x1, y1]`, top-left origin, as
+    /// Python's `_caption_region` reports them) that are bright and
+    /// low-saturation -- a font-independent stand-in for "a caption glyph is
+    /// there" (no OCR in this harness, mirroring `overlay_verify.py`'s own
+    /// opaque-pixel bbox check). Generalizes `pixel(_:x:y:)`'s single-pixel
+    /// draw offset to a whole sub-rectangle instead of one point.
+    private func nearWhiteTextPixelCount(_ image: CGImage, region: [Int]) throws -> Int {
+        guard region.count == 4 else { return 0 }
+        let x0 = max(0, region[0]), y0 = max(0, region[1])
+        let x1 = min(image.width, region[2]), y1 = min(image.height, region[3])
+        let width = x1 - x0, height = y1 - y0
+        guard width > 0, height > 0 else { return 0 }
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try XCTUnwrap(CGContext(
+            data: &rgba, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.draw(image, in: CGRect(x: -x0, y: -(image.height - height - y0), width: image.width, height: image.height))
+        var count = 0
+        for i in stride(from: 0, to: rgba.count, by: 4) where rgba[i] > 200 && rgba[i + 1] > 200 && rgba[i + 2] > 200 {
+            count += 1
+        }
+        return count
     }
 }

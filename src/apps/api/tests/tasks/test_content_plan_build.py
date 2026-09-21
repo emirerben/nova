@@ -2990,10 +2990,16 @@ def test_phone_gate_guided_unapproved_rejected(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_phone_gate_unsupported_format_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    """(iii) non-guided format with proxies -> rejected while the allowlist is empty."""
+    """(iii) a format with no phone compiler at all is always rejected.
+
+    KRI-132: `subtitled` moved out of this bucket (it dispatches once
+    `phone_subtitled_rendering_enabled` + `subtitled_archetype_enabled` hold
+    -- see `test_phone_format_matrix.py`'s table-driven coverage) -- use
+    `talking_head`, which still has no phone compiler under any settings
+    combination, to keep this test's original intent honest."""
     with patch("app.tasks.content_plan_build.log") as mock_log:
         result, _job, mock_build, bind_mock = _run_phone_dispatch(
-            monkeypatch, edit_format="subtitled", approved=False
+            monkeypatch, edit_format="talking_head", approved=False
         )
 
     bind_mock.assert_not_called()
@@ -3001,7 +3007,8 @@ def test_phone_gate_unsupported_format_rejected(monkeypatch: pytest.MonkeyPatch)
     assert result.outcome == "invalid_clips"
     warning_call = mock_log.warning.call_args
     assert (
-        warning_call.kwargs["error"] == "analysis proxies cannot render 'subtitled' on iPhone yet"
+        warning_call.kwargs["error"]
+        == "analysis proxies cannot render 'talking_head' on iPhone yet"
     )
     assert warning_call.kwargs["phone_gate"] == "unsupported_format"
 

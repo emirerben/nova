@@ -342,12 +342,293 @@ def test_phone_only_strategy_rejects_audio_led_format_even_when_enabled(monkeypa
         phone_source_media_ids=["phone-a"],
         phone_rendering_allowed=True,
     )
-    with pytest.raises(MixedMediaTimingUnavailableError, match="guided edit format") as exc:
+    # KRI-132: talking_head has no phone compiler at all (unlike subtitled/
+    # narrated*, which can now be phone-eligible) -- still fails closed, just
+    # with `phone_format:{format}`'s own reason text instead of the old
+    # hardcoded "guided edit format" message.
+    with pytest.raises(
+        MixedMediaTimingUnavailableError, match="does not render on this iPhone"
+    ) as exc:
         capabilities.compile_strategy_to_plan(
             manifest, CreativeStrategy(edit_format="talking_head")
         )
     assert isinstance(exc.value, PhoneFormatUnavailableError)
     assert exc.value.voiceover is False
+
+
+def _enable_narrated_and_subtitled_flags(monkeypatch, *, phone_flags_on: bool = True) -> None:
+    monkeypatch.setattr(capabilities.settings, "narrated_archetype_enabled", True, raising=False)
+    monkeypatch.setattr(capabilities.settings, "narrated_self_narration_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "edit_format_talking_head_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_rendering_enabled", phone_flags_on)
+    monkeypatch.setattr(capabilities.settings, "phone_narrated_rendering_enabled", phone_flags_on)
+    monkeypatch.setattr(capabilities.settings, "phone_narration_rendering_enabled", phone_flags_on)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        ["narrationAudio"] if phone_flags_on else [],
+    )
+
+
+def _phone_manifest(monkeypatch, edit_format, media, *, has_voiceover=False):
+    return capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format=edit_format,
+        media=media,
+        phone_source_media_ids=[m["media_id"] for m in media],
+        phone_rendering_allowed=True,
+        has_voiceover=has_voiceover,
+    )
+
+
+def test_phone_subtitled_one_clip_no_voiceover_compiles_native(monkeypatch) -> None:
+    """KRI-132 follow-up: subtitled ("Talking to camera") is audio-led and has
+    no guided-story lane -- exactly one clip, no voiceover, resolves "native"
+    directly once the rollout flags are on."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _phone_manifest(monkeypatch, "subtitled", [{"media_id": "phone-a", "kind": "video"}])
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="subtitled", audio_strategy="original_audio", selected_media_ids=["phone-a"]
+        ),
+    )
+    assert plan.strategy.render_program == "native"
+
+
+def _without_phone_format_capabilities(manifest):
+    """A manifest as it was resolved before `phone_format:*` existed."""
+    return manifest.model_copy(
+        update={
+            "capabilities": {
+                key: value
+                for key, value in manifest.capabilities.items()
+                if not key.startswith("phone_format")
+            }
+        }
+    )
+
+
+def test_legacy_phone_manifest_without_phone_format_keys_keeps_montage_working(
+    monkeypatch,
+) -> None:
+    """An in-flight session (or replay fixture) persisted before KRI-132 has no
+    `phone_format:*` capability. Absence falls back to the old rule -- montage
+    still compiles "guided" -- rather than refusing every phone project the
+    moment this deploys (caught by the `phone_original_audio_17_clips` eval)."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _without_phone_format_capabilities(
+        _phone_manifest(monkeypatch, "montage", [{"media_id": "phone-a", "kind": "video"}])
+    )
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage", audio_strategy="original_audio", selected_media_ids=["phone-a"]
+        ),
+    )
+    assert plan.strategy.render_program == "guided"
+
+
+def test_legacy_phone_manifest_without_phone_format_keys_still_refuses_subtitled(
+    monkeypatch,
+) -> None:
+    """The legacy fallback is the OLD rule, which never admitted subtitled --
+    the new formats need a freshly resolved manifest."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _without_phone_format_capabilities(
+        _phone_manifest(monkeypatch, "subtitled", [{"media_id": "phone-a", "kind": "video"}])
+    )
+    with pytest.raises(PhoneFormatUnavailableError, match="guided edit format"):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="subtitled",
+                audio_strategy="original_audio",
+                selected_media_ids=["phone-a"],
+            ),
+        )
+
+
+def test_phone_subtitled_two_clips_fails_closed(monkeypatch) -> None:
+    """subtitled requires exactly one clip -- two clips raises
+    PhoneFormatUnavailableError, not a silent single-clip truncation."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    media = [{"media_id": "phone-a", "kind": "video"}, {"media_id": "phone-b", "kind": "video"}]
+    manifest = _phone_manifest(monkeypatch, "subtitled", media)
+    with pytest.raises(PhoneFormatUnavailableError, match="exactly one clip"):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="subtitled",
+                audio_strategy="original_audio",
+                selected_media_ids=["phone-a", "phone-b"],
+            ),
+        )
+
+
+def test_phone_narrated_with_recorded_voiceover_compiles_native_when_supported(
+    monkeypatch,
+) -> None:
+    """A narrated_planned item that ALREADY has its voiceover recorded, on a
+    phone account with the narrated rollout flags on, resolves "native" --
+    this is the manifest-level `CAPABILITY_PHONE_SOURCE_AUDIO` gate
+    (`resolve_creator_manifest`) recognizing the narrated family, not just
+    montage/day_vlog/single_hero."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _phone_manifest(
+        monkeypatch,
+        "narrated_planned",
+        [{"media_id": "phone-a", "kind": "video"}],
+        has_voiceover=True,
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO].available is True
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="narrated_planned",
+            audio_strategy="voiceover",
+            selected_media_ids=["phone-a"],
+        ),
+    )
+    assert plan.strategy.render_program == "native"
+
+
+def test_phone_narrated_with_recorded_voiceover_blocked_when_flag_off(monkeypatch) -> None:
+    """Flag/capability off: byte-identical refusal, still
+    PhoneFormatUnavailableError(voiceover=True) -- the montage-family
+    voiceover gate's own existing behavior, now also proven for narrated."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch, phone_flags_on=False)
+    manifest = _phone_manifest(
+        monkeypatch,
+        "narrated_planned",
+        [{"media_id": "phone-a", "kind": "video"}],
+        has_voiceover=True,
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO].available is False
+    with pytest.raises(PhoneFormatUnavailableError, match="recorded voiceover") as exc:
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="narrated_planned",
+                audio_strategy="voiceover",
+                selected_media_ids=["phone-a"],
+            ),
+        )
+    assert exc.value.voiceover is True
+
+
+def test_phone_narrated_pending_voiceover_compiles_native_before_recording(monkeypatch) -> None:
+    """KRI-132 follow-up (the coordinator's traced dead end): the normal
+    Narrated journey is pick format -> chat/write script -> record voiceover
+    -> Generate. A narrated_planned strategy that intends to record a
+    voiceover (`audio_strategy="voiceover"`) but has none attached YET must
+    still be plannable on a phone account -- otherwise the chat turn
+    dead-ends before the creator ever gets a chance to record anything.
+    Generate itself still gates on the real recording via the dispatch gate
+    (`content_plan_build.py`), unaffected by this test."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _phone_manifest(
+        monkeypatch,
+        "narrated_planned",
+        [{"media_id": "phone-a", "kind": "video"}],
+        has_voiceover=False,
+    )
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="narrated_planned",
+            audio_strategy="voiceover",
+            selected_media_ids=["phone-a"],
+        ),
+    )
+    assert plan.strategy.render_program == "native"
+
+
+def test_phone_narrated_pending_voiceover_blocked_when_flag_off(monkeypatch) -> None:
+    """Same pending-voiceover planning turn, but the narrated phone rollout
+    is off -- must still fail closed with the typed voiceover reason, not
+    silently let planning through for a format that can never render."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch, phone_flags_on=False)
+    manifest = _phone_manifest(
+        monkeypatch,
+        "narrated_planned",
+        [{"media_id": "phone-a", "kind": "video"}],
+        has_voiceover=False,
+    )
+    with pytest.raises(PhoneFormatUnavailableError, match="does not render on this iPhone") as exc:
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="narrated_planned",
+                audio_strategy="voiceover",
+                selected_media_ids=["phone-a"],
+            ),
+        )
+    # The `voiceover=True` subtype is what routes the creator-facing copy to
+    # "ask for this edit without a voiceover" rather than a generic format
+    # rejection -- the exact message text matters less than that flag.
+    assert exc.value.voiceover is True
+
+
+def test_phone_montage_voiceover_switch_with_none_attached_is_unchanged(monkeypatch) -> None:
+    """The montage-family behaviour this fix must NOT loosen: a montage
+    strategy newly switching `audio_strategy` to "voiceover" with none
+    attached yet stays unconditionally blocked, byte-identical to before this
+    turn's fix -- montage is not itself the voiceover format the way narrated
+    is, so it never gets the pending-voiceover leniency."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = _phone_manifest(
+        monkeypatch, "montage", [{"media_id": "phone-a", "kind": "video"}], has_voiceover=False
+    )
+    with pytest.raises(
+        PhoneFormatUnavailableError, match="does not support voiceover audio"
+    ) as exc:
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="montage", audio_strategy="voiceover", selected_media_ids=["phone-a"]
+            ),
+        )
+    assert exc.value.voiceover is True
+
+
+def test_phone_format_capabilities_all_unavailable_when_phone_itself_unavailable(
+    monkeypatch,
+) -> None:
+    """When the top-level phone capability is unavailable (e.g. unverified
+    phone sources), every derived `phone_format:*` /
+    `phone_format_pending_voiceover:*` entry must be unavailable too --
+    never a stale/available leftover from a different code path."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        # No `phone_source_media_ids` passed -> unverified phone sources.
+        phone_source_media_ids=[],
+        phone_rendering_allowed=True,
+    )
+    phone_capability = manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO]
+    assert phone_capability.available is False
+    for edit_format in capabilities.EDIT_FORMATS:
+        entry = manifest.capabilities.get(f"phone_format:{edit_format}")
+        assert entry is not None
+        assert entry.available is False
+    for narrated_format in ("narrated", "narrated_planned", "narrated_ready"):
+        entry = manifest.capabilities.get(f"phone_format_pending_voiceover:{narrated_format}")
+        assert entry is not None
+        assert entry.available is False
 
 
 def _phone_manifest_with_pool(monkeypatch, pool, *, verified_features=(), allowed=True):

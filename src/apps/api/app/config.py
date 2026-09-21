@@ -43,15 +43,51 @@ class Settings(BaseSettings):
     # queuing the job.
     # Also requires "narrationAudio" in `phone_render_verified_features` (see
     # `app.services.phone_rollout.validate_phone_pilot_recipe`) -- this flag
-    # alone does not skip that device-parity gate. Does NOT affect the
-    # `narrated`/`narrated_*` archetypes (side-chain-ducked original-audio
-    # bed) or the guided-story `.narration` plan lane, both of which remain
-    # cloud-only regardless of this flag. Rollback:
+    # alone does not skip that device-parity gate. This flag is ALSO a
+    # co-requirement for the narrated family's own voiceover render (see
+    # `phone_narrated_rendering_enabled` below) -- narrated reuses the same
+    # narrationAudio capability and the same device-verified narration-track
+    # compile path. The guided-story `.narration` plan lane remains cloud-only
+    # regardless of either flag (no phone compiler exists for it). Rollback:
     # `fly secrets set PHONE_NARRATION_RENDERING_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker). See
     # docs/runbooks/phone-rendering.md and
     # docs/reviews/kri-29/capability-matrix.md ("narrationAudio").
     phone_narration_rendering_enabled: bool = True
+    # KRI-132 (talking-to-camera): a `subtitled` item (exactly one portrait
+    # clip, its own audio transcribed into editable captions) compiles through
+    # `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`
+    # (`app.tasks.generative_build._run_phone_subtitled_job`) instead of
+    # failing closed with "analysis proxies cannot render 'subtitled' on
+    # iPhone yet". True (default): the pilot cohort's talking-to-camera edits
+    # render on the device. False: byte-identical to before this flag existed
+    # -- the dispatch gate (`content_plan_build.py`) fails closed early with a
+    # typed `unsupported_format` reason instead of ever queuing the job. Also
+    # requires `settings.subtitled_archetype_enabled` (the format itself must
+    # be enabled at all, phone or not) -- see
+    # `app.services.phone_rollout.phone_render_supported_formats`. Rollback:
+    # `fly secrets set PHONE_SUBTITLED_RENDERING_ENABLED=false --app nova-video`
+    # + `fly machine restart <id>` (api + worker).
+    phone_subtitled_rendering_enabled: bool = True
+    # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
+    # `narrated_ready` item WITH a recorded voiceover compiles through
+    # `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`
+    # (`app.tasks.generative_build._run_phone_narrated_job`) instead of failing
+    # closed. True (default): the pilot cohort's narrated-walkthrough edits
+    # render on the device. False: byte-identical to before this flag existed
+    # -- the dispatch gate fails closed early with a typed
+    # `narrated_voiceover_unavailable` reason. Also requires
+    # `phone_narration_rendering_enabled` + "narrationAudio" in
+    # `phone_render_verified_features` (the narrated family reuses the same
+    # narration-audio device capability the montage-family voiceover render
+    # uses) AND `settings.narrated_archetype_enabled` -- see
+    # `app.services.phone_rollout.phone_render_supported_formats`, the single
+    # source of truth for "which formats can render on the phone right now".
+    # Does NOT cover a narrated item with NO voiceover resolving to
+    # self-narration (see that function's docstring for the 1-clip exception).
+    # Rollback: `fly secrets set PHONE_NARRATED_RENDERING_ENABLED=false
+    # --app nova-video` + `fly machine restart <id>` (api + worker).
+    phone_narrated_rendering_enabled: bool = True
     # A device recipe with no delivery (no poll, no upload) for this long is
     # presumed abandoned (app crashed, app deleted, notification never seen).
     # The reaper (app/tasks/device_render_reaper.py) flips it to

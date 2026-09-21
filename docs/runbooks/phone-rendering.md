@@ -229,6 +229,102 @@ render ("This edit couldn't finish on your iPhone") instead of refusing early
 with the typed `phone_voiceover_unavailable` reason. Use the rollback secret
 above to close that window if a pilot hits it before their app updates.
 
+#### Talking to camera + narrated voiceover on the phone (KRI-132 follow-up)
+
+Two more archetypes render on the phone, following the exact same
+account-pilot/rollout-flag pattern as the montage-family voiceover above.
+
+**Talking to camera (`subtitled`).** Exactly one portrait clip, its OWN audio
+transcribed into editable captions — no voiceover, no music. Compiles through
+`app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan` via
+`app.tasks.generative_build._run_phone_subtitled_job`, behind
+`settings.phone_subtitled_rendering_enabled` (env `PHONE_SUBTITLED_RENDERING
+_ENABLED`, default `true`) AND `settings.subtitled_archetype_enabled` (the
+format must be enabled at all, phone or not). Server-side transcription
+mirrors the cloud lean path exactly: `transcribe_whisper_cached` →
+`build_plain_cues(words, attach_words=True)` → `correct_caption_cues` →
+`resplit_cues_into_sentences`; caption style ("sentence" vs "word") comes
+from the item's `voiceover_caption_style`. **No silence-cut/speech-cleanup
+runs on the phone path at all** — if the item's own contract is `required_v1`
+(the creator explicitly opted into cleanup and it's available), skipping it
+would silently ship uncut footage that contradicts what was approved, so the
+worker fails closed with `UnsupportedPhonePlan` instead
+(`_phone_speech_cleanup_contract_guard`) rather than quietly rendering
+something different. **Rollback:** `fly secrets set
+PHONE_SUBTITLED_RENDERING_ENABLED=false --app nova-video` + `fly machine
+restart <id>` (api + worker).
+
+**Narrated walkthrough (`narrated` / `narrated_planned` / `narrated_ready`)
+WITH a recorded voiceover.** Compiles through
+`app.pipeline.phone_narrated_plan.compile_phone_narrated_plan` via
+`app.tasks.generative_build._run_phone_narrated_job`, behind
+`settings.phone_narrated_rendering_enabled` (env `PHONE_NARRATED_RENDERING
+_ENABLED`, default `true`) AND the SAME `phone_narration_rendering_enabled` +
+verified `narrationAudio` the montage-family voiceover render already
+requires (the narrated family reuses that exact device capability) AND
+`settings.narrated_archetype_enabled`. Mirrors `_render_narrated_variant`
+(the cloud renderer) up to but excluding FFmpeg: downloads the voiceover,
+transcribes it (`transcribe_whisper` with `settings.narrated_whisper_model`),
+computes step timings — scripted force-alignment
+(`_narrated_script_steps` + `align_script_to_voiceover`) when the filming
+guide has 2+ steps, else auto-segmentation (`split_phrases` +
+`contiguous_step_timings`) for `narrated_ready` — assigns one clip per step in
+narrative/guide order (no agentic storyboard re-ranking, unlike the cloud
+path), and burns the same caption-cue pipeline as `subtitled`. The gain math
+mirrors the montage-family voiceover render: `mix = 1.0 - bed_level`
+(`voiceover_bed_level`, default `0.25`), converting the cloud's direct
+bed-gain knob into this compiler's voice-prominence convention. **Rollback:**
+`fly secrets set PHONE_NARRATED_RENDERING_ENABLED=false --app nova-video` +
+`fly machine restart <id>` (api + worker).
+
+**Self-narration (no recorded voiceover).** A `narrated*` item with NO
+voiceover is spined by the footage's OWN speech —
+`_resolve_archetype` (generative_build.py) decides `subtitled` (exactly one
+clip) or `talking_head` (2+ clips) only once the footage is actually probed,
+which the dispatch gate cannot do. So the dispatch gate only lets the
+single-clip shape through (gated by `settings.narrated_self_narration_enabled`
++ `subtitled` being phone-supported), and routes it to
+`_run_phone_subtitled_job`, which re-runs the REAL `_resolve_archetype`
+post-ingest and only proceeds when it lands on `subtitled` — a no-speech clip
+(→ `montage` fallback) or, for the impossible-here 2+-clip case,
+`talking_head`, both fail closed with `UnsupportedPhonePlan` instead of
+silently rendering the wrong shape. **`talking_head` has no phone compiler at
+all**, under any settings combination.
+
+**Single source of truth.** `app.services.phone_rollout
+.phone_render_supported_formats()` is the settings-aware function every
+runtime decision now consults — the dispatch gate, the worker's own dispatch
+fork (redelivery/flag-flip defense in depth), the `/creation-threads
+/capabilities` picker, and the Main Creator Agent's `phone_format:{format}`
+manifest capability (`app.services.creator_capabilities.resolve_creator
+_manifest`, consumed by the settings-free `app.agents._schemas.creator_policy
+.effective_render_program`). `PHONE_RENDER_SUPPORTED_FORMATS`
+(`app/agents/_schemas/edit_format.py`) itself stays a static, settings-free
+constant — it now means "has a phone compiler at all" (montage family +
+`subtitled` + the `narrated*` family), a strict superset of what
+`phone_render_supported_formats()` returns once rollout flags are folded in.
+
+**New typed phone-gate reasons** (`app.tasks.content_plan_build
+.PHONE_GATE_MESSAGES`): `narrated_voiceover_unavailable` (a narrated item
+with a voiceover, but the flags above aren't all satisfied — same user-facing
+copy as `voiceover_unavailable`, distinct key only so the two internal
+compilers stay independently traceable) and `subtitled_clip_count_unsupported`
+(a `subtitled` item with anything but exactly one clip). The generic
+`unsupported_format` copy no longer hard-codes "Only Montage videos" — it's
+deliberately format-agnostic now that the allowlist grows with rollout.
+
+**Known divergences from the cloud path (v1, accepted):** no silence-cut/
+speech-cleanup on either phone lane; no agentic storyboard re-ranking for
+narrated clip assignment (script/guide order only); no side-chain ducking,
+`loudnorm`, or voice fade-out (flat bed gain, same approximation the
+montage-family voiceover render already ships); no face-tracked crop
+(`subtitled` requires an already-portrait source clip instead of cropping);
+word-style captions use the device `karaoke-line` fill, so already-spoken
+words stay highlighted where the cloud ASS path recolours only the current
+word (seen in the simulator render of the `subtitled_word` E2E case);
+`talking_head` (self-narration onto 2+ clips) remains entirely unsupported on
+the phone.
+
 ## Implemented foundations
 
 - `KriaMediaEngine/SourceAssetStore.swift` binds opaque server media IDs to

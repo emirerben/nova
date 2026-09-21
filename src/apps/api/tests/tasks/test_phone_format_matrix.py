@@ -24,7 +24,6 @@ from app.agents._schemas.creator_policy import (
     PhoneFormatUnavailableError,
 )
 from app.agents._schemas.edit_format import (
-    GUIDED_EDIT_FORMATS,
     PHONE_RENDER_SUPPORTED_FORMATS,
     EditFormat,
 )
@@ -154,15 +153,23 @@ def test_worker_rejects_non_guided_format_directly(monkeypatch: pytest.MonkeyPat
 # with a typed, handled exception when compiled -- never a silent cloud
 # render, never an unhandled crash.
 #
-# Two different typed exceptions cover the six non-guided formats, both
-# caught and turned into a `session.status = "failed"` + user-facing chat
-# message by app/routes/creator_agent.py (~2480, ~2554):
-#   - talking_head/subtitled/narrated/narrated_planned/narrated_ready: the
-#     format IS a real (non-phone) renderer, so `effective_render_program`
-#     reaches its phone-specific guided-format check and raises
-#     `PhoneFormatUnavailableError("phone sources require a guided edit
-#     format")` (app/agents/_schemas/creator_policy.py:113-114), mapped to
-#     chat error code "phone_format_unavailable" in
+# KRI-132 update: `subtitled` and the `narrated*` formats are no longer
+# unconditionally rejected on a phone account -- `effective_render_program`
+# now consults the voiceover-state-aware `phone_format:{format}` manifest
+# capability (`app.services.creator_capabilities.resolve_creator_manifest`,
+# backed by `app.services.phone_rollout.phone_render_supported_formats`)
+# instead of a hardcoded "must be guided-applicable" check. Only `talking_head`
+# has no phone compiler at all and remains unconditionally rejected below; see
+# `test_planner_chosen_phone_workable_format_resolves_native_on_phone` for the
+# formats that now succeed.
+#
+# Two different typed exceptions cover the non-guided formats, both caught and
+# turned into a `session.status = "failed"` + user-facing chat message by
+# app/routes/creator_agent.py (~2480, ~2554):
+#   - talking_head: the format IS a real (non-phone) renderer, so
+#     `effective_render_program` reaches its phone-specific format check and
+#     raises `PhoneFormatUnavailableError` (app/agents/_schemas/creator_policy.py),
+#     mapped to chat error code "phone_format_unavailable" in
 #     `_record_media_unavailable` (app/routes/creator_agent.py:1517-1519).
 #   - slides: `_format_availability` (app/services/creator_capabilities.py:
 #     101-148) has NO branch for "slides" at all -- it is unavailable to the
@@ -175,8 +182,13 @@ def test_worker_rejects_non_guided_format_directly(monkeypatch: pytest.MonkeyPat
 #     (code="edit_format_unavailable", app/services/creator_capabilities.py:
 #     457-463), handled at app/routes/creator_agent.py:2480-2496.
 
-_PHONE_SPECIFIC_REJECTION_FORMATS = tuple(
-    sorted(fmt for fmt in ALL_FORMATS if fmt not in GUIDED_EDIT_FORMATS and fmt != "slides")
+_PHONE_SPECIFIC_REJECTION_FORMATS = ("talking_head",)
+
+# The formats that now DO resolve on a phone account (self-narration for the
+# narrated family, since the test manifest below carries no voiceover and
+# exactly one video clip -- the only shape `phone_format:{format}` admits).
+_PHONE_WORKABLE_NON_GUIDED_FORMATS = tuple(
+    sorted({"subtitled", "narrated", "narrated_planned", "narrated_ready"})
 )
 
 
@@ -205,6 +217,63 @@ def test_planner_chosen_unsupported_format_fails_closed_on_phone(
     # (not "phone_voiceover_unavailable").
     assert exc.value.voiceover is False
     assert isinstance(exc.value, MixedMediaTimingUnavailableError)
+
+
+@pytest.mark.parametrize("edit_format", _PHONE_WORKABLE_NON_GUIDED_FORMATS)
+def test_planner_chosen_phone_workable_format_resolves_native_on_phone(
+    monkeypatch: pytest.MonkeyPatch, edit_format: str
+) -> None:
+    """KRI-132: unlike talking_head, `subtitled` and a self-narrated
+    `narrated*` request on a phone account no longer raise
+    `PhoneFormatUnavailableError` -- the manifest below has exactly one
+    attached video clip and no voiceover, the only shape
+    `phone_format:{format}` admits for these formats, so
+    `effective_render_program` resolves "native" (never "guided" -- these
+    formats have no guided-story lane at all)."""
+
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "narrated_archetype_enabled", True, raising=False)
+    monkeypatch.setattr(capabilities.settings, "narrated_self_narration_enabled", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+    )
+
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(edit_format=edit_format, selected_media_ids=["phone-a"]),
+    )
+
+    assert plan.strategy.render_program == "native"
+
+
+def test_planner_chosen_phone_format_capability_rejects_wrong_clip_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`subtitled` requires exactly one clip -- a phone manifest with two
+    still raises `PhoneFormatUnavailableError`, same exception type as the
+    talking_head case, just because the SHAPE is wrong rather than the
+    format having no compiler at all."""
+
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "subtitled_archetype_enabled", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="montage",
+        media=[
+            {"media_id": "phone-a", "kind": "video"},
+            {"media_id": "phone-b", "kind": "video"},
+        ],
+        phone_source_media_ids=["phone-a", "phone-b"],
+        phone_rendering_allowed=True,
+    )
+
+    with pytest.raises(PhoneFormatUnavailableError):
+        capabilities.compile_strategy_to_plan(manifest, CreativeStrategy(edit_format="subtitled"))
 
 
 def test_planner_chosen_slides_fails_closed_but_not_phone_specific(
