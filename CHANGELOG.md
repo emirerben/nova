@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.99.0] - 2026-09-21
+
+### Changed
+- feat(analysis): the video analyzer, chat agent and planner share one open-vocabulary clip record (KRI-127, part 1) (#1111) <!-- release-pr: 1111 -->
+
 ## [0.76.98.0] - 2026-09-21
 
 ### Changed
