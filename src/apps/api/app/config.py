@@ -47,13 +47,38 @@ class Settings(BaseSettings):
     # co-requirement for the narrated family's own voiceover render (see
     # `phone_narrated_rendering_enabled` below) -- narrated reuses the same
     # narrationAudio capability and the same device-verified narration-track
-    # compile path. The guided-story `.narration` plan lane remains cloud-only
-    # regardless of either flag (no phone compiler exists for it). Rollback:
+    # compile path. It is ALSO a co-requirement (alongside
+    # `phone_guided_narration_rendering_enabled` below) for the guided-story
+    # `.narration` plan lane -- see that flag's comment for what gates that
+    # lane specifically. Rollback:
     # `fly secrets set PHONE_NARRATION_RENDERING_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker). See
     # docs/runbooks/phone-rendering.md and
     # docs/reviews/kri-29/capability-matrix.md ("narrationAudio").
     phone_narration_rendering_enabled: bool = True
+    # KRI-132 phone-voiceover-gate follow-up: a guided-story plan whose
+    # `.narration` field is set (the voiceover-timed "guided story" lane,
+    # execution contract `guided_voiceover_v1` -- the only lane that combines
+    # Visuals-pool media with a recorded voiceover) compiles through
+    # `app.pipeline.phone_guided_plan.compile_phone_guided_plan`'s narration
+    # branch (`app.tasks.generative_build._run_phone_guided_job` resolves the
+    # pinned voiceover bed via `_resolve_phone_voiceover_bed`) instead of
+    # failing closed unconditionally. True (default): the pilot cohort's
+    # voiceover-timed guided stories render on the device with their Visuals
+    # photos. False: byte-identical to before this flag existed -- the
+    # dispatch gate (`content_plan_build.py`) fails closed early with a typed
+    # `guided_voiceover_unavailable` reason instead of ever queuing the job.
+    # Also requires `phone_narration_rendering_enabled` (this lane reuses the
+    # same narration-audio device capability the montage-family voiceover
+    # render uses) AND "narrationAudio" in `phone_render_verified_features` --
+    # `app.services.phone_rollout.phone_guided_narration_supported()` is the
+    # single source of truth ANDing all three; every call site (the
+    # capability resolver, the dispatch gate, the worker) MUST go through it
+    # rather than re-deriving the rule. Rollback:
+    # `fly secrets set PHONE_GUIDED_NARRATION_RENDERING_ENABLED=false --app
+    # nova-video` + `fly machine restart <id>` (api + worker). See
+    # docs/runbooks/phone-rendering.md.
+    phone_guided_narration_rendering_enabled: bool = True
     # KRI-132 (talking-to-camera): a `subtitled` item (exactly one portrait
     # clip, its own audio transcribed into editable captions) compiles through
     # `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`

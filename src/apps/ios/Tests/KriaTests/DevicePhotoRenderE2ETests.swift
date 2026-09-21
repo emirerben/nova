@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 import AVFoundation
+import CoreMedia
 import CoreGraphics
 import KriaMediaEngine
 @testable import Kria
@@ -15,6 +16,13 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
 /// made only of Visuals.
 @MainActor final class DevicePhotoRenderE2ETests: XCTestCase {
     private typealias RGB = [Int]
+    // Caption fill is white with a black outline (`_CAPTION_TEXT_COLOR` in
+    // `phone_captions.py`); these only need to separate "some caption glyphs
+    // rendered" from "none did" over a generously-padded region, not measure
+    // exact coverage -- see `nearWhiteTextPixelCount`. Ported from
+    // `DeviceMontageRenderE2ETests`.
+    private let captionPixelPresenceThreshold = 40
+    private let captionPixelAbsenceCeiling = 5
     override func tearDown() { NativeEditorURLProtocol.handler = nil; super.tearDown() }
 
     func testServerCompiledVisualsRenderOnTheIPhone() async throws {
@@ -52,25 +60,70 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         XCTAssertTrue(isColor(pixel(try XCTUnwrap(frames["only-pool-video"]), x: 540, y: 960), [255, 255, 0]))
     }
 
+    /// KRI-132: a voiceover-timed guided story -- 5 clips + 5 Visuals-pool
+    /// photos tile the whole 48s narration duration
+    /// (`compile_phone_guided_plan`'s new `narration:` parameter), a
+    /// hard-replace narration audio track (`audio.originalVolume == 0`,
+    /// unlike the montage/narrated compilers' mixed footage bed), an opening
+    /// title, and one static caption per spoken word-group at y=0.82.
+    /// Caption-region and narration-audio checks are ported from
+    /// `DeviceMontageRenderE2ETests` (`caption_samples` / `expectsNarrationAudio`).
+    func testNarratedStoryWithPhotosRendersOnTheIPhone() async throws {
+        let input = try inputDirectory()
+        let meta = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: input.appendingPathComponent("e2e.json"))) as? [String: Any]
+        )
+        let caseMeta = try XCTUnwrap(meta["narrated_story"] as? [String: Any])
+        let statusFile = try XCTUnwrap(caseMeta["status_file"] as? String)
+        let footageClips = try XCTUnwrap(caseMeta["clips"] as? [[String: Any]])
+        let captionSamples = try XCTUnwrap(caseMeta["caption_samples"] as? [[String: Any]])
+
+        let frames = try await render(
+            status: statusFile, input: input, bindsFootage: true, output: "narrated-story",
+            at: ["clip0": 2.5, "clip2": 21.7, "photo0": 7.3, "photo3": 36.1],
+            footageClips: footageClips,
+            voiceoverAssetID: caseMeta["voiceover_asset_id"] as? String,
+            voiceoverFile: caseMeta["voiceover_file"] as? String,
+            captionSamples: captionSamples, expectsNarrationAudio: true,
+            requiredEffectiveCapabilities: [.stillImages, .narrationAudio],
+            dropCapabilityChecks: ["stillImages", "narrationAudio"]
+        )
+        func sample(_ name: String, _ x: Int, _ y: Int) throws -> RGB { pixel(try XCTUnwrap(frames[name]), x: x, y: y) }
+        // Clips: solid red / lime. Photos: solid orange / teal.
+        XCTAssertTrue(isColor(try sample("clip0", 540, 960), [255, 0, 0]))
+        XCTAssertTrue(isColor(try sample("clip2", 540, 960), [0, 255, 0]))
+        XCTAssertTrue(isColor(try sample("photo0", 540, 960), [255, 165, 0]))
+        XCTAssertTrue(isColor(try sample("photo3", 540, 960), [0, 128, 128]))
+    }
+
     private func inputDirectory() throws -> URL {
         guard let path = ProcessInfo.processInfo.environment["KRIA_E2E_DIR"] else { throw XCTSkip("Set KRIA_E2E_DIR to run") }
         return URL(fileURLWithPath: path)
     }
 
-    private func render(status name: String, input: URL, bindsFootage: Bool, output: String, at times: [String: Double]) async throws -> [String: CGImage] {
+    private func render(
+        status name: String, input: URL, bindsFootage: Bool, output: String, at times: [String: Double],
+        footageClips: [[String: Any]]? = nil,
+        voiceoverAssetID: String? = nil, voiceoverFile: String? = nil,
+        captionSamples: [[String: Any]] = [], expectsNarrationAudio: Bool = false,
+        requiredEffectiveCapabilities: [MediaCapability] = [.stillImages, .visualVideos],
+        dropCapabilityChecks: [String] = ["stillImages", "visualVideos"]
+    ) async throws -> [String: CGImage] {
         let status = try JSONDecoder().decode(DeviceRenderStatusResponse.self, from: Data(contentsOf: input.appendingPathComponent(name)))
         let meta = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: input.appendingPathComponent("e2e.json"))) as? [String: Any])
         let recipe = status.request.recipe
 
-        // The iPhone takes the local route only while every Visuals kind is verified.
+        // The iPhone takes the local route only while every capability this
+        // call cares about is verified.
         let verified = try XCTUnwrap(meta["verified_features"] as? [String])
         func route(_ features: [String]) -> ExportRoute {
             DeviceRenderSessions.decision(recipe, capabilities: PhoneRenderingCapabilities(enabled: true, recipeVersions: [2], verifiedFeatures: features)).route
         }
-        XCTAssertTrue(recipe.effectiveCapabilities.isSuperset(of: [.stillImages, .visualVideos]))
+        XCTAssertTrue(recipe.effectiveCapabilities.isSuperset(of: requiredEffectiveCapabilities))
         XCTAssertEqual(route(verified), .local)
-        XCTAssertEqual(route(verified.filter { $0 != "stillImages" }), .cloud)
-        XCTAssertEqual(route(verified.filter { $0 != "visualVideos" }), .cloud)
+        for capability in dropCapabilityChecks {
+            XCTAssertEqual(route(verified.filter { $0 != capability }), .cloud, "dropping \(capability)")
+        }
 
         // Footage is a device original bound at upload time; Visuals never are.
         let project = ProjectDirectory(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
@@ -78,17 +131,36 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try project.createIfNeeded()
         let store = SourceAssetStore(project: project)
         if bindsFootage {
-            let original = project.originals.appendingPathComponent("video.mp4")
-            try FileManager.default.copyItem(at: input.appendingPathComponent("video.mp4"), to: original)
-            let videoID = try XCTUnwrap(meta["video_media_id"] as? String)
-            try store.bind(mediaID: videoID, original: MediaAsset(id: videoID, relativePath: "originals/video.mp4",
-                                                                     fingerprint: try SHA256Fingerprinter().fingerprint(file: original)))
+            if let footageClips {
+                // Multi-clip case (KRI-132 narrated_story): one bound original
+                // per clip, mirroring DeviceMontageRenderE2ETests's own loop.
+                for clip in footageClips {
+                    let mediaID = try XCTUnwrap(clip["media_id"] as? String)
+                    let file = try XCTUnwrap(clip["file"] as? String)
+                    let original = project.originals.appendingPathComponent(file)
+                    try FileManager.default.copyItem(at: input.appendingPathComponent(file), to: original)
+                    try store.bind(mediaID: mediaID, original: MediaAsset(id: mediaID, relativePath: "originals/\(file)",
+                                                                             fingerprint: try SHA256Fingerprinter().fingerprint(file: original)))
+                }
+            } else {
+                let original = project.originals.appendingPathComponent("video.mp4")
+                try FileManager.default.copyItem(at: input.appendingPathComponent("video.mp4"), to: original)
+                let videoID = try XCTUnwrap(meta["video_media_id"] as? String)
+                try store.bind(mediaID: videoID, original: MediaAsset(id: videoID, relativePath: "originals/video.mp4",
+                                                                         fingerprint: try SHA256Fingerprinter().fingerprint(file: original)))
+            }
         }
 
-        // The API grants each pinned visual; storage serves its bytes.
+        // The API grants each pinned visual; storage serves its bytes. A
+        // recorded voiceover (KRI-132) resolves through the SAME per-asset
+        // grant endpoint under its own asset id -- see
+        // DeviceMontageRenderE2ETests's own narration case.
         let files = try XCTUnwrap(meta["visual_files"] as? [String: String])
         let visualIDs = (recipe.assetManifest?.assets ?? []).compactMap { asset -> String? in if case .visual = asset.source { asset.id } else { nil } }
-        let bytes = try Dictionary(uniqueKeysWithValues: visualIDs.map { ($0, try Data(contentsOf: input.appendingPathComponent(try XCTUnwrap(files[$0])))) })
+        var bytes = try Dictionary(uniqueKeysWithValues: visualIDs.map { ($0, try Data(contentsOf: input.appendingPathComponent(try XCTUnwrap(files[$0])))) })
+        if let voiceoverAssetID, let voiceoverFile {
+            bytes[voiceoverAssetID] = try Data(contentsOf: input.appendingPathComponent(voiceoverFile))
+        }
         let log = RequestLog()
         NativeEditorURLProtocol.handler = { request in
             log.urls.append(request.url?.absoluteString ?? "")
@@ -103,7 +175,9 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
                 downloadSession: NativeEditorTestSupport.session())
         }
         let urls = try await resolver().resolve(for: recipe)
-        XCTAssertEqual(Set(log.urls.filter { $0.contains("storage.e2e.test") }), Set(visualIDs.map { "https://storage.e2e.test/\($0)" }))
+        var expectedGrantedIDs = Set(visualIDs)
+        if let voiceoverAssetID { expectedGrantedIDs.insert(voiceoverAssetID) }
+        XCTAssertEqual(Set(log.urls.filter { $0.contains("storage.e2e.test") }), Set(expectedGrantedIDs.map { "https://storage.e2e.test/\($0)" }))
         // A second resolve renders from the verified cache: no grants, no downloads,
         // and videos still get a playable extension.
         log.urls = []
@@ -132,6 +206,10 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             let audio = try await asset.loadTracks(withMediaType: .audio)
             XCTAssertFalse(audio.isEmpty, "source audio survives next to stills")
         }
+        if expectsNarrationAudio {
+            let peak = try await peakAmplitude(of: asset)
+            XCTAssertGreaterThan(peak, 0.01, "the recorded voiceover must be audible")
+        }
         let generator = AVAssetImageGenerator(asset: asset)
         generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
         var images: [String: CGImage] = [:]
@@ -142,6 +220,19 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             CGImageDestinationAddImage(destination, image, nil)
             XCTAssertTrue(CGImageDestinationFinalize(destination))
             images[name] = image
+        }
+        for sample in captionSamples {
+            let sampleName = try XCTUnwrap(sample["name"] as? String)
+            let t = try XCTUnwrap(sample["t"] as? Double)
+            let region = try XCTUnwrap(sample["region"] as? [Int])
+            let expectText = try XCTUnwrap(sample["expect_text"] as? Bool)
+            let image = try await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image
+            let count = try nearWhiteTextPixelCount(image, region: region)
+            if expectText {
+                XCTAssertGreaterThan(count, captionPixelPresenceThreshold, "\(sampleName) at \(t)s: expected caption pixels in \(region), found \(count)")
+            } else {
+                XCTAssertLessThanOrEqual(count, captionPixelAbsenceCeiling, "\(sampleName) at \(t)s: expected no caption pixels in \(region), found \(count)")
+            }
         }
         return images
     }
@@ -156,5 +247,58 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
                                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
         return rgba.prefix(3).map(Int.init)
+    }
+
+    /// Peak absolute sample amplitude (normalized 0...1) across the asset's
+    /// first audio track, read directly via `AVAssetReader` -- no playback,
+    /// no dependency on device volume/mute state. Ported verbatim from
+    /// `DeviceMontageRenderE2ETests`.
+    private func peakAmplitude(of asset: AVAsset) async throws -> Float {
+        guard let track = try await asset.loadTracks(withMediaType: .audio).first else { return 0 }
+        let reader = try AVAssetReader(asset: asset)
+        let outputSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsNonInterleaved: false,
+        ]
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
+        reader.add(output)
+        _ = reader.startReading()
+        var peak: Float = 0
+        while let buffer = output.copyNextSampleBuffer() {
+            guard let blockBuffer = CMSampleBufferGetDataBuffer(buffer) else { continue }
+            let length = CMBlockBufferGetDataLength(blockBuffer)
+            var data = [UInt8](repeating: 0, count: length)
+            _ = CMBlockBufferCopyDataBytes(blockBuffer, atOffset: 0, dataLength: length, destination: &data)
+            data.withUnsafeBytes { raw in
+                for value in raw.bindMemory(to: Float32.self) { peak = max(peak, abs(value)) }
+            }
+        }
+        return peak
+    }
+
+    /// Counts pixels within `region` (`[x0, y0, x1, y1]`, top-left origin, as
+    /// Python's `_caption_region` reports them) that are bright and
+    /// low-saturation -- a font-independent stand-in for "a caption glyph is
+    /// there" (no OCR in this harness). Ported verbatim from
+    /// `DeviceMontageRenderE2ETests`.
+    private func nearWhiteTextPixelCount(_ image: CGImage, region: [Int]) throws -> Int {
+        guard region.count == 4 else { return 0 }
+        let x0 = max(0, region[0]), y0 = max(0, region[1])
+        let x1 = min(image.width, region[2]), y1 = min(image.height, region[3])
+        let width = x1 - x0, height = y1 - y0
+        guard width > 0, height > 0 else { return 0 }
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try XCTUnwrap(CGContext(
+            data: &rgba, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.draw(image, in: CGRect(x: -x0, y: -(image.height - height - y0), width: image.width, height: image.height))
+        var count = 0
+        for i in stride(from: 0, to: rgba.count, by: 4) where rgba[i] > 200 && rgba[i + 1] > 200 && rgba[i + 2] > 200 {
+            count += 1
+        }
+        return count
     }
 }

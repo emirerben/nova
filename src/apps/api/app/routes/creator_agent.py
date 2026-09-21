@@ -1532,9 +1532,20 @@ async def _record_media_unavailable(
         message = (
             _PHONE_VOICEOVER_UNAVAILABLE_MESSAGE
             if exc.voiceover
-            else "Only Montage videos can render on your iPhone right now, "
-            "not talking or narrated ones. Choose Montage to render on this "
-            "iPhone. No fallback edit was rendered."
+            # KRI-132: this copy used to hard-code "Only Montage videos" --
+            # no longer true now that `subtitled` (talking-to-camera) and the
+            # `narrated*` formats can also render on the phone once rolled
+            # out (see `app.services.phone_rollout.phone_render_
+            # supported_formats`, the single source of truth for what's
+            # actually enabled). Kept deliberately format-agnostic here
+            # rather than naming the current allowlist, since that set
+            # changes with rollout flags and this string does not -- mirrors
+            # `PHONE_GATE_MESSAGES["unsupported_format"]` in
+            # content_plan_build.py (deliberately duplicated, not imported;
+            # this module sits above that one in the import graph).
+            else "This kind of video can't render on your iPhone right now. Choose a format "
+            "that renders on this iPhone (Montage, or Talking to camera / Narrated "
+            "where available). No fallback edit was rendered."
         )
     else:
         code = "mixed_media_timing_unavailable"

@@ -19,8 +19,9 @@ from app.kria.recipes import (
     Transition,
 )
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import RenderAssetManifest
+from app.kria.render_assets import RenderAssetManifest, VoiceoverRenderAsset
 from app.pipeline.guided_story import _FRAME_S, GuidedStoryExecutionPlan, _story_canvas
+from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.schemas.guided_edit_revision import GUIDED_EDITOR_FPS
 from app.services.phone_sources import (
     PhoneSourceBinding,
@@ -48,9 +49,12 @@ class UnsupportedPhonePlan(ValueError):
 # Plan lane -> the MediaCapability it would require once the recipe schema
 # carries its content. Kept next to the reject loop so a new plan lane and
 # its capability name are added together.
+#
+# `narration` is deliberately NOT here (KRI-132 phone-voiceover-gate
+# follow-up): the guided-story narration lane now has a phone compiler --
+# see the `plan.narration` handling below instead of the reject loop.
 _UNSUPPORTED_PHONE_LANE_CAPABILITY: dict[str, str] = {
     "music": "musicBed",
-    "narration": "narrationAudio",
     "licensed_sfx_intent": "soundEffects",
     "editor_sound_effects": "soundEffects",
     "editor_media_overlays": "mediaCards",
@@ -101,16 +105,54 @@ def compile_phone_guided_plan(
     plan: GuidedStoryExecutionPlan,
     bindings: tuple[PhoneSourceBinding, ...],
     visuals: tuple[PhoneVisualBinding, ...] = (),
+    *,
+    narration: PhoneNarrationBed | None = None,
 ) -> EditRecipeV2:
     """``visuals`` pins approved Visuals-pool photos and videos (KRI-121). Callers
     bind each kind only while its feature (``stillImages`` / ``visualVideos``)
-    is verified; without a binding, a pool moment fails closed exactly as before."""
+    is verified; without a binding, a pool moment fails closed exactly as before.
+
+    ``narration`` (KRI-132 phone-voiceover-gate follow-up): required exactly
+    when ``plan.narration`` is set -- resolved by the caller
+    (`app.tasks.generative_build._run_phone_guided_job`, mirroring
+    `_resolve_phone_voiceover_bed`'s use in the montage-family compiler) and
+    re-checked here against the plan's own pinned identity so a voiceover
+    replaced since approval fails closed instead of silently binding the
+    wrong bytes. Compiles to a `VoiceoverRenderAsset` + a second
+    `TimelineTrack(id="narration", kind="audio")`, mirroring
+    `_mix_pinned_narration`'s cloud behavior exactly: the narration HARD-
+    REPLACES the footage's own audio (`original_volume=0.0`, no ducking, no
+    gain, no matched bed) -- see that function in `app.pipeline.guided_story`
+    for why (`-map 1:a:0`, never `-filter_complex amix`).
+    """
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.portable_text_layout import compile_text_overlay
 
     for lane, capability in _UNSUPPORTED_PHONE_LANE_CAPABILITY.items():
         if getattr(plan, lane):
             raise UnsupportedPhonePlan(f"unsupported phone lane: {lane}", capability=capability)
+    if plan.narration is not None:
+        if narration is None:
+            raise UnsupportedPhonePlan(
+                "recorded voiceover requires a phone narration binding",
+                capability="narrationAudio",
+            )
+        if (
+            narration.generation != plan.narration.generation
+            or abs(narration.duration_s - plan.narration.duration_s) > 0.05
+        ):
+            raise UnsupportedPhonePlan(
+                "the approved voiceover was replaced since approval",
+                capability="narrationAudio",
+            )
+    elif narration is not None:
+        # A worker/plan mismatch: nothing in `plan.narration` asked for a
+        # narration bed at all, so binding one here would silently attach
+        # audio the approved plan never carried.
+        raise UnsupportedPhonePlan(
+            "phone narration binding was provided for a plan with no narration",
+            capability="narrationAudio",
+        )
     transition_names = {
         "crossfade": "crossfade",
         "dip_to_black": "fade_black",
@@ -445,14 +487,10 @@ def compile_phone_guided_plan(
                 layer.end = text_bound_s
                 if layer.end - layer.start < _FRAME_S:
                     layer.start = max(0.0, layer.end - _FRAME_S)
-    return EditRecipeV2(
-        canvas=Canvas(width=canvas.width, height=canvas.height),
-        assets=list(assets.values()),
-        asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
-        tracks=[TimelineTrack(id="story", kind="video", clips=clips)],
-        text_layers=layers,
-        audio=AudioMixRecipe(original_volume=plan.editor_audio_level if preserve_audio else 0),
-        required_capabilities={"basicComposition", "local1080Export"}
+    tracks = [TimelineTrack(id="story", kind="video", clips=clips)]
+    audio = AudioMixRecipe(original_volume=plan.editor_audio_level if preserve_audio else 0)
+    required_capabilities = (
+        {"basicComposition", "local1080Export"}
         | (
             {"crossfade"}
             if any(clip.transition and clip.transition.kind == "crossfade" for clip in clips)
@@ -464,5 +502,63 @@ def compile_phone_guided_plan(
             if any(layer.effect not in {"static", "none"} for layer in layers)
             else set()
         )
-        | ({"audioMix"} if preserve_audio else set()),
+        | ({"audioMix"} if preserve_audio else set())
+    )
+    if plan.narration is not None:
+        # `narration is not None` always holds here (the checks at the top of
+        # this function raise otherwise) -- spelled out again for clarity.
+        narration_asset = VoiceoverRenderAsset(
+            id=f"voiceover-{narration.plan_item_id}",
+            plan_item_id=narration.plan_item_id,
+            generation=narration.generation,
+            fingerprint=narration.fingerprint,
+        )
+        manifest[narration_asset.id] = narration_asset
+        assets[narration_asset.id] = MediaAsset(
+            id=narration_asset.id,
+            relative_path=narration_asset.id,
+            fingerprint=AssetFingerprint(
+                hex=narration.fingerprint.sha256, byte_count=narration.fingerprint.byte_count
+            ),
+            duration=narration.duration_s,
+        )
+        # Bound to the timeline this recipe actually compiled (mirrors
+        # `compile_phone_montage_plan`'s `total_duration_s` clamp): an
+        # on-device refit can shrink `compiled_duration` below the plan's
+        # nominal `resolved_duration_s`, and the audio must never outlast the
+        # video track it plays under.
+        narration_duration_s = max(0.1, min(narration.duration_s, max(compiled_duration, 0.1)))
+        tracks.append(
+            TimelineTrack(
+                id="narration",
+                kind="audio",
+                clips=[
+                    TimelineClip(
+                        id="narration-voice",
+                        source_asset_id=narration_asset.id,
+                        source_start=0.0,
+                        source_duration=narration_duration_s,
+                        timeline_start=0.0,
+                        rate=1.0,
+                        volume=1.0,
+                    )
+                ],
+            )
+        )
+        # `_mix_pinned_narration` (guided_story.py) HARD-REPLACES the
+        # footage's own audio with the pinned narration (`-map 1:a:0`, no
+        # ducking, no gain, no matched original-audio bed) regardless of
+        # `plan.montage_audio.preserve_source_audio` -- mirror that exactly
+        # rather than the `preserve_audio`-derived value above, which is for
+        # the no-narration case only.
+        audio = AudioMixRecipe(original_volume=0.0, narration_asset_id=narration_asset.id)
+        required_capabilities |= {"narrationAudio", "audioMix"}
+    return EditRecipeV2(
+        canvas=Canvas(width=canvas.width, height=canvas.height),
+        assets=list(assets.values()),
+        asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
+        tracks=tracks,
+        text_layers=layers,
+        audio=audio,
+        required_capabilities=required_capabilities,
     )

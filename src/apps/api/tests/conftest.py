@@ -37,6 +37,19 @@ os.environ.setdefault("ALLOWED_ORIGINS", '["http://localhost:3000"]')
 os.environ.setdefault("INTERNAL_API_KEY", "test-internal-key")
 
 
+@pytest.fixture
+def prod_profile(monkeypatch):
+    """Settings as production runs them (see tests/_prod_profile.py).
+
+    Use in any test asserting that something renders on the iPhone in
+    production: defaults-only tests passed twice while the real device failed.
+    """
+
+    from tests._prod_profile import apply_prod_profile  # noqa: PLC0415
+
+    return apply_prod_profile(monkeypatch)
+
+
 @pytest.fixture(scope="module")
 def _build_task_table_lock():
     """Serialize modules that destructively share the build_task table.

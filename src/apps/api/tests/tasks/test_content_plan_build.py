@@ -3122,18 +3122,14 @@ def test_phone_gate_voiceover_dispatches_when_flag_and_capability_verified(
     assert result.reason is None
 
 
-def test_phone_gate_guided_voiceover_always_rejected_regardless_of_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """KRI-132 follow-up: the guided-story narration lane
-    (`GUIDED_VOICEOVER_CONTRACT`) has no phone compiler at all --
-    `compile_phone_guided_plan` rejects its "narration" plan lane
-    unconditionally. Confirm this fails closed at the DISPATCH GATE (before a
-    Job is minted) rather than falling through to `bind_phone_sources` +
-    `_run_phone_guided_job`, which would only fail once the worker tries to
-    compile the (never-implemented) lane -- even with
-    PHONE_NARRATION_RENDERING_ENABLED on, since that flag only covers the
-    separate montage-family (non-guided) voiceover archetype.
+def _guided_voiceover_dispatch_setup(
+    monkeypatch: pytest.MonkeyPatch, *, phone_guided_narration_rendering_enabled: bool
+) -> tuple:
+    """Shared fixture for an approved guided-voiceover proposal on a phone item.
+
+    Every montage-family voiceover flag is fully on; only
+    `phone_guided_narration_rendering_enabled` (the guided-story narration
+    lane's OWN rollout flag) varies between the two tests below.
     """
     from app.services.creator_execution_contract import GUIDED_VOICEOVER_CONTRACT
 
@@ -3159,9 +3155,15 @@ def test_phone_gate_guided_voiceover_always_rejected_regardless_of_flag(
             "context_hash": "context-1",
         },
     }
-    session.execute.return_value = SimpleNamespace(
-        scalars=lambda: SimpleNamespace(all=lambda: [SimpleNamespace(active_plan=active_plan)])
-    )
+    # A MagicMock (not a fixed SimpleNamespace) so the SAME `session.execute`
+    # return value can answer both the `matching_sessions` query below
+    # (`.scalars().all()`) and the later `_item_direction_snapshot` query
+    # (`.scalar_one_or_none()`) -- the dispatched-path test reaches both;
+    # the flag-off test never gets past the first.
+    session.execute.return_value.scalars.return_value.all.return_value = [
+        SimpleNamespace(active_plan=active_plan)
+    ]
+    session.execute.return_value.scalar_one_or_none.return_value = None
     # The item's own `edit_proposal` (unrelated to the guided-voiceover
     # active_plan checked above) is read by BOTH `proposal_generate_error`
     # (earlier) and the exact_attempt/expected_state re-check (later) -- a
@@ -3188,9 +3190,38 @@ def test_phone_gate_guided_voiceover_always_rejected_regardless_of_flag(
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
     monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
     monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", True)
-    # Even with the montage-family flag fully on, guided narration stays blocked.
     monkeypatch.setattr(settings, "phone_narration_rendering_enabled", True)
     monkeypatch.setattr(settings, "phone_render_verified_features", ["narrationAudio"])
+    monkeypatch.setattr(
+        settings,
+        "phone_guided_narration_rendering_enabled",
+        phone_guided_narration_rendering_enabled,
+    )
+    return item, plan, session, creator_strategy, attempt_id
+
+
+def test_phone_gate_guided_voiceover_rejected_when_new_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-132 phone-voiceover-gate follow-up: the guided-story narration lane
+    (`GUIDED_VOICEOVER_CONTRACT`) NOW has a phone compiler
+    (`compile_phone_guided_plan`'s narration branch), gated by its own
+    rollout flag `phone_guided_narration_rendering_enabled` --
+    `phone_guided_narration_supported()` is the single source of truth this
+    dispatch gate, `creator_capabilities.py`'s `CAPABILITY_GUIDED_VOICEOVER`,
+    and the worker's `_run_phone_guided_job` all consult. This test pins the
+    explicit rollback case (flag off): confirm it still fails closed at the
+    DISPATCH GATE (before a Job is minted) rather than falling through to
+    `bind_phone_sources` + `_run_phone_guided_job` -- byte-identical to this
+    lane's original (pre-follow-up) unconditional rejection, even with every
+    OTHER montage-family voiceover flag fully on, since those only cover the
+    separate montage-family (non-guided) voiceover archetype. See
+    `test_phone_gate_guided_voiceover_dispatches_when_supported` for the
+    flag-on path, which is the one that actually renders on the phone today.
+    """
+    item, plan, session, creator_strategy, attempt_id = _guided_voiceover_dispatch_setup(
+        monkeypatch, phone_guided_narration_rendering_enabled=False
+    )
 
     bind_mock = MagicMock(return_value=("bound-source",))
     with (
@@ -3227,3 +3258,60 @@ def test_phone_gate_guided_voiceover_always_rejected_regardless_of_flag(
     assert result.reason == "guided_voiceover_unavailable"
     warning_call = mock_log.warning.call_args
     assert warning_call.kwargs["phone_gate"] == "guided_voiceover_unavailable"
+
+
+def test_phone_gate_guided_voiceover_dispatches_when_supported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-132 phone-voiceover-gate follow-up: an approved guided-voiceover
+    proposal on a phone item dispatches (binds phone sources, mints the Job
+    with a `guided_edit` snapshot carrying the `guided_voiceover_v1` execution
+    contract) once `phone_guided_narration_supported()` holds -- the same
+    approved-proposal requirement (`unapproved_guided`) any other guided phone
+    item is held to still applies; only the unconditional rejection is lifted.
+    """
+    from app.services.creator_execution_contract import GUIDED_VOICEOVER_CONTRACT
+
+    item, plan, session, creator_strategy, attempt_id = _guided_voiceover_dispatch_setup(
+        monkeypatch, phone_guided_narration_rendering_enabled=True
+    )
+    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={})
+    approved_proposal = {
+        "proposal_version": 1,
+        "media_digest": "d" * 64,
+        "snapshot": {"narration": {}, "media": []},
+    }
+
+    bind_mock = MagicMock(return_value=("bound-source",))
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch(
+            "app.services.edit_proposals.validate_approved_proposal_media_sync",
+            return_value=(None, approved_proposal),
+        ),
+        patch(
+            "app.services.creator_execution_contract.narration_matches_item",
+            return_value=True,
+        ),
+        patch("app.services.phone_sources.bind_phone_sources", bind_mock),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            creator_strategy=creator_strategy,
+            creator_guided_attempt_id=attempt_id,
+        )
+
+    bind_mock.assert_called_once()
+    assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
+    assert result.outcome == "dispatched"
+    assert job.assembly_plan["guided_edit"]["execution_contract"] == GUIDED_VOICEOVER_CONTRACT
+    assert job.assembly_plan["guided_edit"]["approved_proposal"] == approved_proposal["snapshot"]

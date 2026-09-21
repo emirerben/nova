@@ -3045,9 +3045,13 @@ async def test_planning_names_phone_media_rejection_honestly(
         (
             {"edit_format": "talking_head"},
             "phone_format_unavailable",
-            "Only Montage videos can render on your iPhone right now, not talking or "
-            "narrated ones. Choose Montage to render on this iPhone. "
-            "No fallback edit was rendered.",
+            # KRI-132 phone-voiceover-gate follow-up: this copy is now
+            # format-agnostic (talking_head itself still has no phone
+            # compiler under any settings combination, so this case's outcome
+            # is unchanged -- only the wording is).
+            "This kind of video can't render on your iPhone right now. Choose a format "
+            "that renders on this iPhone (Montage, or Talking to camera / Narrated "
+            "where available). No fallback edit was rendered.",
         ),
         (
             {"edit_format": "montage", "audio_strategy": "voiceover"},

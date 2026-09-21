@@ -3704,12 +3704,18 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
         GuidedStoryExecutionPlan,
         song_reference_variant_fields,
     )
-    from app.pipeline.phone_guided_plan import compile_phone_guided_plan  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
+        UnsupportedPhonePlan,
+        compile_phone_guided_plan,
+    )
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
         pin_device_request,
     )
-    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_guided_narration_supported,
+        validate_phone_pilot_recipe,
+    )
     from app.services.phone_sources import (  # noqa: PLC0415
         PHONE_SOURCES_FIELD,
         PHONE_VISUALS_FIELD,
@@ -3750,7 +3756,31 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
     )
     if not bindings and not visuals:
         raise ValueError("Phone rendering requires original source bindings or pinned visuals")
-    recipe = compile_phone_guided_plan(plan, bindings, visuals=visuals)
+    # KRI-132 phone-voiceover-gate follow-up: a recorded voiceover pinned onto
+    # this approved plan needs a freshly re-verified device receipt, the same
+    # way the montage-family compiler resolves one via
+    # `_resolve_phone_voiceover_bed` -- never trust `plan.narration`'s
+    # gcs_path/generation alone, since a concurrent edit could have replaced
+    # or cleared the voiceover since approval. The dispatch gate
+    # (`content_plan_build.py`) already checked `phone_guided_narration_
+    # supported()` before minting this Job; the worker rechecks
+    # independently (redelivery, a flag flip mid-flight) exactly like the
+    # dispatch fork's own `phone_render_supported_formats()` recheck a few
+    # lines above this function's call site.
+    narration_bed = None
+    if plan.narration is not None:
+        if not phone_guided_narration_supported():
+            raise UnsupportedPhonePlan(
+                "phone rendering does not yet support guided-story narration",
+                capability="narrationAudio",
+            )
+        narration_bed = _resolve_phone_voiceover_bed(job_id, plan.narration.gcs_path)
+        if narration_bed is None or narration_bed.generation != plan.narration.generation:
+            raise UnsupportedPhonePlan(
+                "the approved voiceover was replaced since approval",
+                capability="narrationAudio",
+            )
+    recipe = compile_phone_guided_plan(plan, bindings, visuals=visuals, narration=narration_bed)
     validate_phone_pilot_recipe(recipe)
     visual_rows = [visual.model_dump(mode="json") for visual in visuals]
     request = make_device_request(
