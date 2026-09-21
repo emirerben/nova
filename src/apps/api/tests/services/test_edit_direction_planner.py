@@ -144,6 +144,82 @@ def test_deterministic_guided_beats_covers_required_media_up_to_schema_limit() -
     }
 
 
+# KRI-126 regression (job 506d2993): the metadata-free fallback used to burn
+# five canned captions ("A few moments, together.", "Details worth
+# noticing.", ...) as `beat.thought` on every recovered guided story, which
+# `guided_story._text_elements` then rendered as unrequested on-screen text.
+# A failed-planner recovery must never put invented copy on screen -- only
+# the (never rendered) `topic` field may stay distinct for internal bookkeeping.
+_KRI126_CANNED_THOUGHTS = {
+    "A few moments, together.",
+    "Details worth noticing.",
+    "One last look.",
+    "A different angle on the moment.",
+    "A final frame to remember.",
+    "The story moves into another moment.",
+    "Another detail adds to the sequence.",
+    "A later moment keeps the story moving.",
+    "One more view sets up the ending.",
+    "The final moment brings the story together.",
+}
+
+
+def test_deterministic_guided_beats_never_burns_generic_thought_copy() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"clip-{index}",
+            gcs_path=f"users/test/clip-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8.0,
+        )
+        for index in range(6)
+    ]
+
+    beats = edit_direction_planner.deterministic_guided_beats(media, 30, pace="balanced")
+
+    assert len(beats) > 1
+    assert all(beat.thought == "" for beat in beats)
+    topics = [beat.topic for beat in beats]
+    assert all(topic for topic in topics)
+    assert len(set(topics)) == len(topics)
+
+
+def test_deterministic_guided_beats_kri126_prod_fixture_has_no_canned_thoughts() -> None:
+    """Exact prod input for job 506d2993 (redacted): 30 clips, 45s target,
+    whose planner attempt fell back to `deterministic_guided_beats`.
+    """
+    import json
+    from pathlib import Path
+
+    fixture_path = (
+        Path(__file__).resolve().parents[1] / "fixtures" / "kri126_thirty_clip_guided_story.json"
+    )
+    fixture = json.loads(fixture_path.read_text())
+    media = [
+        MediaRef(
+            lane=row["lane"],
+            media_id=row["media_id"],
+            gcs_path=f"users/test/{row['media_id']}",
+            generation="1",
+            kind=row["kind"],
+            duration_s=row.get("duration_s"),
+            aspect=row.get("aspect"),
+            analysis=row.get("analysis") or {},
+        )
+        for row in fixture["media"]
+    ]
+
+    beats = edit_direction_planner.deterministic_guided_beats(
+        media, fixture["duration_s"], pace=fixture.get("pace", "balanced")
+    )
+
+    assert beats
+    assert all(beat.thought == "" for beat in beats)
+    assert not _KRI126_CANNED_THOUGHTS & {beat.thought for beat in beats}
+
+
 def _guided_snapshot_media(durations: list[float]) -> list[MediaRef]:
     return [
         MediaRef(

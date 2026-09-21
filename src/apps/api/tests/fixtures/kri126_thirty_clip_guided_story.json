@@ -1,0 +1,849 @@
+{
+ "_comment": "Redacted prod input for KRI-126 (job 506d2993): 30-clip guided_story whose planner fell back to deterministic beats. Media ids, paths and user ids are anonymized; durations, subjects and the degraded analysis shape are verbatim. Spoken-transcript text (stored under on_screen_text for videos) is redacted.",
+ "creator_request": "Continue with 30 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech",
+ "goal": "Open with title over park footage of individuals relaxing; Transition to active sports footage, grouped by sport; Include the creator's speech to camera; End with a sequence of the post-match pub celebration",
+ "direction": "guided_story",
+ "pace": "balanced",
+ "duration_s": 45,
+ "video_reuse_policy": "once",
+ "opening_title": "Emir Olympics London Edition",
+ "closing_title": "post match pub",
+ "montage_audio": {
+  "source_media_ids": [],
+  "preview_source_beds": false,
+  "preserve_source_audio": true
+ },
+ "media": [
+  {
+   "media_id": "clip-01.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 6.7,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group of friends relaxing in a park",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-02.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 0.866667,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "man sitting on grass",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-03.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 2.833333,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group of people posing",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-04.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 11.2,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "people playing football",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-05.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 6.466667,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group of young adults",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-06.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 5.066667,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "people playing soccer",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-07.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 2.533333,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "people walking across a field",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-08.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 4.666667,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group of people playing with balls",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-09.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 4.666667,
+   "aspect": 1.775,
+   "analysis": {
+    "subject": "group of friends relaxing on grass",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-10.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 1.3,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "young woman waving and smiling",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-11.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 6.7,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group of friends on a field",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-12.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 7.333333,
+   "aspect": 1.775,
+   "analysis": {
+    "subject": "people in a park",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-13.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 1.833333,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "two men sitting on grass",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-14.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 2.5,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "person on grass using phone",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-15.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 4.6,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "woman on grass with phone",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-16.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 1.566667,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "people on field",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-17.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 1.933333,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "three young men sitting on grass",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-18.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 2.833333,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group of friends",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-19.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 1.2,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group of men on a field",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-20.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 13.166667,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group of people playing soccer",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-21.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 3.733333,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "players on a football pitch",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-22.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 2.933333,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "people playing soccer",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-23.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 11.3,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "people playing field sport",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-24.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 8.733333,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group playing soccer",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-25.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 2.533333,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "people walking on a field",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-26.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 6.466667,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group of young adults",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-27.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 7.6,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "group playing soccer",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     },
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-28.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 3.4,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "people playing volleyball",
+    "description": "",
+    "on_screen_text": "",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-29.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 1.2,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "woman on volleyball court",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  },
+  {
+   "media_id": "clip-30.mp4",
+   "kind": "video",
+   "lane": "clip",
+   "duration_s": 2.166667,
+   "aspect": 0.5634,
+   "analysis": {
+    "subject": "woman making funny faces",
+    "description": "",
+    "on_screen_text": "(redacted spoken transcript)",
+    "best_moments": [
+     {
+      "end_s": 0.0,
+      "energy": 0.0,
+      "start_s": 0.0,
+      "description": ""
+     }
+    ],
+    "kind_hint": "screenshot",
+    "source": "clip_metadata",
+    "analysis_version": 6
+   }
+  }
+ ]
+}

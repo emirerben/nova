@@ -459,6 +459,10 @@ def save_proposal_draft(
         "status": "draft",
         "draft": snapshot,
         "failure": None,
+        # Every new draft starts unmarked; only the build task re-marks the
+        # one it produced through the deterministic fallback (KRI-126). This
+        # keeps a creator's manual correction from inheriting a stale marker.
+        "planner_fallback": None,
     }
     if clear_approval_mode:
         update["approval_mode"] = None

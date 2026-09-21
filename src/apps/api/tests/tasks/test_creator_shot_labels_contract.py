@@ -637,6 +637,91 @@ def test_barcelona_request_survives_main_creator_to_rendered_text(monkeypatch) -
     assert not GENERIC_FALLBACK_COPY & set(texts)
 
 
+def test_unlabeled_fallback_never_burns_generic_thought_copy(monkeypatch) -> None:
+    """KRI-126 regression (job 506d2993): without shot labels to preserve,
+    the metadata-free fallback (`deterministic_guided_beats`) used to burn
+    the same five canned captions this file guards against for the labeled
+    path onto every beat. A failed-planner recovery must never put
+    unrequested generated copy on screen -- the typed, creator-confirmed
+    opening/closing title still render; only the per-beat `thought` is
+    suppressed.
+    """
+    from app.schemas.edit_proposal import EditProposal
+
+    refs = _refs()
+    clips = [ref for ref in refs if ref.kind == "video"]
+    photos = [ref for ref in refs if ref.kind == "image"]
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(
+        item_id,
+        clip_assignments=[
+            {
+                "media_id": ref.media_id,
+                "gcs_path": ref.gcs_path,
+                "generation": ref.generation,
+                "duration_s": ref.duration_s,
+            }
+            for ref in clips
+        ],
+    )
+    item.edit_proposal = EditProposal(
+        proposal_version=1,
+        generation_attempt_id="attempt-1",
+        status="analyzing",
+        brief=ProposalBrief(
+            direction="guided_story",
+            pace="fast",
+            duration_s=13,
+            creator_request="13-second trailer, no shot labels this time.",
+            media_scope="all",
+            video_reuse_policy="once",
+            opening_title=OPENING_TITLE,
+            opening_title_duration_s=2.0,
+            closing_title=CLOSING_TITLE,
+        ),
+    ).model_dump(mode="json")
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(proposal_build, "_pool_refs", lambda *_a, **_kw: photos)
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda assignments, *_a, **_kw: list(zip(assignments, clips, strict=True)),
+    )
+    monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda *_a, **_kw: (_ for _ in ()).throw(TerminalError("schema: selected 0 sources")),
+    )
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, False
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None and persisted.status == "draft", persisted.failure
+    snapshot = persisted.draft
+    assert snapshot is not None
+    assert snapshot.direction == "guided_story"
+    assert all(beat.thought == "" for beat in snapshot.story_beats)
+    assert not GENERIC_FALLBACK_COPY & {beat.thought for beat in snapshot.story_beats}
+    elements = _compile(snapshot)["text_elements"]
+    ids = [element["id"] for element in elements]
+    texts = [element["text"] for element in elements]
+    assert not any(element_id.startswith("guided-thought-") for element_id in ids)
+    assert OPENING_TITLE in texts
+    assert CLOSING_TITLE in texts
+
+
 def test_label_contract_fits_specialist_beat_limit() -> None:
     # One beat per label plus both title-hold beats must stay inside the guided
     # specialist's output limit; otherwise label drafts fail parsing and quietly

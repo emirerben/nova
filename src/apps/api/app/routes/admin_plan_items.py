@@ -162,6 +162,16 @@ class DraftSummaryPayload(BaseModel):
     duration_s: int
 
 
+class PlannerFallbackPayload(BaseModel):
+    """KRI-126: surfaces the deterministic-fallback marker (never shown to
+    end users). `reason` may contain a truncated model/exception message —
+    admin-only, kept bounded by the source field's own 500-char limit."""
+
+    reason: str
+    direction: str
+    at: datetime
+
+
 class ConversationTurnSummaryPayload(BaseModel):
     """Redacted turn — never the creator's actual typed content."""
 
@@ -184,6 +194,7 @@ class EditProposalDebugPayload(BaseModel):
     last_approved: LastApprovedSummaryPayload | None
     draft: DraftSummaryPayload | None
     conversation: list[ConversationTurnSummaryPayload]
+    planner_fallback: PlannerFallbackPayload | None = None
 
 
 class PlanItemDebugResponse(BaseModel):
@@ -260,6 +271,14 @@ def _edit_proposal_debug_payload(raw: Any) -> EditProposalDebugPayload | None:
             retryable=proposal.failure.retryable,
         )
 
+    planner_fallback = None
+    if proposal.planner_fallback is not None:
+        planner_fallback = PlannerFallbackPayload(
+            reason=proposal.planner_fallback.reason,
+            direction=proposal.planner_fallback.direction,
+            at=proposal.planner_fallback.at,
+        )
+
     return EditProposalDebugPayload(
         status=proposal.status,
         proposal_version=proposal.proposal_version,
@@ -287,6 +306,7 @@ def _edit_proposal_debug_payload(raw: Any) -> EditProposalDebugPayload | None:
             )
             for turn in proposal.conversation
         ],
+        planner_fallback=planner_fallback,
     )
 
 
