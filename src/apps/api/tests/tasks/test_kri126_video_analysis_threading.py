@@ -12,6 +12,11 @@ always "". Every one of 30 prod video analyses showed this exact shape
 These tests pin the fix: `_moment_field` (dict-or-attribute accessor),
 malformed/inverted/zero-length moment dropping, the rebuilt `description`,
 and kind-scoped staleness for the ANALYSIS_VERSION 6 -> 7 bump.
+
+Also covers the ANALYSIS_VERSION 7 -> 8 bump (KRI-127 shared clip
+understanding record): the persisted `understanding` block, the new
+top-level `transcript` key, and the byte-identical `on_screen_text`
+back-compat shape.
 """
 
 from __future__ import annotations
@@ -208,12 +213,99 @@ def test_stored_image_analysis_at_v6_stays_fresh() -> None:
     )
 
 
-def test_stored_video_analysis_at_v7_is_fresh() -> None:
+# ── kind-scoped staleness (ANALYSIS_VERSION 7 -> 8, KRI-127 is video-only) ────
+
+
+def test_stored_video_analysis_at_v7_is_stale() -> None:
+    """v7 -> v8 (KRI-127) is video-only, so a v7 real video analysis is now
+    stale — it predates the shared `understanding` block."""
+    assert ap.analysis_is_stale({"source": "clip_metadata", "analysis_version": 7}, kind="video")
+
+
+def test_stored_image_analysis_at_v7_stays_fresh() -> None:
+    """v8 is video-only; the image floor stays at v6 (unaffected)."""
     assert (
-        ap.analysis_is_stale({"source": "clip_metadata", "analysis_version": 7}, kind="video")
+        ap.analysis_is_stale({"source": "image_metadata", "analysis_version": 7}, kind="image")
         is False
     )
 
 
-def test_analysis_version_is_bumped_to_7() -> None:
-    assert ap.ANALYSIS_VERSION == 7
+def test_stored_video_analysis_at_v8_is_fresh() -> None:
+    assert (
+        ap.analysis_is_stale({"source": "clip_metadata", "analysis_version": 8}, kind="video")
+        is False
+    )
+
+
+def test_analysis_version_is_bumped_to_8() -> None:
+    assert ap.ANALYSIS_VERSION == 8
+
+
+# ── KRI-127: shared `understanding` block + top-level `transcript` key ────────
+
+
+def test_analyze_video_persists_understanding_block(monkeypatch) -> None:
+    """`_analyze_video` must persist a valid `understanding` block built by
+    `understanding_payload`, and add a correctly-named top-level `transcript`
+    key WITHOUT touching the legacy `on_screen_text` back-compat shape."""
+    from app.schemas.clip_understanding import UNDERSTANDING_KEY, ClipUnderstanding
+
+    _patch_video_probe_and_upload(monkeypatch)
+    meta = SimpleNamespace(
+        failed=False,
+        best_moments=[
+            {"start_s": 1.0, "end_s": 4.0, "energy": 7.0, "description": "spike at the net"},
+        ],
+        detected_subject="people playing volleyball",
+        hook_text="watch this rally",
+        transcript="okay so this is the final point " * 20,  # long enough to test capping
+        clip_brands=["Mikasa"],
+        clip_summary="Friends play a volleyball match on a sand court.",
+        setting="outdoor sand volleyball court in a city park",
+        activity="playing volleyball",
+        people_count=6,
+        speaks_to_camera=True,
+        people_note="one man faces the camera and narrates",
+        clip_content_type="action",
+        clip_audio_type="dialogue",
+    )
+    _patch_analyze_clip(monkeypatch, meta)
+
+    analysis, _a, _d, _dims = ap._analyze_video("/tmp/asset.mp4")
+
+    assert analysis is not None
+    assert UNDERSTANDING_KEY in analysis
+    record = ClipUnderstanding.model_validate(analysis[UNDERSTANDING_KEY])
+    assert record.activity == "playing volleyball"
+    assert record.setting == "outdoor sand volleyball court in a city park"
+    assert record.people.count == 6
+    assert record.people.speaks_to_camera is True
+    assert record.speech.has_speech is True
+    assert record.brands == ["Mikasa"]
+    assert record.notable_moments[0].description == "spike at the net"
+
+
+def test_analyze_video_adds_transcript_key_keeps_on_screen_text_byte_identical(
+    monkeypatch,
+) -> None:
+    """New top-level `transcript` key carries the spoken transcript capped at
+    1200 chars; the pre-existing `on_screen_text` key is left exactly as it
+    was pre-KRI-127 (still the spoken transcript, still capped at 400)."""
+    _patch_video_probe_and_upload(monkeypatch)
+    long_transcript = "word " * 400  # 2000 chars, well past both caps
+    meta = SimpleNamespace(
+        failed=False,
+        best_moments=[],
+        detected_subject="",
+        hook_text="",
+        transcript=long_transcript,
+        brands=[],
+    )
+    _patch_analyze_clip(monkeypatch, meta)
+
+    analysis, _a, _d, _dims = ap._analyze_video("/tmp/asset.mp4")
+
+    assert analysis is not None
+    assert analysis["on_screen_text"] == long_transcript[:400]
+    assert analysis["transcript"] == long_transcript[:1200]
+    assert len(analysis["transcript"]) > len(analysis["on_screen_text"])

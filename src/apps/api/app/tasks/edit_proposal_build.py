@@ -43,6 +43,7 @@ from app.schemas.edit_proposal import (
     parse_edit_proposal,
     uses_quick_photo_long_video_timing,
 )
+from app.services.clip_understanding import clip_record
 from app.services.content_plan_persona import load_owned_plan_persona_sync
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.edit_direction_planner import (
@@ -1644,6 +1645,22 @@ def _run_draft_attempt(
             if preflight_analysis_id is not None:
                 publish_preflight_after_commit(preflight_analysis_id)
 
+        def _understanding_fields(ref: MediaRef) -> dict[str, object]:
+            # KRI-127: subject/description/on_screen_text/best_moments above
+            # stay populated from the raw analysis dict exactly as before
+            # (back-compat with existing fixtures); this adds the shared
+            # record's richer, open-vocabulary fields so the planner can
+            # group clips by setting/activity/speech without a new keyword
+            # list per feature request.
+            record = clip_record(ref.analysis, kind=ref.kind)
+            return {
+                "summary": record.summary,
+                "setting": record.setting,
+                "activity": record.activity,
+                "speaks_to_camera": record.speech.to_camera,
+                "transcript": record.speech.transcript,
+            }
+
         agent_media = [
             EditProposalMedia(
                 media_id=ref.media_id,
@@ -1656,6 +1673,7 @@ def _run_draft_attempt(
                 description=str(ref.analysis.get("description") or ""),
                 on_screen_text=str(ref.analysis.get("on_screen_text") or ""),
                 best_moments=list(ref.analysis.get("best_moments") or []),
+                **_understanding_fields(ref),
             )
             for ref in media
         ]

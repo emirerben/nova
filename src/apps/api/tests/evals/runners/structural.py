@@ -319,7 +319,7 @@ def check_clip_metadata(
     if output.hook_score < 0 or output.hook_score > 10:
         failures.append(f"hook_score={output.hook_score} outside [0, 10]")
 
-    # Prompt contract (analyze_clip.txt, 2026-07-11.1): "brands" lists visible
+    # Prompt contract (analyze_clip.txt, 2026-09-21.1): "brands" lists visible
     # brand/mascot identities, [] when none. Empty is always legitimate; the
     # schema validator caps at 10 entries of ≤80 chars, so anything else here
     # means the parse threading regressed.

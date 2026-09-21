@@ -169,6 +169,41 @@ def test_round_trip_get_after_set(fake_redis):
     assert got.hook_score == 8.5
 
 
+def test_round_trip_preserves_kri127_understanding_fields(fake_redis):
+    """KRI-127: ClipMeta gained open-vocabulary fields via
+    dataclasses.asdict()/ClipMeta(**data) -- no field-by-field threading here,
+    but a schema bump (CACHE_SCHEMA_VERSION s2 -> s3) is still required so a
+    pre-existing cache entry from before this PR can't silently supply the
+    defaults for fields it never populated. This pins that a FRESH write
+    (post-bump) round-trips every new field losslessly."""
+    meta = _meta(
+        clip_summary="Two friends grill burgers in a backyard.",
+        setting="backyard patio at dusk",
+        activity="grilling burgers",
+        people_count=2,
+        speaks_to_camera=True,
+        people_note="two men in aprons",
+        clip_brands=["Weber"],
+        clip_composition_note="subject centered, smoke drifting right",
+        clip_content_type="action",
+        clip_audio_type="dialogue",
+    )
+    clip_cache.set_cached_meta("hash1", "ball", meta, creator_id=_CREATOR_ID)
+    got = clip_cache.get_cached_meta("hash1", "ball", creator_id=_CREATOR_ID)
+
+    assert got is not None
+    assert got.clip_summary == "Two friends grill burgers in a backyard."
+    assert got.setting == "backyard patio at dusk"
+    assert got.activity == "grilling burgers"
+    assert got.people_count == 2
+    assert got.speaks_to_camera is True
+    assert got.people_note == "two men in aprons"
+    assert got.clip_brands == ["Weber"]
+    assert got.clip_composition_note == "subject centered, smoke drifting right"
+    assert got.clip_content_type == "action"
+    assert got.clip_audio_type == "dialogue"
+
+
 def test_get_returns_none_on_miss(fake_redis):
     assert clip_cache.get_cached_meta("never-set", "ball", creator_id=_CREATOR_ID) is None
 

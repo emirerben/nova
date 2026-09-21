@@ -37,6 +37,7 @@ from app.models import (
     SoundEffect,
 )
 from app.schemas.edit_proposal import parse_edit_proposal
+from app.services.clip_understanding import clip_record
 from app.services.creator_capabilities import resolve_creator_manifest
 from app.services.edit_proposal_limits import (
     CREATOR_EXECUTION_RECEIPT_LEASE_S,
@@ -112,6 +113,50 @@ def _positive_duration_s(value: object) -> float | None:
     if duration_s is None or duration_s <= 0 or not math.isfinite(duration_s):
         return None
     return duration_s
+
+
+# Per-clip budget for the chat prompt: up to MAX_CREATOR_MEDIA_REFS clips share
+# one MainCreatorAgent call (35s timeout), so every free-text field is capped.
+CHAT_EVIDENCE_TRANSCRIPT_CHARS = 160
+CHAT_EVIDENCE_MAX_MOMENTS = 2
+CHAT_EVIDENCE_FIELD_CHARS = {
+    "subject": 120,
+    "summary": 200,
+    "setting": 120,
+    "activity": 120,
+    "on_screen_text": 120,
+}
+CHAT_EVIDENCE_MOMENT_CHARS = 80
+CHAT_EVIDENCE_PEOPLE_NOTE_CHARS = 80
+
+
+def _chat_evidence(analysis: object, *, kind: str) -> dict[str, Any]:
+    """Compact per-clip AI evidence for the chat agent (KRI-127).
+
+    Routes through the same ``clip_record`` projection the edit planner and
+    the clip matchers use, so the chat agent can never again see a
+    differently-shaped (or effectively empty) subset of the same stored
+    analysis. Trimmed further than the planner's view because this can repeat
+    once per clip for up to ``MAX_CREATOR_MEDIA_REFS`` clips in one prompt:
+    brands carry no clip-identification value for chat (no sponsor/rights
+    decision happens here) and only the first few notable moments are kept.
+    """
+    record = clip_record(analysis if isinstance(analysis, dict) else None, kind=kind)
+    view = record.prompt_view(transcript_chars=CHAT_EVIDENCE_TRANSCRIPT_CHARS)
+    view.pop("brands", None)
+    for key, limit in CHAT_EVIDENCE_FIELD_CHARS.items():
+        if key in view:
+            view[key] = view[key][:limit]
+    people = view.get("people")
+    if isinstance(people, dict) and people.get("note"):
+        people["note"] = people["note"][:CHAT_EVIDENCE_PEOPLE_NOTE_CHARS]
+    moments = view.get("notable_moments")
+    if isinstance(moments, list):
+        view["notable_moments"] = [
+            {**m, "description": m["description"][:CHAT_EVIDENCE_MOMENT_CHARS]}
+            for m in moments[:CHAT_EVIDENCE_MAX_MOMENTS]
+        ]
+    return view
 
 
 def creator_narration_identity(item: PlanItem) -> CreatorNarrationIdentity | None:
@@ -282,14 +327,13 @@ async def resolve_item_creator_context(
         seen.add(media_id)
         user_note = _clean(assignment.get("user_note"), 400)
         duration_s = _positive_duration_s(assignment.get("duration_s"))
+        clip_kind = (
+            assignment.get("kind") if assignment.get("kind") in {"video", "image"} else "video"
+        )
         media_refs.append(
             CreatorMediaRef(
                 media_id=media_id,
-                kind=(
-                    assignment.get("kind")
-                    if assignment.get("kind") in {"video", "image"}
-                    else "video"
-                ),
+                kind=clip_kind,
                 duration_s=duration_s,
                 label=user_note or None,
             )
@@ -297,13 +341,17 @@ async def resolve_item_creator_context(
         media_context.append(
             {
                 "media_id": media_id,
-                "kind": (
-                    assignment.get("kind")
-                    if assignment.get("kind") in {"video", "image"}
-                    else "video"
-                ),
+                "kind": clip_kind,
                 "duration_s": duration_s,
                 "creator_note": user_note or None,
+                # AI evidence is clearly segregated and must never be copied to
+                # on-screen text (also enforced in the main prompt). Populated
+                # once the guided-planning clip analysis lands on this
+                # assignment (app/tasks/edit_proposal_build.py); empty before
+                # that (the raw clip has no other analysis source).
+                "analysis_only_not_copy": _chat_evidence(
+                    assignment.get("analysis"), kind=clip_kind
+                ),
             }
         )
 
@@ -355,11 +403,7 @@ async def resolve_item_creator_context(
             "creator_context": context or None,
             # AI evidence is clearly segregated and must never be copied to
             # on-screen text (also enforced in the main prompt).
-            "analysis_only_not_copy": {
-                key: _clean(analysis.get(key), 400)
-                for key in ("summary", "description", "setting", "activity")
-                if analysis.get(key)
-            },
+            "analysis_only_not_copy": _chat_evidence(analysis, kind=kind),
         }
         if not analysis_ready:
             # Tell the planner the file exists but its evidence is still on

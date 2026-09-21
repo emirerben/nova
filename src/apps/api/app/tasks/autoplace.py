@@ -790,7 +790,13 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
 # Video-only fix — image_metadata.py was never affected, so image analyses at
 # v6 stay fresh (see `_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`); only videos are
 # re-analyzed by the self-healing backfill.
-ANALYSIS_VERSION = 7
+# v8 (KRI-127): `_analyze_video` persists the shared open-vocabulary
+# `understanding` block (app.services.clip_understanding.understanding_payload)
+# and a top-level `transcript` key (the full-length spoken transcript, [:1200],
+# alongside the pre-existing [:400]-capped `on_screen_text` kept byte-identical
+# for back-compat). Video-only — image_metadata.py is untouched, so images
+# stay at the v6 floor (see `_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`).
+ANALYSIS_VERSION = 8
 
 # Per-kind freshness floor. Most version bumps fix/add a field for BOTH kinds,
 # so the common case (a kind missing here, or no kind passed) just compares
@@ -1123,6 +1129,10 @@ def _analyze_video(
             analyze_clip,
             gemini_upload_and_wait,
         )
+        from app.services.clip_understanding import (  # noqa: PLC0415
+            UNDERSTANDING_KEY,
+            understanding_payload,
+        )
 
         file_ref = gemini_upload_and_wait(local_path)
         # A pool analysis belongs to a PlanItem, not a Job.  Passing the item
@@ -1184,10 +1194,18 @@ def _analyze_video(
                 seen_descriptions.add(d)
                 deduped_descriptions.append(d)
         description = " ".join(deduped_descriptions) or str(getattr(meta, "hook_text", "") or "")
+        transcript_text = str(getattr(meta, "transcript", "") or "")
         analysis = {
             "subject": str(getattr(meta, "detected_subject", "") or "")[:200],
             "description": description[:400],
-            "on_screen_text": str(getattr(meta, "transcript", "") or "")[:400],
+            # Back-compat: pre-KRI-127 readers expect the spoken transcript
+            # here, capped at 400 chars. Left byte-identical on purpose -- see
+            # the new top-level `transcript` key below for the longer form.
+            "on_screen_text": transcript_text[:400],
+            # Correctly-named top-level transcript (KRI-127): same spoken
+            # text as `on_screen_text` above, capped longer (1200 chars) since
+            # this key has no legacy readers to stay compatible with.
+            "transcript": transcript_text[:1200],
             # No `kind_hint` here (unlike the image path): the image vocabulary
             # ("screenshot"/"photo"/"diagram"/"document"/"other", see
             # image_metadata.py) has no video-shaped value, and nothing reads
@@ -1207,6 +1225,10 @@ def _analyze_video(
             "video_codec": probe.codec,
             "pix_fmt": probe.pix_fmt,
         }
+        # KRI-127: one shared open-vocabulary understanding record per clip.
+        # `understanding_payload` is getattr-tolerant so a degraded/partial
+        # `meta` still yields a valid (if mostly-empty) block.
+        analysis[UNDERSTANDING_KEY] = understanding_payload(meta, best_moments=best_moments)
         return analysis, aspect, duration, dims
     except SoftTimeLimitExceeded:
         raise

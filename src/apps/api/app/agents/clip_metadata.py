@@ -62,6 +62,38 @@ ClipAudioType = Literal["dialogue", "voiceover", "ambient", "music", "mixed"]
 _CONTENT_TYPES = ("talking_head", "broll", "action", "ambience")
 _AUDIO_TYPES = ("dialogue", "voiceover", "ambient", "music", "mixed")
 
+# Open-vocabulary understanding fields (KRI-127 shared clip understanding record).
+# Free text on purpose — see app/schemas/clip_understanding.py. Lengths are
+# clamped defensively; a drifted/oversized model value must never fail parsing.
+_SUMMARY_LIMIT = 400
+_SETTING_LIMIT = 200
+_ACTIVITY_LIMIT = 200
+_PEOPLE_NOTE_LIMIT = 200
+
+
+def _clean_open_text(value: object, limit: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())[:limit]
+
+
+def _coerce_people_count(value: object) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(99, n))
+
+
+def _coerce_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "1")
+    return bool(value) if value is not None else False
+
 
 class ClipMetadataOutput(BaseModel):
     clip_id: str = ""
@@ -82,6 +114,14 @@ class ClipMetadataOutput(BaseModel):
     # fields stay authoritative and a missing/drifted label can't break parsing.
     content_type: ClipContentType = "broll"
     audio_type: ClipAudioType = "ambient"
+    # Open-vocabulary understanding fields (KRI-127). Free text/plain flags on
+    # purpose -- no enums or keyword lists here (see clip_understanding.py).
+    summary: str = ""
+    setting: str = ""
+    activity: str = ""
+    people_count: int | None = Field(default=None, ge=0, le=99)
+    speaks_to_camera: bool = False
+    people_note: str = ""
 
     @field_validator("brands")
     @classmethod
@@ -105,6 +145,36 @@ class ClipMetadataOutput(BaseModel):
             if n in _AUDIO_TYPES:
                 return n
         return "ambient"
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def _clean_summary(cls, v: object) -> str:
+        return _clean_open_text(v, _SUMMARY_LIMIT)
+
+    @field_validator("setting", mode="before")
+    @classmethod
+    def _clean_setting(cls, v: object) -> str:
+        return _clean_open_text(v, _SETTING_LIMIT)
+
+    @field_validator("activity", mode="before")
+    @classmethod
+    def _clean_activity(cls, v: object) -> str:
+        return _clean_open_text(v, _ACTIVITY_LIMIT)
+
+    @field_validator("people_note", mode="before")
+    @classmethod
+    def _clean_people_note(cls, v: object) -> str:
+        return _clean_open_text(v, _PEOPLE_NOTE_LIMIT)
+
+    @field_validator("people_count", mode="before")
+    @classmethod
+    def _clean_people_count(cls, v: object) -> int | None:
+        return _coerce_people_count(v)
+
+    @field_validator("speaks_to_camera", mode="before")
+    @classmethod
+    def _clean_speaks_to_camera(cls, v: object) -> bool:
+        return _coerce_bool(v)
 
 
 # ── Domain-specific post-filter (lifted verbatim from gemini_analyzer.py) ────
@@ -294,7 +364,12 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # engine), layered on the composition fields above. New fields default +
         # coerce, so a hook_score regression here is attributable; D4 eval gate
         # compares hook_score against the prior baseline before merge.
-        prompt_version="2026-07-11.1",
+        # 2026-09-21.1 (KRI-127) — added the open-vocabulary understanding fields
+        # (summary/setting/activity/people_count/speaks_to_camera/people_note)
+        # that feed app.services.clip_understanding.understanding_payload. Free
+        # text/flags only, all defaulted + length-clamped, so a missing/drifted
+        # value never breaks parsing.
+        prompt_version="2026-09-21.1",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
@@ -469,6 +544,16 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
                 # parse and never falsely promotes a clip to the talking-head spine.
                 content_type=data.get("content_type"),
                 audio_type=data.get("audio_type"),
+                # Open-vocabulary understanding fields (KRI-127) — same
+                # field-by-field threading rule as above: pass raw values, the
+                # schema's before-validators clean/clamp/coerce them so a
+                # missing or drifted value can't break parsing.
+                summary=data.get("summary"),
+                setting=data.get("setting"),
+                activity=data.get("activity"),
+                people_count=data.get("people_count"),
+                speaks_to_camera=data.get("speaks_to_camera"),
+                people_note=data.get("people_note"),
             )
         except ValidationError as exc:
             raise SchemaError(f"clip_metadata: output validation — {exc}") from exc
