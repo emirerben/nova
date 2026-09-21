@@ -24,6 +24,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.sfx_intent import (
@@ -347,7 +348,12 @@ class CreativeStrategy(_CreatorModel):
     )
     # KRI-127 (flag CLIP_INTENTS_ENABLED). Both default to None so stored
     # strategies and every exclude_none hash stay byte-identical when unused.
-    clip_intents: list[ClipIntent] | None = Field(
+    # SkipJsonSchema keeps both OUT of every derived JSON schema: the Kria
+    # `apply_strategy` tool builds its argument schema from this model, and a
+    # model that saw an inert `clip_intents` there could route a sport-label
+    # request into it and lose the label while the flag is off. The creator
+    # prompt teaches the shape in prose, only when the flag is on.
+    clip_intents: SkipJsonSchema[list[ClipIntent] | None] = Field(
         default=None,
         max_length=MAX_CLIP_INTENTS,
         description=(
@@ -356,9 +362,10 @@ class CreativeStrategy(_CreatorModel):
             "Carries no per-clip answers; the server resolves those."
         ),
     )
-    # Server-owned. Never trusted from model output: the route overwrites it
-    # with the resolver's result (assignments, evidence, grounding).
-    resolved_clip_intents: list[ResolvedClipIntent] | None = Field(
+    # Server-owned. Never trusted from model output: every entry point that
+    # accepts a model-authored strategy clears it; the creator route then sets
+    # it from the resolver's result (assignments, evidence, grounding).
+    resolved_clip_intents: SkipJsonSchema[list[ResolvedClipIntent] | None] = Field(
         default=None, max_length=MAX_CLIP_INTENTS
     )
 
@@ -490,6 +497,35 @@ class CreativeStrategy(_CreatorModel):
         """Compatibility accessor for callers that used the early v1 draft."""
 
         return self.pacing
+
+
+def legacy_clip_intents(strategy: CreativeStrategy) -> list[ClipIntent]:
+    """Read-time only: map an old sport-labels-shaped strategy onto KRI-127.
+
+    A strategy that already carries ``clip_intents`` owns the generic path
+    already, so this returns an empty list for it (never mutates or merges).
+    Otherwise, a strategy whose coded fields still ask for the sport being
+    played (``sport_labels`` or ``context_label.kind == "sport"``) -- for
+    example one restored by the refresh-pin path from a session that
+    predates the flag -- maps onto one generic label intent so it keeps
+    reaching the resolver once ``clip_intents_enabled`` is on. This never
+    writes back to the stored strategy; callers decide whether to use the
+    result for one turn.
+    """
+
+    if strategy.clip_intents:
+        return []
+    if strategy.sport_labels or (
+        strategy.context_label is not None and strategy.context_label.kind == "sport"
+    ):
+        return [
+            ClipIntent(
+                intent_id="legacy-sport",
+                op="label",
+                attribute="the sport being played in the clip",
+            )
+        ]
+    return []
 
 
 class AskUser(_CreatorModel):
@@ -1212,6 +1248,7 @@ __all__ = [
     "MixedMediaTimingProfile",
     "DispatchRenderCommand",
     "DraftGuidedProposalCommand",
+    "legacy_clip_intents",
     "ProposeStrategy",
     "ResolvedCreatorManifest",
     "ReviewDecision",

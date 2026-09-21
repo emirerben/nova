@@ -849,6 +849,21 @@ class EditProposalSnapshot(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    # KRI-127 (flag CLIP_INTENTS_ENABLED): creator intents already resolved to
+    # clips by the chat turn, carried through to the render worker so
+    # `_guided_execution_plan.materialize_context_labels` can re-verify them at
+    # the grounding fence (`app.schemas.clip_intents.ground_label`) before any
+    # value reaches pixels. Same name/shape as `ProposalBrief.clip_intents` so
+    # a brief's dump validates straight through; `None` (every snapshot before
+    # this field existed, and every snapshot while the flag is off) is omitted
+    # from serialization so stored snapshots and approval hashes stay
+    # byte-identical. Server-owned like `ProposalBrief.resolved_clip_intents`:
+    # never trusted verbatim by the render worker regardless of this field.
+    clip_intents: list[ResolvedClipIntent] | None = Field(
+        default=None,
+        max_length=MAX_CLIP_INTENTS,
+        exclude_if=lambda value: value is None,
+    )
 
     @field_validator("shot_labels", mode="before")
     @classmethod

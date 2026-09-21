@@ -1,0 +1,16 @@
+{
+  "agent": "nova.video.clip_question",
+  "prompt_version": "2026-09-21.2",
+  "input": {
+    "file_uri": "files/kri127-eval-fixture-clip-2",
+    "file_mime": "video/mp4",
+    "question": "What dish is on the plate?"
+  },
+  "raw_text": "{\"answer\": \"unknown\", \"confidence\": 0.1, \"evidence\": \"\"}",
+  "output": {"answer": "", "confidence": 0.0, "evidence": ""},
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_empty": true,
+    "case": "The clip genuinely does not show enough to answer -- the model says unknown rather than guessing a dish name, and parse() normalizes it to an empty answer with zero confidence."
+  }
+}

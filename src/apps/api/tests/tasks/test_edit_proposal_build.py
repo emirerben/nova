@@ -1230,6 +1230,61 @@ def test_initial_draft_preserves_fractional_agent_output_through_approval(monkey
     validate_proposal_timing(persisted.last_approved.snapshot)
 
 
+def test_clip_intents_reach_the_planner_only_when_the_flag_is_enabled(monkeypatch) -> None:
+    """KRI-127 Lane P: brief.clip_intents is gated by settings.clip_intents_enabled
+    at the call site in _run_draft_attempt, not inside the agent itself."""
+
+    from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
+
+    intent = ResolvedClipIntent(
+        intent_id="i1",
+        op="include",
+        attribute="talking to camera",
+        assignments=[
+            ClipAssignment(media_id=str(_PROD_CLIP_ASSIGNMENT["media_id"]), confidence=0.9)
+        ],
+    )
+
+    def _run_with_flag(flag: bool) -> object | None:
+        from app.config import settings as app_settings
+
+        item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+        proposal = parse_edit_proposal(item.edit_proposal)
+        proposal.brief.clip_intents = [intent]
+        item.edit_proposal = proposal.model_dump(mode="json")
+        seen: dict[str, object] = {}
+
+        def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+            seen["clip_intents"] = agent_input.clip_intents
+            return agent.parse(
+                json.dumps(
+                    {
+                        "title": "T",
+                        "duration_s": 6,
+                        "story_beats": [
+                            {
+                                "topic": "Topic",
+                                "thought": "A visible detail worth noting.",
+                                "media_ids": [str(_PROD_CLIP_ASSIGNMENT["media_id"])],
+                                "duration_s": 6,
+                            }
+                        ],
+                    }
+                ),
+                agent_input,
+            )
+
+        monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+        monkeypatch.setattr(app_settings, "clip_intents_enabled", flag)
+        proposal_build._run_draft_attempt(
+            SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=False
+        )
+        return seen.get("clip_intents")
+
+    assert _run_with_flag(False) is None
+    assert _run_with_flag(True) == [intent]
+
+
 def test_agent_media_carries_shared_understanding_fields_for_new_style_analysis(
     monkeypatch,
 ) -> None:

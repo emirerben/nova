@@ -1,0 +1,15 @@
+{
+  "agent": "nova.video.clip_question",
+  "prompt_version": "2026-09-21.2",
+  "input": {
+    "file_uri": "files/kri127-eval-fixture-clip",
+    "file_mime": "video/mp4",
+    "question": "What sport is being played?"
+  },
+  "raw_text": "{\"answer\": \"Volleyball\", \"confidence\": 0.92, \"evidence\": \"net visible, player spikes the ball\"}",
+  "output": {"answer": "Volleyball", "confidence": 0.92, "evidence": "net visible, player spikes the ball"},
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Confident, specific answer grounded in what's visible in the clip."
+  }
+}

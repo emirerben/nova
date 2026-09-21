@@ -21,6 +21,7 @@ from app.agents._schemas.creator_agent import (
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
+from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MontageCadenceConstraint,
@@ -32,7 +33,39 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-21-v28"
+# v28 -> v29: added the flag-gated KRI-127 clip_intents section (see
+# `_CLIP_INTENTS_PROMPT_SECTION` below). `settings.clip_intents_enabled=False`
+# renders the identical v28 prompt text byte-for-byte (the new template slot
+# renders to an empty string on the same blank line it replaced) -- pinned by
+# `test_main_creator_prompt_flag_off_is_byte_identical_to_pre_kri127`. There is
+# no repo precedent for a second, flag-conditional prompt_version, so this is a
+# single bump covering both prompt states.
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-21-v29"
+
+# KRI-127 (flag `clip_intents_enabled`). Kept out of prompts/main_creator.txt's
+# unconditional JSON envelope so a flag-off render never differs by even one
+# example line; only ever substituted into the one optional template slot.
+_CLIP_INTENTS_PROMPT_SECTION = """
+OPEN-VOCABULARY CLIP INTENTS
+When the creator asks to label, name, group, order, or include clips by ANY attribute they
+describe in their own words -- not only a coded sport/participant/score field -- add
+`clip_intents` to `strategy`: a list of at most 6 objects, each
+{"intent_id": "short-slug", "op": "label|group|order|include", "attribute": "the creator's
+described attribute, in your own words", "creator_text": "the creator's exact on-screen
+words for this intent, or null", "position": "first|last (only for op=\\"order\\"), else
+null"}. Examples this covers (diverse; treat every similarly-shaped request the same way,
+not only these): "put the name of the dish on each food clip" (label), "group these by
+city" (group), "move the clips where nobody is on screen to the end" (order, position
+"last"), "only use the clips with my dog in them" (include), "put my product's name under
+the unboxing shots" (label). Prefer `clip_intents` over `sport_labels`/`context_label` for
+any such request: when you use `clip_intents`, leave `sport_labels` false and
+`context_label` null. Never put a per-clip answer, a media id, or label text you invented
+into `clip_intents` -- the server matches clips to the described attribute and verifies any
+on-screen value against the footage before it can render. `creator_text` may ONLY be the
+creator's own exact written words for that intent, copied verbatim; never your paraphrase
+or an inference from clip metadata. `analysis_only_not_copy` evidence may inform which
+owned clips an attribute is about, but you never author the label text yourself.
+""".strip("\n")
 
 
 class MainCreatorInput(BaseModel):
@@ -93,6 +126,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             conversation=json.dumps(input.conversation, ensure_ascii=False),
             creator_request=input.creator_request or input.user_message,
             user_message=input.user_message,
+            # Renders to "" (flag off) on the one blank template line it
+            # occupies, so the rest of the prompt is untouched byte-for-byte.
+            clip_intents_section=(
+                _CLIP_INTENTS_PROMPT_SECTION if settings.clip_intents_enabled else ""
+            ),
         )
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002

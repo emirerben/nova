@@ -37,6 +37,7 @@ from app.models import (
     SoundEffect,
 )
 from app.schemas.edit_proposal import parse_edit_proposal
+from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
 from app.services.creator_capabilities import resolve_creator_manifest
 from app.services.edit_proposal_limits import (
@@ -523,6 +524,94 @@ async def resolve_item_creator_context(
         ),
     )
     return manifest, media_context
+
+
+async def load_intent_clips_for_item(
+    db: AsyncSession, item: PlanItem, persona: Persona
+) -> list[IntentClip]:
+    """Per-media identity + raw analysis/storage identity for KRI-127 clip intents.
+
+    ``resolve_item_creator_context`` deliberately exposes only a trimmed
+    ``analysis_only_not_copy`` evidence view to the model prompt, and never
+    the storage identity a vision re-query would need. This mirrors that
+    function's media_id assignment (clip_assignments first, then ready
+    ``PlanItemAsset`` pool rows, then the legacy ``clip_gcs_paths`` fallback)
+    so a clip-intent resolution always targets the same identity the model
+    was shown, while carrying the FULL stored analysis dict and gcs_path the
+    resolver needs.
+    """
+
+    clips: list[IntentClip] = []
+    seen: set[str] = set()
+    for index, assignment in enumerate((item.clip_assignments or [])[:MAX_CREATOR_MEDIA_REFS]):
+        if not isinstance(assignment, dict):
+            continue
+        media_id = _clean(assignment.get("media_id"), 160) or f"clip-{index + 1}"
+        if media_id in seen:
+            continue
+        seen.add(media_id)
+        clip_kind = (
+            assignment.get("kind") if assignment.get("kind") in {"video", "image"} else "video"
+        )
+        analysis = assignment.get("analysis")
+        clips.append(
+            IntentClip(
+                media_id=media_id,
+                kind=clip_kind,
+                analysis=analysis if isinstance(analysis, dict) else None,
+                gcs_path=_clean(assignment.get("gcs_path"), 512) or None,
+                asset_id=None,
+            )
+        )
+
+    if len(clips) < MAX_CREATOR_MEDIA_REFS:
+        assets = (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == persona.user_id,
+                    PlanItemAsset.status.in_(CREATOR_VISIBLE_ASSET_STATES),
+                    PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                )
+                .order_by(PlanItemAsset.created_at)
+                .limit(50)
+            )
+        ).scalars()
+        for asset in assets:
+            if len(clips) >= MAX_CREATOR_MEDIA_REFS:
+                break
+            media_id = f"asset-{asset.id}"
+            if media_id in seen:
+                continue
+            seen.add(media_id)
+            kind = asset.kind if asset.kind in {"video", "image"} else "image"
+            analysis_ready = getattr(asset, "status", "ready") == "ready"
+            analysis = (
+                asset.analysis if analysis_ready and isinstance(asset.analysis, dict) else None
+            )
+            clips.append(
+                IntentClip(
+                    media_id=media_id,
+                    kind=kind,
+                    analysis=analysis,
+                    gcs_path=asset.gcs_path,
+                    asset_id=str(asset.id),
+                )
+            )
+
+    if not clips:
+        for index, path in enumerate((item.clip_gcs_paths or [])[:MAX_CREATOR_MEDIA_REFS]):
+            clips.append(
+                IntentClip(
+                    media_id=f"legacy-clip-{index + 1}",
+                    kind="video",
+                    analysis=None,
+                    gcs_path=path or None,
+                    asset_id=None,
+                )
+            )
+    return clips
 
 
 async def append_event(

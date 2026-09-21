@@ -1,0 +1,107 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-09-21",
+  "input": {
+    "creator_request": "Name the dish on each food clip",
+    "intents": [
+      {
+        "intent_id": "i_dish",
+        "op": "label",
+        "attribute": "the dish on each food clip",
+        "creator_text": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "plate of pasta",
+          "summary": "A close-up shot of a steaming plate of spaghetti carbonara being twirled onto a fork.",
+          "setting": "restaurant table",
+          "activity": "eating pasta"
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "street food stall",
+          "summary": "A vendor grills skewers of chicken satay over open coals at a night market stall.",
+          "setting": "outdoor night market",
+          "activity": "cooking street food"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "bowl of soup",
+          "summary": "A person is served a large bowl of ramen with a soft-boiled egg and pork slices.",
+          "setting": "ramen shop counter",
+          "activity": "eating ramen"
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "video",
+        "record": {
+          "subject": "group of friends walking",
+          "summary": "A group of friends walk down a busy sidewalk chatting, no food visible.",
+          "setting": "city sidewalk",
+          "activity": "walking and talking"
+        }
+      },
+      {
+        "alias": "m005",
+        "kind": "video",
+        "record": {
+          "subject": "plate of unidentified food",
+          "summary": "A close-up of a plate with a sauce-covered dish, hard to make out the ingredients from this angle.",
+          "setting": "dim restaurant interior",
+          "activity": "eating a meal"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"i_dish\", \"assignments\": [{\"media\": \"m001\", \"value\": \"Pasta\", \"evidence\": \"steaming plate of spaghetti carbonara\", \"confidence\": 0.9}, {\"media\": \"m002\", \"value\": \"Satay\", \"evidence\": \"grills skewers of chicken satay\", \"confidence\": 0.9}, {\"media\": \"m003\", \"value\": \"Ramen\", \"evidence\": \"large bowl of ramen\", \"confidence\": 0.9}], \"needs_vision\": [{\"media\": \"m005\", \"question\": \"What dish is on the plate?\"}]}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i_dish",
+        "assignments": [
+          {
+            "media": "m001",
+            "value": "Pasta",
+            "evidence": "steaming plate of spaghetti carbonara",
+            "confidence": 0.9
+          },
+          {
+            "media": "m002",
+            "value": "Satay",
+            "evidence": "grills skewers of chicken satay",
+            "confidence": 0.9
+          },
+          {
+            "media": "m003",
+            "value": "Ramen",
+            "evidence": "large bowl of ramen",
+            "confidence": 0.9
+          }
+        ],
+        "needs_vision": [
+          {
+            "media": "m005",
+            "question": "What dish is on the plate?"
+          }
+        ],
+        "question": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Never-coded-for open-vocabulary request: 'name the dish on each food clip'. No dish enum exists anywhere in the codebase -- the same label op + record-grounding rule handles it. m004 has no food at all and is correctly left out entirely; m005's record is too vague to name the dish and goes to needs_vision instead of a guess."
+  }
+}

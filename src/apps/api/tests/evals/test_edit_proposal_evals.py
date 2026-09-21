@@ -71,6 +71,57 @@ def test_edit_proposal_eval(
         # confirmed labels, in order, live or replay (prod job ac795019).
         labeled = [beat["thought"] for beat in result.output["story_beats"] if beat["thought"]]
         assert labeled == shot_labels
+    clip_intents = fixture.input.get("clip_intents")
+    if clip_intents:
+        # KRI-127 Lane P: resolved clip intents are binding constraints.
+        # EditProposalAgent.parse() already enforces group/order/include
+        # structurally (app/agents/edit_proposal.py::_validate_clip_intents),
+        # so a passing run_eval() above is the primary signal -- these pin the
+        # concrete shape too, so a future prompt regression that satisfies
+        # parse()'s looser checks by accident (e.g. the "first" media landing
+        # in beat 2 instead of beat 1 while still passing structurally) still
+        # fails visibly here.
+        beats = result.output["story_beats"]
+        media_id_positions: dict[str, int] = {}
+        for index, beat in enumerate(beats):
+            for media_id in beat["media_ids"]:
+                media_id_positions[media_id] = index
+        for intent in clip_intents:
+            if intent.get("status") != "resolved":
+                continue
+            ids = [a["media_id"] for a in intent["assignments"]]
+            if intent["op"] == "include":
+                assert all(media_id in media_id_positions for media_id in ids)
+            elif intent["op"] == "group":
+                positions = sorted(
+                    {media_id_positions[mid] for mid in ids if mid in media_id_positions}
+                )
+                assert positions, f"group media {ids} missing from the plan"
+                assert positions[-1] - positions[0] + 1 == len(positions), (
+                    "group media must land in one beat or consecutive beats"
+                )
+            elif intent["op"] == "order" and intent.get("position") == "first":
+                first_positions = {
+                    media_id_positions[mid] for mid in ids if mid in media_id_positions
+                }
+                other_positions = {pos for mid, pos in media_id_positions.items() if mid not in ids}
+                if first_positions and other_positions:
+                    assert max(first_positions) <= min(other_positions)
+            elif intent["op"] == "order" and intent.get("position") == "last":
+                last_positions = {
+                    media_id_positions[mid] for mid in ids if mid in media_id_positions
+                }
+                other_positions = {pos for mid, pos in media_id_positions.items() if mid not in ids}
+                if last_positions and other_positions:
+                    assert min(last_positions) >= max(other_positions)
+            elif intent["op"] == "label":
+                # Labels are rendered by another lane -- the planner must
+                # never turn a label value into a beat's own thought text.
+                for assignment in intent["assignments"]:
+                    value = assignment.get("value")
+                    if not value:
+                        continue
+                    assert all(beat["thought"].strip() != value for beat in beats)
     if eval_mode == "replay":
         # Golden cassettes pin the intended chapter vocabulary. Live outputs are
         # allowed natural synonyms; optional replay judging scores semantic coverage.

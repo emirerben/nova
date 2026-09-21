@@ -1,0 +1,17 @@
+Answer ONE short, specific question about this clip, using ONLY what is visible or audible in it.
+
+Question: $question
+
+Rules:
+- Answer from what you can actually see/hear in THIS clip. Never guess, and never answer from general knowledge about what's typical — if you cannot tell, say so.
+- If you cannot confidently answer from this clip, set "answer" to the literal string "unknown" rather than making something up.
+- "answer" MUST be a short noun phrase, 3 words or fewer — never a full sentence.
+- If the question asks for "yes" or "no", "answer" MUST be exactly "yes", "no", or "unknown". Read negations in the question carefully (for "people NOT doing X", answer "yes" only when nobody is doing X).
+- "confidence" is your honest belief the answer is correct, 0.0-1.0. An "unknown" answer should carry a low confidence.
+- "evidence" is one short phrase describing what you actually saw/heard that supports the answer (empty string if the answer is "unknown").
+
+Return ONLY this JSON object. No markdown fences, no prose, no commentary.
+
+```
+{"answer": "<short noun phrase, or \"unknown\">", "confidence": <float 0.0-1.0>, "evidence": "<short phrase>"}
+```
