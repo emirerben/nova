@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.98.0] - 2026-09-21
+
+### Changed
+- test(api): use the real VideoProbe in the KRI-126 analysis tests (main CI is red since #1104) (#1109) <!-- release-pr: 1109 -->
+
 ## [0.76.97.0] - 2026-09-21
 
 ### Changed
