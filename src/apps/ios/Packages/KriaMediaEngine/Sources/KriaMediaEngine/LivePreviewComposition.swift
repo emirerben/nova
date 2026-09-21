@@ -253,11 +253,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                     fadeIn: fill.fadeIn, fadeOut: fill.fadeOut), visualOrder: fill.order))
         }
         let total = TimelineMath.totalDuration(of: next)
-        let boundaries = Set([0, total] + layers.flatMap { [$0.start, $0.end] }).sorted()
-        replacement.instructions = zip(boundaries, boundaries.dropFirst()).map { start, end in
-            RecipeVideoInstruction(timeRange: CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 60_000),
-                end: CMTime(seconds: end, preferredTimescale: 60_000)),
-                layers: layers.filter { $0.start < end && $0.end > start }, text: painted, canvas: current.renderSize,
+        replacement.instructions = RecipeInstructionTiming.tiledRanges(total: total, layers: layers).map { range, active in
+            RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
                 cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore)
         }
         let mix = AVMutableAudioMix()

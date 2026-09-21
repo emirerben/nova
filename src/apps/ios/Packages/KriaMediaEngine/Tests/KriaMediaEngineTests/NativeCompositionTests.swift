@@ -71,6 +71,119 @@ final class NativeCompositionTests: XCTestCase {
         _ = try await generator.image(at: CMTime(seconds: max(0, claimedDuration - 0.01), preferredTimescale: 600)).image
     }
 
+    /// Hard cuts whose ends are computed (timelineStart + duration) while the
+    /// next start is a server literal can differ by one ulp: 0.1 + 0.2 is
+    /// 0.30000000000000004, not 0.3. Both Doubles survived the boundary Set
+    /// and rounded to the same CMTime, producing a zero-length instruction.
+    /// AVFoundation rejects such a video composition: AVPlayer played audio
+    /// over a permanently black picture and never called the compositor,
+    /// while the lenient AVAssetImageGenerator scrub path still rendered.
+    @MainActor func testHardCutsOneUlpApartNeverProduceAZeroLengthInstruction() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = try await makeVideo(directory: directory, name: "cuts", color: CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        XCTAssertNotEqual(0.1 + 0.2, 0.3, "the fixture relies on this floating-point identity")
+        let recipe = EditRecipe(canvas: Canvas(width: 96, height: 160),
+            assets: [MediaAsset(id: "source", relativePath: "source.mp4")],
+            tracks: [TimelineTrack(id: "video", kind: .video, clips: [
+                TimelineClip(id: "a", sourceAssetID: "source", sourceDuration: 0.1, timelineStart: 0),
+                TimelineClip(id: "b", sourceAssetID: "source", sourceDuration: 0.2, timelineStart: 0.1),
+                TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 0.3, timelineStart: 0.3),
+            ])])
+        let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["source": url])
+        let composition = try XCTUnwrap(preview.playerItem.videoComposition)
+        var cursor = CMTime.zero
+        for instruction in composition.instructions {
+            XCTAssertEqual(instruction.timeRange.start, cursor, "instructions must tile without gaps or overlaps")
+            XCTAssertGreaterThan(instruction.timeRange.duration, .zero, "a zero-length instruction invalidates the whole composition")
+            cursor = instruction.timeRange.end
+        }
+        XCTAssertEqual(composition.instructions.count, 3)
+        let asset = preview.playerItem.asset
+        let valid = try await composition.isValid(for: asset, timeRange: CMTimeRange(start: .zero, duration: try await asset.load(.duration)), validationDelegate: nil)
+        XCTAssertTrue(valid, "AVPlayer silently renders black for an invalid video composition")
+    }
+
+    /// A recipe can claim a hair more source than the track has (KRI-99 clamps the insert). The
+    /// time the clamp removed still belongs to that clip's slot; left unfilled it rendered as
+    /// black frames at the cut, in the editor and in the exported file (KRI-126 follow-up: six
+    /// black frames across four cuts of a 60 s montage).
+    @MainActor func testSourceShorterThanItsSlotHoldsTheLastFrameInsteadOfFlashingBlack() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let red = try await makeVideo(directory: directory, name: "red", color: CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        let blue = try await makeVideo(directory: directory, name: "blue", color: CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        let redTracks = try await AVURLAsset(url: red).loadTracks(withMediaType: .video)
+        let actual = try await XCTUnwrap(redTracks.first).load(.timeRange).duration.seconds
+        let claimed = actual + 2.0 / 30  // the slot is two frames longer than the real source
+        let recipe = EditRecipe(canvas: Canvas(width: 96, height: 160),
+            assets: [MediaAsset(id: "red", relativePath: "red.mp4"), MediaAsset(id: "blue", relativePath: "blue.mp4")],
+            tracks: [TimelineTrack(id: "video", kind: .video, clips: [
+                TimelineClip(id: "a", sourceAssetID: "red", sourceDuration: claimed, timelineStart: 0),
+                TimelineClip(id: "b", sourceAssetID: "blue", sourceDuration: 0.5, timelineStart: claimed),
+            ])])
+        let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["red": red, "blue": blue])
+        let generator = AVAssetImageGenerator(asset: preview.playerItem.asset)
+        generator.videoComposition = preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        var frame = 0
+        while Double(frame) / 30 < claimed + 0.2 {
+            let time = CMTime(value: Int64(frame), timescale: 30)
+            let pixels = rgba(try await generator.image(at: time).image)
+            let brightest = max(pixels[0], pixels[1], pixels[2])
+            XCTAssertGreaterThan(brightest, 100, "black frame at \(String(format: "%.3f", time.seconds)) s")
+            frame += 1
+        }
+    }
+
+    /// The render compiler derives a hold as `outputDuration - movingDuration`, which is often
+    /// floating-point residue (4.4e-16 s) rather than zero. The composer used to insert a
+    /// one-frame tail for it; scaling that tail to a zero-length target is a no-op, so the tail
+    /// stayed on the reused track and was pushed past the end of the timeline. The asset then
+    /// outlasted the instructions and a LIVE AVPlayer rendered no video at all: audio over a
+    /// black picture, item status healthy, no error (KRI-126 follow-up, physical iPhone).
+    /// AVAssetImageGenerator and the export reader tolerate that shape, which is why every
+    /// existing test passed; this one drives a real player.
+    @MainActor func testResidueHoldStillPlaysVideoThroughALivePlayer() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = try await makeVideo(directory: directory, name: "live", color: CGColor(red: 0, green: 1, blue: 1, alpha: 1))
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: url)
+        let manifest = try RenderAssetManifest(assets: [RenderAssetReference(id: "source", fingerprint: RenderFingerprint(fingerprint), source: .original(mediaID: "source"))])
+        let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160),
+            assets: [MediaAsset(id: "source", relativePath: "source", fingerprint: fingerprint)],
+            tracks: [TimelineTrack(id: "video", kind: .video, clips: [
+                TimelineClip(id: "a", sourceAssetID: "source", sourceDuration: 0.4, timelineStart: 0),
+                TimelineClip(id: "b", sourceAssetID: "source", sourceDuration: 0.4, timelineStart: 0.4, holdDuration: 4.4e-16),
+                TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 0.4, timelineStart: 0.8),
+            ])], assetManifest: manifest)
+        let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["source": url])
+        let item = preview.playerItem
+        let composition = try XCTUnwrap(item.videoComposition)
+        let assetDuration = try await item.asset.load(.duration)
+        XCTAssertEqual(assetDuration.seconds, 1.2, accuracy: 0.001, "a residue hold must not leave a stray tail on the track")
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(composition.instructions.last).timeRange.end, assetDuration,
+            "instructions must cover the whole asset or AVPlayer renders nothing")
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        item.add(output)
+        let player = AVPlayer(playerItem: item)
+        player.isMuted = true
+        player.play()
+        var frames = 0
+        for _ in 0..<60 where frames == 0 {
+            try await Task.sleep(for: .milliseconds(50))
+            let time = item.currentTime()
+            if output.hasNewPixelBuffer(forItemTime: time), output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) != nil { frames += 1 }
+        }
+        player.pause()
+        XCTAssertNotEqual(item.status, .failed)
+        XCTAssertGreaterThan(frames, 0, "the live player advanced without producing a single video frame")
+    }
+
     @MainActor func testLongStoryDecodesWithMoreThan64MBOfTimedText() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

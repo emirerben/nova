@@ -82,6 +82,23 @@ struct RecipeTextLayer: @unchecked Sendable {
     }
 }
 
+/// Instruction time ranges for a set of layers, tiled on the composition's 1/60000 s clock.
+///
+/// Boundaries are de-duplicated AFTER quantizing to CMTime, never as Doubles: a hard cut's end is
+/// computed (`timelineStart + duration`) while the next clip's start is a server literal, and the
+/// two can differ by one ulp (44.132999999999996 vs 44.133). Both Doubles used to survive the
+/// boundary Set and round to the same CMTime, which produced a zero-length instruction.
+enum RecipeInstructionTiming {
+    static func time(_ seconds: Double) -> CMTime { CMTime(value: Int64((seconds * 60_000).rounded()), timescale: 60_000) }
+    static func tiledRanges(total: Double, layers: [RecipeVideoLayer]) -> [(range: CMTimeRange, layers: [RecipeVideoLayer])] {
+        let spans = layers.map { (layer: $0, start: time($0.start), end: time($0.end)) }
+        let boundaries = Set([CMTime.zero, time(total)] + spans.flatMap { [$0.start, $0.end] }).sorted()
+        return zip(boundaries, boundaries.dropFirst()).map { start, end in
+            (CMTimeRange(start: start, end: end), spans.filter { $0.start < end && $0.end > start }.map(\.layer))
+        }
+    }
+}
+
 final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProtocol, @unchecked Sendable {
     let timeRange: CMTimeRange
     let enablePostProcessing = true
