@@ -232,16 +232,16 @@ struct NativeEditorTransport: View {
 
 struct NativeEditorTimeline: View {
     @ObservedObject var session: NativeEditorSession
+    var bottomClearance: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 6) {
-            NativeMiniStrip(session: session)
+            NativeMiniStrip(session: session, bottomClearance: bottomClearance)
                 .frame(maxHeight: .infinity)
                 .accessibilityIdentifier("native-editor-mini-strip")
         }
         .padding(.horizontal, 14)
         .padding(.top, 5)
-        .padding(.bottom, 4)
         .background(KriaColor.paper)
     }
 }
@@ -251,32 +251,35 @@ struct NativeEditorContextStrip: View {
     let onAdjust: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             Button(action: onAdjust) {
                 Label("Adjust", systemImage: "slider.horizontal.3")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 16)
             }
             .buttonStyle(NativeEditorContextButtonStyle(isAccent: true))
             .accessibilityIdentifier("native-editor-adjust")
 
             Button(action: onAdjust) {
                 Label("Audio", systemImage: "speaker.slash")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 16)
             }
             .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
             .accessibilityIdentifier("native-editor-clip-audio")
 
             Button(action: session.deleteSelectedClip) {
                 Label("Delete", systemImage: "trash")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 16)
             }
             .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
             .disabled(!session.canEditTimeline || session.draft.clips.count <= 1)
             .accessibilityIdentifier("native-editor-delete")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-        .background(KriaColor.paper)
+        .padding(4)
+        .frame(height: NativeEditorIslandMetrics.contextHeight)
+        .nativeEditorIslandSurface()
     }
 }
 
@@ -285,23 +288,37 @@ struct NativeEditorTextContextStrip: View {
     let onDeselect: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             Button(action: onEdit) {
                 Label("Edit text", systemImage: "textformat")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 16)
             }
             .buttonStyle(NativeEditorContextButtonStyle(isAccent: true))
             .accessibilityIdentifier("native-editor-text-edit-action")
             Button(action: onDeselect) {
                 Label("Deselect", systemImage: "xmark")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 16)
             }
             .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-        .background(KriaColor.paper)
-        .accessibilityIdentifier("native-editor-text-context")
+        .padding(4)
+        .frame(height: NativeEditorIslandMetrics.contextHeight)
+        .accessibilityElement(children: .contain)
+        // See the note in `NativeEditorIslandSurface.glass` — the identifier
+        // has to live on a plain marker, not directly on the glass-surfaced
+        // view, or its reported frame silently loses its padding.
+        .background(
+            Color.clear
+                .accessibilityElement()
+                // The marker is its own VoiceOver stop, so it reads as the
+                // group's heading rather than an unlabeled element.
+                .accessibilityLabel("Text actions")
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("native-editor-text-context")
+        )
+        .nativeEditorIslandSurface()
     }
 }
 
@@ -312,48 +329,78 @@ private struct NativeEditorContextButtonStyle: ButtonStyle {
         configuration.label
             .font(KriaFont.body(12).weight(.semibold))
             .foregroundStyle(KriaColor.ink)
-            .background(isAccent ? KriaColor.sage : KriaColor.softZinc)
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .background(isAccent ? KriaColor.sage : Color.clear, in: Capsule())
             .opacity(configuration.isPressed ? 0.65 : 1)
     }
 }
 
 struct NativeEditorToolRail: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var selectionNamespace
     @Binding var selected: NativeEditorTool?
     let onSelect: (NativeEditorTool) -> Void
 
+    private var shouldReduceMotion: Bool {
+        reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
+    }
+
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
             ForEach(NativeEditorTool.allCases.filter { $0 != .kria }) { tool in
                 Button { selected = tool; onSelect(tool) } label: {
                     VStack(spacing: 4) {
                         Image(systemName: tool.icon)
                             .font(.system(size: 17, weight: .medium))
                         Text(tool.rawValue)
-                            .font(KriaFont.body(11).weight(.medium))
+                            .font(KriaFont.body(11).weight(selected == tool ? .semibold : .medium))
                             .lineLimit(1)
+                            // The island pins each tool to a fixed width, so
+                            // larger Dynamic Type shrinks the label instead
+                            // of truncating it.
+                            .minimumScaleFactor(0.7)
                     }
                     .foregroundStyle(selected == tool ? KriaColor.ink : KriaColor.zinc)
-                    .frame(maxWidth: .infinity, minHeight: 58)
-                    .overlay(alignment: .bottom) {
-                        Rectangle()
-                            .fill(selected == tool ? KriaColor.ink : .clear)
-                            .frame(height: 2)
-                            .padding(.horizontal, 10)
+                    .frame(width: NativeEditorIslandMetrics.toolWidth, height: NativeEditorIslandMetrics.toolHeight)
+                    .background {
+                        if selected == tool {
+                            Capsule()
+                                .fill(KriaColor.ink.opacity(0.07))
+                                .matchedGeometryEffect(id: "native-editor-tool-selection", in: selectionNamespace)
+                        }
                     }
+                    .contentShape(Capsule())
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.plain)
                 .accessibilityLabel(tool.rawValue)
                 .accessibilityHint(tool.accessibilityHint)
                 .accessibilityIdentifier("native-editor-tool-\(tool.rawValue.lowercased())")
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 66)
-        .background(KriaColor.paper)
-        .overlay(alignment: .top) { Rectangle().fill(KriaColor.line).frame(height: 1) }
+        .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
+        .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
+        .frame(height: NativeEditorIslandMetrics.islandHeight)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("native-editor-tool-rail")
+        // `.glassEffect()` (used by `.nativeEditorIslandSurface()` on iOS
+        // 26+) corrupts the accessibility/hit-test frame of any ancestor
+        // that carries `.accessibilityElement(children: .contain)` or a
+        // bare `.accessibilityIdentifier` in its subtree: the reported
+        // frame silently collapses to the union of only the "real"
+        // (non-glass) accessible children, dropping this view's own
+        // padding. Confirmed by isolating every other modifier here one at
+        // a time; only removing `.glassEffect()` fixed it. Rather than drop
+        // Liquid Glass, the identifier lives on a plain, non-glass marker
+        // leaf added *after* `.contain` seals the button group, so its
+        // frame reflects the padded capsule correctly for both VoiceOver
+        // and UI tests, while `.contain` above still groups the buttons.
+        .background(
+            Color.clear
+                .accessibilityElement()
+                .accessibilityLabel("Editing tools")
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("native-editor-tool-rail")
+        )
+        .nativeEditorIslandSurface()
+        .animation(shouldReduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: selected)
     }
 }
 

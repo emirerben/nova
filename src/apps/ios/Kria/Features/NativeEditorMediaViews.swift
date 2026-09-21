@@ -925,6 +925,10 @@ struct NativeMiniStrip: View {
     @ScaledMetric(relativeTo: .caption2) private var laneLabelWidth: CGFloat = 66
     @ObservedObject var session: NativeEditorSession
     @ObservedObject private var clock: NativeEditorPlaybackClock
+    /// Extra space reserved at the bottom of the scrollable lane content so
+    /// the last lane can always scroll clear of the floating tool island
+    /// (KRI-131). Zero at other call sites, where there is no island.
+    let bottomClearance: CGFloat
     @State private var zoom: CGFloat = 1
     @State private var pinchAnchor: CGFloat = 1
     @State private var isPinching = false
@@ -956,8 +960,9 @@ struct NativeMiniStrip: View {
     private let secondaryLaneHeight: CGFloat = 44
     private let rowGap: CGFloat = 6
 
-    init(session: NativeEditorSession) {
+    init(session: NativeEditorSession, bottomClearance: CGFloat = 0) {
         self.session = session
+        self.bottomClearance = bottomClearance
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -1043,6 +1048,12 @@ struct NativeMiniStrip: View {
     // edit the phone can never save.
     private var canAddClip: Bool { session.canEditTimeline && !session.rendersOnDevice && session.draft.clips.count < 20 }
 
+    /// KRI-131: the floating Edit text/Deselect context capsule appears
+    /// directly above the tool island whenever a text element is selected.
+    /// On a short timeline this region can coincide with content that's
+    /// already on screen — e.g. the only "TEXT" row — silently covering the
+    /// very item the user just selected. `scrollSelectionClearOfIsland`
+    /// nudges that row into view so it can't land underneath the capsule.
     var body: some View {
         VStack(spacing: 6) {
             controls
@@ -1052,18 +1063,25 @@ struct NativeMiniStrip: View {
                     .accessibilityIdentifier("native-editor-add-clip-unavailable")
             }
             GeometryReader { viewport in
-                ScrollView(.vertical, showsIndicators: laneCount > 4) {
-                    HStack(alignment: .top, spacing: 6) {
-                        laneLabels
-                            .frame(width: laneLabelWidth, alignment: .leading)
-                        timeline
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: laneCount > 4) {
+                        HStack(alignment: .top, spacing: 6) {
+                            laneLabels
+                                .frame(width: laneLabelWidth, alignment: .leading)
+                            timeline
+                        }
+                        .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - bottomClearance), alignment: .topLeading)
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(timelinePanGesture)
                     }
-                    .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .topLeading)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(timelinePanGesture)
+                    .contentMargins(.bottom, bottomClearance, for: .scrollContent)
+                    .contentMargins(.bottom, bottomClearance, for: .scrollIndicators)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .accessibilityIdentifier("native-editor-lane-scroll")
+                    .onChange(of: session.selectionRequest) { _, _ in
+                        scrollSelectionClearOfIsland(proxy: proxy)
+                    }
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .accessibilityIdentifier("native-editor-lane-scroll")
             }
         }
         .padding(.vertical, 4)
@@ -1173,17 +1191,28 @@ struct NativeMiniStrip: View {
     }
 
     private var laneLabels: some View {
-        VStack(spacing: rowGap) {
+        // KRI-131: `native-editor-lane-label-last` marks whichever row is
+        // visually last (AUDIO when present, else the last packed row, else
+        // VIDEO) so UI tests can assert it scrolls clear of the floating
+        // tool island without hardcoding lane composition.
+        let rowsList = rows
+        let hasAudioLane = !clips.isEmpty
+        return VStack(spacing: rowGap) {
             Color.clear.frame(height: 18)
             Text("VIDEO")
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: filmstripHeight)
-            ForEach(rows) { row in
+                .accessibilityIdentifier(rowsList.isEmpty && !hasAudioLane ? "native-editor-lane-label-last" : "native-editor-lane-label-video")
+            ForEach(Array(rowsList.enumerated()), id: \.element.id) { index, row in
                 laneLabel(row.title)
                     .frame(height: CGFloat(rowCount(row)) * secondaryLaneHeight + CGFloat(rowCount(row) - 1) * rowGap, alignment: .top)
+                    .accessibilityIdentifier(
+                        index == rowsList.count - 1 && !hasAudioLane
+                            ? "native-editor-lane-label-last" : "native-editor-lane-label-\(row.id)"
+                    )
             }
-            if !clips.isEmpty { laneLabel("AUDIO") }
+            if hasAudioLane { laneLabel("AUDIO").accessibilityIdentifier("native-editor-lane-label-last") }
         }
         .font(.system(size: laneLabelSize, weight: .bold, design: .rounded))
         .tracking(0.8)
@@ -1207,6 +1236,9 @@ struct NativeMiniStrip: View {
                     filmstrip(width: width, playheadX: playheadX)
                     ForEach(rows) { row in
                         timedLane(title: row.title, items: row.items, color: KriaColor.softZinc, playheadX: playheadX)
+                            // KRI-131: lets a text selection scroll its row
+                            // clear of the floating context capsule.
+                            .id(row.id)
                     }
                     if !clips.isEmpty { originalAudioLane(playheadX: playheadX) }
                 }
@@ -1406,6 +1438,24 @@ struct NativeMiniStrip: View {
     private func alignTimeline(to start: TimeInterval) {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
             session.seek(to: start)
+        }
+    }
+
+    /// Text selection floats the context capsule over the timeline
+    /// (`showsContext` in `NativeEditorView`). The clips/filmstrip row is
+    /// always the topmost row (right after the ruler), so it's never at
+    /// realistic risk of landing under the bottom-anchored island the way a
+    /// lone "TEXT" row can on a short timeline — scoping this to text only
+    /// avoids nudging scroll position on every clip tap, which isn't needed
+    /// and unsettles scrub-position-sensitive interactions. Other selection
+    /// kinds route to a lane panel instead and never overlap this scroll
+    /// view either.
+    private func scrollSelectionClearOfIsland(proxy: ScrollViewProxy) {
+        guard session.selection?.kind == .text,
+              session.document.textElements.first(where: { $0.id == session.selection?.id })?.isCaption != true
+        else { return }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            proxy.scrollTo("TEXT", anchor: UnitPoint(x: 0.5, y: 0.15))
         }
     }
 
