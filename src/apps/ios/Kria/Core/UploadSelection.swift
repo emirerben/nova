@@ -69,6 +69,10 @@ enum DeselectOutcome: Equatable, Sendable {
     case refused(String)
     /// The coordinator had no record of it.
     case notTracked
+    /// Another `deselect` for this asset is still running and will decide the outcome. Callers must
+    /// not re-diff on this: the ledger hasn't changed yet, so the same removal would be found again
+    /// and re-issued in a loop until the first one finished.
+    case alreadyInProgress
 }
 
 /// One clip that failed, shown in place next to the ones that worked. A single global error

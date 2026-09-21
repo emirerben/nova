@@ -571,6 +571,73 @@ extension BackgroundUploadRetryTests {
         XCTAssertNil(h.coordinator.lastError)
     }
 
+    /// The rule `ChatWorkspaceView` gates Continue on: an upload record only appears after a clip is
+    /// prepared AND reserved, so counting records alone lets Continue through while chosen clips are
+    /// still on their way — proceeding with fewer clips than the user picked.
+    private func pendingCount(_ h: SelectionHarness) -> Int {
+        let coordinator = h.coordinator
+        let recorded = coordinator.records.filter { $0.projectID == h.projectID }.count
+        let preparing = BackgroundUploadCoordinator.reservedCount(projectID: h.projectID, role: nil, inFlight: coordinator.inFlight, records: coordinator.records, selections: coordinator.photoSelections)
+        return recorded + preparing
+    }
+
+    func testAChosenClipBlocksContinueBeforeItsUploadRecordExists() async throws {
+        let h = harness(answerImmediately: false)
+        try h.select("asset-1", debounce: .seconds(30))   // chosen, still in its debounce window
+
+        XCTAssertTrue(h.coordinator.records.isEmpty)
+        XCTAssertEqual(pendingCount(h), 1, "a clip that is only chosen already counts as on its way")
+        XCTAssertFalse(FootageReadiness(attachedCount: 1, pendingCount: pendingCount(h)).canContinue)
+
+        _ = await h.deselect("asset-1")
+        XCTAssertEqual(pendingCount(h), 0, "un-choosing it releases the gate")
+    }
+
+    func testAClipBeingPreparedBlocksContinueAndIsNotCountedTwiceOnceRecorded() async throws {
+        let h = harness(answerImmediately: false)
+        try h.select("asset-1")
+        let reached = await waitUntil { h.received == 1 }   // the reservation is in flight: prepared, but no record yet
+        XCTAssertTrue(reached)
+
+        XCTAssertTrue(h.coordinator.records.isEmpty)
+        XCTAssertEqual(pendingCount(h), 1)
+        XCTAssertFalse(FootageReadiness(attachedCount: 1, pendingCount: pendingCount(h)).canContinue)
+
+        h.answerPending(1)
+        let recorded = await waitUntil { h.coordinator.records.count == 1 }
+        XCTAssertTrue(recorded)
+        XCTAssertEqual(pendingCount(h), 1, "once it has a record it counts through the record, not twice")
+    }
+
+    /// The picker re-diffs after an un-choose finishes. If a second `deselect` for the same asset just
+    /// reported `.discarded` while the first was still running, that re-diff would find the same removal
+    /// again (the ledger has not changed yet) and re-issue it in a loop for the length of the round trip.
+    func testASecondUnchooseWhileTheFirstIsRunningDefersToItInsteadOfLooping() async throws {
+        let h = harness()
+        try h.select("asset-1", debounce: .seconds(30))
+
+        async let first = h.deselect("asset-1")
+        async let second = h.deselect("asset-1")
+        let outcomes = await [first, second]
+
+        XCTAssertTrue(outcomes.contains(.discarded), "one call does the work")
+        XCTAssertTrue(outcomes.contains(.alreadyInProgress), "the other must say it is deferring, not report a result")
+        XCTAssertEqual(h.received, 0)
+    }
+
+    func testStartingANewBatchClearsThatRolesEarlierFailuresOnly() async throws {
+        let h = harness()
+        let bad = FileManager.default.temporaryDirectory.appending(path: "notes-\(UUID().uuidString).txt")
+        try Data("not a video".utf8).write(to: bad)
+        _ = await h.coordinator.enqueue(fileURL: bad, projectID: h.projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource, role: .clip)
+        h.coordinator.reportFailure(projectID: h.projectID, role: .visual, filename: "card.png", message: "visual failed")
+        XCTAssertEqual(h.coordinator.failures.count, 2)
+
+        h.coordinator.clearFailures(projectID: h.projectID, role: .clip)
+
+        XCTAssertEqual(h.coordinator.failures.map(\.role), [.visual], "a footage batch must not wipe a visual's failure")
+    }
+
     func testUnchoosingAnAssetTheCoordinatorNeverHeardOfIsHarmless() async {
         let h = harness()
         let outcome = await h.deselect("never-chosen")

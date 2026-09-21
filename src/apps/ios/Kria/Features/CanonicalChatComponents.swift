@@ -327,6 +327,9 @@ struct FootageStage: View {
     let mediaCount: Int
     let maximumClipCount: Int
     let uploads: [UploadRecoveryRecord]
+    /// Clips still being prepared or chosen. They are not in `uploads` yet, but Continue must wait
+    /// for them or it would proceed with fewer clips than the user picked.
+    var preparingCount = 0
     let progress: [UUID: Double]
     let addFootage: () -> Void
     let continueWithFootage: () -> Void
@@ -336,7 +339,13 @@ struct FootageStage: View {
     var removeMedia: (String) -> Void = { _ in }
 
     private var readiness: FootageReadiness {
-        FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count)
+        FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count + preparingCount)
+    }
+
+    /// One bar for every clip on its way. With uploads overlapping, showing only the first upload's
+    /// progress would misrepresent the rest; a clip still being prepared counts as 0.
+    private var overallProgress: Double {
+        FootageReadiness.overallProgress(uploads: uploads.map { progress[$0.id] ?? 0 }, preparingCount: preparingCount)
     }
 
     var body: some View {
@@ -401,11 +410,9 @@ struct FootageStage: View {
                     Text("Uploading \(readiness.pendingCount) \(readiness.pendingCount == 1 ? "file" : "files")…")
                         .font(KriaFont.body(12).weight(.medium))
                         .foregroundStyle(KriaColor.zinc)
-                    if let active = uploads.first {
-                        ProgressView(value: progress[active.id] ?? 0)
-                            .tint(KriaColor.ink)
-                            .frame(maxWidth: 160)
-                    }
+                    ProgressView(value: overallProgress)
+                        .tint(KriaColor.ink)
+                        .frame(maxWidth: 160)
                 }
                 .accessibilityIdentifier("footage-upload-progress")
             }
@@ -428,6 +435,14 @@ struct FootageReadiness: Equatable, Sendable {
     }
 
     var canContinue: Bool { attachedCount > 0 && pendingCount == 0 }
+
+    /// Mean progress across every clip still on its way: each upload's own fraction, and 0 for a
+    /// clip that has not started uploading yet.
+    static func overallProgress(uploads: [Double], preparingCount: Int) -> Double {
+        let total = uploads.count + max(0, preparingCount)
+        guard total > 0 else { return 0 }
+        return min(1, max(0, uploads.reduce(0, +) / Double(total)))
+    }
 }
 
 private struct FootageThumbnail: View {

@@ -171,6 +171,9 @@ struct FootagePickerView: View {
     private func beginImport(_ selection: UploadConsentSelection) {
         consentedPurpose = selection.purpose
         uploads.clearLastError()
+        // A new batch starts clean: earlier failures were already shown, and one for a clip the user is
+        // now adding again would otherwise sit there forever after the retry succeeds.
+        uploads.clearFailures(projectID: projectID, role: role)
         selectionMessage = nil
         if selection.source == .photos { Task { await presentPhotosPicker() } }
         else { showingFileImporter = true }
@@ -218,12 +221,22 @@ struct FootagePickerView: View {
 
     private func unchoose(_ identifier: String) async {
         let outcome = await uploads.deselect(assetIdentifier: identifier, projectID: projectID, role: role, itemID: itemID)
-        guard case .refused(let reason) = outcome else { return }
-        // Put it back: leaving it un-chosen would show a screen that disagrees with the project.
-        selectionMessage = reason
-        if !photoItems.contains(where: { $0.itemIdentifier == identifier }) {
-            photoItems.append(PhotosPickerItem(itemIdentifier: identifier))
+        // The first call for this asset will decide, and re-diffing before it finishes would find the
+        // same removal again and re-issue it in a loop.
+        if outcome == .alreadyInProgress { return }
+        if case .refused(let reason) = outcome {
+            // Put it back: leaving it un-chosen would show a screen that disagrees with the project.
+            selectionMessage = reason
+            if !photoItems.contains(where: { $0.itemIdentifier == identifier }) {
+                photoItems.append(PhotosPickerItem(itemIdentifier: identifier))
+            }
+            return
         }
+        // The user may have chosen this asset again while the removal was still running (a detach is
+        // a network round trip). That change was diffed against a ledger that still contained it, so
+        // it looked like no change and nothing was started; the picker would show it selected while
+        // the coordinator has released it. Diff again now that the ledger is up to date.
+        reconcile(photoItems)
     }
 
     /// No-Photos-access path: today's commit-on-Done behavior, minus the one-at-a-time wait.

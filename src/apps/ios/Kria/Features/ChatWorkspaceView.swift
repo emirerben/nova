@@ -277,6 +277,11 @@ private struct CreationWorkspaceView: View {
     @State private var pendingAction: CreationActionIdentity?
     @State private var uploadRecords: [UploadRecoveryRecord] = []
     @State private var uploadProgress: [UUID: Double] = [:]
+    /// What the coordinator is still preparing, and the assets the user has chosen. `uploadRecords`
+    /// alone is blind to a clip until it is prepared AND reserved, so without these Continue would
+    /// be enabled while chosen clips were still on their way.
+    @State private var uploadInFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
+    @State private var photoSelections: [String: ProjectPhotoSelection] = [:]
     @State private var maximumClipsByFormat: [CreationFormat: Int] = [:]
     @State private var capabilitiesAreAuthoritative = false
     @State private var isChoosingFormat = false
@@ -320,8 +325,13 @@ private struct CreationWorkspaceView: View {
         return maximumClipsByFormat[selectedFormat] ?? selectedFormat.fallbackMaximumClipCount
     }
 
+    /// Clips being prepared or still being chosen — not yet visible as an upload record.
+    private var preparingUploadCount: Int {
+        BackgroundUploadCoordinator.reservedCount(projectID: project.id, role: nil, inFlight: uploadInFlight, records: uploadRecords, selections: photoSelections)
+    }
+
     private var pendingUploadCount: Int {
-        uploadRecords.filter { $0.projectID == project.id }.count
+        uploadRecords.filter { $0.projectID == project.id }.count + preparingUploadCount
     }
 
     private var isUITesting: Bool {
@@ -439,6 +449,8 @@ private struct CreationWorkspaceView: View {
             threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
         }
         .onReceive(model.uploads.$records) { uploadRecords = $0 }
+        .onReceive(model.uploads.$inFlight) { uploadInFlight = $0 }
+        .onReceive(model.uploads.$photoSelections) { photoSelections = $0 }
         .onReceive(model.uploads.$progress) { uploadProgress = $0 }
         .onReceive(model.uploads.$attachedThreads) { threads in
             guard let thread = threads[project.id] else { return }
@@ -520,6 +532,7 @@ private struct CreationWorkspaceView: View {
                     mediaCount: attachedClipCount,
                     maximumClipCount: selectedMaximumClipCount,
                     uploads: uploadRecords.filter { $0.projectID == project.id },
+                    preparingCount: preparingUploadCount,
                     progress: uploadProgress,
                     addFootage: { showsAttachments = true },
                     continueWithFootage: {

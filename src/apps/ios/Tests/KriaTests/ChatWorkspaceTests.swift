@@ -252,6 +252,15 @@ final class ChatWorkspaceTests: XCTestCase {
         }
     }
 
+    func testOverallProgressAveragesEveryClipOnItsWayAndCountsPreparingOnesAsZero() {
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [1, 0], preparingCount: 0), 0.5)
+        // Two uploads at 100% and 50%, plus two clips not yet uploading: (1 + 0.5) / 4.
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [1, 0.5], preparingCount: 2), 0.375, accuracy: 0.0001)
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [], preparingCount: 3), 0, "only preparing clips: nothing has uploaded yet")
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [], preparingCount: 0), 0, "no division by zero")
+        XCTAssertEqual(FootageReadiness.overallProgress(uploads: [3], preparingCount: 0), 1, "clamped to a valid ProgressView value")
+    }
+
     func testCreationFormatFallbackClipLimitProtectsTalkingToCameraOffline() {
         XCTAssertEqual(CreationFormat.talkingToCamera.fallbackMaximumClipCount, 1)
         XCTAssertEqual(CreationFormat.montage.fallbackMaximumClipCount, 10)

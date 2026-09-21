@@ -380,6 +380,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     func dismissFailure(id: UUID) { failures.removeAll { $0.id == id } }
 
+    func clearFailures(projectID: UUID, role: CreationMediaRole) {
+        failures.removeAll { $0.projectID == projectID && $0.role == role }
+    }
+
     private func recordFailure(id: UUID, projectID: UUID, role: CreationMediaRole, filename: String, message: String) {
         failures.removeAll { $0.id == id }
         failures.append(UploadFailure(id: id, projectID: projectID, role: role, filename: filename, message: message))
@@ -454,7 +458,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         let pid = projectID.uuidString
         guard let entry = photoSelections[pid]?.byIdentifier[assetIdentifier] else { return .notTracked }
         let key = Self.selectionKey(projectID, assetIdentifier)
-        guard deselecting.insert(key).inserted else { return .discarded }   // the first call decides
+        guard deselecting.insert(key).inserted else { return .alreadyInProgress }   // the first call decides
         defer { deselecting.remove(key) }
         if let task = selectionTasks[key] {
             task.cancel()
@@ -536,11 +540,20 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// Clips that occupy a slot but aren't in `records` or attached yet: mid-prepare uploads, and
     /// chosen assets still in their debounce/load window.
     func reservedCount(projectID: UUID, role: CreationMediaRole) -> Int {
-        let flying = Set(inFlight.filter { $0.value.projectID == projectID && $0.value.role == role }.keys)
-        let recorded = Set(records.filter { $0.projectID == projectID && $0.role == role }.map(\.id))
-        let entries: [PhotoSelectionEntry] = photoSelections[projectID.uuidString].map { Array($0.byIdentifier.values) } ?? []
+        Self.reservedCount(projectID: projectID, role: role, inFlight: inFlight, records: records, selections: photoSelections)
+    }
+
+    /// The counting rule as a pure function over values. A view that observes `$inFlight` and
+    /// `$records` must call this with the values those publishers EMIT: a `@Published` sink fires
+    /// before the property changes, so re-reading the coordinator inside it returns stale state.
+    /// `role: nil` counts every role (what "is anything still on its way?" needs).
+    nonisolated static func reservedCount(projectID: UUID, role: CreationMediaRole?, inFlight: [UUID: InFlightUpload], records: [UploadRecoveryRecord], selections: [String: ProjectPhotoSelection]) -> Int {
+        func matches(_ candidate: CreationMediaRole) -> Bool { role == nil || candidate == role }
+        let flying = Set(inFlight.filter { $0.value.projectID == projectID && matches($0.value.role) }.keys)
+        let recorded = Set(records.filter { $0.projectID == projectID && matches($0.role) }.map(\.id))
+        let entries: [PhotoSelectionEntry] = selections[projectID.uuidString].map { Array($0.byIdentifier.values) } ?? []
         let choosing = entries.filter {
-            $0.role == role && $0.mediaID == nil && !flying.contains($0.recordID) && !recorded.contains($0.recordID)
+            matches($0.role) && $0.mediaID == nil && !flying.contains($0.recordID) && !recorded.contains($0.recordID)
         }
         return flying.count + choosing.count
     }
