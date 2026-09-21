@@ -25,9 +25,25 @@ def _patch_video_probe_and_upload(monkeypatch) -> None:
     from app.config import settings as _settings
 
     monkeypatch.setattr(_settings, "gemini_api_key", "gemini-key")
+    # The real probe type, not a SimpleNamespace: a namespace fake only knows
+    # the fields that existed when it was written, so the first new read in
+    # _analyze_video (#1104: codec, pix_fmt) broke every test here on main
+    # even though both PRs were green on their own.
+    from app.pipeline.probe import VideoProbe
+
     monkeypatch.setattr(
         "app.pipeline.probe.probe_video",
-        lambda _path: SimpleNamespace(duration_s=10.0, width=720, height=1280),
+        lambda _path: VideoProbe(
+            duration_s=10.0,
+            fps=30.0,
+            width=720,
+            height=1280,
+            has_audio=True,
+            codec="h264",
+            aspect_ratio="9:16",
+            file_size_bytes=1_000_000,
+            pix_fmt="yuv420p",
+        ),
     )
     file_ref = SimpleNamespace(uri="provider://file", mime_type="video/mp4")
     monkeypatch.setattr(
