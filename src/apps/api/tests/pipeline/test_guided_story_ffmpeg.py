@@ -233,17 +233,31 @@ def test_real_ffmpeg_transparent_photo_renders_black_matte(
     )
 
     def close_to(actual: tuple[int, ...], expected: tuple[int, int, int]) -> bool:
-        # H.264 + yuv420p round-trip: a few levels of drift, never a colour swap.
-        return all(abs(a - e) <= 12 for a, e in zip(actual, expected, strict=True))
+        # RGB -> yuv420p -> H.264 -> RGB drifts by a few levels, and by how much
+        # depends on the ffmpeg build (CI's Debian ffmpeg lands ~18 levels off
+        # this source green where Homebrew's lands ~5). Keep the window wide
+        # enough for that and let the assertions below carry the contract.
+        return all(abs(a - e) <= 30 for a, e in zip(actual, expected, strict=True))
 
     with Image.open(frame) as rendered:
         rgb = rendered.convert("RGB")
         assert rgb.size == (320, 180)
         # Both layouts centre the photo, so the hole sits on the canvas centre
         # and (160, 40) is opaque photo above it.
-        assert close_to(rgb.getpixel((160, 90)), (0, 0, 0))
-        assert close_to(rgb.getpixel((160, 40)), (50, 180, 120))
-        assert close_to(rgb.getpixel(half_alpha_xy), (128, 0, 0))
+        hole, opaque, edge = (
+            rgb.getpixel((160, 90)),
+            rgb.getpixel((160, 40)),
+            rgb.getpixel(half_alpha_xy),
+        )
+        # Unmatted, the hole would show the hidden white (fullscreen) or the
+        # blurred green background (card); the opaque photo must be untouched.
+        assert close_to(hole, (0, 0, 0)), hole
+        assert max(hole) < 40, hole
+        assert close_to(opaque, (50, 180, 120)), opaque
+        # A 50%-alpha edge composites to half strength, not the full red the
+        # alpha-dropping graph used to burn in.
+        assert close_to(edge, (128, 0, 0)), edge
+        assert edge[0] < 190, edge
 
 
 def test_real_ffmpeg_many_quick_photos_keep_exact_frame_budget(
