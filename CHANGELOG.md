@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.95.0] - 2026-09-21
+
+### Changed
+- feat(ios): upload as the user chooses and show what's already chosen (KRI-125) (#1106) <!-- release-pr: 1106 -->
+
 ## [0.76.94.0] - 2026-09-21
 
 ### Changed
