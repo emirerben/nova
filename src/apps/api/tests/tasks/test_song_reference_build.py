@@ -66,7 +66,7 @@ def test_guided_execution_plan_v6_matches_without_audio_metadata(monkeypatch) ->
     plan, render_track = gb._guided_execution_plan(str(job.id), guided)
 
     assert render_track is None
-    assert plan["compiler_version"] == 6
+    assert plan["compiler_version"] == 7
     assert plan["music"] is None
     assert plan["song_reference"]["start_s"] == 12.0
     assert plan["song_reference"]["end_s"] == 30.0

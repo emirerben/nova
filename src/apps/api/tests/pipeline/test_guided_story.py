@@ -44,6 +44,7 @@ from app.schemas.edit_proposal import (
     FastMontageCut,
     MediaRef,
     MixedMediaTimingProfile,
+    MontageAudioPlan,
     MontageCadenceConstraint,
     MontageTextBinding,
     NarrationTrack,
@@ -243,7 +244,7 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
     assert plan["selected_media_ids"] == ["food-photo", "town-photo", "coast-video"]
     assert "unused-photo" not in {row["media_id"] for row in plan["story_timeline"]}
     assert plan["resolved_duration_s"] == 18
-    assert plan["compiler_version"] == 6
+    assert plan["compiler_version"] == 7
     assert plan["proposal_version"] == 7
     assert [row["beat_id"] for row in plan["beat_windows"]] == ["food", "town", "coast"]
     assert {row["layout"] for row in plan["story_timeline"]} == {
@@ -288,7 +289,7 @@ def test_voiceover_compiler_uses_narration_duration_and_caption_words() -> None:
 
     plan = compile_execution_plan(raw, track=None)
 
-    assert plan["compiler_version"] == 6
+    assert plan["compiler_version"] == 7
     assert plan["resolved_duration_s"] == pytest.approx(4.7)
     assert [
         row["text"] for row in plan["text_elements"] if row["id"].startswith("narration-caption-")
@@ -540,6 +541,100 @@ def test_fast_montage_compiles_exact_source_windows_and_optional_beats() -> None
     assert plan["transition_policy"] == {"type": "none", "duration_s": 0.0}
     assert len(plan["text_elements"]) == 1
     assert validate_execution_plan(plan, raw) == plan
+
+
+def test_fast_montage_keeps_the_creators_source_audio_and_text_bindings() -> None:
+    """The fast-cut compile branch dropped `montage_audio` (and the text
+    bindings) that the story-beat branch carries. A creator who asked to keep
+    the original audio then got `source_audio_preserved: False`: the renderers
+    muted every clip, and with a reference-only song the video was silent
+    apart from a few milliseconds leaking at each cut (prod job 1fffa9f6)."""
+
+    raw = _guided_snapshot(direction="fast_montage")
+    proposal = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    proposal.duration_s = 3
+    proposal.fast_cuts = [
+        FastMontageCut(
+            cut_id=f"cut-{index + 1}",
+            media_id=media_id,
+            source_start_s=0.0,
+            source_end_s=1.0,
+            output_duration_s=1.0,
+            role=role,
+        )
+        for index, (media_id, role) in enumerate(
+            [("coast-video", "hook"), ("food-photo", "build"), ("town-photo", "payoff")]
+        )
+    ]
+    proposal.montage_audio = MontageAudioPlan(
+        preserve_source_audio=True, preview_source_beds=False, source_media_ids=[]
+    )
+    raw["approved_proposal"] = proposal.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(proposal.media)
+    raw["media_identities"] = [
+        {
+            "lane": ref.lane,
+            "media_id": ref.media_id,
+            "gcs_path": ref.gcs_path,
+            "generation": ref.generation,
+            "kind": ref.kind,
+        }
+        for ref in proposal.media
+    ]
+
+    plan = compile_execution_plan(raw, track=None)
+
+    assert plan["montage_audio"] == {
+        "preserve_source_audio": True,
+        "preview_source_beds": False,
+        "source_media_ids": [],
+    }
+    assert validate_execution_plan(plan, raw) == plan
+
+
+def test_stored_v6_fast_montage_plan_still_validates_without_source_audio() -> None:
+    """Saved plans are re-validated by recompiling at their own version and
+    comparing. v6 never carried `montage_audio` for a fast montage, so v6 must
+    keep compiling that way or every existing edit becomes "changed after
+    approval" on its next render."""
+
+    raw = _guided_snapshot(direction="fast_montage")
+    proposal = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    proposal.duration_s = 3
+    proposal.fast_cuts = [
+        FastMontageCut(
+            cut_id=f"cut-{index + 1}",
+            media_id=media_id,
+            source_start_s=0.0,
+            source_end_s=1.0,
+            output_duration_s=1.0,
+            role=role,
+        )
+        for index, (media_id, role) in enumerate(
+            [("coast-video", "hook"), ("food-photo", "build"), ("town-photo", "payoff")]
+        )
+    ]
+    proposal.montage_audio = MontageAudioPlan(
+        preserve_source_audio=True, preview_source_beds=False, source_media_ids=[]
+    )
+    raw["approved_proposal"] = proposal.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(proposal.media)
+    raw["media_identities"] = [
+        {
+            "lane": ref.lane,
+            "media_id": ref.media_id,
+            "gcs_path": ref.gcs_path,
+            "generation": ref.generation,
+            "kind": ref.kind,
+        }
+        for ref in proposal.media
+    ]
+
+    stored = guided_story._compile_execution_plan_version(raw, track=None, compiler_version=6)
+
+    assert stored["compiler_version"] == 6
+    assert stored["montage_audio"] is None
+    assert validate_execution_plan(stored, raw) == stored
 
 
 def test_fast_montage_none_policy_resolves_to_hard_cut_boundaries() -> None:
