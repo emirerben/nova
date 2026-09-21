@@ -146,7 +146,20 @@ struct PreviewAudioBinding: Sendable {
                     // bookkeeping above — otherwise a clamp here would just
                     // move the same "missing" failure to a different clip.
                     var layerEnd = clip.timelineStart + movingDuration
-                    if let hold = clip.holdDuration, hold > 0 {
+                    // A hold must survive quantization to the composition clock. The render
+                    // compiler derives it as `outputDuration - movingDuration`, which is often
+                    // pure floating-point residue (4.4e-16 s) rather than zero. Scaling the
+                    // inserted one-frame tail to a zero-length target is a no-op, so that tail
+                    // used to stay on the reused track at full length and get pushed past the
+                    // end of the timeline by later cuts. The asset then outlasted the
+                    // instructions, and AVPlayer silently rendered no video at all (audio over
+                    // black, no error) while scrubbing and export kept working.
+                    // Source time the clamp above removed still belongs to this clip's slot.
+                    // Left unfilled it is an empty stretch of the track, which renders as black
+                    // frames at the cut in the editor and in the exported file, so it is held
+                    // on the last real frame exactly like an authored hold.
+                    let hold = (clip.holdDuration ?? 0) + max(0, clip.sourceDuration - effectiveSourceDuration) / clip.rate
+                    if time(hold) > .zero {
                         let fps = Double(try await source.load(.nominalFrameRate))
                         let frameDuration = min(effectiveSourceDuration, 1 / max(1, fps.isFinite && fps > 0 ? fps : 30))
                         let tail = CMTimeRange(start: time(clip.sourceStart + effectiveSourceDuration - frameDuration), duration: time(frameDuration))
@@ -290,11 +303,13 @@ struct PreviewAudioBinding: Sendable {
             audioParameters.append(parameter)
         }
         if composition.duration.seconds < total { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, duration: time(total - composition.duration.seconds))) }
-        let boundaries = Set([0, total] + layers.flatMap { [$0.start, $0.end] }).sorted()
         let motion = try NativeMotionPainter.make(recipe.motionScenes, assets: assetURLs, canvas: canvas, duration: total, frameRate: recipe.frameRate)
-        videoComposition.instructions = zip(boundaries, boundaries.dropFirst()).map { start, end in
-            RecipeVideoInstruction(timeRange: CMTimeRange(start: time(start), end: time(end)),
-                layers: layers.filter { $0.start < end && $0.end > start }, text: textLayers, canvas: canvas, cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore)
+        // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
+        // video at all (audio over black, no error), while scrubbing and export stay correct.
+        let covered = max(total, composition.duration.seconds)
+        videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
+            RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
+                cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore)
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters
