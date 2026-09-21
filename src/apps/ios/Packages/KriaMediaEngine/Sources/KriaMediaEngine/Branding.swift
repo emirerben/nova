@@ -26,12 +26,16 @@ public enum KriaBranding {
     static let referenceHeight: CGFloat = 1920
 
     static let markLeft: CGFloat = 60
-    static let markWidth: CGFloat = 168
-    static let markHeight: CGFloat = 75
-    /// Distance from the bottom of the frame to the bottom of the mark. The
-    /// position is anchored to the BOTTOM because the constraint it was chosen
-    /// against -- the platforms' caption block -- is measured up from there.
-    static let markBottomInset: CGFloat = referenceHeight - (1400 + markHeight)  // 445
+    static let markWidth: CGFloat = 144
+    static let markHeight: CGFloat = 64
+    /// Distance from the bottom of the frame to the bottom of the mark.
+    ///
+    /// The approved position pins the mark's BOTTOM edge at y=1475, because the
+    /// constraint it was chosen against -- the platforms' caption block -- is
+    /// measured up from the bottom of the frame. Stated as a constant rather
+    /// than derived from a top edge so that resizing the mark moves its top
+    /// edge and leaves the corner where it was signed off.
+    static let markBottomInset: CGFloat = 445
     /// Transparent margin baked into the PNG for the mark's shadow.
     static let tilePad: CGFloat = 30
 

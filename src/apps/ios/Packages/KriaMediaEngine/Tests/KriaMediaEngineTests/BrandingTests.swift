@@ -56,9 +56,8 @@ final class BrandingTests: XCTestCase {
         // 445px of clearance under the mark, and the caption block starts at
         // 1530 from the top => 390 from the bottom. The mark must stay above it.
         XCTAssertEqual(markOrigin.y, 445, accuracy: 0.5)
-        let topEdge = 1920 - (markOrigin.y + KriaBranding.markHeight)
-        XCTAssertEqual(topEdge, 1400, accuracy: 0.5)
-        XCTAssertLessThan(markOrigin.y + KriaBranding.markHeight, 1920 - 1400 + 1)
+        // Bottom edge on 1475, which is what the position was signed off as.
+        XCTAssertEqual(1920 - markOrigin.y, 1475, accuracy: 0.5)
         XCTAssertGreaterThan(markOrigin.y, 1920 - 1530, "mark must clear the caption block")
     }
 
@@ -132,11 +131,11 @@ final class BrandingTests: XCTestCase {
         generator.requestedTimeToleranceAfter = .zero
 
         // The mark's box, measured from the visual top-left.
-        let markBox = CGRect(x: 60, y: 1400, width: 168, height: 75)
-        let mirrored = CGRect(x: 1080 - 228, y: 1400, width: 168, height: 75)
+        let markBox = CGRect(x: 60, y: 1475 - 64, width: 144, height: 64)
+        let mirrored = CGRect(x: 1080 - 60 - 144, y: 1475 - 64, width: 144, height: 64)
         for time in [0.1, 1.0, 1.9] {
             let frame = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image
-            XCTAssertGreaterThan(brightPixels(in: frame, rect: markBox, canvas: canvas, context: context), 800,
+            XCTAssertGreaterThan(brightPixels(in: frame, rect: markBox, canvas: canvas, context: context), 600,
                                  "no watermark at \(time)s")
             XCTAssertEqual(brightPixels(in: frame, rect: mirrored, canvas: canvas, context: context), 0,
                            "the mark must be bottom-LEFT only, at \(time)s")
@@ -167,7 +166,7 @@ final class BrandingTests: XCTestCase {
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
         let frame = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
-        XCTAssertEqual(brightPixels(in: frame, rect: CGRect(x: 60, y: 1400, width: 168, height: 75),
+        XCTAssertEqual(brightPixels(in: frame, rect: CGRect(x: 60, y: 1475 - 64, width: 144, height: 64),
                                     canvas: canvas, context: CIContext()), 0)
     }
 

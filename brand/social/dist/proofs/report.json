@@ -3,8 +3,8 @@
     "watermark/compact/bottom-left": {
       "rect": [
         60,
-        1412,
-        200,
+        1422,
+        178,
         1475
       ],
       "collisions": {
@@ -18,8 +18,8 @@
       "rect": [
         60,
         210,
-        200,
-        273
+        178,
+        263
       ],
       "collisions": {
         "tiktok": [],
@@ -31,8 +31,8 @@
     "watermark/standard/bottom-left": {
       "rect": [
         60,
-        1400,
-        229,
+        1411,
+        205,
         1475
       ],
       "collisions": {
@@ -46,8 +46,8 @@
       "rect": [
         60,
         210,
-        229,
-        285
+        205,
+        274
       ],
       "collisions": {
         "tiktok": [],
@@ -59,8 +59,8 @@
     "watermark/demo/bottom-left": {
       "rect": [
         60,
-        1382,
-        270,
+        1394,
+        241,
         1475
       ],
       "collisions": {
@@ -74,8 +74,8 @@
       "rect": [
         60,
         210,
-        270,
-        303
+        241,
+        291
       ],
       "collisions": {
         "tiktok": [],
@@ -165,8 +165,8 @@
       "meets_reference": false
     },
     "graphite/bright": {
-      "median": 2.68,
-      "worst_tile": 2.68,
+      "median": 2.66,
+      "worst_tile": 2.66,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
@@ -238,43 +238,43 @@
     },
     "graphite/warm": {
       "median": 1.55,
-      "worst_tile": 1.54,
+      "worst_tile": 1.55,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
       "meets_reference": false
     },
     "sky/warm": {
-      "median": 1.86,
-      "worst_tile": 1.86,
+      "median": 1.87,
+      "worst_tile": 1.87,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
       "meets_reference": false
     },
     "mist/busy": {
-      "median": 1.33,
-      "worst_tile": 1.34,
+      "median": 1.59,
+      "worst_tile": 1.55,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
       "meets_reference": false
     },
     "graphite/busy": {
-      "median": 1.57,
-      "worst_tile": 1.54,
+      "median": 1.32,
+      "worst_tile": 1.31,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
       "meets_reference": false
     },
     "sky/busy": {
-      "median": 1.91,
-      "worst_tile": 1.84,
+      "median": 2.22,
+      "worst_tile": 2.15,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "meets_reference": false
+      "meets_reference": true
     }
   }
 }

@@ -52,7 +52,7 @@ RUNTIME_ASSET_FILES = (
 )
 
 # --- placements (all verified against the chrome map before export) -----------
-WATERMARK_SIZES = {"compact": 140, "standard": 168, "demo": 210}
+WATERMARK_SIZES = {"compact": 118, "standard": 144, "demo": 180}
 # Bottom-left. The hard floor is 1530, where Reels starts drawing the username
 # block, but the signed-off position is one notch above it: the standard mark's
 # top edge on 1400, i.e. its bottom edge on 1475. That leaves 55px of clearance

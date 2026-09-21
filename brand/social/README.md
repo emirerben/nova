@@ -51,7 +51,7 @@ Two useful exceptions:
 
 | | x | y |
 | --- | --- | --- |
-| watermark, primary (bottom-left) | 60 | bottom edge pinned to **1530** |
+| watermark, primary (bottom-left) | 60 | bottom edge pinned to **1475** |
 | watermark, alternate (bottom-left is busy) | 60 | 210 |
 | hook title block | 60 | 255 → 700 (kicker + 3 lines) |
 | step chip | 60 | 1294 → 1400 |
@@ -74,7 +74,7 @@ directly, by compositing the real assets and reading the pixels.
 
 `dist/watermark/kria-watermark-<variant>-<size>.png`
 
-Three sizes — `compact` (140px mark), `standard` (168px), `demo` (210px).
+Three sizes — `compact` (118px mark), `standard` (144px), `demo` (180px).
 Use `standard` unless you have a reason. `demo` is for product walkthroughs
 where the watermark doubles as the title; `compact` is for busy travel edits.
 
