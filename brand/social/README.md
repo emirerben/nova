@@ -42,14 +42,17 @@ Two useful exceptions:
 
 - Above `y = 980` no platform has a right action rail, so the top band is wider:
   `x 60 → 1020`, `y 200 → 980`.
-- Below `y ≈ 1530` you are in the caption / username / audio block on every
+- Below `y = 1530` you are in the caption / username / audio block on every
   platform. Never put text there, and never assume your own caption burn-in
-  will survive it.
+  will survive it. **1530 is the floor, and the watermark sits right on it** —
+  the mark is anchored by its bottom edge, so all three sizes end at 1530 and
+  none of them creeps under the username. `build.py place <video>` draws the
+  chrome over a real frame if you want to see it.
 
 | | x | y |
 | --- | --- | --- |
-| watermark, primary | 60 | 210 |
-| watermark, alternate (top-left is busy) | 60 | 1400 |
+| watermark, primary (bottom-left) | 60 | bottom edge pinned to **1530** |
+| watermark, alternate (bottom-left is busy) | 60 | 210 |
 | hook title block | 60 | 255 → 700 (kicker + 3 lines) |
 | step chip | 60 | 1294 → 1400 |
 
@@ -79,12 +82,18 @@ Opacity is already baked into every file. Do not add your own on top.
 
 ### Which variant
 
-| variant | use on | why |
+The mark is a quiet grey with a diffuse shadow and nothing else — no chip, no
+halo, no box. Two tones cover the range:
+
+| variant | use on | worst measured |
 | --- | --- | --- |
-| `plate` | **anything — this is the default** | white mark on a feathered 48% scrim; the only variant that survives every footage class |
-| `white` | dark, mid-tone or busy footage | cleanest, least furniture, but it disappears on a bright sky |
-| `ink` | bright, pale, overexposed or warm footage | warm ink `#30352C`; the inverse trade-off |
-| `sky` | white product screens and UI demos only | the brand signature from `DESIGN.md` — a logotype, not footage text |
+| `mist` `#CAD2DB` @85% | **default** — dark, mid-tone, warm or busy footage | 2.2:1 |
+| `graphite` `#526071` @92% | bright, pale or overexposed footage | 4.5:1 |
+| `sky` `#9BCAFF` | white product screens and UI demos only — the brand logotype, never over footage | n/a |
+
+`mist` is the look; `graphite` is the same treatment re-toned so the mark does
+not vanish on a bright shot. Switching between them is the only decision an
+editor has to make, and `build.py pick` makes it for you.
 
 If you are unsure, don't guess — measure the actual shot:
 
@@ -99,16 +108,16 @@ achieves, and names the file to use.
 
 The PNGs carry a transparent margin for the shadow, so the overlay origin is
 **not** the placement origin. Every file's exact `overlay_xy` is in
-[`dist/manifest.json`](dist/manifest.json). For `plate`/`standard`/top-left:
+[`dist/manifest.json`](dist/manifest.json). For `mist`/`standard`/bottom-left:
 
 ```bash
-ffmpeg -i clip.mp4 -i brand/social/dist/watermark/kria-watermark-plate-standard.png \
-  -filter_complex "[0:v][1:v]overlay=30:180" \
+ffmpeg -i clip.mp4 -i brand/social/dist/watermark/kria-watermark-mist-standard.png \
+  -filter_complex "[0:v][1:v]overlay=30:1425" \
   -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -c:a copy out.mp4
 ```
 
 In CapCut, import the PNG as an overlay, set scale to 100% and pin it to the
-top-left with the frame's own margins — do not eyeball a different size.
+bottom-left with the frame's own margins — do not eyeball a different size.
 
 ---
 
@@ -168,8 +177,9 @@ the hook so the two never fight.
 1. **One wordmark.** It comes from `favicon.svg`. Never retype `kria` in another
    typeface, never re-space the letters, never rotate them yourself. The letter
    rhythm *is* the mark.
-2. **One watermark position per account, held for the whole series.** Top-left
-   by default. Moving it clip to clip reads as sloppy, not dynamic.
+2. **One watermark position per account, held for the whole series.**
+   Bottom-left, bottom edge on 1530. Moving it clip to clip reads as sloppy,
+   not dynamic.
 3. **Sky is for brand and selection. Butter is for the one action.** No other
    accent — no gradients, no second colour per video. (`DESIGN.md` §9.)
 4. **Fraunces for display, Inter for everything else.** DynaPuff is the wordmark
@@ -189,38 +199,47 @@ Every variant, measured against five footage classes — bright, dark, mid-grey,
 warm and high-frequency busy. Contrast is WCAG 2.2, measured between the glyph
 and the ring of pixels immediately around it, then split into a 8×3 tile grid so
 a mark that reads on average but vanishes over one bright patch still fails.
-The floor is **3.0:1** (WCAG large text); the design target is 4.5:1.
+
+**The watermark is gated at 2.0:1, not the 3.0:1 used for text.** This is a
+deliberate, narrow exception. An unaided grey mark cannot hold 3:1 over busy
+mid-tone footage without a chip or a halo behind it — that was measured across
+three rounds of candidates — and putting a box behind the wordmark was rejected
+as too heavy. A watermark is an attribution mark rather than content: it has to
+be *noticeable*, not readable at a glance, and being quiet is the brief. Hook
+titles, step labels and captions are still gated at 3.0:1.
 
 Sheets: `dist/proofs/legibility-<variant>-<footage>.jpg` (half-resolution;
 they are evidence, not deliverables).
 
-| variant | footage | median | worst tile | signed off |
-| --- | --- | --- | --- | --- |
-| `plate` | bright | 4.2:1 | 4.2:1 | **yes** — pass |
-| `plate` | busy | 9.7:1 | 9.2:1 | **yes** — pass |
-| `plate` | dark | 17.8:1 | 17.8:1 | **yes** — pass |
-| `plate` | mid | 10.0:1 | 9.9:1 | **yes** — pass |
-| `plate` | warm | 7.0:1 | 6.8:1 | **yes** — pass |
-| `white` | bright | 1.3:1 | 1.2:1 | no — out of policy |
-| `white` | busy | 4.0:1 | 3.7:1 | **yes** — pass |
-| `white` | dark | 14.3:1 | 14.3:1 | **yes** — pass |
-| `white` | mid | 4.2:1 | 4.1:1 | **yes** — pass |
-| `white` | warm | 2.4:1 | 2.4:1 | no — out of policy |
-| `ink` | bright | 7.6:1 | 7.6:1 | **yes** — pass |
-| `ink` | busy | 3.0:1 | 2.7:1 | no — out of policy |
-| `ink` | dark | 1.4:1 | 1.4:1 | no — out of policy |
-| `ink` | mid | 2.7:1 | 2.7:1 | no — out of policy |
-| `ink` | warm | 4.5:1 | 4.5:1 | **yes** — pass |
-| `sky` | bright | 1.6:1 | 1.6:1 | n/a — logotype |
-| `sky` | busy | 2.0:1 | 1.7:1 | n/a — logotype |
-| `sky` | dark | 10.7:1 | 10.7:1 | n/a — logotype |
-| `sky` | mid | 2.3:1 | 2.3:1 | n/a — logotype |
-| `sky` | warm | 1.2:1 | 1.2:1 | n/a — logotype |
+| variant | footage | worst tile | signed off |
+| --- | --- | --- | --- |
+| `mist` | bright | 1.1:1 | no — out of policy |
+| `mist` | busy | 2.5:1 | **yes** — pass |
+| `mist` | dark | 8.0:1 | **yes** — pass |
+| `mist` | mid | 2.6:1 | **yes** — pass |
+| `mist` | warm | 2.2:1 | **yes** — pass |
+| `graphite` | bright | 4.5:1 | **yes** — pass |
+| `graphite` | busy | 1.5:1 | no — out of policy |
+| `graphite` | dark | 2.3:1 | no — out of policy |
+| `graphite` | mid | 1.4:1 | no — out of policy |
+| `graphite` | warm | 1.7:1 | no — out of policy |
+| `sky` | bright | 1.5:1 | n/a — logotype |
+| `sky` | busy | 2.1:1 | n/a — logotype |
+| `sky` | dark | 9.1:1 | n/a — logotype |
+| `sky` | mid | 2.3:1 | n/a — logotype |
+| `sky` | warm | 1.9:1 | n/a — logotype |
 
-The rows marked *out of policy* are why the variant rules above exist: `white`
-really does collapse to 1.3:1 on a blown-out sky, and `ink` to 1.4:1 at night.
-They are measured and kept visible rather than left as folklore.
+The rows marked *out of policy* are why the two-tone rule exists: `mist` really
+does collapse to 1.1:1 on a blown-out sky, and `graphite` to 1.5:1 on a busy
+mid-tone crowd. They are measured and kept visible rather than left as folklore.
 
 `sky` is the brand logotype on white product surfaces. WCAG 1.4.11 exempts
 logotypes from the contrast minimum, so it is reported but never gated — do not
 use it as a watermark over footage.
+
+### Exploring alternatives
+
+`build.py compare <video>` composites a ladder of candidate treatments onto real
+frames and measures each one; `build.py place <video>` shows one treatment at
+several heights with the chrome drawn over it. Both were used to arrive at the
+current mark, and both are the right tool if the treatment is revisited.

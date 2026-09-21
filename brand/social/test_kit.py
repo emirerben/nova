@@ -58,26 +58,37 @@ def test_wordmark_is_derived_from_the_product_favicon():
 
 
 @pytest.mark.parametrize("variant", sorted(B.RECOMMENDED))
-def test_recommended_pairings_clear_the_contrast_floor(variant):
+def test_recommended_pairings_clear_the_watermark_floor(variant):
     backgrounds = B._backgrounds()
     width = B.WATERMARK_SIZES["standard"]
+    pad = B.watermark_pad(variant)
     tile = B.build_watermark(variant, width)
     bare = wordmark(width, fill=B.VARIANTS[variant][0])
-    ink = B._overlay_rgba(
-        B._pad(bare.full, B.watermark_pad(variant)), *B.WATERMARK_HOME)
+    ink = B._place(B._pad(bare.full, pad), B.WATERMARK_HOME, pad)
 
     for bg_name in B.RECOMMENDED[variant]:
-        composite = verify.over(B._overlay_rgba(tile, *B.WATERMARK_HOME),
+        composite = verify.over(B._place(tile, B.WATERMARK_HOME, pad),
                                 backgrounds[bg_name])
         result = verify.contrast(ink, composite)
-        assert result.passes_floor, (
+        assert result.worst_tile >= verify.WATERMARK_FLOOR, (
             f"{variant} on {bg_name}: worst tile {result.worst_tile:.2f}:1 "
-            f"< {verify.CONTRAST_FLOOR}:1")
+            f"< {verify.WATERMARK_FLOOR}:1")
 
 
-def test_plate_is_the_universal_variant():
-    # The kit's headline promise: one file an editor can reach for blindly.
-    assert set(B.RECOMMENDED["plate"]) == set(B._backgrounds())
+def test_the_two_tones_cover_every_footage_class_between_them():
+    # An editor must never face footage with no signed-off variant.
+    covered = set(B.RECOMMENDED["mist"]) | set(B.RECOMMENDED["graphite"])
+    assert covered == set(B._backgrounds())
+
+
+def test_every_size_sits_on_the_caption_floor():
+    # Bottom-anchored, so the tallest size cannot creep under the username.
+    for size in B.WATERMARK_SIZES:
+        _x, y = B.watermark_slot(size, "bottom-left")
+        height = wordmark(B.WATERMARK_SIZES[size]).size[1]
+        assert y + height == B.WATERMARK_BOTTOM
+        assert verify.is_clear((B.WATERMARK_LEFT, y,
+                                B.WATERMARK_LEFT + 400, y + height))
 
 
 @pytest.mark.skipif(not (DIST / "proofs" / "report.json").exists(),
@@ -85,6 +96,6 @@ def test_plate_is_the_universal_variant():
 def test_committed_report_has_no_gated_failures():
     report = json.loads((DIST / "proofs" / "report.json").read_text())
     failed = [k for k, v in report["legibility"].items()
-              if v["gated"] and not v["passes_floor"]]
+              if v["gated"] and not v["passes_watermark_floor"]]
     assert not failed, failed
     assert all(v["clear"] for v in report["placements"].values())

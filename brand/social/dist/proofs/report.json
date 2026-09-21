@@ -1,5 +1,19 @@
 {
   "placements": {
+    "watermark/compact/bottom-left": {
+      "rect": [
+        60,
+        1467,
+        200,
+        1530
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
     "watermark/compact/top-left": {
       "rect": [
         60,
@@ -14,12 +28,12 @@
       },
       "clear": true
     },
-    "watermark/compact/bottom-left": {
+    "watermark/standard/bottom-left": {
       "rect": [
         60,
-        1400,
-        200,
-        1463
+        1455,
+        229,
+        1530
       ],
       "collisions": {
         "tiktok": [],
@@ -42,12 +56,12 @@
       },
       "clear": true
     },
-    "watermark/standard/bottom-left": {
+    "watermark/demo/bottom-left": {
       "rect": [
         60,
-        1400,
-        229,
-        1475
+        1437,
+        270,
+        1530
       ],
       "collisions": {
         "tiktok": [],
@@ -62,20 +76,6 @@
         210,
         270,
         303
-      ],
-      "collisions": {
-        "tiktok": [],
-        "reels": [],
-        "shorts": []
-      },
-      "clear": true
-    },
-    "watermark/demo/bottom-left": {
-      "rect": [
-        60,
-        1400,
-        270,
-        1493
       ],
       "collisions": {
         "tiktok": [],
@@ -156,93 +156,77 @@
     }
   },
   "legibility": {
-    "plate/bright": {
-      "median": 4.22,
-      "worst_tile": 4.16,
-      "passes_floor": true,
-      "meets_target": false,
-      "recommended_pairing": true,
-      "gated": true
-    },
-    "white/bright": {
-      "median": 1.29,
-      "worst_tile": 1.25,
+    "mist/bright": {
+      "median": 1.13,
+      "worst_tile": 1.12,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false
+      "gated": false,
+      "passes_watermark_floor": false
     },
-    "ink/bright": {
-      "median": 7.6,
-      "worst_tile": 7.6,
+    "graphite/bright": {
+      "median": 4.52,
+      "worst_tile": 4.49,
       "passes_floor": true,
-      "meets_target": true,
+      "meets_target": false,
       "recommended_pairing": true,
-      "gated": true
+      "gated": true,
+      "passes_watermark_floor": true
     },
     "sky/bright": {
-      "median": 1.63,
-      "worst_tile": 1.63,
+      "median": 1.54,
+      "worst_tile": 1.54,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false
+      "gated": false,
+      "passes_watermark_floor": false
     },
-    "plate/dark": {
-      "median": 17.76,
-      "worst_tile": 17.75,
+    "mist/dark": {
+      "median": 8.06,
+      "worst_tile": 8.04,
       "passes_floor": true,
       "meets_target": true,
       "recommended_pairing": true,
-      "gated": true
+      "gated": true,
+      "passes_watermark_floor": true
     },
-    "white/dark": {
-      "median": 14.32,
-      "worst_tile": 14.3,
-      "passes_floor": true,
-      "meets_target": true,
-      "recommended_pairing": true,
-      "gated": true
-    },
-    "ink/dark": {
-      "median": 1.36,
-      "worst_tile": 1.36,
+    "graphite/dark": {
+      "median": 2.28,
+      "worst_tile": 2.28,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false
+      "gated": false,
+      "passes_watermark_floor": true
     },
     "sky/dark": {
-      "median": 10.67,
-      "worst_tile": 10.67,
+      "median": 9.14,
+      "worst_tile": 9.14,
       "passes_floor": true,
       "meets_target": true,
       "recommended_pairing": false,
-      "gated": false
+      "gated": false,
+      "passes_watermark_floor": true
     },
-    "plate/mid": {
-      "median": 9.97,
-      "worst_tile": 9.9,
-      "passes_floor": true,
-      "meets_target": true,
-      "recommended_pairing": true,
-      "gated": true
-    },
-    "white/mid": {
-      "median": 4.15,
-      "worst_tile": 4.06,
-      "passes_floor": true,
+    "mist/mid": {
+      "median": 2.64,
+      "worst_tile": 2.62,
+      "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
-      "gated": true
+      "gated": true,
+      "passes_watermark_floor": true
     },
-    "ink/mid": {
-      "median": 2.68,
-      "worst_tile": 2.68,
+    "graphite/mid": {
+      "median": 1.46,
+      "worst_tile": 1.45,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false
+      "gated": false,
+      "passes_watermark_floor": false
     },
     "sky/mid": {
       "median": 2.31,
@@ -250,71 +234,62 @@
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false
+      "gated": false,
+      "passes_watermark_floor": true
     },
-    "plate/warm": {
-      "median": 6.95,
-      "worst_tile": 6.84,
-      "passes_floor": true,
-      "meets_target": true,
+    "mist/warm": {
+      "median": 2.24,
+      "worst_tile": 2.22,
+      "passes_floor": false,
+      "meets_target": false,
       "recommended_pairing": true,
-      "gated": true
+      "gated": true,
+      "passes_watermark_floor": true
     },
-    "white/warm": {
-      "median": 2.41,
-      "worst_tile": 2.35,
+    "graphite/warm": {
+      "median": 1.74,
+      "worst_tile": 1.73,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false
-    },
-    "ink/warm": {
-      "median": 4.49,
-      "worst_tile": 4.49,
-      "passes_floor": true,
-      "meets_target": false,
-      "recommended_pairing": true,
-      "gated": true
+      "gated": false,
+      "passes_watermark_floor": false
     },
     "sky/warm": {
-      "median": 1.23,
-      "worst_tile": 1.23,
+      "median": 1.9,
+      "worst_tile": 1.9,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false
+      "gated": false,
+      "passes_watermark_floor": false
     },
-    "plate/busy": {
-      "median": 9.67,
-      "worst_tile": 9.24,
-      "passes_floor": true,
-      "meets_target": true,
-      "recommended_pairing": true,
-      "gated": true
-    },
-    "white/busy": {
-      "median": 4.0,
-      "worst_tile": 3.74,
-      "passes_floor": true,
+    "mist/busy": {
+      "median": 2.56,
+      "worst_tile": 2.53,
+      "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
-      "gated": true
+      "gated": true,
+      "passes_watermark_floor": true
     },
-    "ink/busy": {
-      "median": 3.05,
-      "worst_tile": 2.68,
+    "graphite/busy": {
+      "median": 1.53,
+      "worst_tile": 1.51,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false
+      "gated": false,
+      "passes_watermark_floor": false
     },
     "sky/busy": {
-      "median": 2.0,
-      "worst_tile": 1.74,
+      "median": 2.18,
+      "worst_tile": 2.1,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
-      "gated": false
+      "gated": false,
+      "passes_watermark_floor": true
     }
   }
 }

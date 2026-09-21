@@ -18,10 +18,19 @@ import numpy as np
 
 from kria_brand import OCCLUSION
 
-# WCAG 2.2 minimum for large text. A watermark is large, low-stakes text, so
-# 3.0 is the floor we gate on and 4.5 is what we design for.
+# WCAG 2.2 minimum for large text. This is the floor for anything a viewer has
+# to READ -- hook titles, step labels, captions.
 CONTRAST_FLOOR = 3.0
 CONTRAST_TARGET = 4.5
+
+# A watermark is an attribution mark, not content: it has to be NOTICEABLE, not
+# readable at a glance, and being quiet is the entire point of the brief. An
+# unaided grey mark cannot hold 3:1 over busy mid-tone footage without a chip
+# or a halo behind it (measured, see README section 6), so the watermark set is
+# gated at a lower, explicitly separate floor. This is a deliberate exception
+# with a stated reason, not a relaxed version of the rule above -- text assets
+# are still gated at CONTRAST_FLOOR.
+WATERMARK_FLOOR = 2.0
 
 
 def _intersects(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:

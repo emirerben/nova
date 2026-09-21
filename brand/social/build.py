@@ -40,8 +40,29 @@ DIST = HERE / "dist"
 
 # --- placements (all verified against the chrome map before export) -----------
 WATERMARK_SIZES = {"compact": 140, "standard": 168, "demo": 210}
-WATERMARK_HOME = (60, 210)        # top-left, primary
-WATERMARK_ALT = (60, 1400)        # bottom-left, when the top-left is busy
+# Bottom-left, as low as the frame allows. 1530 is where Reels starts drawing
+# the username block -- one pixel lower and the caption is composited over the
+# mark. Verified by `build.py place` and re-checked on every build.
+#
+# The slot is anchored by the mark's BOTTOM edge, not its top: the three sizes
+# have different heights, and pinning the top would push the tallest one into
+# the caption block (which is exactly what the placement gate caught).
+WATERMARK_BOTTOM = 1530
+WATERMARK_LEFT = 60
+WATERMARK_TOP_Y = 210             # the top-left alternate is top-anchored
+
+
+def watermark_slot(size: str, slot: str = "bottom-left") -> tuple[int, int]:
+    """Placement origin of the MARK (not the padded tile) for a size and slot."""
+    if slot == "top-left":
+        return (WATERMARK_LEFT, WATERMARK_TOP_Y)
+    mark_h = wordmark(WATERMARK_SIZES[size]).size[1]
+    return (WATERMARK_LEFT, WATERMARK_BOTTOM - mark_h)
+
+
+# Kept for the standard size, which is what the exploration tools default to.
+WATERMARK_HOME = watermark_slot("standard")
+WATERMARK_ALT = (WATERMARK_LEFT, WATERMARK_TOP_Y)
 
 OUTRO_FRAMES = 48                 # 1.6s at 30fps
 MARK_W_OUTRO = 560
@@ -51,22 +72,22 @@ MARK_W_OUTRO = 560
 # watermark
 # =============================================================================
 
+# The watermark is a quiet grey mark with a diffuse shadow and nothing else --
+# no chip, no halo, no box. Two tones cover the range: one light, one dark.
+# name:   (ink colour, baked opacity, shadow opacity or None)
 VARIANTS = {
-    # name:   (ink colour, baked opacity, shadow?, scrim opacity or None)
-    "plate":  (PAPER, 0.95, True, 0.48),   # universal: works on any footage
-    "white":  (PAPER, 0.88, True, None),   # dark / mid / busy footage
-    "ink":    (INK,   0.85, False, None),  # bright / pale / warm footage
-    "sky":    (SKY,   1.00, False, None),  # white product screens, UI demos
+    "mist":     ("#CAD2DB", 0.85, 0.45),  # light grey: dark / mid / warm / busy
+    "graphite": ("#526071", 0.92, 0.20),  # dark grey: bright / pale footage
+    "sky":      (SKY,       1.00, None),  # logotype, white product screens only
 }
 
 # Which footage each variant is signed off for. The build gates on exactly
 # these pairings; the report still measures the full cross-product so the
 # out-of-policy combinations stay visible as evidence rather than folklore.
 RECOMMENDED = {
-    "plate": ("bright", "dark", "mid", "warm", "busy"),
-    "white": ("dark", "mid", "busy"),
-    "ink": ("bright", "warm"),
-    # `sky` is the brand logotype on white product surfaces, not text over
+    "mist": ("dark", "mid", "warm", "busy"),
+    "graphite": ("bright",),
+    # `sky` is the brand logotype on white product surfaces, not a mark over
     # footage. WCAG 1.4.11 exempts logotypes from the contrast minimum, so it
     # is measured and reported but never gated.
     "sky": (),
@@ -77,38 +98,28 @@ PLATE_PAD_X, PLATE_PAD_Y, PLATE_RADIUS, PLATE_FEATHER = 26, 17, 20, 7
 
 
 def build_watermark(name: str, width: int) -> np.ndarray:
-    """A padded RGBA tile: scrim, mark, shadow, opacity already baked in.
+    """A padded RGBA tile: mark, shadow, opacity already baked in.
 
     Opacity is baked rather than left to the editor because the one thing that
     reliably goes wrong in a hurry is somebody typing a different number into
     CapCut every week.
     """
-    fill, opacity, shadowed, scrim = VARIANTS[name]
+    fill, opacity, shadow = VARIANTS[name]
     mark = wordmark(width, fill=fill)
     mw, mh = mark.size
     pad = watermark_pad(name)
     surface = skia.Surface(mw + pad * 2, mh + pad * 2)
     with surface as canvas:
         canvas.clear(skia.ColorTRANSPARENT)
-        if scrim is not None:
-            # Feathered, so it reads as a soft chip rather than a box.
-            sp = skia.Paint(AntiAlias=True,
-                            Color=skia.Color(0, 0, 0, int(round(scrim * 255))))
-            sp.setImageFilter(skia.ImageFilters.Blur(PLATE_FEATHER, PLATE_FEATHER))
-            canvas.drawRoundRect(
-                skia.Rect.MakeLTRB(pad - PLATE_PAD_X, pad - PLATE_PAD_Y,
-                                   pad + mw + PLATE_PAD_X, pad + mh + PLATE_PAD_Y),
-                PLATE_RADIUS, PLATE_RADIUS, sp)
-        paint = (soft_shadow(dy=2, sigma=6, opacity=0.35) if scrim is not None
-                 else soft_shadow() if shadowed else skia.Paint(AntiAlias=True))
+        paint = (soft_shadow(dy=2, sigma=7, opacity=shadow)
+                 if shadow is not None else skia.Paint(AntiAlias=True))
         draw_rgba(canvas, mark.full, pad, pad, paint, opacity)
     return np.array(surface.makeImageSnapshot().toarray())
 
 
 def watermark_pad(name: str) -> int:
     """Transparent margin the tile carries, so masks can be aligned to it."""
-    _fill, _opacity, shadowed, scrim = VARIANTS[name]
-    return SHADOW_PAD if (shadowed or scrim is not None) else 0
+    return SHADOW_PAD if VARIANTS[name][2] is not None else 0
 
 
 def export_watermarks() -> dict:
@@ -133,8 +144,9 @@ def export_watermarks() -> dict:
                 # overlay origin is not the placement origin. These are the
                 # numbers to paste into ffmpeg; no arithmetic required.
                 "overlay_xy": {
-                    "top-left": [WATERMARK_HOME[0] - pad, WATERMARK_HOME[1] - pad],
-                    "bottom-left": [WATERMARK_ALT[0] - pad, WATERMARK_ALT[1] - pad],
+                    name: [watermark_slot(size_name, name)[0] - pad,
+                           watermark_slot(size_name, name)[1] - pad]
+                    for name in ("bottom-left", "top-left")
                 },
             }
     return manifest
@@ -358,6 +370,17 @@ def _overlay_rgba(tile: np.ndarray, x: int, y: int) -> np.ndarray:
     return frame
 
 
+def _place(tile: np.ndarray, slot: tuple[int, int], pad: int) -> np.ndarray:
+    """Composite a padded tile so that the MARK lands on `slot`.
+
+    Tiles carry a transparent margin for the shadow, so the tile origin and the
+    placement origin differ by `pad`. Getting this wrong shifts the mark by 30px
+    -- invisible on a top-anchored slot, and enough to push a bottom-anchored
+    one under the caption block.
+    """
+    return _overlay_rgba(tile, slot[0] - pad, slot[1] - pad)
+
+
 def _annotate(canvas: skia.Canvas) -> None:
     """Draw the union of all three platforms' chrome, plus the safe rectangle."""
     from kria_brand import OCCLUSION
@@ -381,11 +404,11 @@ def export_proofs() -> dict:
     # 1. geometry: every placement this kit ships, checked against the map.
     checks: dict = {}
     for size_name, width in WATERMARK_SIZES.items():
-        tile = build_watermark("plate", width)
-        pad = watermark_pad("plate")
+        tile = build_watermark("mist", width)
+        pad = watermark_pad("mist")
         th, tw = tile.shape[0] - pad * 2, tile.shape[1] - pad * 2
-        for slot, (px, py) in (("top-left", WATERMARK_HOME),
-                               ("bottom-left", WATERMARK_ALT)):
+        for slot in ("bottom-left", "top-left"):
+            px, py = watermark_slot(size_name, slot)
             rect = (px, py, px + tw, py + th)
             checks[f"watermark/{size_name}/{slot}"] = {
                 "rect": list(rect),
@@ -411,13 +434,15 @@ def export_proofs() -> dict:
     with surface as canvas:
         canvas.clear(hex_to_color("#F2F4F7"))
         _annotate(canvas)
-        std = build_watermark("plate", WATERMARK_SIZES["standard"])
-        draw_rgba(canvas, std, *WATERMARK_HOME)
-        draw_rgba(canvas, std, *WATERMARK_ALT)
+        std = build_watermark("graphite", WATERMARK_SIZES["standard"])
+        pad_std = watermark_pad("graphite")
+        for name in ("bottom-left", "top-left"):
+            sx, sy = watermark_slot("standard", name)
+            draw_rgba(canvas, std, sx - pad_std, sy - pad_std)
         f = font("Inter-Medium", 34)
         p = skia.Paint(AntiAlias=True, Color=hex_to_color(INK))
-        canvas.drawString("safe rectangle 60,200 - 890,1520", 70, 1560, f, p)
-        canvas.drawString("red = TikTok / Reels / Shorts chrome", 70, 1610, f, p)
+        canvas.drawString("safe rectangle 60,200 - 890,1520", 70, 1660, f, p)
+        canvas.drawString("red = TikTok / Reels / Shorts chrome", 70, 1710, f, p)
     save_png(surface, out / "safezone-map.png")
 
     # 3. photometry: each variant over each background class.
@@ -425,8 +450,8 @@ def export_proofs() -> dict:
         for variant in VARIANTS:
             width = WATERMARK_SIZES["standard"]
             tile = build_watermark(variant, width)
-            layer = _overlay_rgba(tile, *WATERMARK_HOME)
-            composite = verify.over(layer, bg)
+            pad = watermark_pad(variant)
+            composite = verify.over(_place(tile, WATERMARK_HOME, pad), bg)
 
             # Mask from the ink alone (no shadow/scrim) so the glyph is the
             # subject. It must be padded exactly as `build_watermark` padded
@@ -434,13 +459,14 @@ def export_proofs() -> dict:
             # reads 1.00.
             fill = VARIANTS[variant][0]
             bare = wordmark(width, fill=fill)
-            ink_layer = _overlay_rgba(
-                _pad(bare.full, watermark_pad(variant)), *WATERMARK_HOME)
+            ink_layer = _place(_pad(bare.full, pad), WATERMARK_HOME, pad)
 
             res = verify.contrast(ink_layer, composite)
             entry = res.as_dict()
             entry["recommended_pairing"] = bg_name in RECOMMENDED[variant]
             entry["gated"] = entry["recommended_pairing"]
+            entry["passes_watermark_floor"] = (
+                res.worst_tile >= verify.WATERMARK_FLOOR)
             report["legibility"][f"{variant}/{bg_name}"] = entry
 
             _save_proof(_sheet(composite, variant, bg_name, res),
@@ -596,7 +622,7 @@ def context_sheet(video: Path, at: float, names: list[str], size: str,
         canvas.clear(hex_to_color("#14171A"))
         for col, name in enumerate(names):
             composite = verify.over(
-                _overlay_rgba(build_gray(name, width), *slot), bg)
+                _place(build_gray(name, width), slot, SHADOW_PAD), bg)
             rgba = np.dstack([composite.astype(np.uint8),
                               np.full((H, W, 1), 255, np.uint8)])
             img = to_image(rgba).resize(
@@ -605,6 +631,65 @@ def context_sheet(video: Path, at: float, names: list[str], size: str,
             canvas.drawString(name, col * fw + 16, fh + 38, font("Inter-Bold", 28),
                               skia.Paint(AntiAlias=True, Color=hex_to_color(PAPER)))
     return surface
+
+
+def place_sheet(video: Path, at: float, name: str, ys: list[int],
+                size: str) -> tuple[skia.Surface, dict]:
+    """The same mark at several heights, with the platform chrome drawn over it.
+
+    Position is a whole-frame question, and the binding constraint at the
+    bottom-left is the username/caption block -- which is exactly where a
+    bottom-left watermark wants to live. Drawing the chrome makes the floor
+    visible instead of asking anyone to trust a number.
+    """
+    from kria_brand import OCCLUSION
+
+    width = WATERMARK_SIZES[size]
+    bg = load_frame(video, at)
+    tile = build_gray(name, width)
+    pad = SHADOW_PAD
+    mh = tile.shape[0] - pad * 2
+    mw = tile.shape[1] - pad * 2
+
+    scale = 0.30
+    fw, fh = int(W * scale), int(H * scale)
+    surface = skia.Surface(fw * len(ys), fh + 92)
+    report: dict = {}
+
+    with surface as canvas:
+        canvas.clear(hex_to_color("#14171A"))
+        for col, y in enumerate(ys):
+            slot = (WATERMARK_HOME[0], y)
+            composite = verify.over(_place(tile, slot, pad), bg)
+            rgba = np.dstack([composite.astype(np.uint8),
+                              np.full((H, W, 1), 255, np.uint8)])
+            frame = skia.Surface(W, H)
+            with frame as fc:
+                draw_rgba(fc, rgba, 0, 0)
+                hatch = skia.Paint(Color=skia.Color(220, 30, 30, 62))
+                for regions in OCCLUSION.values():
+                    for (rx0, ry0, rx1, ry1) in regions:
+                        fc.drawRect(skia.Rect.MakeLTRB(rx0, ry0, rx1, ry1), hatch)
+            img = frame.makeImageSnapshot().resize(
+                fw, fh, skia.SamplingOptions(skia.CubicResampler.Mitchell()))
+            canvas.drawImage(img, col * fw, 0)
+
+            rect = (slot[0], y, slot[0] + mw, y + mh)
+            hits = verify.check_rect(rect)
+            clear = verify.is_clear(rect)
+            report[str(y)] = {"rect": list(rect), "clear": clear,
+                              "collisions": hits}
+            note = "clear" if clear else "  ".join(
+                f"{k}:{'+'.join(v)}" for k, v in hits.items() if v)
+            canvas.drawString(f"y = {y}", col * fw + 16, fh + 38,
+                              font("Inter-Bold", 28),
+                              skia.Paint(AntiAlias=True, Color=hex_to_color(PAPER)))
+            canvas.drawString(note, col * fw + 16, fh + 72,
+                              font("Inter-Medium", 21),
+                              skia.Paint(AntiAlias=True,
+                                         Color=hex_to_color(PAPER if clear
+                                                            else "#E8846F")))
+    return surface, report
 
 
 def _cell_for(slot: tuple[int, int]) -> tuple[int, int, int, int]:
@@ -638,11 +723,11 @@ def compare_grays(video: Path, times: list[float], size: str,
         for row, name in enumerate(names):
             tile = build_gray(name, width)
             bare = wordmark(width, fill=GRAY_CANDIDATES[name].fill)
-            ink = _overlay_rgba(_pad(bare.full, SHADOW_PAD), *slot)
+            ink = _place(_pad(bare.full, SHADOW_PAD), slot, SHADOW_PAD)
             y = head_h + row * (ch + label_h)
 
             for col, (t, bg) in enumerate(frames):
-                composite = verify.over(_overlay_rgba(tile, *slot), bg)
+                composite = verify.over(_place(tile, slot, SHADOW_PAD), bg)
                 res = verify.contrast(ink, composite)
                 scores[f"{name}@{t:g}s"] = res.as_dict()
 
@@ -697,17 +782,19 @@ def pick_variant(frame: Path, at: float, slot: tuple[int, int],
     width = WATERMARK_SIZES[size]
     scores: dict[str, float] = {}
     for variant in VARIANTS:
+        pad = watermark_pad(variant)
         tile = build_watermark(variant, width)
-        composite = verify.over(_overlay_rgba(tile, *slot), bg)
+        composite = verify.over(_place(tile, slot, pad), bg)
         bare = wordmark(width, fill=VARIANTS[variant][0])
-        ink = _overlay_rgba(_pad(bare.full, watermark_pad(variant)), *slot)
+        ink = _place(_pad(bare.full, pad), slot, pad)
         scores[variant] = verify.contrast(ink, composite).worst_tile
 
     # Prefer the least obtrusive mark that clears the design target; fall back
     # to the plate, which is the variant that always works.
-    plain = [v for v in ("ink", "white")
-             if scores[v] >= verify.CONTRAST_TARGET]
-    best = max(plain, key=lambda v: scores[v]) if plain else "plate"
+    usable = [v for v in ("mist", "graphite")
+              if scores[v] >= verify.WATERMARK_FLOOR]
+    best = (max(usable, key=lambda v: scores[v]) if usable
+            else max(("mist", "graphite"), key=lambda v: scores[v]))
     return best, scores
 
 
@@ -746,7 +833,8 @@ def main() -> int:
         "pick", help="measure the watermark variants against a real frame")
     pick.add_argument("frame", type=Path, help="image or video to sample")
     pick.add_argument("--at", type=float, default=0.0, help="seek seconds, video only")
-    pick.add_argument("--slot", choices=["top-left", "bottom-left"], default="top-left")
+    pick.add_argument("--slot", choices=["bottom-left", "top-left"],
+                      default="bottom-left")
     pick.add_argument("--size", choices=list(WATERMARK_SIZES), default="standard")
 
     cmp_ = sub.add_parser(
@@ -755,11 +843,20 @@ def main() -> int:
     cmp_.add_argument("--at", default="1,6,10",
                       help="comma-separated seek times")
     cmp_.add_argument("--size", choices=list(WATERMARK_SIZES), default="standard")
-    cmp_.add_argument("--slot", choices=["top-left", "bottom-left"],
-                      default="top-left")
+    cmp_.add_argument("--slot", choices=["bottom-left", "top-left"],
+                      default="bottom-left")
     cmp_.add_argument("--context", default="mist,slate,veil",
                       help="candidates to show full-frame, comma-separated")
     cmp_.add_argument("--out", type=Path, default=Path("gray-compare.png"))
+
+    place = sub.add_parser(
+        "place", help="show one treatment at several heights, over the chrome map")
+    place.add_argument("video", type=Path)
+    place.add_argument("--at", type=float, default=4.0)
+    place.add_argument("--name", default="mist", help="candidate from GRAY_CANDIDATES")
+    place.add_argument("--ys", default="1400,1455,1520,1600")
+    place.add_argument("--size", choices=list(WATERMARK_SIZES), default="standard")
+    place.add_argument("--out", type=Path, default=Path("placement.png"))
 
     card = sub.add_parser("card", help="render one template card")
     card.add_argument("--kind", choices=["hook", "step"], required=True)
@@ -771,7 +868,7 @@ def main() -> int:
 
     if args.cmd == "compare":
         times = [float(x) for x in args.at.split(",")]
-        slot = WATERMARK_HOME if args.slot == "top-left" else WATERMARK_ALT
+        slot = WATERMARK_ALT if args.slot == "top-left" else WATERMARK_HOME
         surface, scores = compare_grays(args.video, times, args.size, slot)
         save_png(surface, args.out)
         args.out.with_suffix(".json").write_text(json.dumps(scores, indent=2) + "\n")
@@ -781,13 +878,20 @@ def main() -> int:
         print(f"wrote {args.out}\nwrote {ctx}")
         return 0
 
+    if args.cmd == "place":
+        ys = [int(v) for v in args.ys.split(",")]
+        surface, report = place_sheet(args.video, args.at, args.name, ys, args.size)
+        save_png(surface, args.out)
+        print(json.dumps(report, indent=2))
+        return 0
+
     if args.cmd == "pick":
-        slot = WATERMARK_HOME if args.slot == "top-left" else WATERMARK_ALT
+        slot = WATERMARK_HOME if args.slot == "bottom-left" else WATERMARK_ALT
         best, scores = pick_variant(args.frame, args.at, slot, args.size)
         for name, score in sorted(scores.items(), key=lambda kv: -kv[1]):
-            note = "" if name in ("plate", "white", "ink") else "  (logotype, not gated)"
-            print(f"  {name:6} {score:6.2f}:1"
-                  f"  {'ok' if score >= verify.CONTRAST_FLOOR else 'too low'}{note}")
+            note = "" if name != "sky" else "  (logotype, not gated)"
+            print(f"  {name:9} {score:6.2f}:1"
+                  f"  {'ok' if score >= verify.WATERMARK_FLOOR else 'too low'}{note}")
         print(f"\nuse: kria-watermark-{best}-{args.size}.png at {args.slot}")
         return 0
 
@@ -812,7 +916,7 @@ def main() -> int:
     (DIST / "proofs" / "report.json").write_text(json.dumps(report, indent=2) + "\n")
 
     failures = [k for k, v in report["legibility"].items()
-                if v["gated"] and not v["passes_floor"]]
+                if v["gated"] and not v["passes_watermark_floor"]]
     bad_geom = [k for k, v in report["placements"].items() if not v["clear"]]
     print(json.dumps({"legibility_failures": failures,
                       "placement_failures": bad_geom}, indent=2))

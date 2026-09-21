@@ -1,9 +1,8 @@
 {
   "watermark": {
-    "kria-watermark-plate-compact.png": {
-      "variant": "plate",
+    "kria-watermark-mist-compact.png": {
+      "variant": "mist",
       "for_footage": [
-        "bright",
         "dark",
         "mid",
         "warm",
@@ -16,20 +15,19 @@
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
+        "bottom-left": [
+          30,
+          1437
+        ],
         "top-left": [
           30,
           180
-        ],
-        "bottom-left": [
-          30,
-          1370
         ]
       }
     },
-    "kria-watermark-plate-standard.png": {
-      "variant": "plate",
+    "kria-watermark-mist-standard.png": {
+      "variant": "mist",
       "for_footage": [
-        "bright",
         "dark",
         "mid",
         "warm",
@@ -42,20 +40,19 @@
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
+        "bottom-left": [
+          30,
+          1425
+        ],
         "top-left": [
           30,
           180
-        ],
-        "bottom-left": [
-          30,
-          1370
         ]
       }
     },
-    "kria-watermark-plate-demo.png": {
-      "variant": "plate",
+    "kria-watermark-mist-demo.png": {
+      "variant": "mist",
       "for_footage": [
-        "bright",
         "dark",
         "mid",
         "warm",
@@ -68,22 +65,20 @@
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
+        "bottom-left": [
+          30,
+          1407
+        ],
         "top-left": [
           30,
           180
-        ],
-        "bottom-left": [
-          30,
-          1370
         ]
       }
     },
-    "kria-watermark-white-compact.png": {
-      "variant": "white",
+    "kria-watermark-graphite-compact.png": {
+      "variant": "graphite",
       "for_footage": [
-        "dark",
-        "mid",
-        "busy"
+        "bright"
       ],
       "mark_width_px": 140,
       "tile_px": [
@@ -92,22 +87,20 @@
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
+        "bottom-left": [
+          30,
+          1437
+        ],
         "top-left": [
           30,
           180
-        ],
-        "bottom-left": [
-          30,
-          1370
         ]
       }
     },
-    "kria-watermark-white-standard.png": {
-      "variant": "white",
+    "kria-watermark-graphite-standard.png": {
+      "variant": "graphite",
       "for_footage": [
-        "dark",
-        "mid",
-        "busy"
+        "bright"
       ],
       "mark_width_px": 168,
       "tile_px": [
@@ -116,22 +109,20 @@
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
+        "bottom-left": [
+          30,
+          1425
+        ],
         "top-left": [
           30,
           180
-        ],
-        "bottom-left": [
-          30,
-          1370
         ]
       }
     },
-    "kria-watermark-white-demo.png": {
-      "variant": "white",
+    "kria-watermark-graphite-demo.png": {
+      "variant": "graphite",
       "for_footage": [
-        "dark",
-        "mid",
-        "busy"
+        "bright"
       ],
       "mark_width_px": 210,
       "tile_px": [
@@ -140,82 +131,13 @@
       ],
       "transparent_pad_px": 30,
       "overlay_xy": {
+        "bottom-left": [
+          30,
+          1407
+        ],
         "top-left": [
           30,
           180
-        ],
-        "bottom-left": [
-          30,
-          1370
-        ]
-      }
-    },
-    "kria-watermark-ink-compact.png": {
-      "variant": "ink",
-      "for_footage": [
-        "bright",
-        "warm"
-      ],
-      "mark_width_px": 140,
-      "tile_px": [
-        140,
-        63
-      ],
-      "transparent_pad_px": 0,
-      "overlay_xy": {
-        "top-left": [
-          60,
-          210
-        ],
-        "bottom-left": [
-          60,
-          1400
-        ]
-      }
-    },
-    "kria-watermark-ink-standard.png": {
-      "variant": "ink",
-      "for_footage": [
-        "bright",
-        "warm"
-      ],
-      "mark_width_px": 168,
-      "tile_px": [
-        169,
-        75
-      ],
-      "transparent_pad_px": 0,
-      "overlay_xy": {
-        "top-left": [
-          60,
-          210
-        ],
-        "bottom-left": [
-          60,
-          1400
-        ]
-      }
-    },
-    "kria-watermark-ink-demo.png": {
-      "variant": "ink",
-      "for_footage": [
-        "bright",
-        "warm"
-      ],
-      "mark_width_px": 210,
-      "tile_px": [
-        210,
-        93
-      ],
-      "transparent_pad_px": 0,
-      "overlay_xy": {
-        "top-left": [
-          60,
-          210
-        ],
-        "bottom-left": [
-          60,
-          1400
         ]
       }
     },
@@ -229,13 +151,13 @@
       ],
       "transparent_pad_px": 0,
       "overlay_xy": {
+        "bottom-left": [
+          60,
+          1467
+        ],
         "top-left": [
           60,
           210
-        ],
-        "bottom-left": [
-          60,
-          1400
         ]
       }
     },
@@ -249,13 +171,13 @@
       ],
       "transparent_pad_px": 0,
       "overlay_xy": {
+        "bottom-left": [
+          60,
+          1455
+        ],
         "top-left": [
           60,
           210
-        ],
-        "bottom-left": [
-          60,
-          1400
         ]
       }
     },
@@ -269,13 +191,13 @@
       ],
       "transparent_pad_px": 0,
       "overlay_xy": {
+        "bottom-left": [
+          60,
+          1437
+        ],
         "top-left": [
           60,
           210
-        ],
-        "bottom-left": [
-          60,
-          1400
         ]
       }
     }
