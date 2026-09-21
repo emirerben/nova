@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -1073,10 +1074,12 @@ def _pending_visual_item() -> SimpleNamespace:
     )
 
 
-def _visual(asset_id: uuid.UUID, *, status: str, analysis: dict | None) -> SimpleNamespace:
+def _visual(
+    asset_id: uuid.UUID, *, status: str, analysis: dict | None, kind: str = "image"
+) -> SimpleNamespace:
     return SimpleNamespace(
         id=asset_id,
-        kind="image",
+        kind=kind,
         status=status,
         duration_s=None,
         user_context=None,
@@ -1123,7 +1126,9 @@ async def test_context_keeps_visuals_in_manifest_while_their_analysis_is_pending
             _visual(
                 asset_id,
                 status="ready",
-                analysis={"summary": "A close-up photo of Lionel Messi"},
+                # `description` is the real legacy top-level key `clip_record`
+                # projects into the shared record's `summary` field (KRI-127).
+                analysis={"description": "A close-up photo of Lionel Messi"},
             )
         ],
     )
@@ -1149,6 +1154,126 @@ async def test_context_keeps_visuals_in_manifest_while_their_analysis_is_pending
     assert "plan_item_assets.status IN ('uploaded', 'queued', 'analyzing', 'ready')" in compiled
     assert "plan_item_assets.status = 'ready'" not in compiled
     assert "deduplicated_to_asset_id IS NULL" in compiled
+
+
+# --- KRI-127: chat evidence reads the shared clip-understanding record -----
+
+
+@pytest.mark.asyncio
+async def test_chat_evidence_for_pool_asset_exposes_full_shared_record() -> None:
+    """A new-style analysis exposes far more than the old dead-key dict did.
+
+    Before KRI-127, `analysis_only_not_copy` was built from top-level
+    `summary`/`description`/`setting`/`activity` keys no analyzer ever wrote
+    at that level, so chat effectively only ever saw `description`.
+    """
+    from app.services.clip_understanding import UNDERSTANDING_KEY, understanding_payload
+
+    meta = SimpleNamespace(
+        detected_subject="man cooking pasta",
+        transcript="okay so first we boil the water",
+        clip_summary="A man narrates cooking pasta in a home kitchen.",
+        setting="home kitchen",
+        activity="cooking pasta",
+        people_count=1,
+        speaks_to_camera=True,
+        people_note="one man faces the camera and narrates",
+        clip_brands=["Barilla"],
+        clip_content_type="tutorial",
+        clip_audio_type="dialogue",
+    )
+    analysis = {
+        "subject": "man cooking pasta",
+        "description": "a man narrates cooking pasta",
+        UNDERSTANDING_KEY: understanding_payload(
+            meta, best_moments=[{"start_s": 0.0, "end_s": 2.0, "description": "adds pasta"}]
+        ),
+    }
+    item = _pending_visual_item()
+    item.clip_assignments = []
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    asset_id = uuid.uuid4()
+
+    _manifest, media_context, _db = await _resolve_with_visuals(
+        item, persona, [_visual(asset_id, status="ready", analysis=analysis, kind="video")]
+    )
+
+    evidence = media_context[-1]["analysis_only_not_copy"]
+    assert evidence["subject"] == "man cooking pasta"
+    assert evidence["summary"] == "A man narrates cooking pasta in a home kitchen."
+    assert evidence["setting"] == "home kitchen"
+    assert evidence["activity"] == "cooking pasta"
+    assert evidence["speech"]["to_camera"] is True
+    assert evidence["speech"]["transcript"].startswith("okay so first we boil")
+    # Chat-specific trims: brands dropped, moments capped.
+    assert "brands" not in evidence
+    assert len(evidence["notable_moments"]) <= creator_sessions.CHAT_EVIDENCE_MAX_MOMENTS
+    # Worst case stays bounded: 50 clips share one chat prompt.
+    assert len(json.dumps(evidence)) < 1200
+
+
+@pytest.mark.asyncio
+async def test_chat_evidence_for_legacy_video_analysis_exposes_subject_and_transcript() -> None:
+    """Legacy (pre-KRI-127) video analyses stored the transcript under
+    `on_screen_text`. Chat must see subject + transcript + moments, not just
+    `description` as before.
+    """
+    legacy_analysis = {
+        "subject": "people playing soccer",
+        "description": "a goal is scored",
+        "on_screen_text": "what a goal",
+        "source": "clip_metadata",
+        "best_moments": [{"start_s": 0.0, "end_s": 2.0, "description": "goal"}],
+        "analysis_version": 7,
+    }
+    item = _pending_visual_item()
+    item.clip_assignments = []
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    asset_id = uuid.uuid4()
+
+    _manifest, media_context, _db = await _resolve_with_visuals(
+        item,
+        persona,
+        [_visual(asset_id, status="ready", analysis=legacy_analysis, kind="video")],
+    )
+
+    evidence = media_context[-1]["analysis_only_not_copy"]
+    assert evidence["subject"] == "people playing soccer"
+    assert evidence["summary"] == "a goal is scored"
+    assert evidence["speech"]["transcript"] == "what a goal"
+    assert evidence["notable_moments"][0]["description"] == "goal"
+    # The old, effectively-blind projection only ever surfaced `description`.
+    assert "on_screen_text" not in evidence
+
+
+@pytest.mark.asyncio
+async def test_chat_evidence_for_raw_clip_assignment_reads_planner_analysis() -> None:
+    """Raw (non-pool) clips gain analysis once the guided planner analyzes them
+    (app/tasks/edit_proposal_build.py writes it back onto the assignment).
+    Chat must see it through the same shared record, not stay permanently blind.
+    """
+    item = _pending_visual_item()
+    item.clip_assignments = [
+        {
+            "media_id": "ios-clip-1.mp4",
+            "gcs_path": "users/u/1.mp4",
+            "kind": "video",
+            "analysis": {
+                "subject": "friends at a pub",
+                "description": "friends share a round of drinks",
+                "on_screen_text": "cheers to that",
+                "source": "clip_metadata",
+            },
+        }
+    ]
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+
+    _manifest, media_context, _db = await _resolve_with_visuals(item, persona, [])
+
+    evidence = media_context[0]["analysis_only_not_copy"]
+    assert evidence["subject"] == "friends at a pub"
+    assert evidence["summary"] == "friends share a round of drinks"
+    assert evidence["speech"]["transcript"] == "cheers to that"
 
 
 # --- KRI-121 round 2: a project holding only Visuals plans for the iPhone ----

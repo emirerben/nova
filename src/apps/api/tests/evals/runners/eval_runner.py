@@ -379,6 +379,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.main_creator import MainCreatorAgent
 
         return MainCreatorAgent
+    if agent_name == "nova.compose.camera_emphasis":
+        from app.agents.camera_emphasis import CameraEmphasisAgent
+
+        return CameraEmphasisAgent
     if agent_name == "nova.compose.sfx_placement":
         from app.agents.sfx_placement import SfxPlacementAgent
 
@@ -403,6 +407,14 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.slide_post_composer import SlidePostComposerAgent
 
         return SlidePostComposerAgent
+    if agent_name == "nova.plan.clip_request_resolver":
+        from app.agents.clip_request_resolver import ClipRequestResolverAgent
+
+        return ClipRequestResolverAgent
+    if agent_name == "nova.video.clip_question":
+        from app.agents.clip_question import ClipQuestionAgent
+
+        return ClipQuestionAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

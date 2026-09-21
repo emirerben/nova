@@ -1,0 +1,77 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-09-21",
+  "input": {
+    "creator_request": "Label each sport",
+    "intents": [
+      {
+        "intent_id": "i_sport",
+        "op": "label",
+        "attribute": "sport being played",
+        "creator_text": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "people on a field",
+          "summary": "A group of people are on a grassy field doing some kind of activity.",
+          "setting": "outdoor field",
+          "activity": "engaged in an activity"
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "person with a ball",
+          "summary": "A person holds a ball and appears to be preparing to do something with it.",
+          "setting": "outdoor court",
+          "activity": "holding a ball"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "group of people",
+          "summary": "Several people stand together, it is unclear what they are doing.",
+          "setting": "unclear location",
+          "activity": "standing together"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"i_sport\", \"assignments\": [], \"needs_vision\": [{\"media\": \"m001\", \"question\": \"What sport, if any, is being played?\"}, {\"media\": \"m002\", \"question\": \"What sport, if any, is being played?\"}, {\"media\": \"m003\", \"question\": \"What sport, if any, is being played?\"}]}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i_sport",
+        "assignments": [],
+        "needs_vision": [
+          {
+            "media": "m001",
+            "question": "What sport, if any, is being played?"
+          },
+          {
+            "media": "m002",
+            "question": "What sport, if any, is being played?"
+          },
+          {
+            "media": "m003",
+            "question": "What sport, if any, is being played?"
+          }
+        ],
+        "question": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_needs_vision_nonempty": true,
+    "case": "Every clip's record is too vague to name a sport (no record_span possible). The resolver must route ALL of them to needs_vision with zero guessed assignments -- never a fabricated label."
+  }
+}

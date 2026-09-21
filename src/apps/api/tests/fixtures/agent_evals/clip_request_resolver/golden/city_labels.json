@@ -1,0 +1,97 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-09-21",
+  "input": {
+    "creator_request": "Label each city",
+    "intents": [
+      {
+        "intent_id": "i_city",
+        "op": "label",
+        "attribute": "the city each clip was filmed in",
+        "creator_text": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "Eiffel Tower at dusk",
+          "summary": "A wide shot of the Eiffel Tower lit up at dusk with tourists in the foreground.",
+          "setting": "Paris, France",
+          "activity": "sightseeing"
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "Times Square billboards",
+          "summary": "Bright digital billboards and crowds fill Times Square at night.",
+          "setting": "Times Square, New York City",
+          "activity": "walking through a crowded plaza"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "narrow cobblestone alley",
+          "summary": "A quiet cobblestone alley lined with old stone buildings, no landmark visible.",
+          "setting": "an old European town",
+          "activity": "walking down an alley"
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "video",
+        "record": {
+          "subject": "Colosseum exterior",
+          "summary": "A tourist films the ancient Roman Colosseum from across the street.",
+          "setting": "Rome, Italy",
+          "activity": "sightseeing"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"i_city\", \"assignments\": [{\"media\": \"m001\", \"value\": \"Paris\", \"evidence\": \"setting: Paris, France\", \"confidence\": 0.95}, {\"media\": \"m002\", \"value\": \"New York\", \"evidence\": \"Times Square, New York City\", \"confidence\": 0.9}, {\"media\": \"m004\", \"value\": \"Rome\", \"evidence\": \"setting: Rome, Italy\", \"confidence\": 0.95}], \"needs_vision\": [{\"media\": \"m003\", \"question\": \"What city or landmark is visible in this clip?\"}]}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i_city",
+        "assignments": [
+          {
+            "media": "m001",
+            "value": "Paris",
+            "evidence": "setting: Paris, France",
+            "confidence": 0.95
+          },
+          {
+            "media": "m002",
+            "value": "New York",
+            "evidence": "Times Square, New York City",
+            "confidence": 0.9
+          },
+          {
+            "media": "m004",
+            "value": "Rome",
+            "evidence": "setting: Rome, Italy",
+            "confidence": 0.95
+          }
+        ],
+        "needs_vision": [
+          {
+            "media": "m003",
+            "question": "What city or landmark is visible in this clip?"
+          }
+        ],
+        "question": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Another never-coded-for request: 'label each city'. Grounds directly from the record's `setting` field for clips that name a city; the unlabeled alley clip (m003) has no city in its record and correctly goes to needs_vision rather than a guess."
+  }
+}

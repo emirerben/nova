@@ -315,6 +315,19 @@ class Settings(BaseSettings):
     # verified end-to-end.
     edit_format_talking_head_enabled: bool = False
 
+    # KRI-127 kill switch for open-vocabulary clip intents: the chat agent emits
+    # generic label/group/order/include intents, a resolver matches them to clips
+    # from the shared understanding record (with a capped vision re-query), and
+    # on-screen labels must pass the grounding fence in app/schemas/clip_intents.py.
+    # False (default) => legacy sport_labels/context_label path, byte-identical.
+    # See docs/pipelines/clip-understanding.md. Apply: `fly secrets set
+    # CLIP_INTENTS_ENABLED=true --app nova-video` + restart api + worker.
+    clip_intents_enabled: bool = False
+    # Chat-turn budget for the on-demand vision re-query (download + File API
+    # upload per clip). Over the cap or the deadline => ask the creator instead.
+    clip_intents_max_vision_requeries: int = Field(default=4, ge=0, le=12)
+    clip_intents_vision_deadline_s: float = Field(default=25.0, gt=0, le=60)
+
     # Kill switch for the narrated walkthrough archetype. When False, a job
     # whose plan declares edit_format="narrated" follows the existing voiceover
     # or montage path. When True, eligible voiceover + filming-guide jobs align
@@ -1229,6 +1242,16 @@ class Settings(BaseSettings):
     # Exposure gate for new Evolving Type insertions and motion-control edits.
     # Persisted instances continue to validate and render while disabled.
     evolving_type_enabled: bool = False
+
+    # KRI-7 contextual zoom-in emphasis. The renderer and the editor lane are
+    # NOT gated by this flag — creators can always author a zoom by hand. What
+    # it gates is the ONE `camera_emphasis` LLM call that picks the moments
+    # automatically. Kill switch: CAMERA_EMPHASIS_AI_ENABLED=false → renders
+    # fall back to the deterministic Smart-preset camera picks (the pre-KRI-7
+    # behavior) with no other change. Already-placed effects keep rendering.
+    # Apply: fly secrets set CAMERA_EMPHASIS_AI_ENABLED=false --app nova-video
+    # + machine restart (worker).
+    camera_emphasis_ai_enabled: bool = True
 
     # Sound-effects glossary + user placement (PR-1 foundation). Admin-curated
     # SFX + user uploads placed at arbitrary timestamps in a plan-item variant.

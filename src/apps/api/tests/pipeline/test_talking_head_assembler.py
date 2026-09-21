@@ -67,6 +67,50 @@ def test_select_spine_ignores_metas_without_paths():
     assert sel.broll_clip_ids == []
 
 
+def test_analyzed_clip_meta_content_type_getattr_stays_default(monkeypatch):
+    """KRI-127 guard: ClipMeta now carries the REAL Lane A labels under
+    `clip_content_type`/`clip_audio_type` (analyze_clip threads them from the
+    agent output). This assembler's `_content_type`/`_audio_type` helpers
+    deliberately still getattr the OLD names ("content_type"/"audio_type"),
+    which ClipMeta has never had -- so an analyzed clip must keep resolving to
+    the neutral defaults here, unchanged by the KRI-127 field additions. This
+    pin exists so a future rename/alignment of these attribute names is a
+    conscious decision, not an accidental behavior change to spine selection."""
+    from types import SimpleNamespace as _NS
+
+    from app.pipeline.agents.gemini_analyzer import analyze_clip
+
+    file_ref = _NS(name="files/abc", uri="https://x/files/abc", mime_type="video/mp4")
+    data = {
+        "transcript": "hello",
+        "hook_text": "watch this",
+        "hook_score": 7.0,
+        "best_moments": [{"start_s": 0.0, "end_s": 3.0, "energy": 5.0, "description": "talk"}],
+        "content_type": "talking_head",
+        "audio_type": "dialogue",
+    }
+
+    class _Candidate:
+        finish_reason = _NS(name="STOP")
+
+    class _Response:
+        text = __import__("json").dumps(data)
+        candidates = [_Candidate()]
+
+    mock_client = _NS(models=_NS(generate_content=lambda **_kw: _Response()))
+    monkeypatch.setattr("app.pipeline.agents.gemini_analyzer._get_client", lambda: mock_client)
+
+    meta = analyze_clip(file_ref)
+
+    # The real labels landed under the renamed attributes...
+    assert meta.clip_content_type == "talking_head"
+    assert meta.clip_audio_type == "dialogue"
+    # ...but the assembler's spine-selection helpers still see the defaults,
+    # so select_spine's scoring is byte-identical to before this PR.
+    assert tha._content_type(meta) == "broll"
+    assert tha._audio_type(meta) == "ambient"
+
+
 # ── schedule_broll ──────────────────────────────────────────────────────────
 
 

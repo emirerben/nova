@@ -29,6 +29,7 @@ _EXPECTED = {
     "nova.compose.creative_direction",
     "nova.compose.visual_treatment_planner",
     "nova.compose.scene_matcher",
+    "nova.compose.camera_emphasis",
     "nova.layout.text_designer",
     "nova.video.shot_ranker",
     "nova.layout.transition_picker",
@@ -56,6 +57,9 @@ _EXPECTED = {
     "nova.edit.director",
     # Main Creator Agent V1 — capability-aware creative orchestrator
     "nova.creator.main",
+    # KRI-127 Lane C — open-vocabulary clip-intent resolution
+    "nova.plan.clip_request_resolver",
+    "nova.video.clip_question",
 }
 
 

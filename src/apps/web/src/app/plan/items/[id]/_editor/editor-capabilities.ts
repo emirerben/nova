@@ -214,7 +214,14 @@ export function computeToolDisabledReasons({
       capabilities.overlays_reason ?? "media overlays aren't available for this edit",
     );
   }
-  if (capabilities?.visual_blocks === false && capabilities?.motion_scenes !== true) {
+  // The Visuals drawer hosts three lanes: visual blocks, Creator Blocks, and
+  // (KRI-7) camera emphasis. It stays reachable while ANY of them is available,
+  // or a subtitled edit — blocks off, camera on — could never add a zoom.
+  if (
+    capabilities?.visual_blocks === false &&
+    capabilities?.motion_scenes !== true &&
+    capabilities?.camera_effects !== true
+  ) {
     out.visuals = editorReasonCopy(
       capabilities.motion_scenes_reason ??
         capabilities.visual_blocks_reason ??

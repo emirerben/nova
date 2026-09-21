@@ -142,6 +142,110 @@ class TestClipMetadataParse:
         assert len(out.best_moments) == 2
 
 
+class TestParseThreading:
+    """Regression guard for the recurring 'new field silently defaults' trap
+    (clip-metadata-parse-threading-trap): `parse()` reconstructs the output
+    field-by-field, so a new ClipMetadataOutput field must ALSO be threaded
+    through parse()'s constructor call or the model's real value is silently
+    dropped in favor of the schema default. Feed raw JSON with every
+    non-required field populated through the real parse() and assert each one
+    survives."""
+
+    def test_every_optional_field_survives_real_parse(self):
+        raw = json.dumps(
+            {
+                # NOTE: clip_id is intentionally NOT part of the model's JSON
+                # contract (see prompts/analyze_clip.txt) -- the shim
+                # (gemini_analyzer.analyze_clip) assigns it from file_ref.name
+                # after parse(), so ClipMetadataOutput.clip_id staying "" here
+                # is correct, not a threading gap.
+                "transcript": "let's grill some burgers",
+                "hook_text": "wait for the flip",
+                "hook_score": 7.5,
+                "best_moments": [
+                    {"start_s": 0.0, "end_s": 4.0, "energy": 6.0, "description": "burger flip"}
+                ],
+                "detected_subject": "backyard grill",
+                "brands": ["Weber"],
+                "text_safe_zone": {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.2},
+                "visual_density": 6.5,
+                "composition_note": "subject centered, smoke drifting right",
+                "content_type": "action",
+                "audio_type": "dialogue",
+                "summary": "Two friends grill burgers in a backyard.",
+                "setting": "backyard patio at dusk",
+                "activity": "grilling burgers",
+                "people_count": 2,
+                "speaks_to_camera": True,
+                "people_note": "two men in aprons",
+            }
+        )
+
+        out = _agent().parse(raw, _make_input())
+
+        assert out.transcript == "let's grill some burgers"
+        assert out.detected_subject == "backyard grill"
+        assert out.brands == ["Weber"]
+        assert out.text_safe_zone == {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.2}
+        assert out.visual_density == pytest.approx(6.5)
+        assert out.composition_note == "subject centered, smoke drifting right"
+        assert out.content_type == "action"
+        assert out.audio_type == "dialogue"
+        assert out.summary == "Two friends grill burgers in a backyard."
+        assert out.setting == "backyard patio at dusk"
+        assert out.activity == "grilling burgers"
+        assert out.people_count == 2
+        assert out.speaks_to_camera is True
+        assert out.people_note == "two men in aprons"
+
+    def test_missing_understanding_fields_default_safely(self):
+        raw = json.dumps(
+            {
+                "transcript": "",
+                "hook_text": "headline",
+                "hook_score": 5.0,
+                "best_moments": [],
+            }
+        )
+
+        out = _agent().parse(raw, _make_input())
+
+        assert out.summary == ""
+        assert out.setting == ""
+        assert out.activity == ""
+        assert out.people_count is None
+        assert out.speaks_to_camera is False
+        assert out.people_note == ""
+
+    def test_understanding_fields_tolerate_drifted_values(self):
+        raw = json.dumps(
+            {
+                "transcript": "",
+                "hook_text": "headline",
+                "hook_score": 5.0,
+                "best_moments": [],
+                "summary": 12345,
+                "setting": None,
+                "activity": ["not", "a", "string"],
+                "people_count": "a lot",
+                "speaks_to_camera": "definitely",
+                "people_note": {"nope": True},
+            }
+        )
+
+        out = _agent().parse(raw, _make_input())
+
+        assert out.summary == ""
+        assert out.setting == ""
+        assert out.activity == ""
+        assert out.people_count is None
+        # Only recognized truthy strings ("true"/"yes"/"1") coerce to True;
+        # an unrecognized string is NOT truthy-cast (avoids "false"/"no"-shaped
+        # drift accidentally reading as True) -- it safely defaults instead.
+        assert out.speaks_to_camera is False
+        assert out.people_note == ""
+
+
 class TestEnforceMomentSpread:
     """Locks the deterministic post-filter for the TODOS.md 2026-05-13 clustering
     bug: Gemini periodically returns 3 moments inside 0.5s; matcher loses variety."""

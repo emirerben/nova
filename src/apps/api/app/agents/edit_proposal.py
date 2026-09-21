@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
+from app.schemas.clip_intents import ResolvedClipIntent
 from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
     GUIDED_STORY_MIN_MOMENT_S,
@@ -322,6 +323,289 @@ def _apply_creator_shot_labels(
     return set(labeled)
 
 
+def _clip_intent_alias_ids(intent: ResolvedClipIntent, id_to_alias: dict[str, str]) -> list[str]:
+    """Media ids from the intent that are actually visible to the model this call.
+
+    An id the chat resolver grounded against media outside this call's
+    shortlisted, aliased prompt (shortlist_edit_proposal_media trims a large
+    upload) is silently dropped rather than breaking the whole constraint --
+    the resolver may have grounded against media this specific attempt never
+    selected for the model to see.
+    """
+
+    return [media_id for media_id in intent.media_ids() if media_id in id_to_alias]
+
+
+def _clip_intents_prompt_note(
+    input: EditProposalAgentInput,  # noqa: A002
+) -> str:
+    """KRI-127 Lane P: render the chat-resolved clip intents as binding
+    constraints, in alias terms only -- the model never sees a real media_id.
+
+    Returns "" whenever there is nothing to say (no clip_intents, none
+    resolved, or shot_labels is active), so the rendered prompt stays
+    byte-identical to pre-KRI-127 when the feature is unused.
+
+    shot_labels is the older, stricter exact-copy contract; when the creator
+    also has shot labels active, that contract wins outright and this note
+    stays empty (mirrors the matching skip in `_validate_clip_intents`) --
+    the two contracts were never designed to compose.
+    """
+
+    if input.shot_labels or not input.clip_intents:
+        return ""
+    _prompt, _alias_to_id, id_to_alias = _prompt_media(input)
+    resolved = [intent for intent in input.clip_intents if intent.status == "resolved"]
+    clauses: list[str] = []
+    for intent in resolved:
+        ids = _clip_intent_alias_ids(intent, id_to_alias)
+        if not ids:
+            continue
+        aliases = ", ".join(id_to_alias[media_id] for media_id in ids)
+        if intent.op == "group":
+            topic = (intent.creator_text or intent.attribute).strip()[:80]
+            verbatim = (
+                " Use the creator's own words "
+                f'"{intent.creator_text}" as this beat\'s topic and thought, copied verbatim.'
+                if intent.creator_text
+                else ""
+            )
+            clauses.append(
+                f'GROUP ("{topic}"): {aliases} belong together in ONE beat. If there are '
+                "more than 4 of them, spread them across CONSECUTIVE beats that all share "
+                f"this same topic -- never place an unrelated beat between them.{verbatim}"
+            )
+        elif intent.op == "order" and intent.position == "first":
+            clauses.append(
+                f"ORDER (first): {aliases} must come before every beat that holds other "
+                "media. Only a server-burned opening title hold may still precede them."
+            )
+        elif intent.op == "order" and intent.position == "last":
+            clauses.append(
+                f"ORDER (last): {aliases} must come after every beat that holds other "
+                "media. Only a server-burned closing title hold may still follow them."
+            )
+        elif intent.op == "include":
+            fast_cut_note = (
+                ", or in fast_cuts for a fast_montage" if input.direction == "fast_montage" else ""
+            )
+            clauses.append(
+                f"INCLUDE: {aliases} must each appear somewhere in the plan -- in a story "
+                f"beat's media_ids{fast_cut_note}."
+            )
+        elif intent.op == "label":
+            values = {
+                id_to_alias[assignment.media_id]: assignment.value
+                for assignment in intent.assignments
+                if assignment.media_id in id_to_alias and assignment.value
+            }
+            if not values:
+                continue
+            pairs = ", ".join(f"{alias}={value}" for alias, value in values.items())
+            clauses.append(
+                f'LABELS ("{intent.attribute}"): per-clip labels are rendered by the server '
+                "-- do NOT write them as beat thoughts and do NOT create one beat per clip "
+                f"for them. Clips labeled the same value are a grouping signal: {pairs} -- "
+                "clips sharing a value belong in the same chapter."
+            )
+    if not clauses:
+        return ""
+    return (
+        "CLIP INTENT CONSTRAINTS (binding -- the creator's own requests were already "
+        "resolved to specific clips before this call; honor them exactly, using only the "
+        "AVAILABLE MEDIA aliases below): " + " ".join(clauses)
+    )
+
+
+def _clip_intents_lead_trail_exempt(
+    input: EditProposalAgentInput,  # noqa: A002
+    beat_count: int,
+) -> tuple[int, int]:
+    """How many leading/trailing beats are server title holds, not the model's story.
+
+    Mirrors the exemption `_apply_creator_shot_labels` grants opening/closing
+    title beats -- clip-intent ORDER/GROUP/INCLUDE constraints only bind the
+    beats the model actually authored, never a fast_montage's cuts (a hold is
+    never part of a fast_cuts timeline).
+    """
+
+    if input.direction == "fast_montage" or beat_count == 0:
+        return 0, 0
+    lead = 1 if input.opening_title else 0
+    trail = 1 if input.closing_title and beat_count > lead else 0
+    return lead, trail
+
+
+def _clip_intent_units(
+    output: EditProposalAgentOutput,
+    input: EditProposalAgentInput,  # noqa: A002
+) -> list[frozenset[str]]:
+    if input.direction == "fast_montage":
+        return [frozenset([cut.media_id]) for cut in (output.fast_cuts or [])]
+    return [frozenset(beat.media_ids) for beat in output.story_beats]
+
+
+def _reorder_beats_for_clip_intent_order(
+    output: EditProposalAgentOutput,
+    input: EditProposalAgentInput,  # noqa: A002
+    resolved: list[ResolvedClipIntent],
+    id_to_alias: dict[str, str],
+) -> None:
+    """Best-effort deterministic repair for ORDER(first)/ORDER(last).
+
+    Only the beat SEQUENCE changes -- no beat's content, topic, or duration is
+    touched -- so this cannot invalidate any other constraint. GROUP and
+    INCLUDE violations are never repaired here; they can require content
+    decisions this function has no safe value to guess, so they fall through
+    to the schema-clarification retry instead.
+    """
+
+    if input.direction == "fast_montage":
+        return
+    beats = output.story_beats
+    lead, trail = _clip_intents_lead_trail_exempt(input, len(beats))
+    if len(beats) <= lead + trail:
+        return
+    core_indices = list(range(lead, len(beats) - trail))
+    for intent in resolved:
+        if intent.op != "order" or intent.position not in ("first", "last"):
+            continue
+        ids = set(_clip_intent_alias_ids(intent, id_to_alias))
+        if not ids:
+            continue
+        match = [index for index in core_indices if set(beats[index].media_ids) & ids]
+        if not match:
+            continue
+        rest = [index for index in core_indices if index not in match]
+        core_indices = match + rest if intent.position == "first" else rest + match
+    new_order = list(range(lead)) + core_indices + list(range(len(beats) - trail, len(beats)))
+    output.story_beats = [beats[index] for index in new_order]
+
+
+def _repair_missing_clip_intent_includes(
+    output: EditProposalAgentOutput,
+    input: EditProposalAgentInput,  # noqa: A002
+    resolved: list[ResolvedClipIntent],
+    id_to_alias: dict[str, str],
+) -> None:
+    """Best-effort deterministic repair for a dropped INCLUDE media id.
+
+    Appends it to the first beat that still has room under the 4-media cap.
+    Never for fast_montage -- a cut carries an exact, already-validated source
+    window and duration that this function has no safe value to invent.
+    """
+
+    if input.direction == "fast_montage":
+        return
+    beats = output.story_beats
+    if not beats:
+        return
+    lead, trail = _clip_intents_lead_trail_exempt(input, len(beats))
+    used = {media_id for beat in beats for media_id in beat.media_ids}
+    for intent in resolved:
+        if intent.op != "include":
+            continue
+        for media_id in _clip_intent_alias_ids(intent, id_to_alias):
+            if media_id in used:
+                continue
+            target = next(
+                (
+                    beat
+                    for index, beat in enumerate(beats)
+                    if lead <= index < len(beats) - trail
+                    and len(beat.media_ids) < GUIDED_DRAFT_MEDIA_PER_BEAT
+                ),
+                None,
+            )
+            if target is None:
+                continue
+            target.media_ids.append(media_id)
+            used.add(media_id)
+
+
+def _validate_clip_intents(
+    output: EditProposalAgentOutput,
+    input: EditProposalAgentInput,  # noqa: A002
+) -> None:
+    """KRI-127 Lane P: hold the planner to the chat turn's already-resolved
+    creator intents (group/order/include) as binding structural constraints.
+
+    Labels (op="label") are never validated here -- they are rendered
+    deterministically by another lane, never authored by this agent.
+
+    shot_labels is the older, stricter exact-copy contract. When both are
+    present it wins outright and clip intents are skipped entirely here
+    (mirrors the prompt-side skip in `_clip_intents_prompt_note`) -- the two
+    contracts were never designed to compose.
+    """
+
+    if input.shot_labels or not input.clip_intents:
+        return
+    resolved = [intent for intent in input.clip_intents if intent.status == "resolved"]
+    if not resolved:
+        return
+    _prompt, _alias_to_id, id_to_alias = _prompt_media(input)
+    _reorder_beats_for_clip_intent_order(output, input, resolved, id_to_alias)
+    _repair_missing_clip_intent_includes(output, input, resolved, id_to_alias)
+    units = _clip_intent_units(output, input)
+    all_used: frozenset[str] = frozenset().union(*units) if units else frozenset()
+    lead, trail = _clip_intents_lead_trail_exempt(input, len(units))
+    core_indices = (
+        range(lead, len(units) - trail) if len(units) > lead + trail else range(len(units))
+    )
+    for intent in resolved:
+        ids = _clip_intent_alias_ids(intent, id_to_alias)
+        if not ids:
+            continue
+        id_set = set(ids)
+        alias_label = ", ".join(id_to_alias[media_id] for media_id in ids)
+        if intent.op == "include":
+            missing = [media_id for media_id in ids if media_id not in all_used]
+            if missing:
+                raise SchemaError(
+                    "edit_proposal: clip intent violated -- INCLUDE requires "
+                    f"{alias_label} to appear somewhere in the plan"
+                )
+        elif intent.op == "group":
+            positions = sorted(index for index, unit in enumerate(units) if unit & id_set)
+            if not positions:
+                raise SchemaError(
+                    f"edit_proposal: clip intent violated -- GROUP {alias_label} did not "
+                    "appear in the plan"
+                )
+            if positions[-1] - positions[0] + 1 != len(positions):
+                raise SchemaError(
+                    f"edit_proposal: clip intent violated -- GROUP {alias_label} was split "
+                    "by an unrelated beat in between"
+                )
+        elif intent.op == "order" and intent.position in ("first", "last"):
+            group_positions = [index for index in core_indices if units[index] & id_set]
+            other_positions = [index for index in core_indices if not (units[index] & id_set)]
+            if not group_positions:
+                raise SchemaError(
+                    f"edit_proposal: clip intent violated -- ORDER({intent.position}) "
+                    f"{alias_label} did not appear in the plan"
+                )
+            if (
+                other_positions
+                and intent.position == "first"
+                and max(group_positions) > min(other_positions)
+            ):
+                raise SchemaError(
+                    f"edit_proposal: clip intent violated -- ORDER(first) {alias_label} "
+                    "must come before the rest of the plan"
+                )
+            if (
+                other_positions
+                and intent.position == "last"
+                and min(group_positions) < max(other_positions)
+            ):
+                raise SchemaError(
+                    f"edit_proposal: clip intent violated -- ORDER(last) {alias_label} "
+                    "must come after the rest of the plan"
+                )
+
+
 class EditProposalMedia(BaseModel):
     media_id: str
     lane: Literal["clip", "asset"]
@@ -333,9 +617,23 @@ class EditProposalMedia(BaseModel):
     description: str = ""
     on_screen_text: str = ""
     best_moments: list[dict] = Field(default_factory=list)
+    # KRI-127: shared clip-understanding fields (app.services.clip_understanding
+    # .clip_record), populated in app/tasks/edit_proposal_build.py alongside the
+    # legacy fields above. subject/description/on_screen_text/best_moments stay
+    # populated exactly as before for back-compat with existing fixtures; these
+    # add richer, open-vocabulary evidence so the planner can group clips by
+    # setting/activity/speech (e.g. "the pub videos", "where I talk to the
+    # camera") without a new keyword list per feature request.
+    summary: str = ""
+    setting: str = ""
+    activity: str = ""
+    speaks_to_camera: bool = False
+    transcript: str = ""
 
 
 class EditProposalAgentInput(BaseModel):
+    # KRI-127: resolved creator intents (groups / order / includes) the plan must honor.
+    clip_intents: list[ResolvedClipIntent] | None = None
     idea: str = ""
     theme: str = ""
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
@@ -509,6 +807,36 @@ def _prompt_media(
         alias_to_id,
         id_to_alias,
     )
+
+
+_MEDIA_PROMPT_UNDERSTANDING_DEFAULTS: dict[str, object] = {
+    "summary": "",
+    "setting": "",
+    "activity": "",
+    "speaks_to_camera": False,
+    "transcript": "",
+}
+
+
+def _media_prompt_dict(media: EditProposalMedia) -> dict:
+    """``model_dump`` with unset KRI-127 understanding fields dropped.
+
+    Every pre-existing field is kept exactly as before (even when empty) for
+    back-compat with prompt-shape fixtures; only the newer open-vocabulary
+    fields are omitted when unset so up to EDIT_PROPOSAL_AGENT_MEDIA_LIMIT
+    rows of legacy-only analyses do not bloat the prompt with empty keys.
+    """
+    data = media.model_dump()
+    for key, default in _MEDIA_PROMPT_UNDERSTANDING_DEFAULTS.items():
+        if data.get(key) == default:
+            data.pop(key, None)
+    # A legacy analysis projects `description` into `summary` and (for videos)
+    # `on_screen_text` into `transcript`: never send the same text twice.
+    if data.get("summary") and data.get("summary") == data.get("description"):
+        data.pop("summary")
+    if data.get("transcript") and data.get("transcript") == data.get("on_screen_text"):
+        data.pop("transcript")
+    return data
 
 
 def _resolve_model_media_references(
@@ -1209,7 +1537,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.11.0",
+        prompt_version="1.13.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1235,7 +1563,12 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             "be null; use at least the required distinct sources noted above. "
             "montage_audio.source_media_ids must equal exactly the requested audio source "
             "IDs — an empty request means an empty list, never every clip your story_beats "
-            "use."
+            "use. When CLIP INTENT CONSTRAINTS were given, they are binding: keep every "
+            "GROUP's aliases in one beat or in consecutive beats that share its topic with no "
+            "unrelated beat between them, place every ORDER(first) alias before all other "
+            "beats and every ORDER(last) alias after all other beats, make sure every INCLUDE "
+            "alias appears somewhere in the plan, and never turn a LABELS hint into its own "
+            "beat-per-clip or write the label value into a beat's thought."
         )
 
     def render_prompt(self, input: EditProposalAgentInput) -> str:  # noqa: A002
@@ -1527,9 +1860,15 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             montage_note=montage_note,
             review_note=review_note,
             narration_note=narration_note,
-            creator_text_note=_creator_text_note(input),
+            creator_text_note=" ".join(
+                part
+                for part in (_creator_text_note(input), _clip_intents_prompt_note(input))
+                if part
+            ),
             footage_note=footage_note,
-            media_json=json.dumps([row.model_dump() for row in prompt_media], ensure_ascii=False),
+            media_json=json.dumps(
+                [_media_prompt_dict(row) for row in prompt_media], ensure_ascii=False
+            ),
             source_floor_note=source_floor_note,
             beat_count_note=beat_count_note,
         )
@@ -1809,4 +2148,5 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 or output.duration_s - beat_duration > max_intro_gap
             ):
                 raise SchemaError("edit_proposal: beat durations do not fit the declared duration")
+        _validate_clip_intents(output, input)
         return output

@@ -6097,6 +6097,11 @@ _PHONE_UNSUPPORTED_CLIP_OPERATIONS = (
     "playback_rate",
 )
 _PHONE_UNSUPPORTED_LANES = ("sfx", "overlays", "visual_blocks", "motion_scenes")
+# The phone compiler has no camera lane (KRI-114 Phase 4), so a device-rendered
+# variant must not advertise the emphasis-zoom control either — authoring one
+# there can only end in a 422 at commit. Mirrors the copilot family gate in
+# `kria_editor_ops._portable_families`.
+_PHONE_UNSUPPORTED_TOP_LEVEL = (*_PHONE_UNSUPPORTED_LANES, "camera_effects")
 
 
 def _clamp_phone_editor_capabilities(capabilities: dict) -> dict:
@@ -6118,11 +6123,14 @@ def _clamp_phone_editor_capabilities(capabilities: dict) -> dict:
                 )
                 for name, value in operations.items()
             }
-    for lane in _PHONE_UNSUPPORTED_LANES:
-        # Legacy top-level booleans carry their reason in a `<lane>_reason` sibling.
+    for lane in _PHONE_UNSUPPORTED_TOP_LEVEL:
+        # Legacy top-level booleans carry their reason in a `<lane>_reason`
+        # sibling — when the archetype's map has one. Device and cloud maps must
+        # keep the SAME keys (tested), so a missing reason stays missing.
         if lane in clamped:
             clamped[lane] = False
-            clamped[f"{lane}_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
+            if f"{lane}_reason" in clamped:
+                clamped[f"{lane}_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
     if "visual_editor_style" in clamped:
         clamped["visual_editor_style"] = False
     return clamped

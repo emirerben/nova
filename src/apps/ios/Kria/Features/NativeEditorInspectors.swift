@@ -195,7 +195,9 @@ struct NativeEffectBrowserInspector: View {
         case .mediaOverlay: return session.document.mediaOverlays.first(where: { $0.id == item.id })?.kind ?? "Media overlay"
         case .visualBlock: return session.document.visualBlocks.first(where: { $0.id == item.id })?.kind ?? "Visual block"
         case .motionScene: return session.document.motionScenes.first(where: { $0.id == item.id })?.preset ?? "Motion scene"
-        case .cameraEffect: return session.document.cameraEffects.first(where: { $0.id == item.id })?.effect ?? "Camera effect"
+        case .cameraEffect:
+            guard let effect = session.document.cameraEffects.first(where: { $0.id == item.id }) else { return "Camera effect" }
+            return CameraEmphasis.label(effect.raw["easing"]?.stringValue)
         case .carousel: return "Carousel moment"
         default: return item.kind.rawValue
         }
@@ -631,7 +633,7 @@ private struct NativeSelectedEffectInspector: View {
     @State private var visualOverlayY = 0.5
     @State private var visualOverlayScale = 0.35
     @State private var intensity = 0.04
-    @State private var easing = "sine_pulse"
+    @State private var easing = CameraEmphasis.pulseEasing
     @State private var carouselPosition = "middle"
 
     private var title: String {
@@ -890,11 +892,12 @@ private struct NativeSelectedEffectInspector: View {
             }
         case .cameraEffect:
             Section("Camera effect") {
-                NativeEditorSlider(session: session, value: $intensity, in: 0...0.08, step: 0.001) { Text("Intensity") }
+                NativeEditorSlider(session: session, value: $intensity, in: 0...CameraEmphasis.maxIntensity, step: 0.001) { Text("Intensity") }
                     .onChange(of: intensity) { _, value in session.setCameraEffectIntensity(id: selection.id, intensity: value) }
                     .accessibilityIdentifier("native-editor-selected-camera-intensity")
-                Picker("Easing", selection: $easing) {
-                    Text("Sine pulse").tag("sine_pulse")
+                Picker("Style", selection: $easing) {
+                    Text("Zoom in").tag(CameraEmphasis.holdEasing)
+                    Text("Pulse").tag(CameraEmphasis.pulseEasing)
                 }
                 .onChange(of: easing) { _, value in session.setCameraEffectEasing(id: selection.id, easing: value) }
                 .accessibilityIdentifier("native-editor-selected-camera-easing")
@@ -988,7 +991,7 @@ private struct NativeSelectedEffectInspector: View {
         case .cameraEffect:
             let raw = session.document.cameraEffects.first(where: { $0.id == selection.id })?.raw
             intensity = nativeNumber(raw?["intensity"]) ?? 0.04
-            easing = nativeString(raw?["easing"]) ?? "sine_pulse"
+            easing = CameraEmphasis.resolve(nativeString(raw?["easing"]))
         case .carousel:
             carouselPosition = nativeString(session.document.carouselMoment?["position"]) ?? "middle"
         default: break

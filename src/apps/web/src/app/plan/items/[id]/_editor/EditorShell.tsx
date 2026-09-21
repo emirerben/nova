@@ -42,6 +42,7 @@ import {
   retimeVisualBlock,
   updatePoolAssetContext,
   type CameraEffect,
+  type CameraEffectEasing,
   type CarouselMoment,
   type MediaOverlay,
   type MediaVisualBlock,
@@ -62,7 +63,7 @@ import { mergePoolAssetsPreservingDisplayUrls } from "@/lib/pool-assets";
 import type { CarouselClipThumb } from "./CarouselPanel";
 import type { NovaStep } from "@/lib/job-phases";
 import { POLL_INTERVAL_MS } from "@/components/progress";
-import { normalizeCameraEffect } from "@/lib/camera-effects";
+import { cameraEasingBounds, normalizeCameraEffect } from "@/lib/camera-effects";
 import {
   removeGeneratedEffectGroup,
   removeOverlayEffectGroup,
@@ -1494,6 +1495,13 @@ export default function EditorShell({
     "motion_scenes",
     capabilities?.motion_scenes === true,
   );
+  // KRI-7: the camera lane rides the same capability the render honors, so the
+  // authoring affordance can never offer a zoom the export would drop.
+  const cameraEffectsAllowed = capabilities?.camera_effects === true;
+  const cameraEffectsReason = cameraEffectsAllowed
+    ? null
+    : editorReasonCopy(capabilities?.camera_effects_reason);
+
   const evolvingTypeExposureEnabled =
     EVOLVING_TYPE_PUBLIC_ENABLED && capabilities?.evolving_type === true;
   const readOnly =
@@ -4122,6 +4130,45 @@ export default function EditorShell({
       setCameraEffectsDirty(true);
     },
     [capabilities?.camera_effects, readOnly],
+  );
+
+  // KRI-7: the user's own emphasis zoom. Placed at the playhead in BASE time
+  // (the same clock the render reads), sized from the easing's default window
+  // and trimmed to whatever room is left before the end of the edit.
+  const addCameraEffect = useCallback(
+    (easing: CameraEffectEasing) => {
+      if (readOnly || capabilities?.camera_effects === false) return;
+      const bounds = cameraEasingBounds(easing);
+      const start = Math.max(0, outputToBaseTimeRef.current(currentTime));
+      const room = Math.max(0, duration - start);
+      if (room < bounds.minDurationS) {
+        notify("There isn't room for a zoom here — move the playhead earlier in the edit.");
+        return;
+      }
+      history.record();
+      const effect = normalizeCameraEffect({
+        id: crypto.randomUUID(),
+        token: "semantic_crop_pulse",
+        start_s: start,
+        end_s: start + Math.min(bounds.defaultDurationS, room),
+        intensity: bounds.defaultIntensity,
+        easing,
+        source: "user",
+      });
+      setLocalCameraEffects((effects) => [...effects, effect]);
+      setCameraEffectsDirty(true);
+      select("camera", effect.id);
+      setInspectorTab("basic");
+    },
+    [
+      capabilities?.camera_effects,
+      currentTime,
+      duration,
+      history,
+      notify,
+      readOnly,
+      select,
+    ],
   );
 
   const patchCameraEffect = useCallback(
@@ -8198,6 +8245,7 @@ export default function EditorShell({
         <ToolRail
           activeTool={activeTool}
           disabledTools={railDisabledReasons}
+          cameraEmphasisAvailable={cameraEffectsAllowed}
           onToggleTool={(tool) => setActiveTool((cur) => (cur === tool ? null : tool))}
         />
         {layoutMode === "full" &&
@@ -8244,6 +8292,9 @@ export default function EditorShell({
               evolvingTypeEnabled={evolvingTypeExposureEnabled}
               onAddMotion={addMotionScene}
               onSelectMotion={(id) => selectElement("motion", id)}
+              cameraEmphasisAvailable={cameraEffectsAllowed}
+              cameraEmphasisReason={cameraEffectsReason}
+              onAddCameraEmphasis={addCameraEffect}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={poolUploader.busy}
@@ -8316,6 +8367,9 @@ export default function EditorShell({
               evolvingTypeEnabled={evolvingTypeExposureEnabled}
               onAddMotion={addMotionScene}
               onSelectMotion={(id) => selectElement("motion", id)}
+              cameraEmphasisAvailable={cameraEffectsAllowed}
+              cameraEmphasisReason={cameraEffectsReason}
+              onAddCameraEmphasis={addCameraEffect}
               visualAssets={poolAssets}
               visualTextElements={state.bars}
               visualUploading={poolUploader.busy}
@@ -8740,6 +8794,9 @@ export default function EditorShell({
             evolvingTypeEnabled={evolvingTypeExposureEnabled}
             onAddMotion={addMotionScene}
             onSelectMotion={(id) => selectElement("motion", id)}
+            cameraEmphasisAvailable={cameraEffectsAllowed}
+            cameraEmphasisReason={cameraEffectsReason}
+            onAddCameraEmphasis={addCameraEffect}
             visualAssets={poolAssets}
             visualTextElements={state.bars}
             visualUploading={poolUploader.busy}

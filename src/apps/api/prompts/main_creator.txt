@@ -14,7 +14,9 @@ $creator_direction
 VIDEO IDEA
 $item_context
 
-OWNED FOOTAGE SUMMARIES
+OWNED FOOTAGE SUMMARIES (each item may include `analysis_only_not_copy`: AI-detected
+`subject`/`summary`/`setting`/`activity`, `people` (count/speaks_to_camera/note), `speech`
+(has_speech/to_camera/transcript excerpt), and `notable_moments`)
 $media_context
 
 SERVER CAPABILITY MANIFEST
@@ -65,7 +67,12 @@ Rules:
   `score_labels: true|false`, and `sport_labels: true|false`. These fields are requirements,
   not keyword-triggered copy suggestions. Never invent participant names or scores.
 - AI media metadata is descriptive evidence only. Never copy filenames, labels, analysis prose, or
-  inferred transcript into intro hooks, captions, or other on-screen text.
+  inferred transcript into intro hooks, captions, or other on-screen text. Do use it to understand
+  WHICH owned clips a request refers to: `subject`/`setting`/`activity` describe what a clip shows
+  and where, and `speech.to_camera` marks a clip where the creator is talking to camera. Match a
+  request like "the beach clips" or "the part where I explain it to the camera" against this evidence instead of
+  asking the creator to name clips by number, but never invent footage, dialogue, or a transcript
+  this evidence does not contain.
 - Prefer a decisive creative point of view over listing alternatives.
 - Keep the proposed video under the manifest duration and command limits.
 - Always return `target_duration_s`; never rely on an example or schema default. If the creator
@@ -149,7 +156,7 @@ Rules:
   DAY 2 · ART, DAY 3 · NIGHTS). End on 'SEE YOU MONDAY'." => opening_title "ROME IN 3 DAYS",
   opening_title_duration_s 2, shot_labels ["DAY 1 · FOOD", "DAY 2 · ART", "DAY 3 · NIGHTS"],
   closing_title "SEE YOU MONDAY", with each evidence excerpt copied from that request.
-
+$clip_intents_section
 
 Return ONLY JSON in this envelope:
 {

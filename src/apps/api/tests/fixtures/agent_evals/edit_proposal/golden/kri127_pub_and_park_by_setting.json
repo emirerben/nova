@@ -1,0 +1,70 @@
+{
+    "agent": "nova.plan.edit_proposal",
+    "prompt_version": "1.12.0",
+    "input": {
+        "idea": "A day out with friends",
+        "theme": "Park then pub",
+        "direction": "guided_story",
+        "goal": "Group the footage by where it happened",
+        "creator_request": "Group the pub videos together and keep the park clips separate.",
+        "pace": "balanced",
+        "target_duration_s": 20,
+        "media": [
+            {
+                "media_id": "p1",
+                "lane": "clip",
+                "kind": "video",
+                "duration_s": 5.0,
+                "subject": "two people sitting on a bench",
+                "setting": "a city park",
+                "activity": "chatting outdoors"
+            },
+            {
+                "media_id": "p2",
+                "lane": "clip",
+                "kind": "video",
+                "duration_s": 4.5,
+                "subject": "a raised glass",
+                "setting": "a neighborhood pub",
+                "activity": "celebrating with drinks",
+                "speaks_to_camera": true,
+                "transcript": "cheers everyone, what a day"
+            },
+            {
+                "media_id": "p3",
+                "lane": "clip",
+                "kind": "video",
+                "duration_s": 6.2,
+                "subject": "a group laughing around a table",
+                "setting": "a neighborhood pub",
+                "activity": "celebrating with drinks"
+            },
+            {
+                "media_id": "p4",
+                "lane": "clip",
+                "kind": "video",
+                "duration_s": 3.8,
+                "subject": "a person walking along a path",
+                "setting": "a city park",
+                "activity": "walking outdoors"
+            },
+            {
+                "media_id": "p5",
+                "lane": "asset",
+                "kind": "image",
+                "subject": "hands around a full glass",
+                "setting": "a neighborhood pub",
+                "activity": "ordering drinks"
+            }
+        ]
+    },
+    "raw_text": "{\"title\":\"Park then pub\",\"duration_s\":18,\"story_beats\":[{\"topic\":\"Park\",\"thought\":\"An easy afternoon on a bench in the park.\",\"media_ids\":[\"p1\"],\"layout\":\"fullscreen\",\"duration_s\":5},{\"topic\":\"Walking\",\"thought\":\"A last stretch of the park before heading out.\",\"media_ids\":[\"p4\"],\"layout\":\"fullscreen\",\"duration_s\":4},{\"topic\":\"Pub\",\"thought\":\"The night moves to the pub with the group together.\",\"media_ids\":[\"p2\",\"p3\",\"p5\"],\"layout\":\"fullscreen\",\"duration_s\":9}],\"mixed_media_timing\":null,\"montage_text_bindings\":[],\"montage_audio\":null,\"fast_cuts\":null}",
+    "meta": {
+        "source": "hand-authored-kri127-regression",
+        "expected_topics": [
+            "park",
+            "pub"
+        ],
+        "contract": "KRI-127: none of the `subject` strings say pub/park explicitly; only the shared record's `setting` field (now threaded onto EditProposalMedia) distinguishes the two groups the creator named."
+    }
+}

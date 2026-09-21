@@ -1483,6 +1483,21 @@ def test_montage_device_variant_closes_legacy_lane_booleans_only(monkeypatch) ->
         assert device[untouched] == cloud[untouched]
 
 
+def test_device_variant_closes_the_camera_lane(monkeypatch) -> None:
+    """KRI-7: the phone compiler has no camera lane, so the phone must not offer one."""
+    _arm_every_editor_lane(monkeypatch)
+    job = _job(resolved_archetype="subtitled")
+    variant = {**job.assembly_plan["variants"][0], "base_video_path": "base.mp4"}
+
+    cloud = gj._editor_capabilities(job, variant)
+    device = gj._editor_capabilities(job, {**variant, "render_destination": "device"})
+
+    assert cloud["camera_effects"] is True  # or the clamp proves nothing
+    assert device["camera_effects"] is False
+    assert device["camera_effects_reason"] == "phone_edit_unsupported"
+    assert device.keys() == cloud.keys()
+
+
 @pytest.mark.parametrize("render_destination", [None, "cloud"])
 @pytest.mark.parametrize("archetype", [None, "guided_story"])
 def test_cloud_variant_capabilities_are_never_clamped(

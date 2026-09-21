@@ -1448,6 +1448,26 @@ export interface CreatorAgentPlanPreview {
       participant_labels?: "none" | "single_subject";
       score_labels?: boolean;
       sport_labels?: boolean;
+      /**
+       * KRI-127 (flag `clip_intents_enabled`, dark). Server-resolved
+       * open-vocabulary label/group/order/include intents; null/absent while
+       * the flag is off or nothing resolved this turn.
+       */
+      clip_intents?: Array<{
+        intent_id: string;
+        op: "label" | "group" | "order" | "include";
+        attribute: string;
+        creator_text?: string | null;
+        position?: "first" | "last" | null;
+        status?: "resolved" | "needs_creator";
+        assignments?: Array<{
+          media_id: string;
+          value?: string | null;
+          evidence?: string;
+          confidence?: number;
+          grounding?: "creator_text" | "record_span" | "vision_verified" | null;
+        }>;
+      }> | null;
       optional_treatments?: Array<"overlays" | "sfx" | "transitions" | "looks">;
       target_duration_s?: number;
       montage_cadence?: MontageCadenceConstraint | null;
@@ -2245,13 +2265,16 @@ export interface OverlayApplyReceipt {
   at?: string;
 }
 
+/** Emphasis shape. `sine_pulse` accents; `ease_in_hold` punches in and holds. */
+export type CameraEffectEasing = "sine_pulse" | "ease_in_hold";
+
 export interface CameraEffect {
   id: string;
   token?: "semantic_crop_pulse" | string;
   start_s: number;
   end_s: number;
   intensity: number;
-  easing: "sine_pulse";
+  easing: CameraEffectEasing;
   source: "smart_captions" | "user" | string;
   effect_group_id?: string | null;
   event_id?: string | null;

@@ -1147,7 +1147,9 @@ def test_main_creator_large_shape_rejects_unknown_refs_then_persists_safe_fallba
     )
 
 
-def _prepare_terminal_agent_attempt(monkeypatch, *, direction: str = "guided_story"):
+def _prepare_terminal_agent_attempt(
+    monkeypatch, *, direction: str = "guided_story", analysis: dict | None = None
+):
     from app.agents._runtime import TerminalError
 
     item_id = uuid.uuid4()
@@ -1173,6 +1175,7 @@ def _prepare_terminal_agent_attempt(monkeypatch, *, direction: str = "guided_sto
         generation=str(_PROD_CLIP_ASSIGNMENT["generation"]),
         kind="video",
         duration_s=6.768333,
+        **({"analysis": analysis} if analysis is not None else {}),
     )
     monkeypatch.setattr(
         proposal_build,
@@ -1225,6 +1228,165 @@ def test_initial_draft_preserves_fractional_agent_output_through_approval(monkey
     assert persisted.last_approved.snapshot.duration_s == 6.7
     assert persisted.last_approved.snapshot.story_beats[0].thought == "The Acropolis"
     validate_proposal_timing(persisted.last_approved.snapshot)
+
+
+def test_clip_intents_reach_the_planner_only_when_the_flag_is_enabled(monkeypatch) -> None:
+    """KRI-127 Lane P: brief.clip_intents is gated by settings.clip_intents_enabled
+    at the call site in _run_draft_attempt, not inside the agent itself."""
+
+    from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
+
+    intent = ResolvedClipIntent(
+        intent_id="i1",
+        op="include",
+        attribute="talking to camera",
+        assignments=[
+            ClipAssignment(media_id=str(_PROD_CLIP_ASSIGNMENT["media_id"]), confidence=0.9)
+        ],
+    )
+
+    def _run_with_flag(flag: bool) -> object | None:
+        from app.config import settings as app_settings
+
+        item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+        proposal = parse_edit_proposal(item.edit_proposal)
+        proposal.brief.clip_intents = [intent]
+        item.edit_proposal = proposal.model_dump(mode="json")
+        seen: dict[str, object] = {}
+
+        def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+            seen["clip_intents"] = agent_input.clip_intents
+            return agent.parse(
+                json.dumps(
+                    {
+                        "title": "T",
+                        "duration_s": 6,
+                        "story_beats": [
+                            {
+                                "topic": "Topic",
+                                "thought": "A visible detail worth noting.",
+                                "media_ids": [str(_PROD_CLIP_ASSIGNMENT["media_id"])],
+                                "duration_s": 6,
+                            }
+                        ],
+                    }
+                ),
+                agent_input,
+            )
+
+        monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+        monkeypatch.setattr(app_settings, "clip_intents_enabled", flag)
+        proposal_build._run_draft_attempt(
+            SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=False
+        )
+        return seen.get("clip_intents")
+
+    assert _run_with_flag(False) is None
+    assert _run_with_flag(True) == [intent]
+
+
+def test_agent_media_carries_shared_understanding_fields_for_new_style_analysis(
+    monkeypatch,
+) -> None:
+    """KRI-127: agent_media exposes the shared record on top of the legacy
+    subject/description/on_screen_text/best_moments fields, which stay
+    populated exactly as before for back-compat."""
+    from app.services.clip_understanding import UNDERSTANDING_KEY, understanding_payload
+
+    understanding_analysis = {
+        "subject": "Acropolis of Athens",
+        "description": "",
+        "on_screen_text": "",
+        UNDERSTANDING_KEY: understanding_payload(
+            SimpleNamespace(
+                detected_subject="Acropolis of Athens",
+                clip_summary="A tourist films the Acropolis from below.",
+                setting="the Acropolis of Athens",
+                activity="sightseeing",
+                transcript="look at that view",
+                speaks_to_camera=True,
+            )
+        ),
+    }
+    item_id, _item = _prepare_terminal_agent_attempt(monkeypatch, analysis=understanding_analysis)
+
+    captured: dict = {}
+
+    def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+        captured["media"] = agent_input.media
+        return agent.parse(
+            json.dumps(
+                {
+                    "title": "The Acropolis",
+                    "duration_s": 6,
+                    "story_beats": [
+                        {
+                            "topic": "Architecture",
+                            "thought": "The Acropolis",
+                            "media_ids": [str(_PROD_CLIP_ASSIGNMENT["media_id"])],
+                            "duration_s": 6,
+                        }
+                    ],
+                }
+            ),
+            agent_input,
+        )
+
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    [media] = captured["media"]
+    assert media.subject == "Acropolis of Athens"  # unchanged legacy field
+    assert media.summary == "A tourist films the Acropolis from below."
+    assert media.setting == "the Acropolis of Athens"
+    assert media.activity == "sightseeing"
+    assert media.speaks_to_camera is True
+    assert media.transcript == "look at that view"
+
+
+def test_agent_media_stays_valid_for_a_legacy_analysis(monkeypatch) -> None:
+    """A legacy analysis (no `understanding` block) still produces a valid
+    EditProposalMedia -- the new fields simply stay at their defaults."""
+    item_id, _item = _prepare_terminal_agent_attempt(
+        monkeypatch, analysis=dict(_PROD_CLIP_ASSIGNMENT["analysis"])
+    )
+
+    captured: dict = {}
+
+    def _run(agent, agent_input, ctx=None):  # noqa: ANN001, ARG001
+        captured["media"] = agent_input.media
+        return agent.parse(
+            json.dumps(
+                {
+                    "title": "The Acropolis",
+                    "duration_s": 6,
+                    "story_beats": [
+                        {
+                            "topic": "Architecture",
+                            "thought": "The Acropolis",
+                            "media_ids": [str(_PROD_CLIP_ASSIGNMENT["media_id"])],
+                            "duration_s": 6,
+                        }
+                    ],
+                }
+            ),
+            agent_input,
+        )
+
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run)
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    [media] = captured["media"]
+    assert media.subject == "Acropolis of Athens"
+    assert media.summary == ""
+    assert media.setting == ""
+    assert media.activity == ""
+    assert media.speaks_to_camera is False
+    assert media.transcript == ""
 
 
 def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(

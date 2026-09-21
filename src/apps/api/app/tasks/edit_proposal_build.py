@@ -43,6 +43,7 @@ from app.schemas.edit_proposal import (
     parse_edit_proposal,
     uses_quick_photo_long_video_timing,
 )
+from app.services.clip_understanding import clip_record
 from app.services.content_plan_persona import load_owned_plan_persona_sync
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.edit_direction_planner import (
@@ -1261,6 +1262,7 @@ def _run_draft_attempt(
         EditProposalAgentInput,
         EditProposalMedia,
     )
+    from app.config import settings  # noqa: PLC0415
     from app.services.edit_direction_planner import (  # noqa: PLC0415
         CreatorTextInfeasibleError,
         deterministic_fast_cuts,
@@ -1268,6 +1270,13 @@ def _run_draft_attempt(
         deterministic_labeled_beats,
     )
     from app.services.edit_proposals import approve_proposal  # noqa: PLC0415
+
+    def _resolved_clip_intents(proposal_brief):
+        # KRI-127 Lane P: only surface the chat turn's resolved clip intents
+        # to the planner when the kill switch is on; None keeps the
+        # planner's prompt, parsing, and validation byte-identical to
+        # pre-KRI-127.
+        return proposal_brief.clip_intents if settings.clip_intents_enabled else None
 
     try:
         with sync_session() as db:
@@ -1644,6 +1653,22 @@ def _run_draft_attempt(
             if preflight_analysis_id is not None:
                 publish_preflight_after_commit(preflight_analysis_id)
 
+        def _understanding_fields(ref: MediaRef) -> dict[str, object]:
+            # KRI-127: subject/description/on_screen_text/best_moments above
+            # stay populated from the raw analysis dict exactly as before
+            # (back-compat with existing fixtures); this adds the shared
+            # record's richer, open-vocabulary fields so the planner can
+            # group clips by setting/activity/speech without a new keyword
+            # list per feature request.
+            record = clip_record(ref.analysis, kind=ref.kind)
+            return {
+                "summary": record.summary,
+                "setting": record.setting,
+                "activity": record.activity,
+                "speaks_to_camera": record.speech.to_camera,
+                "transcript": record.speech.transcript,
+            }
+
         agent_media = [
             EditProposalMedia(
                 media_id=ref.media_id,
@@ -1656,6 +1681,7 @@ def _run_draft_attempt(
                 description=str(ref.analysis.get("description") or ""),
                 on_screen_text=str(ref.analysis.get("on_screen_text") or ""),
                 best_moments=list(ref.analysis.get("best_moments") or []),
+                **_understanding_fields(ref),
             )
             for ref in media
         ]
@@ -1688,6 +1714,7 @@ def _run_draft_attempt(
                     shot_labels=brief.shot_labels,
                     closing_title=brief.closing_title,
                     media=agent_media,
+                    clip_intents=_resolved_clip_intents(brief),
                 ),
                 ctx=RunContext(
                     creator_id=str(owner_id),
@@ -1751,6 +1778,7 @@ def _run_draft_attempt(
                             shot_labels=brief.shot_labels,
                             closing_title=brief.closing_title,
                             media=agent_media,
+                            clip_intents=_resolved_clip_intents(brief),
                         ),
                         ctx=RunContext(
                             creator_id=str(owner_id),
@@ -1885,6 +1913,8 @@ def _run_draft_attempt(
                 else None
             )
         snapshot = EditProposalSnapshot(
+            # KRI-127: the render worker re-grounds every label from these.
+            clip_intents=_resolved_clip_intents(brief),
             direction=brief.direction,
             goal=brief.goal,
             pace=brief.pace,

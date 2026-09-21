@@ -28,6 +28,7 @@ import type { MusicTrackSummary } from "@/lib/music-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
   isBoundedCreatorImageAsset,
+  type CameraEffectEasing,
   type PoolAsset,
   type VisualBlock,
 } from "@/lib/plan-api";
@@ -115,6 +116,9 @@ export default function ToolDrawer({
   evolvingTypeEnabled = false,
   onAddMotion,
   onSelectMotion,
+  cameraEmphasisAvailable = false,
+  cameraEmphasisReason = null,
+  onAddCameraEmphasis,
   visualAssets = [],
   visualTextElements = [],
   visualUploading = false,
@@ -192,6 +196,10 @@ export default function ToolDrawer({
   evolvingTypeEnabled?: boolean;
   onAddMotion?: (presetId: MotionPresetId) => void;
   onSelectMotion?: (id: string) => void;
+  /** KRI-7 — camera emphasis (zoom-in / pulse) authoring. */
+  cameraEmphasisAvailable?: boolean;
+  cameraEmphasisReason?: string | null;
+  onAddCameraEmphasis?: (easing: CameraEffectEasing) => void;
   visualAssets?: PoolAsset[];
   visualTextElements?: Array<{
     id?: string;
@@ -483,6 +491,11 @@ export default function ToolDrawer({
           data-testid="visuals-scroll-container"
           className="min-h-0 flex-1 overflow-y-auto"
         >
+          <CameraEmphasisPanel
+            available={cameraEmphasisAvailable}
+            reason={cameraEmphasisReason}
+            onAdd={onAddCameraEmphasis}
+          />
           <MotionPresetsPanel
             scenes={motionScenes}
             selectedSceneId={selectedMotionId}
@@ -545,6 +558,59 @@ export default function ToolDrawer({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * KRI-7 — camera emphasis authoring. Kria places these automatically on the
+ * moments it reads as important; this is how a creator adds one of their own,
+ * or a second one somewhere the AI didn't reach. Both land at the playhead and
+ * open in the inspector, where timing, length and strength are editable.
+ */
+function CameraEmphasisPanel({
+  available,
+  reason,
+  onAdd,
+}: {
+  available: boolean;
+  reason?: string | null;
+  onAdd?: (easing: CameraEffectEasing) => void;
+}) {
+  if (!available && !reason) return null;
+  const options: Array<{ easing: CameraEffectEasing; label: string; hint: string }> = [
+    { easing: "ease_in_hold", label: "Zoom in", hint: "Push in and hold the moment" },
+    { easing: "sine_pulse", label: "Pulse", hint: "One quick accent, then settle" },
+  ];
+  return (
+    <section className="border-b border-zinc-100 px-5 py-5">
+      <div className="mb-4">
+        <p className="text-[12px] font-semibold text-[#3f3f46]">Camera</p>
+      </div>
+      {!available && reason && <p className="text-[11px] text-[#71717a]">{reason}</p>}
+      <div className="grid grid-cols-2 gap-3">
+        {options.map((option) => (
+          <Button
+            key={option.easing}
+            type="button"
+            variant="outline"
+            disabled={!available}
+            onClick={() => onAdd?.(option.easing)}
+            data-testid={`add-camera-${option.easing}`}
+            className="h-auto flex-col items-start gap-1 rounded-xl px-3 py-3 text-left"
+          >
+            <span className="text-[13px] font-semibold text-[#0c0c0e]">{option.label}</span>
+            <span className="text-[11px] font-normal leading-4 text-[#71717a]">
+              {option.hint}
+            </span>
+          </Button>
+        ))}
+      </div>
+      {available && (
+        <p className="mt-3 text-[11px] leading-4 text-[#71717a]">
+          Added at the playhead.
+        </p>
+      )}
+    </section>
   );
 }
 

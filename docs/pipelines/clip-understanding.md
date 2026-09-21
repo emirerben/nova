@@ -1,0 +1,142 @@
+# Shared clip understanding record (KRI-127)
+
+One open-vocabulary record per clip, written by the analyzer and read by every
+agent. It exists so a new kind of creator request ("name the dish", "label each
+city", "the pub videos") never needs a new field, enum or keyword list.
+
+## Shape
+
+`app/schemas/clip_understanding.py::ClipUnderstanding` — `subject`, `summary`,
+`setting`, `activity`, `people{count, speaks_to_camera, note}`,
+`speech{has_speech, to_camera, transcript}`, `on_screen_text`, `brands`,
+`content_type`, `audio_type`, `notable_moments`. Everything is free text or a
+plain flag. It is AI-written evidence and is never on-screen copy by itself.
+
+## One writer, one reader
+
+- **Writer:** `understanding_payload(meta, best_moments=...)` in
+  `app/services/clip_understanding.py`. `autoplace._analyze_video` persists it
+  under `PlanItemAsset.analysis["understanding"]` (plus a correctly named
+  top-level `transcript`; the legacy `on_screen_text` key still holds the spoken
+  transcript for videos and is kept for back-compat).
+- **Reader:** `clip_record(analysis, kind=...)`. It never raises and projects
+  new analyses, legacy video analyses (v<=7) and image analyses into the same
+  record. The chat agent (`creator_sessions._chat_evidence`) and the edit
+  planner (`edit_proposal_build` → `EditProposalMedia`) read clips only through
+  it. Do not read `analysis[...]` keys directly in a new consumer.
+
+Text fields are defanged (control characters, role markers, code fences) because
+transcripts are third-party text that ends up in agent prompts.
+
+## Invariants
+
+- **`ClipMeta` field names.** Older modules read optional attributes off
+  `ClipMeta` with `getattr(meta, "<name>", default)` for names it never had
+  (`summary`, `brands`, `composition_note`, `content_type`, `audio_type`). A new
+  field with one of those names silently switches that code path on with no
+  flag. Such fields are named `clip_*` on `ClipMeta`. Guard:
+  `tests/pipeline/test_clip_meta_dormant_readers.py`.
+- **The record does not feed `matcher_clip_metas`.** Its `detected_subject`
+  drives the on-screen sport-label keyword matcher and the music matcher prompt.
+  Replaying the real KRI-126 clips showed free-text `activity` gains a wrong
+  label and loses a correct one. Guard:
+  `tests/pipeline/test_guided_story_clip_understanding.py`.
+- **Versioning.** `ANALYSIS_VERSION = 8` is video-only; photos stay fresh at 6
+  (`_MIN_FRESH_ANALYSIS_VERSION_BY_KIND`). Re-analysis is lazy. `clip_cache`
+  invalidates through `CACHE_SCHEMA_VERSION` + the analyzer `prompt_version`.
+- **parse() threading.** New `ClipMetadataOutput` fields must be threaded
+  through `ClipMetadataAgent.parse()` (`TestParseThreading`).
+
+## Fixture
+
+`tests/fixtures/kri126_thirty_clip_guided_story.json` carries a real
+`understanding` block per clip, regenerated from the production clips with
+`scripts/dev/regen_kri126_fixture.py` (read-only on prod; transcripts and brand
+strings are redacted before anything is written).
+
+## Open-vocabulary clip intents (`CLIP_INTENTS_ENABLED`, default `false`)
+
+One generic intent replaces the per-feature strategy fields (`sport_labels`,
+`context_label.kind`): **label / group / order / include clips by an attribute
+the creator described in their own words**. No enum, no keyword list. Flag off is
+byte-identical to the legacy path (prompts, events, stored strategy/brief/snapshot;
+pinned by prompt-hash and serializer tests).
+
+Flow (flag on):
+
+1. **Chat.** `MainCreatorAgent` emits `strategy.clip_intents`
+   (`app/schemas/clip_intents.py::ClipIntent`). It never authors per-clip answers
+   or label text; `creator_text` only carries the creator's exact words. The
+   sport regex in `_apply_explicit_render_intent` stops forcing `context_label`.
+   `resolved_clip_intents` is server-owned: every entry point that accepts a
+   model-authored strategy clears it (creator route, Kria `apply_strategy`), and
+   both fields are hidden from derived JSON schemas (`SkipJsonSchema`) so the
+   Kria tool contract is unchanged.
+2. **Resolve, inside the chat turn** (`app/services/clip_intent_resolution.py`,
+   DB-free, the session row lock is released around it): `ClipRequestResolverAgent`
+   (text-only, media aliases, id set-membership) matches intents to the shared
+   clip records. Clips the record cannot answer go to `ClipQuestionAgent` (the
+   vision model re-watches THAT clip): at most `clip_intents_max_vision_requeries`
+   (4) per turn, under one `clip_intents_vision_deadline_s` (25 s) deadline, video
+   only. Membership checks are re-asked as closed yes/no questions; a confident
+   "no" excludes the clip. New answers are cached on the asset's
+   `analysis["answers"][normalized_question]` (pool assets only).
+3. **Ask, never guess.** Anything unresolved (ungrounded label, over the cap,
+   deadline, "unknown", empty group, agent failure) becomes ONE
+   `assistant_question` event (`reason_code: clip_intent_unresolved`). The
+   creator's answer arrives as a normal next message.
+4. **Plan.** On confirm the intents travel `ProposalBrief.clip_intents` (chat
+   `asset-{uuid}` ids translated to planner ids) into `EditProposalAgent` as
+   alias-only constraints: group (creator's words as the chapter title), order
+   first/last, include. `parse()` validates them; order and include are repaired,
+   a split group falls to the clarification retry. `shot_labels` wins when both
+   are present. Label values are grouping hints only, never beat copy.
+5. **Render.** `EditProposalSnapshot.clip_intents` reaches the worker, which
+   **re-grounds every label** (`generative_build._grounded_context_labels`) and
+   feeds the existing context-label lane (same geometry, compaction, slot windows,
+   replay pinning; iOS consumes the same server text elements). The
+   timeline-revision rebuild in `guided_story.py` uses the same path. One label
+   per clip; the first resolved label intent claims it.
+
+### The on-screen text fence (replaces `_CONTEXT_SPORT_ALIASES`)
+
+`ground_label()` is the only rule by which AI-derived text may reach pixels. A
+label renders only when it is, in order:
+
+- `creator_text` — the creator's own words: whole words, in order, contiguous in
+  the confirmed request (not a letters-only substring);
+- `vision_verified` — every word is in the vision model's answer for THAT clip,
+  confidence >= 0.8;
+- `record_span` — every word is in what the vision model WROTE about THAT clip
+  (subject, summary, setting, activity, people note, moments; never the spoken
+  transcript), resolver confidence >= 0.8.
+
+Plus: <= 24 chars, <= 3 words, safe charset, every word counted. Stored
+`value`/`grounding` are never trusted; the worker re-derives them. Guards:
+`tests/schemas/test_clip_intents.py`, `tests/tasks/test_grounded_context_labels.py`
+(sentinels: made-up value at 0.99, forged provenance, cross-clip evidence,
+transcript-only evidence), and the offline acceptance replay on the real KRI-126
+clips `tests/services/test_kri126_clip_intents_acceptance.py`.
+`TestNoGeminiTextLeaks` is unchanged.
+
+### Rollout / rollback
+
+Server-only flag (no `NEXT_PUBLIC` twin; questions render through the existing
+chat event). Enable: `fly secrets set CLIP_INTENTS_ENABLED=true --app nova-video`
++ restart api + worker. Rollback: set it `false`; stored intents are ignored
+(chat clears them, the build task and the worker gate on the flag) and
+already-confirmed label elements keep replaying by value. Before enabling, run
+the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
+`test_clip_question_evals.py`, `test_main_creator_evals.py`,
+`test_edit_proposal_evals.py` (`--eval-mode=live`, no judge).
+
+## Known gaps
+
+- Vision re-query is video-only and per-turn capped; more vague clips than the
+  cap means a question. An async (Celery) re-query is a follow-up.
+- Vision answers are cached for pool assets only, not raw `clip_assignments`.
+- `participant_labels` / `score_labels` stay on the transcript-grounded narration
+  lane; retiring them is a follow-up.
+- `generative_build._clip_meta_from_cache` drops the `clip_*` fields on the
+  fast-reburn cache round trip, so the non-guided lane can only ground from a
+  fresh analysis.

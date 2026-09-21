@@ -1,0 +1,117 @@
+{
+    "agent": "nova.creator.main",
+    "prompt_version": "2026-09-21-v28",
+    "input": {
+        "user_message": "Make a video from only the clips where I talk to the camera",
+        "creator_context": "",
+        "item_context": "Untitled video; montage; no recorded voiceover.",
+        "media_context": [
+            {
+                "media_id": "clip-1",
+                "kind": "video",
+                "duration_s": 5.2,
+                "analysis_only_not_copy": {
+                    "subject": "man sitting on a park bench",
+                    "setting": "city park",
+                    "activity": "talking directly to the camera",
+                    "speech": {
+                        "has_speech": true,
+                        "to_camera": true,
+                        "transcript": "okay so today we are trying something new"
+                    }
+                }
+            },
+            {
+                "media_id": "clip-2",
+                "kind": "video",
+                "duration_s": 8.1,
+                "analysis_only_not_copy": {
+                    "subject": "wide shot of a park with people walking",
+                    "setting": "city park",
+                    "activity": "people walking and relaxing"
+                }
+            },
+            {
+                "media_id": "clip-3",
+                "kind": "video",
+                "duration_s": 4.4,
+                "analysis_only_not_copy": {
+                    "subject": "man standing near a fountain",
+                    "setting": "city park fountain",
+                    "activity": "talking directly to the camera",
+                    "speech": {
+                        "has_speech": true,
+                        "to_camera": true,
+                        "transcript": "and that is why the fountain is my favorite spot"
+                    }
+                }
+            }
+        ],
+        "conversation": [],
+        "capability_manifest": {
+            "schema_version": 1,
+            "item_id": "item-1",
+            "edit_format": "montage",
+            "render_program": "guided",
+            "has_voiceover": false,
+            "media": [
+                {
+                    "media_id": "clip-1",
+                    "kind": "video",
+                    "duration_s": 5.2
+                },
+                {
+                    "media_id": "clip-2",
+                    "kind": "video",
+                    "duration_s": 8.1
+                },
+                {
+                    "media_id": "clip-3",
+                    "kind": "video",
+                    "duration_s": 4.4
+                }
+            ],
+            "catalog": [
+                {
+                    "catalog_id": "music-track-1",
+                    "kind": "music",
+                    "label": "Warm acoustic bed"
+                }
+            ],
+            "capabilities": {
+                "dispatch_render": {
+                    "available": true
+                },
+                "draft_guided_proposal": {
+                    "available": true
+                },
+                "media_overlays": {
+                    "available": false,
+                    "reason_code": "disabled_by_setting"
+                },
+                "sound_effects": {
+                    "available": false,
+                    "reason_code": "disabled_by_setting"
+                },
+                "wide_looks": {
+                    "available": false,
+                    "reason_code": "disabled_by_setting"
+                }
+            },
+            "limits": {
+                "max_media_refs": 50,
+                "max_catalog_refs": 50,
+                "max_commands": 4,
+                "max_output_duration_s": 120.0
+            },
+            "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+    },
+    "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"guided_story\",\"edit_format\":\"talking_head\",\"archetype\":\"talking_head\",\"audio_strategy\":\"licensed_music\",\"media_scope\":\"selected\",\"story_structure\":[\"Talking to camera on the bench\",\"Talking to camera at the fountain\"],\"caption_style\":\"auto\",\"intro_hook\":\"Straight to camera in the park\",\"pacing\":\"balanced\",\"target_duration_s\":10,\"render_program\":\"guided\",\"selected_media_ids\":[\"clip-1\",\"clip-3\"],\"optional_treatments\":[],\"rationale\":\"The creator asked to use only the clips where they talk to the camera. clip-1 and clip-3 both show speech.to_camera true in the footage evidence; clip-2 is an establishing shot with no speech to camera, so it is left out.\"},\"summary\":\"A guided edit using only the two clips where you talk to the camera.\"}}",
+    "output": {},
+    "meta": {
+        "source": "hand-authored-kri127-regression",
+        "contract": "KRI-127: the chat agent's per-clip evidence (speech.to_camera via the shared clip-understanding record) is enough to select clips by content, not just by user-supplied labels"
+    }
+}

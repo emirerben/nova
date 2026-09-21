@@ -1,0 +1,80 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-09-21",
+  "input": {
+    "creator_request": "Include the clip where my dog jumps in the lake",
+    "intents": [
+      {
+        "intent_id": "i_dog_jump",
+        "op": "include",
+        "attribute": "the clip where my dog jumps in the lake",
+        "creator_text": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "dog running on a dock",
+          "summary": "A golden retriever sprints down a wooden dock toward the water.",
+          "setting": "lake dock",
+          "activity": "running toward water"
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "dog jumping into a lake",
+          "summary": "The same golden retriever leaps off the end of the dock and splashes into the lake.",
+          "setting": "lake",
+          "activity": "jumping into the water"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "family having a picnic",
+          "summary": "A family sits on a blanket eating sandwiches near a lake, no dog visible.",
+          "setting": "lakeside picnic area",
+          "activity": "having a picnic"
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "video",
+        "record": {
+          "subject": "dog shaking off water",
+          "summary": "The dog shakes water off its fur while standing on the shore.",
+          "setting": "lake shore",
+          "activity": "shaking off water"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"i_dog_jump\", \"assignments\": [{\"media\": \"m002\", \"evidence\": \"leaps off the end of the dock and splashes into the lake\", \"confidence\": 0.95}], \"needs_vision\": []}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i_dog_jump",
+        "assignments": [
+          {
+            "media": "m002",
+            "value": null,
+            "evidence": "leaps off the end of the dock and splashes into the lake",
+            "confidence": 0.95
+          }
+        ],
+        "needs_vision": [],
+        "question": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "'Find the clip' single-target include intent. Only m002's record explicitly describes the jump; the dock run-up (m001) and the post-jump shake-off (m004) are close but not the jump itself and are correctly left out."
+  }
+}

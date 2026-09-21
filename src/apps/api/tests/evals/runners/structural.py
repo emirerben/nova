@@ -20,6 +20,11 @@ from app.agents._schemas.persona import _MAX_TOPICS as PERSONA_MAX_TOPICS
 from app.agents._schemas.persona import Persona
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.agents.audio_template import AudioTemplateOutput
+from app.agents.camera_emphasis import (
+    MAX_CAMERA_EMPHASES,
+    CameraEmphasisInput,
+    CameraEmphasisOutput,
+)
 from app.agents.clip_metadata import (
     _BALL_BLACKLIST,
     _BALL_WHITELIST,
@@ -27,6 +32,11 @@ from app.agents.clip_metadata import (
     ClipMetadataOutput,
 )
 from app.agents.clip_plan_matcher import ClipPlanMatcherInput, ClipPlanMatcherOutput
+from app.agents.clip_question import ClipQuestionInput, ClipQuestionOutput
+from app.agents.clip_request_resolver import (
+    ClipRequestResolverInput,
+    ClipRequestResolverOutput,
+)
 from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
 from app.agents.edit_copilot import _MAX_OPS as _EDIT_COPILOT_MAX_OPS
@@ -319,7 +329,7 @@ def check_clip_metadata(
     if output.hook_score < 0 or output.hook_score > 10:
         failures.append(f"hook_score={output.hook_score} outside [0, 10]")
 
-    # Prompt contract (analyze_clip.txt, 2026-07-11.1): "brands" lists visible
+    # Prompt contract (analyze_clip.txt, 2026-09-21.1): "brands" lists visible
     # brand/mascot identities, [] when none. Empty is always legitimate; the
     # schema validator caps at 10 entries of ≤80 chars, so anything else here
     # means the parse threading regressed.
@@ -1184,6 +1194,83 @@ def check_clip_plan_matcher(
     return failures
 
 
+def check_clip_request_resolver(
+    output: ClipRequestResolverOutput,
+    input: ClipRequestResolverInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.plan.clip_request_resolver (KRI-127 Lane C).
+
+    ``parse()`` is the hallucination-defense layer (drops unknown intent ids /
+    aliases); this layer re-asserts those invariants plus the label-specific
+    render-fence prerequisites: a label value is never set on a membership op,
+    and every kept label value is short enough to ever pass
+    ``clean_label_text`` (parse() should already have dropped anything longer).
+    """
+    failures: list[str] = []
+    valid_intent_ids = {i.intent_id for i in input.intents}
+    valid_aliases = {c.alias for c in input.clips}
+    op_by_id = {i.intent_id: i.op for i in input.intents}
+
+    for intent_out in output.intents:
+        if intent_out.intent_id not in valid_intent_ids:
+            failures.append(
+                f"intent {intent_out.intent_id!r}: not in input intents "
+                "(parse() should have dropped this)"
+            )
+            continue
+        op = op_by_id[intent_out.intent_id]
+        seen_assignment_media: set[str] = set()
+        for a in intent_out.assignments:
+            if a.media not in valid_aliases:
+                failures.append(
+                    f"intent {intent_out.intent_id}: assignment media {a.media!r} "
+                    "not in input clips"
+                )
+            if a.media in seen_assignment_media:
+                failures.append(
+                    f"intent {intent_out.intent_id}: duplicate assignment media {a.media!r}"
+                )
+            seen_assignment_media.add(a.media)
+            if op != "label" and a.value is not None:
+                failures.append(
+                    f"intent {intent_out.intent_id}: membership op {op!r} carries a "
+                    f"label value {a.value!r}"
+                )
+            if op == "label" and a.value is not None and len(a.value.split()) > 3:
+                failures.append(
+                    f"intent {intent_out.intent_id}: label value {a.value!r} exceeds 3 words"
+                )
+        seen_vision_media: set[str] = set()
+        for nv in intent_out.needs_vision:
+            if nv.media not in valid_aliases:
+                failures.append(
+                    f"intent {intent_out.intent_id}: needs_vision media {nv.media!r} "
+                    "not in input clips"
+                )
+            if nv.media in seen_vision_media:
+                failures.append(
+                    f"intent {intent_out.intent_id}: duplicate needs_vision media {nv.media!r}"
+                )
+            seen_vision_media.add(nv.media)
+
+    return failures
+
+
+def check_clip_question(
+    output: ClipQuestionOutput,
+    input: ClipQuestionInput,  # noqa: A002 — unused, kept for the dispatcher's uniform signature
+) -> list[str]:
+    """Structural floor for nova.video.clip_question (KRI-127 Lane C)."""
+    failures: list[str] = []
+    if output.answer and len(output.answer.split()) > 3:
+        failures.append(f"answer {output.answer!r} exceeds 3 words")
+    if not output.answer and output.confidence != 0.0:
+        failures.append("empty (unknown) answer carries non-zero confidence")
+    if output.confidence < 0.0 or output.confidence > 1.0:
+        failures.append(f"confidence={output.confidence} outside [0, 1]")
+    return failures
+
+
 def check_template_text(
     output: TemplateTextOutput,
     input: TemplateTextInput,  # noqa: A002
@@ -1362,6 +1449,51 @@ def check_sequence_quote(output: SequenceQuoteOutput) -> list[str]:
     own validation.
     """
     return quote_structural_failures(output.quote)
+
+
+def check_camera_emphasis(
+    output: CameraEmphasisOutput,
+    input: CameraEmphasisInput,  # noqa: A002
+) -> list[str]:
+    """Keep zoom placement inside the envelope the server offered (KRI-7).
+
+    The agent only ever picks candidate indexes and a closed-vocabulary shape;
+    `services/camera_emphasis.py` owns the final geometry. These checks catch a
+    prompt regression BEFORE that layer silently discards every pick: too many
+    emphases, an index nobody offered, back-to-back moments, more than one
+    "strong", or a set so dense it stops reading as emphasis.
+    """
+
+    failures: list[str] = []
+    by_index = {candidate.index: candidate for candidate in input.candidates}
+    if len(output.emphases) > min(input.max_effects, MAX_CAMERA_EMPHASES):
+        failures.append(
+            f"{len(output.emphases)} emphases exceeds the caller's max_effects={input.max_effects}"
+        )
+    seen: set[int] = set()
+    strong = 0
+    picked: list[tuple[float, float]] = []
+    for position, emphasis in enumerate(output.emphases):
+        candidate = by_index.get(emphasis.candidate_index)
+        if candidate is None:
+            failures.append(
+                f"emphasis {position}: candidate_index={emphasis.candidate_index} was never offered"
+            )
+            continue
+        if emphasis.candidate_index in seen:
+            failures.append(f"emphasis {position}: candidate {emphasis.candidate_index} repeated")
+        seen.add(emphasis.candidate_index)
+        if emphasis.strength == "strong":
+            strong += 1
+        picked.append((candidate.start_s, candidate.end_s))
+    if strong > 1:
+        failures.append(f"{strong} emphases marked 'strong' — at most one may be the peak")
+    for (start, _end), (next_start, _next_end) in zip(
+        sorted(picked), sorted(picked)[1:], strict=False
+    ):
+        if next_start - start < 1.0:
+            failures.append(f"emphases at {start:.1f}s and {next_start:.1f}s are back to back")
+    return failures
 
 
 def check_sfx_placement(
@@ -2883,6 +3015,10 @@ def run_structural(
         return check_retake_detector(output, input)
     if agent_name == "nova.plan.clip_plan_matcher":
         return check_clip_plan_matcher(output, input)
+    if agent_name == "nova.plan.clip_request_resolver":
+        return check_clip_request_resolver(output, input)
+    if agent_name == "nova.video.clip_question":
+        return check_clip_question(output, input)
     if agent_name == "nova.video.clip_router":
         return check_clip_router(output, input)
     if agent_name == "nova.video.shot_ranker":
@@ -2979,6 +3115,12 @@ def run_structural(
                 if "sfx" in action.strategy.optional_treatments:
                     failures.append("explicit Fah request silently degraded to optional sfx")
         return failures
+    if agent_name == "nova.compose.camera_emphasis":
+        if not isinstance(output, CameraEmphasisOutput) or not isinstance(
+            input, CameraEmphasisInput
+        ):
+            return ["camera emphasis input/output type mismatch"]
+        return check_camera_emphasis(output, input)
     if agent_name == "nova.compose.sfx_placement":
         if not isinstance(output, SfxPlacementOutput) or not isinstance(input, SfxPlacementInput):
             return ["sfx placement input/output type mismatch"]

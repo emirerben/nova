@@ -49,11 +49,14 @@ const TOOLS: Array<{ id: EditorTool; icon: string | null; label: string }> = [
 export default function ToolRail({
   activeTool,
   disabledTools = {},
+  cameraEmphasisAvailable = false,
   onToggleTool,
 }: {
   /** null = drawer closed, no active tool. */
   activeTool: EditorTool | null;
   disabledTools?: Partial<Record<EditorTool, string | null>>;
+  /** KRI-7: the camera lane also lives in the Visuals drawer. */
+  cameraEmphasisAvailable?: boolean;
   onToggleTool: (tool: EditorTool) => void;
 }) {
   const [novaSeen, setNovaSeen] = useState(true);
@@ -67,9 +70,12 @@ export default function ToolRail({
       TOOLS.filter(
         (tool) =>
           (copilotEnabled || tool.id !== "nova") &&
-          (visualBlocksEnabled || motionScenesEnabled || tool.id !== "visuals"),
+          (visualBlocksEnabled ||
+            motionScenesEnabled ||
+            cameraEmphasisAvailable ||
+            tool.id !== "visuals"),
       ),
-    [copilotEnabled, motionScenesEnabled, visualBlocksEnabled],
+    [cameraEmphasisAvailable, copilotEnabled, motionScenesEnabled, visualBlocksEnabled],
   );
 
   useEffect(() => {
