@@ -30,25 +30,57 @@ public struct ProjectDirectory: Sendable {
 
 public protocol AssetFileCoordinator: Sendable {
     func copyAsset(from source: URL, to destination: URL) throws
+    /// Like `copyAsset`, but MAY share the source's bytes (a hardlink) instead of
+    /// duplicating them. Only call this for a source the app owns and never edits
+    /// in place: a hardlink shares an inode, so an in-place edit of either name
+    /// would show through the other, unlike the snapshot a real copy gives.
+    func linkAsset(from source: URL, to destination: URL) throws
+}
+
+public extension AssetFileCoordinator {
+    /// Conformers that cannot link keep the always-correct behavior: a real copy.
+    func linkAsset(from source: URL, to destination: URL) throws {
+        try copyAsset(from: source, to: destination)
+    }
 }
 
 public struct CoordinatedFileCopier: AssetFileCoordinator {
-    public init() {}
+    private let linker: @Sendable (URL, URL) throws -> Void
+
+    /// `linker` is a seam so tests can force the link-failed fallback deterministically
+    /// (a cross-volume or permission failure is impractical to provoke on a simulator).
+    public init(linker: @escaping @Sendable (URL, URL) throws -> Void = { try FileManager.default.linkItem(at: $0, to: $1) }) {
+        self.linker = linker
+    }
+
     public func copyAsset(from source: URL, to destination: URL) throws {
+        try transfer(from: source, to: destination) { try FileManager.default.copyItem(at: $0, to: $1) }
+    }
+
+    /// Hardlinks when it can and silently falls back to a real copy when it cannot
+    /// (different volume, filesystem without hardlinks, sandbox refusal). A failed
+    /// link therefore never fails the import; it only costs the bytes it would have saved.
+    public func linkAsset(from source: URL, to destination: URL) throws {
+        try transfer(from: source, to: destination) { source, destination in
+            do { try linker(source, destination) } catch { try FileManager.default.copyItem(at: source, to: destination) }
+        }
+    }
+
+    private func transfer(from source: URL, to destination: URL, using operation: (URL, URL) throws -> Void) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
 #if canImport(Foundation)
         var coordinationError: NSError?
-        var copyError: Error?
+        var operationError: Error?
         let coordinator = NSFileCoordinator(filePresenter: nil)
         coordinator.coordinate(readingItemAt: source, options: [], error: &coordinationError) { coordinatedURL in
-            do { try fm.copyItem(at: coordinatedURL, to: destination) } catch { copyError = error }
+            do { try operation(coordinatedURL, destination) } catch { operationError = error }
         }
-        if let copyError { throw copyError }
+        if let operationError { throw operationError }
         if let coordinationError { throw coordinationError }
 #else
-        try fm.copyItem(at: source, to: destination)
+        try operation(source, destination)
 #endif
     }
 }
@@ -57,7 +89,10 @@ public actor AssetImportCoordinator {
     private let project: ProjectDirectory
     private let copier: any AssetFileCoordinator
     public init(project: ProjectDirectory, copier: any AssetFileCoordinator = CoordinatedFileCopier()) { self.project = project; self.copier = copier }
-    public func importAsset(from source: URL, id: String? = nil) throws -> MediaAsset {
+    /// `preferLink` lets the import share the source's bytes instead of duplicating them
+    /// (see `AssetFileCoordinator.linkAsset`). Default `false`: an external source (a
+    /// Files/iCloud pick, a download) must stay a snapshot the user can't alter mid-upload.
+    public func importAsset(from source: URL, id: String? = nil, preferLink: Bool = false) throws -> MediaAsset {
         try project.createIfNeeded()
         let rawAssetID = id ?? UUID().uuidString
         let assetID = rawAssetID.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_").replacingOccurrences(of: "..", with: "_")
@@ -65,7 +100,11 @@ public actor AssetImportCoordinator {
         let destination = project.originals.appendingPathComponent("\(assetID).\(ext)")
         let accessingSecurityScope = source.startAccessingSecurityScopedResource()
         defer { if accessingSecurityScope { source.stopAccessingSecurityScopedResource() } }
-        try copier.copyAsset(from: source, to: destination)
+        if preferLink {
+            try copier.linkAsset(from: source, to: destination)
+        } else {
+            try copier.copyAsset(from: source, to: destination)
+        }
         let fingerprint = try SHA256Fingerprinter().fingerprint(file: destination)
         return MediaAsset(id: assetID, relativePath: project.root.relativePath(to: destination), fingerprint: fingerprint)
     }

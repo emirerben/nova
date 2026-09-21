@@ -259,7 +259,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             // launch instead of silently vanishing with no trace at all.
             var stagedURL: URL?
             if role == .clip {
-                let copy = try Self.copyIntoRecoveryDirectory(fileURL)
+                let copy = try Self.stageIntoRecoveryDirectory(fileURL)
                 stagedURL = copy
                 Self.persistPreparingUpload(PreparingUpload(id: recordID, projectID: projectID, localFilePath: copy.path,
                     filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID, launchToken: launchToken), key: defaultsKey)
@@ -272,7 +272,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let prepared = role == .clip ? try await prepare(fileURL: stagedURL ?? fileURL, projectID: projectID, purpose: purpose, recordID: recordID) : (fileURL, nil, nil)
             try Self.validateProjectUploadPurpose(purpose, contract: prepared.2)
             let preparedURL = prepared.0
-            let localURL = try Self.copyIntoRecoveryDirectory(preparedURL)
+            let localURL = try Self.linkIntoRecoveryDirectory(preparedURL)
             recoveryCopy = localURL
             let values = try localURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
             guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
@@ -412,7 +412,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private func performResume(_ entry: PreparingUpload) async {
         let recordID = entry.id
         let stagedURL = URL(fileURLWithPath: entry.localFilePath)
-        // Tracks the fresh (post-import/transcode) copy `copyIntoRecoveryDirectory`
+        // Tracks the fresh (post-import/transcode) file `linkIntoRecoveryDirectory`
         // produces below, distinct from `stagedURL`/`entry.localFilePath` -- the
         // ORIGINAL staged source, which is the thing worth protecting from data
         // loss. On any failure this fresh copy is discarded either way (a
@@ -423,7 +423,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             let prepared = try await prepare(fileURL: stagedURL, projectID: entry.projectID, purpose: entry.purpose, recordID: recordID)
             try Self.validateProjectUploadPurpose(entry.purpose, contract: prepared.2)
             let preparedURL = prepared.0
-            let localURL = try Self.copyIntoRecoveryDirectory(preparedURL)
+            let localURL = try Self.linkIntoRecoveryDirectory(preparedURL)
             recoveryCopy = localURL
             let values = try localURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
             guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
@@ -768,7 +768,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     private func prepare(fileURL: URL, projectID: UUID, purpose: UploadPurpose, recordID: UUID) async throws -> (URL, MediaAsset?, ProjectMediaUploadContract?) {
         let project = Self.projectDirectory(projectID)
-        let asset = try await AssetImportCoordinator(project: project).importAsset(from: fileURL)
+        // `fileURL` is the staged file for `.clip` (ours, never edited), so the import can
+        // share its bytes instead of writing them a third time. An external source stays a copy.
+        let asset = try await AssetImportCoordinator(project: project).importAsset(from: fileURL, preferLink: Self.isAppOwned(fileURL))
         updatePreparationHeartbeat(recordID: recordID) // import done
         let original = project.root.appending(path: asset.relativePath)
         if purpose == .analysisProxy {
@@ -827,10 +829,61 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         if deleteLocalFile { try? FileManager.default.removeItem(atPath: entry.localFilePath) }
     }
 
-    private static func copyIntoRecoveryDirectory(_ source: URL) throws -> URL {
+    // MARK: Recovery-directory placement
+    //
+    // A cloud clip used to be written to disk four times (Photos export, staging, project
+    // `originals/`, upload file) — ~4x the file size at peak, up to 16 GB for a 4 GB clip. Only
+    // the first write is unavoidable (PhotosPicker's file is valid only inside its transfer
+    // closure). The rest share those bytes when — and only when — the file is one the app owns:
+    // a hardlink shares an inode, so it is safe for files we create and only ever delete, and
+    // wrong for a Files/iCloud pick, where the user editing the original mid-upload must not
+    // change what gets uploaded. External sources therefore always get a real copy.
+
+    /// Application Support (project + recovery trees) and the app's own tmp.
+    static func isAppOwned(_ url: URL) -> Bool {
+        let fm = FileManager.default
+        let roots = [fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0], fm.temporaryDirectory]
+        return roots.contains { isInside(url, directory: $0) }
+    }
+
+    /// The app's tmp, whose contents are disposable by definition (the OS may purge them).
+    static func isInTemporaryDirectory(_ url: URL) -> Bool {
+        isInside(url, directory: FileManager.default.temporaryDirectory)
+    }
+
+    private static func isInside(_ url: URL, directory: URL) -> Bool {
+        // Resolve symlinks on both sides: tmp is `/var/…` but its real path is `/private/var/…`.
+        let root = directory.resolvingSymlinksInPath().standardizedFileURL.path
+        return url.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(root + "/")
+    }
+
+    /// Durable staging for crash-resume. Renames our own tmp file into place (no second write);
+    /// copies anything else, including every Files/iCloud pick.
+    static func stageIntoRecoveryDirectory(_ source: URL) throws -> URL {
+        let destination = try recoveryDestination(for: source)
+        if isInTemporaryDirectory(source) {
+            // A failed rename (e.g. tmp on another volume) is not an error, only a missed saving.
+            if (try? FileManager.default.moveItem(at: source, to: destination)) != nil { return destination }
+        }
+        return try copy(source, to: destination)
+    }
+
+    /// The file the background `URLSession` reads. Hardlinks an app-owned source; copies otherwise.
+    static func linkIntoRecoveryDirectory(_ source: URL) throws -> URL {
+        let destination = try recoveryDestination(for: source)
+        if isAppOwned(source) {
+            if (try? FileManager.default.linkItem(at: source, to: destination)) != nil { return destination }
+        }
+        return try copy(source, to: destination)
+    }
+
+    private static func recoveryDestination(for source: URL) throws -> URL {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "KriaUploads", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let destination = directory.appending(path: "\(UUID().uuidString)-\(source.lastPathComponent)")
+        return directory.appending(path: "\(UUID().uuidString)-\(source.lastPathComponent)")
+    }
+
+    private static func copy(_ source: URL, to destination: URL) throws -> URL {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         try FileManager.default.copyItem(at: source, to: destination)

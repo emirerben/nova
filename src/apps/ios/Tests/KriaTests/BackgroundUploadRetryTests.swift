@@ -227,6 +227,56 @@ import UIKit
         XCTAssertEqual(activity.endCount, 1, "the assertion must end even when enqueue() throws")
     }
 
+    /// KRI-125: a cloud clip used to be written to disk four times (Photos export, staging,
+    /// `originals/`, upload file). Through a real `enqueue`, the bytes must now exist once —
+    /// the same inode from the Photos export all the way to the file the URLSession reads —
+    /// with exactly two names left (the project original and the upload file) and no staged
+    /// leftover.
+    func testEnqueueWritesACloudClipToDiskOnce() async throws {
+        let key = "kria.test.enqueue.\(UUID().uuidString)"
+        let projectID = UUID()
+        let source = FileManager.default.temporaryDirectory.appending(path: "source-\(UUID().uuidString).mp4")
+        try Data("one copy of these bytes".utf8).write(to: source)
+        let exportIdentity = try XCTUnwrap(fileIdentity(source))
+        let projectDirectory = BackgroundUploadCoordinator.projectDirectory(projectID)
+        defer {
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: "\(key).preparing")
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: projectDirectory.root)
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [UploadRetryProtocol.self]
+        UploadRetryProtocol.handler = { transport in
+            // Hold the PUT open so the upload stays in flight while the disk is inspected;
+            // letting it finish would run the attach step against this stub.
+            guard transport.request.httpMethod != "PUT" else { return }
+            transport.finish(200, Data(#"[{"media_id":"clip-1","upload_url":"https://uploads.test/put","gcs_path":"users/u/clip.mp4","content_type":"video/mp4","upload_headers":{}}]"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration, backgroundActivity: RecordingBackgroundActivityAssertion())
+
+        let accepted = await coordinator.enqueue(fileURL: source, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource, role: .clip)
+
+        XCTAssertTrue(accepted)
+        let record = try XCTUnwrap(coordinator.records.first)
+        let uploadFile = URL(fileURLWithPath: record.localFilePath)
+        let originals = try FileManager.default.contentsOfDirectory(at: projectDirectory.originals, includingPropertiesForKeys: nil)
+        XCTAssertEqual(originals.count, 1)
+        let original = try XCTUnwrap(originals.first)
+
+        XCTAssertEqual(fileIdentity(original), exportIdentity, "project original must be the exported bytes, not a copy")
+        XCTAssertEqual(fileIdentity(uploadFile), exportIdentity, "upload file must be the exported bytes, not a copy")
+        let names = try XCTUnwrap((try FileManager.default.attributesOfItem(atPath: uploadFile.path))[.referenceCount] as? NSNumber).intValue
+        XCTAssertEqual(names, 2, "original + upload file only; the staged name must be gone")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path), "the Photos export was renamed into staging")
+        let stillStaged = (UserDefaults.standard.data(forKey: "\(key).preparing")
+            .flatMap { try? JSONDecoder().decode([PreparingUpload].self, from: $0) } ?? [])
+        XCTAssertTrue(stillStaged.isEmpty)
+
+        await coordinator.cancel(recordID: record.id)
+    }
+
     /// KRI-114 P0-4: a background-task expiration must mark the entry `.expired`
     /// and leave the staged file alone -- never delete it -- so the next launch
     /// resumes it instead of finding nothing.
