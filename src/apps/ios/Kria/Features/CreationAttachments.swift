@@ -42,6 +42,15 @@ struct AttachmentSheet: View {
             return max(pool?.assets.count ?? 0, (pool?.occupiedAssets ?? 0) - overlap)
         }
     }
+    /// What is attached for the current role, so the picker can show those clips as already chosen —
+    /// and stop doing so the moment one is removed (trash button, web, or un-choosing it).
+    private var attachedMediaIDs: Set<String> {
+        switch role {
+        case .clip: Set(media.filter { $0.kind == "video" }.map(\.id))
+        case .voiceover: Set(media.filter { $0.kind == "audio" }.map(\.id))
+        case .visual: Set((pool?.assets ?? []).map(\.id))
+        }
+    }
     private var canRecord: Bool {
         existing + pendingRecords.filter { $0.projectID == projectID && $0.role == .voiceover }.count < maximum
     }
@@ -68,7 +77,7 @@ struct AttachmentSheet: View {
                         Text("Photos, screenshots, or short supporting videos.").font(KriaFont.body(14))
                         if pool == nil, error == nil { ProgressView("Loading visuals…") }
                     }
-                    FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
+                    FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum, attachedClipCount: existing, attachedMediaIDs: attachedMediaIDs, role: role, itemID: itemID, limit: limit, destination: uploadDestination)
                         .id(role)
                     if role == .voiceover && uploadDestination == .cloud {
                         if recorder.isRecording {
@@ -137,6 +146,9 @@ struct AttachmentSheet: View {
                 }
             }
             .onReceive(model.uploads.$records) { pendingRecords = $0 }
+            // Un-choosing a visual in the picker removes it server-side; refresh the pool now rather
+            // than on the next poll, or the picker would keep showing it as chosen for a few seconds.
+            .onReceive(model.uploads.$photoSelections) { _ in if role == .visual { Task { await loadVisuals() } } }
             .onDisappear { recorder.discard() }
         }
     }

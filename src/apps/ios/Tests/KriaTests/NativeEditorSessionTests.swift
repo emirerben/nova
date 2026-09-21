@@ -1364,6 +1364,69 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
     }
 
+    /// KRI-125: the add-clip sheet closes as soon as a file is chosen, so the session — not the
+    /// sheet — must report "adding" for the whole time, including while the file is still being
+    /// fetched out of Photos (seconds for an iCloud asset). It also has to finish with no view attached.
+    func testAddClipReportsAddingWhileTheFileIsStillBeingFetched() async throws {
+        let threadID = UUID(); let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        let tempURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("clip-bytes".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        fake.reserveUploadResult = UploadReservation(uploadURL: URL(string: "https://storage.example/signed-put")!, gcsPath: "users/u/generative/abc123def456/clip.mp4", kind: "video", contentType: "video/mp4", uploadHeaders: [:], purpose: nil, reservationID: nil, retentionExpiresAt: nil)
+        fake.addClipResult = AddClipResult(jobID: jobID.uuidString, clipIndex: 1, kind: "video")
+        let latch = FetchLatch()
+
+        let adding = Task { @MainActor in await session.addClip { await latch.wait(); return tempURL } }
+        while !latch.isWaiting { await Task.yield() }
+
+        XCTAssertTrue(session.isAddingClip, "the editor must show progress while Photos is still handing the file over")
+        XCTAssertTrue(fake.uploadFileCalls.isEmpty, "nothing uploads until the file exists")
+
+        latch.open()
+        await adding.value
+
+        XCTAssertFalse(session.isAddingClip)
+        XCTAssertNil(session.addClipError)
+        XCTAssertEqual(session.document.clips.count, 2)
+    }
+
+    func testAddClipExplainsAnUnreadablePhotoWithoutTouchingTheTimeline() async throws {
+        let threadID = UUID(); let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+
+        await session.addClip { throw AddClipSourceUnreadable() }
+
+        XCTAssertEqual(session.addClipError, "This file couldn’t be read. Try Files or choose it again.")
+        XCTAssertFalse(session.isAddingClip)
+        XCTAssertTrue(fake.uploadFileCalls.isEmpty)
+        XCTAssertEqual(session.document.clips.count, 1)
+    }
+
+    /// The sheet is gone by the time the upload runs, so the user will background the app. When the
+    /// connection then drops, "This file couldn't be added" plus a raw URLError is no help.
+    func testAddClipExplainsAnInterruptedUpload() async throws {
+        let threadID = UUID(); let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        let tempURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("clip-bytes".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        fake.reserveUploadResult = UploadReservation(uploadURL: URL(string: "https://storage.example/signed-put")!, gcsPath: "users/u/generative/abc123def456/clip.mp4", kind: "video", contentType: "video/mp4", uploadHeaders: [:], purpose: nil, reservationID: nil, retentionExpiresAt: nil)
+        fake.uploadFileError = URLError(.networkConnectionLost)
+
+        await session.addClip(fileURL: tempURL)
+
+        XCTAssertEqual(session.addClipError, "The upload was interrupted. Your edit is unchanged. Keep Kria open while it uploads and try again.")
+        XCTAssertTrue(fake.addClipCalls.isEmpty, "a clip that never finished uploading must not be minted into the pool")
+        XCTAssertEqual(session.document.clips.count, 1)
+    }
+
     func testSaveCallsExplicitEditorCommitOnlyAfterEdit() async {
         let threadID = UUID(); let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 2, trimIn: 0, trimOut: 2)
         let snapshot: [String: JSONValue] = ["schema_version": .number(2), "kind": .string("editor"), "editor_payload": .object(["base_generation": .string("generation-1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string(clip.id.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "removed": .bool(false)])])])])]
@@ -2195,6 +2258,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var sourcePoolCallCount = 0
     var sourcePoolExpectation: XCTestExpectation?
     var reserveUploadResult: UploadReservation?
+    /// Makes the PUT itself fail (after a successful reservation), e.g. a dropped connection.
+    var uploadFileError: (any Error)?
     var addClipResult: AddClipResult?
     var addClipCalls: [(jobID: UUID, gcsPath: String)] = []
     var uploadFileCalls: [(reservation: UploadReservation, fileURL: URL)] = []
@@ -2316,6 +2381,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     }
     func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws {
         uploadFileCalls.append((reservation, fileURL))
+        if let uploadFileError { throw uploadFileError }
     }
 }
 
@@ -2349,5 +2415,24 @@ private final class DelayedSeekPlayer: AVPlayer, @unchecked Sendable {
     func completeSeek(finished: Bool = true) {
         guard !completions.isEmpty else { return }
         completions.removeFirst()(finished)
+    }
+}
+
+/// Holds a simulated Photos export open so a test can observe the session while the file is still
+/// being fetched, then lets it finish.
+@MainActor private final class FetchLatch {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var opened = false
+    var isWaiting: Bool { continuation != nil }
+
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func open() {
+        opened = true
+        continuation?.resume()
+        continuation = nil
     }
 }

@@ -37,7 +37,7 @@ struct NativeEditorAddClipSheet: View {
                 .photosPicker(isPresented: $showingPhotosPicker, selection: $photoItem, matching: .any(of: [.videos, .images]))
                 .onChange(of: photoItem) { _, item in
                     guard let item else { return }
-                    Task { await importPhotoItem(item) }
+                    importPhotoItem(item)
                 }
                 .accessibilityIdentifier("native-editor-add-clip-photos")
 
@@ -50,9 +50,6 @@ struct NativeEditorAddClipSheet: View {
                 .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.movie, .image], onCompletion: importFile)
                 .accessibilityIdentifier("native-editor-add-clip-files")
 
-                if session.isAddingClip {
-                    HStack { Spacer(); ProgressView("Adding…"); Spacer() }
-                }
                 if let error = session.addClipError {
                     Text(error).font(KriaFont.body(12)).foregroundStyle(KriaColor.failureText)
                         .accessibilityIdentifier("native-editor-add-clip-error")
@@ -71,25 +68,40 @@ struct NativeEditorAddClipSheet: View {
             .navigationTitle("Add clip or photo")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .onChange(of: session.isAddingClip) { _, isAdding in
-                if !isAdding, session.addClipError == nil { dismiss() }
-            }
         }
         .presentationDetents([.medium])
     }
 
-    private func importPhotoItem(_ item: PhotosPickerItem) async {
-        guard let media = try? await item.loadTransferable(type: ImportedMedia.self) else {
-            session.addClipError = "This file couldn’t be read. Try Files or choose it again."
-            photoItem = nil
-            return
-        }
+    // The sheet closes the moment a file is chosen. Everything after that — fetching the file out of
+    // Photos (seconds for an iCloud asset), the upload, and minting the clip — runs on the session,
+    // which the editor owns and which therefore outlives this sheet. The editor shows progress and
+    // any error; holding the user on a spinner here is what made adding a clip feel slow.
+
+    private func importPhotoItem(_ item: PhotosPickerItem) {
+        let session = session
         photoItem = nil
-        await session.addClip(fileURL: media.url)
+        dismiss()
+        Task { @MainActor in
+            await session.addClip {
+                guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw AddClipSourceUnreadable() }
+                return media.url
+            }
+        }
     }
 
     private func importFile(_ result: Result<URL, any Error>) {
         guard case .success(let url) = result else { return }
-        Task { await session.addClip(fileURL: url) }
+        let session = session
+        // The importer's URL is security-scoped. Hold access until the upload is done, since the
+        // work now outlives the sheet that received it.
+        let scoped = url.startAccessingSecurityScopedResource()
+        dismiss()
+        Task { @MainActor in
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            await session.addClip(fileURL: url)
+        }
     }
 }
+
+/// Photos handed back nothing readable for the chosen item.
+struct AddClipSourceUnreadable: Error {}

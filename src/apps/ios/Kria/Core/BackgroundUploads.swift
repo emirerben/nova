@@ -202,6 +202,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// One per asset the user is currently choosing (debounce → load → enqueue), so un-choosing it
     /// can cancel the work. Keyed `"<projectID>|<assetIdentifier>"`.
     private var selectionTasks: [String: Task<Void, Never>] = [:]
+    /// Assets whose `deselect` is still running. The picker's `onChange` can fire again before it
+    /// finishes; a second concurrent `remove_media` would be answered "no longer attached", read as
+    /// a refusal, and wrongly put the clip back.
+    private var deselecting: Set<String> = []
     private var backgroundSession: URLSession!
     private var retryingRecords: Set<UUID> = []
     private var cancellingRecords: Set<UUID> = []
@@ -449,7 +453,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     func deselect(assetIdentifier: String, projectID: UUID, role: CreationMediaRole, itemID: String?) async -> DeselectOutcome {
         let pid = projectID.uuidString
         guard let entry = photoSelections[pid]?.byIdentifier[assetIdentifier] else { return .notTracked }
-        if let task = selectionTasks[Self.selectionKey(projectID, assetIdentifier)] {
+        let key = Self.selectionKey(projectID, assetIdentifier)
+        guard deselecting.insert(key).inserted else { return .discarded }   // the first call decides
+        defer { deselecting.remove(key) }
+        if let task = selectionTasks[key] {
             task.cancel()
             await task.value
         }

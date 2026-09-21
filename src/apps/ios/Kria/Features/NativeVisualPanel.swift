@@ -88,6 +88,8 @@ struct NativeVisualPanel: View {
         }
         .sheet(isPresented: $showsImporter, onDismiss: { Task { await session.refreshVisualLibrary() } }) { visualImporter }
         .onChange(of: uploads.records) { _, _ in Task { await session.refreshVisualLibrary() } }
+        // Un-choosing a visual in the picker removes it server-side without touching `records`.
+        .onChange(of: uploads.photoSelections) { _, _ in Task { await session.refreshVisualLibrary() } }
         .task {
             await session.refreshVisualLibrary()
             // Pending assets may finish analysis after the upload record is removed.
@@ -117,6 +119,7 @@ struct NativeVisualPanel: View {
                     uploads: uploads,
                     maximumClipCount: session.visualLibraryLimit,
                     attachedClipCount: session.visualLibrary.count,
+                    attachedMediaIDs: Set(session.visualLibrary.map(\.id)),
                     role: .visual,
                     itemID: session.visualItemID
                 )

@@ -1062,6 +1062,16 @@ struct NativeMiniStrip: View {
         .accessibilityElement(children: .contain)
         .sensoryFeedback(.selection, trigger: boundaryFeedback)
         .sheet(isPresented: $isPresentingAddClip) { NativeEditorAddClipSheet(session: session) }
+        // The add-clip sheet closes as soon as a file is chosen, so a failure has to surface here.
+        // Suppressed while the sheet is open, where it shows the same error inline.
+        .alert("Couldn’t add clip", isPresented: Binding(
+            get: { session.addClipError != nil && !isPresentingAddClip },
+            set: { if !$0 { session.addClipError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(session.addClipError ?? "")
+        }
     }
 
     private var controls: some View {
@@ -1102,10 +1112,16 @@ struct NativeMiniStrip: View {
 
             Spacer(minLength: 8)
             Button { isPresentingAddClip = true } label: {
-                Image(systemName: "plus").frame(width: 44, height: 44)
+                // The picker sheet has already closed by the time the upload runs, so this is the
+                // only place the user can see that a clip is still on its way.
+                if session.isAddingClip {
+                    ProgressView().frame(width: 44, height: 44)
+                } else {
+                    Image(systemName: "plus").frame(width: 44, height: 44)
+                }
             }
-            .disabled(!canAddClip)
-            .accessibilityLabel("Add clip or photo")
+            .disabled(!canAddClip || session.isAddingClip)
+            .accessibilityLabel(session.isAddingClip ? "Adding clip" : "Add clip or photo")
             .accessibilityIdentifier("native-editor-add-clip")
             Button(action: session.undo) {
                 Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44)

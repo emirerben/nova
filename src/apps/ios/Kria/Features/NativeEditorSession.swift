@@ -2014,14 +2014,26 @@ struct NativeEditorTemporaryVideo {
     /// fixed at job creation, so a slot referencing an unminted index would be
     /// rejected on Save. The new slot itself then round-trips through the
     /// normal Save path like any other timeline edit.
-    func addClip(fileURL: URL) async {
+    func addClip(fileURL: URL) async { await addClip(source: { fileURL }) }
+
+    /// `source` produces the file. For a Photos pick that is the export out of the library, which can
+    /// take seconds when the asset lives in iCloud. Running it here, rather than before the call,
+    /// keeps `isAddingClip` true throughout, so the editor can show progress after the picker sheet
+    /// has already dismissed instead of holding the user on it.
+    func addClip(source: @MainActor () async throws -> URL) async {
         // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
         // no-op instead of a round trip that would 422 anyway.
         guard canEditTimeline, !isAddingClip, let api, let jobID, draft.clips.count < 20 else { return }
         isAddingClip = true
         addClipError = nil
         defer { isAddingClip = false }
+        // With the sheet gone the user will background the app while this uploads, and `uploadFile`
+        // is a foreground request. Ask for time to finish; if it runs out the failure is reported below.
+        let activity = UIKitBackgroundActivityAssertion()
+        let assertion = activity.begin(name: "com.kria.app.editor-add-clip") {}
+        defer { activity.end(assertion) }
         do {
+            let fileURL = try await source()
             let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
             guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
             let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
@@ -2033,6 +2045,10 @@ struct NativeEditorTemporaryVideo {
                 doc.clips.append(EditorTimelineSlot(clipIndex: result.clipIndex, inS: 0, durationS: Self.addedClipDurationS))
             }
             addClipError = nil
+        } catch is AddClipSourceUnreadable {
+            addClipError = "This file couldn’t be read. Try Files or choose it again."
+        } catch let error as URLError where [.networkConnectionLost, .cancelled, .notConnectedToInternet, .timedOut].contains(error.code) {
+            addClipError = "The upload was interrupted. Your edit is unchanged. Keep Kria open while it uploads and try again."
         } catch { addClipError = "This file couldn’t be added. Your edit is unchanged. " + error.localizedDescription }
     }
 
