@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.76.97.0] - 2026-09-21
+
+### Changed
+- fix(planner): a fast montage keeps the creator's original audio (guided-story compiler v7) (KRI-130) (#1110) <!-- release-pr: 1110 -->
+
 ## [0.76.96.0] - 2026-09-21
 
 ### Changed
