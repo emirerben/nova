@@ -17,8 +17,8 @@ def _meta(**overrides):
         "speaks_to_camera": True,
         "people_note": "one man faces the camera and narrates",
         "brands": ["Mikasa"],
-        "content_type": "action",
-        "audio_type": "dialogue",
+        "clip_content_type": "action",
+        "clip_audio_type": "dialogue",
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -42,6 +42,7 @@ def test_payload_round_trips_through_clip_record():
     assert record.speech.to_camera is True
     assert record.brands == ["Mikasa"]
     assert record.content_type == "action"
+    assert record.audio_type == "dialogue"
     assert record.notable_moments[0].description == "spike at the net"
 
 
@@ -135,3 +136,53 @@ def test_prompt_view_drops_empty_fields_and_caps_transcript():
         "note": "one man faces the camera and narrates",
     }
     assert clip_record({}).prompt_view() == {}
+
+
+# ── Real footage: the KRI-126 30-clip upload, re-analyzed with the shared record ──
+
+
+def _kri126_records():
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures" / "kri126_thirty_clip_guided_story.json"
+        ).read_text()
+    )
+    return [clip_record(m["analysis"], kind=m["kind"]) for m in fixture["media"]], fixture
+
+
+def test_kri126_fixture_carries_a_real_record_for_every_clip():
+    records, fixture = _kri126_records()
+
+    assert len(records) == 30
+    assert all(r.activity and r.setting and r.summary for r in records)
+    # Privacy: verbatim speech and brand strings never enter the repo.
+    for media in fixture["media"]:
+        block = media["analysis"][UNDERSTANDING_KEY]
+        transcript = block["speech"]["transcript"]
+        assert transcript == "" or transcript.startswith("(redacted spoken transcript")
+        assert block["brands"] == []
+
+
+def test_kri126_record_answers_what_the_old_subject_could_not():
+    records, fixture = _kri126_records()
+    by_subject = {
+        m["analysis"]["subject"]: r for m, r in zip(fixture["media"], records, strict=True)
+    }
+
+    # "people playing field sport" was never labelled; the record names the sport.
+    field_sport = by_subject["people playing field sport"].activity.lower()
+    assert "soccer" in field_sport or "football" in field_sport
+    # "playing with balls" is volleyball.
+    assert "volleyball" in by_subject["group of people playing with balls"].activity.lower()
+    # "where I talk to the camera" is answerable: no old subject mentioned it.
+    to_camera = [r for r in records if r.speech.to_camera]
+    assert to_camera
+    assert not any("camera" in m["analysis"]["subject"] for m in fixture["media"])
+    # The pub clip is separable from the 29 outdoor clips by setting alone.
+    outdoor_words = ("grass", "field", "park", "court", "outdoor", "beach")
+    not_outdoor = [r for r in records if not any(w in r.setting.lower() for w in outdoor_words)]
+    assert len(not_outdoor) == 1
+    assert not_outdoor[0].speech.to_camera

@@ -51,7 +51,14 @@ CLIP_ANALYSIS_PROMPT_VERSION = ClipMetadataAgent.spec.prompt_version
 # with the default value for the new field — a subtle correctness bug because
 # downstream code can't distinguish "cached from before the field existed"
 # from "actually scored 0.0". Schema version is the cache's contract version.
-CACHE_SCHEMA_VERSION = "s2"  # s2: ClipMeta gained moments_synthetic
+CACHE_SCHEMA_VERSION = "s3"  # s2: ClipMeta gained moments_synthetic
+# s3 (KRI-127): ClipMeta gained the open-vocabulary understanding fields
+# (summary/setting/activity/people_count/speaks_to_camera/people_note/brands/
+# composition_note/clip_content_type/clip_audio_type) -- an s2 cache entry
+# round-trips through dataclasses.asdict()/ClipMeta(**data) fine (all new
+# fields are defaulted), but without this bump a cache HIT from before this
+# PR would silently return the ClipMeta defaults for every new field, which
+# is indistinguishable from "the model genuinely returned nothing" downstream.
 
 ANALYZER_NAME = ClipMetadataAgent.spec.name
 ANALYZER_MODEL = ClipMetadataAgent.spec.model

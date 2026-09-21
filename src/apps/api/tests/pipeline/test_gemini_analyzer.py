@@ -257,6 +257,57 @@ class TestAnalyzeClip:
             with pytest.raises(GeminiRefusalError):
                 analyze_clip(file_ref)
 
+    def test_shim_no_longer_drops_understanding_and_composition_fields(self):
+        """KRI-127: analyze_clip() used to build ClipMeta from only a subset of
+        ClipMetadataOutput, silently dropping brands/content_type/audio_type/
+        composition_note (and, before this PR, had nowhere to put the new
+        open-vocabulary understanding fields at all). Every one of them must
+        now survive the shim -- ClipMeta is the only thing downstream code
+        (autoplace, understanding_payload, talking_head_assembler) reads."""
+        file_ref = _make_file_ref()
+        data = {
+            "transcript": "we grill burgers",
+            "hook_text": "wait for the flip",
+            "hook_score": 6.5,
+            "best_moments": [
+                {"start_s": 0.0, "end_s": 4.0, "energy": 5.0, "description": "burgers on grill"}
+            ],
+            "detected_subject": "backyard grill",
+            "brands": ["Weber"],
+            "content_type": "action",
+            "audio_type": "dialogue",
+            "composition_note": "subject centered, smoke drifting right",
+            "summary": "Two friends grill burgers in a backyard.",
+            "setting": "backyard patio at dusk",
+            "activity": "grilling burgers",
+            "people_count": 2,
+            "speaks_to_camera": True,
+            "people_note": "two men in aprons",
+        }
+
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_get_client.return_value = mock_client
+            mock_client.models.generate_content.return_value = _make_gemini_response(data)
+
+            result = analyze_clip(file_ref)
+
+        assert result.brands == ["Weber"]
+        assert result.composition_note == "subject centered, smoke drifting right"
+        assert result.summary == "Two friends grill burgers in a backyard."
+        assert result.setting == "backyard patio at dusk"
+        assert result.activity == "grilling burgers"
+        assert result.people_count == 2
+        assert result.speaks_to_camera is True
+        assert result.people_note == "two men in aprons"
+        # Deliberately renamed on ClipMeta (see class docstring in
+        # gemini_analyzer.py) so talking_head_assembler's `.content_type` /
+        # `.audio_type` getattr reads keep resolving to their defaults.
+        assert result.clip_content_type == "action"
+        assert result.clip_audio_type == "dialogue"
+        assert not hasattr(result, "content_type")
+        assert not hasattr(result, "audio_type")
+
     def test_json_parse_error_raises_gemini_analysis_error(self):
         file_ref = _make_file_ref()
 

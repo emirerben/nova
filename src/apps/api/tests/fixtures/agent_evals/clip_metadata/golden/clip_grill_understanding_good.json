@@ -1,0 +1,47 @@
+{
+  "agent": "nova.video.clip_metadata",
+  "prompt_version": "2026-09-21.1",
+  "input": {
+    "file_uri": "clips/backyard_grill.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"clip_id\": \"files/g8k2mzq9wlpe\", \"transcript\": \"Careful, careful -- okay, flip it now! Look at that char.\", \"hook_text\": \"Careful, careful -- okay, flip it now!\", \"hook_score\": 7.0, \"best_moments\": [{\"start_s\": 1.0, \"end_s\": 5.0, \"energy\": 5.0, \"description\": \"host seasons patties on the grill grate\"}, {\"start_s\": 9.5, \"end_s\": 14.0, \"energy\": 8.0, \"description\": \"host flips burger revealing dark char lines\"}, {\"start_s\": 18.0, \"end_s\": 22.5, \"energy\": 4.0, \"description\": \"friends clink beer bottles at the picnic table\"}], \"detected_subject\": \"backyard charcoal grill\", \"brands\": [\"Weber\"], \"summary\": \"Two friends grill burgers on a charcoal grill in a backyard, then sit down to eat.\", \"setting\": \"backyard patio at dusk with string lights\", \"activity\": \"grilling burgers and drinking beer at a picnic table\", \"people_count\": 2, \"speaks_to_camera\": true, \"people_note\": \"two men in aprons, one narrating to camera\"}",
+  "output": {
+    "clip_id": "files/g8k2mzq9wlpe",
+    "transcript": "Careful, careful -- okay, flip it now! Look at that char.",
+    "hook_text": "Careful, careful -- okay, flip it now!",
+    "hook_score": 7.0,
+    "best_moments": [
+      {
+        "start_s": 1.0,
+        "end_s": 5.0,
+        "energy": 5.0,
+        "description": "host seasons patties on the grill grate"
+      },
+      {
+        "start_s": 9.5,
+        "end_s": 14.0,
+        "energy": 8.0,
+        "description": "host flips burger revealing dark char lines"
+      },
+      {
+        "start_s": 18.0,
+        "end_s": 22.5,
+        "energy": 4.0,
+        "description": "friends clink beer bottles at the picnic table"
+      }
+    ],
+    "detected_subject": "backyard charcoal grill",
+    "brands": ["Weber"],
+    "summary": "Two friends grill burgers on a charcoal grill in a backyard, then sit down to eat.",
+    "setting": "backyard patio at dusk with string lights",
+    "activity": "grilling burgers and drinking beer at a picnic table",
+    "people_count": 2,
+    "speaks_to_camera": true,
+    "people_note": "two men in aprons, one narrating to camera"
+  },
+  "meta": {
+    "source": "hand-authored golden",
+    "purpose": "KRI-127: covers the open-vocabulary understanding fields (summary/setting/activity/people_count/speaks_to_camera/people_note) added alongside prompt_version 2026-09-21.1, on top of well-spaced moments (span 1.0-22.5s, energy spread 4.0-8.0, specific action descriptions)."
+  }
+}

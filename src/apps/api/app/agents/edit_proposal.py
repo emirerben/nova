@@ -333,6 +333,18 @@ class EditProposalMedia(BaseModel):
     description: str = ""
     on_screen_text: str = ""
     best_moments: list[dict] = Field(default_factory=list)
+    # KRI-127: shared clip-understanding fields (app.services.clip_understanding
+    # .clip_record), populated in app/tasks/edit_proposal_build.py alongside the
+    # legacy fields above. subject/description/on_screen_text/best_moments stay
+    # populated exactly as before for back-compat with existing fixtures; these
+    # add richer, open-vocabulary evidence so the planner can group clips by
+    # setting/activity/speech (e.g. "the pub videos", "where I talk to the
+    # camera") without a new keyword list per feature request.
+    summary: str = ""
+    setting: str = ""
+    activity: str = ""
+    speaks_to_camera: bool = False
+    transcript: str = ""
 
 
 class EditProposalAgentInput(BaseModel):
@@ -509,6 +521,30 @@ def _prompt_media(
         alias_to_id,
         id_to_alias,
     )
+
+
+_MEDIA_PROMPT_UNDERSTANDING_DEFAULTS: dict[str, object] = {
+    "summary": "",
+    "setting": "",
+    "activity": "",
+    "speaks_to_camera": False,
+    "transcript": "",
+}
+
+
+def _media_prompt_dict(media: EditProposalMedia) -> dict:
+    """``model_dump`` with unset KRI-127 understanding fields dropped.
+
+    Every pre-existing field is kept exactly as before (even when empty) for
+    back-compat with prompt-shape fixtures; only the newer open-vocabulary
+    fields are omitted when unset so up to EDIT_PROPOSAL_AGENT_MEDIA_LIMIT
+    rows of legacy-only analyses do not bloat the prompt with empty keys.
+    """
+    data = media.model_dump()
+    for key, default in _MEDIA_PROMPT_UNDERSTANDING_DEFAULTS.items():
+        if data.get(key) == default:
+            data.pop(key, None)
+    return data
 
 
 def _resolve_model_media_references(
@@ -1209,7 +1245,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.11.0",
+        prompt_version="1.12.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -1529,7 +1565,9 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             narration_note=narration_note,
             creator_text_note=_creator_text_note(input),
             footage_note=footage_note,
-            media_json=json.dumps([row.model_dump() for row in prompt_media], ensure_ascii=False),
+            media_json=json.dumps(
+                [_media_prompt_dict(row) for row in prompt_media], ensure_ascii=False
+            ),
             source_floor_note=source_floor_note,
             beat_count_note=beat_count_note,
         )

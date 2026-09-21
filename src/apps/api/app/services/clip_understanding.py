@@ -63,8 +63,10 @@ def understanding_payload(meta: Any, *, best_moments: list[dict] | None = None) 
             transcript=transcript,
         ),
         brands=list(getattr(meta, "brands", None) or []),
-        content_type=getattr(meta, "content_type", "") or "",
-        audio_type=getattr(meta, "audio_type", "") or "",
+        # ClipMeta names these `clip_*` on purpose: talking_head_assembler reads
+        # `content_type`/`audio_type` via getattr and must keep seeing defaults.
+        content_type=getattr(meta, "clip_content_type", "") or "",
+        audio_type=getattr(meta, "clip_audio_type", "") or "",
         notable_moments=_moment_notes(best_moments or []),
     )
     return record.model_dump()

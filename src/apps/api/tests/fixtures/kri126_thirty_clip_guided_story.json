@@ -1,849 +1,1825 @@
 {
- "_comment": "Redacted prod input for KRI-126 (job 506d2993): 30-clip guided_story whose planner fell back to deterministic beats. Media ids, paths and user ids are anonymized; durations, subjects and the degraded analysis shape are verbatim. Spoken-transcript text (stored under on_screen_text for videos) is redacted.",
- "creator_request": "Continue with 30 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech",
- "goal": "Open with title over park footage of individuals relaxing; Transition to active sports footage, grouped by sport; Include the creator's speech to camera; End with a sequence of the post-match pub celebration",
- "direction": "guided_story",
- "pace": "balanced",
- "duration_s": 45,
- "video_reuse_policy": "once",
- "opening_title": "Emir Olympics London Edition",
- "closing_title": "post match pub",
- "montage_audio": {
-  "source_media_ids": [],
-  "preview_source_beds": false,
-  "preserve_source_audio": true
- },
- "media": [
-  {
-   "media_id": "clip-01.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 6.7,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group of friends relaxing in a park",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
+  "_comment": "Redacted prod input for KRI-126 (job 506d2993): 30-clip guided_story whose planner fell back to deterministic beats. Media ids, paths and user ids are anonymized; durations, subjects and the degraded analysis shape are verbatim. Spoken-transcript text (stored under on_screen_text for videos) is redacted. KRI-127: each media.analysis.understanding block was regenerated from the real clips with the shared-record analyzer (scripts/dev/regen_kri126_fixture.py); transcripts and brand strings are redacted.",
+  "creator_request": "Continue with 30 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech",
+  "goal": "Open with title over park footage of individuals relaxing; Transition to active sports footage, grouped by sport; Include the creator's speech to camera; End with a sequence of the post-match pub celebration",
+  "direction": "guided_story",
+  "pace": "balanced",
+  "duration_s": 45,
+  "video_reuse_policy": "once",
+  "opening_title": "Emir Olympics London Edition",
+  "closing_title": "post match pub",
+  "montage_audio": {
+    "source_media_ids": [],
+    "preview_source_beds": false,
+    "preserve_source_audio": true
   },
-  {
-   "media_id": "clip-02.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 0.866667,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "man sitting on grass",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-03.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 2.833333,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group of people posing",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-04.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 11.2,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "people playing football",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-05.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 6.466667,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group of young adults",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-06.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 5.066667,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "people playing soccer",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-07.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 2.533333,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "people walking across a field",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-08.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 4.666667,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group of people playing with balls",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-09.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 4.666667,
-   "aspect": 1.775,
-   "analysis": {
-    "subject": "group of friends relaxing on grass",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-10.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 1.3,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "young woman waving and smiling",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-11.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 6.7,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group of friends on a field",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-12.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 7.333333,
-   "aspect": 1.775,
-   "analysis": {
-    "subject": "people in a park",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-13.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 1.833333,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "two men sitting on grass",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-14.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 2.5,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "person on grass using phone",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-15.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 4.6,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "woman on grass with phone",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-16.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 1.566667,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "people on field",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-17.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 1.933333,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "three young men sitting on grass",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-18.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 2.833333,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group of friends",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-19.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 1.2,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group of men on a field",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-20.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 13.166667,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group of people playing soccer",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-21.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 3.733333,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "players on a football pitch",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-22.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 2.933333,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "people playing soccer",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-23.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 11.3,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "people playing field sport",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-24.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 8.733333,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group playing soccer",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-25.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 2.533333,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "people walking on a field",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-26.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 6.466667,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group of young adults",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-27.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 7.6,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "group playing soccer",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     },
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-28.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 3.4,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "people playing volleyball",
-    "description": "",
-    "on_screen_text": "",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-29.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 1.2,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "woman on volleyball court",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  },
-  {
-   "media_id": "clip-30.mp4",
-   "kind": "video",
-   "lane": "clip",
-   "duration_s": 2.166667,
-   "aspect": 0.5634,
-   "analysis": {
-    "subject": "woman making funny faces",
-    "description": "",
-    "on_screen_text": "(redacted spoken transcript)",
-    "best_moments": [
-     {
-      "end_s": 0.0,
-      "energy": 0.0,
-      "start_s": 0.0,
-      "description": ""
-     }
-    ],
-    "kind_hint": "screenshot",
-    "source": "clip_metadata",
-    "analysis_version": 6
-   }
-  }
- ]
+  "media": [
+    {
+      "media_id": "clip-01.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 6.7,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group of friends relaxing in a park",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of young adults",
+          "summary": "The video starts with a shot of a cloudy sky and then pans down to show a group of young adults sitting on a grassy field, seemingly relaxing and talking, with volleyballs and bicycles nearby.",
+          "setting": "grassy park or field under a cloudy sky",
+          "activity": "sitting and conversing, preparing for or resting from playing sports",
+          "people": {
+            "count": 6,
+            "speaks_to_camera": false,
+            "note": "young adults, some sitting, some lounging, one standing"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.0,
+              "description": "overcast sky with dark clouds"
+            },
+            {
+              "start_s": 2.5,
+              "end_s": 5.0,
+              "description": "camera panning down to people"
+            },
+            {
+              "start_s": 5.0,
+              "end_s": 6.75,
+              "description": "group of people sitting on grass"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-02.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 0.866667,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "man sitting on grass",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "man in [brand] shirt",
+          "summary": "A man sits on a grassy field, making a peace sign towards the camera. Another person's leg is visible in the foreground.",
+          "setting": "outdoor grassy field during daytime",
+          "activity": "sitting on the grass, posing for camera",
+          "people": {
+            "count": 2,
+            "speaks_to_camera": false,
+            "note": "a man and part of another person"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.0,
+              "description": "man makes peace sign"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-03.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 2.833333,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group of people posing",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of friends",
+          "summary": "A group of six people stand together on a grassy field, smiling and posing for the camera.",
+          "setting": "grassy outdoor field",
+          "activity": "posing for a photo",
+          "people": {
+            "count": 6,
+            "speaks_to_camera": false,
+            "note": "six adults in casual athletic wear"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": []
+        }
+      }
+    },
+    {
+      "media_id": "clip-04.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 11.2,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "people playing football",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "players on a field",
+          "summary": "A group of people are playing soccer on a grassy field, passing the ball around and dribbling.",
+          "setting": "outdoor grassy field",
+          "activity": "playing soccer",
+          "people": {
+            "count": 8,
+            "speaks_to_camera": false,
+            "note": "mixed group of adults in casual athletic wear"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "music",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.5,
+              "description": "player kicks off the ball"
+            },
+            {
+              "start_s": 4.5,
+              "end_s": 7.0,
+              "description": "multiple players contest the ball"
+            },
+            {
+              "start_s": 9.0,
+              "end_s": 10.9,
+              "description": "player dribbles the ball downfield"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-05.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 6.466667,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group of young adults",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of young adults",
+          "summary": "A group of young adults gathers on a grassy field under a cloudy sky, preparing for an activity, with one person commenting that \"He's lost the dance.\"",
+          "setting": "grassy outdoor field",
+          "activity": "social gathering, preparing for an activity",
+          "people": {
+            "count": 10,
+            "speaks_to_camera": false,
+            "note": "young adults in casual and athletic wear"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "mixed",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.5,
+              "description": "group arriving on field"
+            },
+            {
+              "start_s": 2.5,
+              "end_s": 4.5,
+              "description": "woman smiling at camera"
+            },
+            {
+              "start_s": 4.5,
+              "end_s": 6.5,
+              "description": "people chatting and organizing"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-06.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 5.066667,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "people playing soccer",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group playing football",
+          "summary": "A group of people are playing football on a grassy field under a cloudy sky. They are passing and kicking the ball around.",
+          "setting": "outdoor grassy field",
+          "activity": "playing football",
+          "people": {
+            "count": 8,
+            "speaks_to_camera": false,
+            "note": "a group of men and women playing football"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "music",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.0,
+              "description": "player kicks ball"
+            },
+            {
+              "start_s": 2.1,
+              "end_s": 3.4,
+              "description": "players chase ball"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-07.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 2.533333,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "people walking across a field",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "people walking across a field",
+          "summary": "Several people are seen walking and jogging across a large, dry grassy field under a cloudy sky. Some individuals in the background appear to be playing soccer, while those in the foreground are moving towards the background.",
+          "setting": "outdoor grassy field with distant buildings and trees",
+          "activity": "walking and jogging across a field, some people playing soccer",
+          "people": {
+            "count": 8,
+            "speaks_to_camera": false,
+            "note": "diverse group of people, including two women and a man in the foreground"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "music",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 3.0,
+              "description": "people walking across field"
+            },
+            {
+              "start_s": 3.5,
+              "end_s": 6.0,
+              "description": "two women jogging away"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-08.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 4.666667,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group of people playing with balls",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of people playing ball",
+          "summary": "A group of people are on a dry grass field, throwing and catching balls under a cloudy sky. T[brand]y appear to be playing a game similar to volleyball or a team-based throwing sport.",
+          "setting": "outdoor grass field",
+          "activity": "playing volleyball or a similar ball game",
+          "people": {
+            "count": 8,
+            "speaks_to_camera": false,
+            "note": "a group of adults in casual athletic wear"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.53,
+              "end_s": 1.9,
+              "description": "group moving and passing ball"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-09.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 4.666667,
+      "aspect": 1.775,
+      "analysis": {
+        "subject": "group of friends relaxing on grass",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of young adults on a field",
+          "summary": "A group of young adults is casually sitting on a large grassy field under a cloudy sky, talking and looking at phones. One woman stands up and walks away from the group.",
+          "setting": "open grassy field",
+          "activity": "group sitting and talking, one person walking",
+          "people": {
+            "count": 7,
+            "speaks_to_camera": false,
+            "note": "young adults"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.5,
+              "description": "group sitting on grass"
+            },
+            {
+              "start_s": 3.0,
+              "end_s": 5.0,
+              "description": "woman walking away from group"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-10.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 1.3,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "young woman waving and smiling",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "woman waving at camera",
+          "summary": "A young woman smiles and waves directly at the camera while sitting on grass, with a young man in a sports jersey sitting behind her.",
+          "setting": "grassy outdoor area",
+          "activity": "waving at camera",
+          "people": {
+            "count": 2,
+            "speaks_to_camera": false,
+            "note": "a young woman and a young man"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.25,
+              "description": "woman smiles and waves"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-11.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 6.7,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group of friends on a field",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of friends relaxing",
+          "summary": "A group of friends are relaxing on a grassy field under a cloudy sky. Some are sitting up and talking, while others are lying down. Volleyballs are visible on the ground.",
+          "setting": "outdoor park or field under a cloudy sky",
+          "activity": "socializing and relaxing on a field",
+          "people": {
+            "count": 6,
+            "speaks_to_camera": false,
+            "note": "a group of young adults"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.0,
+              "description": "cloudy sky establishing shot"
+            },
+            {
+              "start_s": 3.0,
+              "end_s": 6.0,
+              "description": "camera pans down to people sitting"
+            },
+            {
+              "start_s": 7.0,
+              "end_s": 9.0,
+              "description": "friends relaxing on grass"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-12.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 7.333333,
+      "aspect": 1.775,
+      "analysis": {
+        "subject": "people in a park",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of people relaxing in a park",
+          "summary": "The video shows a cloudy sky, then pans down to a group of people sitting on the grass in a large park, some with volleyballs and a bicycle nearby. Others are visible playing or walking in the background.",
+          "setting": "outdoor park on a cloudy day",
+          "activity": "people sitting and talking, relaxing on grass",
+          "people": {
+            "count": 8,
+            "speaks_to_camera": false,
+            "note": "a group of young adults sitting on grass, some with sports equipment"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "ambience",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.96,
+              "description": "cloudy sky overhead"
+            },
+            {
+              "start_s": 4.0,
+              "end_s": 7.0,
+              "description": "pan down to people in park"
+            },
+            {
+              "start_s": 7.5,
+              "end_s": 10.0,
+              "description": "group talking on grass"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-13.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 1.833333,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "two men sitting on grass",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "two men sitting on grass",
+          "summary": "Two men are sitting on a grassy field, one of whom is drinking from a plastic bottle while another sits beside him with a backpack.",
+          "setting": "outdoor grassy field on an overcast day",
+          "activity": "sitting on grass, drinking water, talking",
+          "people": {
+            "count": 2,
+            "speaks_to_camera": false,
+            "note": "two young men in casual clothes"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.5,
+              "description": "man drinking from bottle"
+            },
+            {
+              "start_s": 2.5,
+              "end_s": 5.0,
+              "description": "man screwing cap on bottle"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-14.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 2.5,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "person on grass using phone",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "young man on phone",
+          "summary": "A young man sits on a grassy field, engrossed in his phone, with bags and another person partially visible nearby.",
+          "setting": "outdoor grassy field with trees in background",
+          "activity": "sitting and using a phone",
+          "people": {
+            "count": 2,
+            "speaks_to_camera": false,
+            "note": "two young men, one using a phone"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.5,
+              "description": "man looking at phone"
+            },
+            {
+              "start_s": 2.0,
+              "end_s": 3.5,
+              "description": "man scrolling on phone"
+            },
+            {
+              "start_s": 4.0,
+              "end_s": 5.0,
+              "description": "man in relaxed pose"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-15.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 4.6,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "woman on grass with phone",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "woman on field",
+          "summary": "A young woman sits cross-legged on a grassy field, initially looking down at her phone, then looks up and smiles at someone off-camera.",
+          "setting": "grassy outdoor field",
+          "activity": "sitting on field, looking at phone, looking up and smiling",
+          "people": {
+            "count": 1,
+            "speaks_to_camera": false,
+            "note": "a young woman in a black t-shirt and shorts"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.7,
+              "description": "woman looks at phone"
+            },
+            {
+              "start_s": 2.2,
+              "end_s": 4.5,
+              "description": "woman looks up and smiles"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-16.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 1.566667,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "people on field",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "young woman on grass field",
+          "summary": "A young woman stands on a grassy field, looking to her left. A young man sits in the background. A volleyball is visible near him.",
+          "setting": "outdoor grass field under cloudy sky",
+          "activity": "standing and observing, sitting on grass",
+          "people": {
+            "count": 2,
+            "speaks_to_camera": false,
+            "note": "a young woman and a young man"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 3.0,
+              "description": "woman standing facing away"
+            },
+            {
+              "start_s": 5.0,
+              "end_s": 8.0,
+              "description": "woman observing surroundings"
+            },
+            {
+              "start_s": 10.0,
+              "end_s": 16.0,
+              "description": "woman looking around field"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-17.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 1.933333,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "three young men sitting on grass",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "three men sitting on grass",
+          "summary": "Three young men are sitting on a grassy field, seemingly taking a break, with a volleyball and a bicycle nearby. One person is speaking.",
+          "setting": "grassy outdoor field",
+          "activity": "sitting and conversing",
+          "people": {
+            "count": 3,
+            "speaks_to_camera": false,
+            "note": "three young men"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": []
+        }
+      }
+    },
+    {
+      "media_id": "clip-18.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 2.833333,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group of friends",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of friends",
+          "summary": "A group of six friends poses for a photo or video on a grassy field under a partly cloudy sky.",
+          "setting": "outdoor grassy field",
+          "activity": "posing for a group photo",
+          "people": {
+            "count": 6,
+            "speaks_to_camera": false,
+            "note": "six adults, three men and three women, wearing athletic casual clothes"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.86,
+              "end_s": 2.26,
+              "description": "group standing together"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-19.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 1.2,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group of men on a field",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "four men on a field",
+          "summary": "Four men are gathered on a grassy field, seemingly engaged in a conversation or planning an activity. One man is holding a white object, possibly a ball, while a bicycle lies on the ground nearby.",
+          "setting": "outdoor grassy field on a cloudy day",
+          "activity": "standing and talking",
+          "people": {
+            "count": 4,
+            "speaks_to_camera": false,
+            "note": "four men in athletic casual wear"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.5,
+              "description": "man speaks to group"
+            },
+            {
+              "start_s": 2.5,
+              "end_s": 4.5,
+              "description": "group converses on field"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-20.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 13.166667,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group of people playing soccer",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of people playing football",
+          "summary": "A group of young adults is playing a casual game of football or foot-tennis on a dry grass field under a cloudy sky. They are passing and kicking a soccer ball amongst themselves.",
+          "setting": "outdoor dry grass field with trees in background",
+          "activity": "playing football",
+          "people": {
+            "count": 8,
+            "speaks_to_camera": false,
+            "note": "young adults in casual wear"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": false,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 6.7,
+              "end_s": 8.0,
+              "description": "player dribbles ball between two others"
+            },
+            {
+              "start_s": 9.0,
+              "end_s": 10.3,
+              "description": "player receives pass and kicks it forward"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-21.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 3.733333,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "players on a football pitch",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "men playing football",
+          "summary": "Several men play a casual game of football on a dry, grassy field under a cloudy sky. The players pass the ball between each other in a relaxed match.",
+          "setting": "outdoor grassy field in a park",
+          "activity": "playing football",
+          "people": {
+            "count": 6,
+            "speaks_to_camera": false,
+            "note": "several young men in casual athletic wear"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "music",
+          "notable_moments": []
+        }
+      }
+    },
+    {
+      "media_id": "clip-22.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 2.933333,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "people playing soccer",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "people playing soccer",
+          "summary": "Four people are on a grassy field with a soccer ball, seemingly preparing to play or already in a game under a cloudy sky.",
+          "setting": "grassy field with trees in the background",
+          "activity": "playing soccer",
+          "people": {
+            "count": 4,
+            "speaks_to_camera": false,
+            "note": "four adults in casual athletic wear"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "music",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.5,
+              "description": "four players standing on field"
+            },
+            {
+              "start_s": 2.0,
+              "end_s": 3.5,
+              "description": "player dribbles ball gently"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-23.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 11.3,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "people playing field sport",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "people playing soccer",
+          "summary": "A group of people are playing soccer on a grassy field under a cloudy sky. The camera captures various players kicking and chasing the ball.",
+          "setting": "outdoor grassy field with trees in the background",
+          "activity": "playing soccer",
+          "people": {
+            "count": 10,
+            "speaks_to_camera": false,
+            "note": "a group of adults playing"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "music",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.5,
+              "description": "players chasing the ball"
+            },
+            {
+              "start_s": 3.5,
+              "end_s": 6.0,
+              "description": "player dribbles past opponent"
+            },
+            {
+              "start_s": 7.5,
+              "end_s": 9.5,
+              "description": "group advances the ball"
+            },
+            {
+              "start_s": 10.5,
+              "end_s": 12.5,
+              "description": "players jogging on field"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-24.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 8.733333,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group playing soccer",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "people playing football",
+          "summary": "A group of people is playing football on a dry, grassy field. The ball is passed between players as they move around the field.",
+          "setting": "grassy field outdoors",
+          "activity": "playing football",
+          "people": {
+            "count": 10,
+            "speaks_to_camera": false,
+            "note": "group of young adults playing football"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "music",
+          "notable_moments": [
+            {
+              "start_s": 0.08,
+              "end_s": 1.58,
+              "description": "player receives pass"
+            },
+            {
+              "start_s": 3.73,
+              "end_s": 5.43,
+              "description": "multiple players engage with ball"
+            },
+            {
+              "start_s": 6.33,
+              "end_s": 8.13,
+              "description": "player kicks ball across field"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-25.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 2.533333,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "people walking on a field",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "people walking in a field",
+          "summary": "Several people walk across a large, grassy field under an overcast sky, with some activity in the background.",
+          "setting": "open grassy field during daytime",
+          "activity": "walking across a field",
+          "people": {
+            "count": 6,
+            "speaks_to_camera": false,
+            "note": "several adults walking"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "music",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.0,
+              "description": "people walking on field"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-26.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 6.466667,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group of young adults",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "group of people",
+          "summary": "A group of young adults is gathering on a grassy field under a cloudy sky, some carrying bags and water bottles, seemingly preparing for an activity.",
+          "setting": "grassy outdoor field",
+          "activity": "socializing and preparing for an activity",
+          "people": {
+            "count": 10,
+            "speaks_to_camera": false,
+            "note": "young adults in casual and athletic wear"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "broll",
+          "audio_type": "music",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.5,
+              "description": "people arriving at field"
+            },
+            {
+              "start_s": 2.5,
+              "end_s": 4.0,
+              "description": "people gathering belongings"
+            },
+            {
+              "start_s": 4.5,
+              "end_s": 6.1,
+              "description": "people standing in group"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-27.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 7.6,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "group playing soccer",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          },
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "players on a field",
+          "summary": "A group of people is playing a game similar to foot-volleyball or kickball on a grassy field, using a large inflatable ball. They are kicking and heading the ball to each other.",
+          "setting": "outdoor grassy field with trees in the background",
+          "activity": "playing foot-volleyball or kickball",
+          "people": {
+            "count": 8,
+            "speaks_to_camera": false,
+            "note": "group of young adults playing a game"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "music",
+          "notable_moments": [
+            {
+              "start_s": 0.5,
+              "end_s": 1.9,
+              "description": "player kicks ball into air"
+            },
+            {
+              "start_s": 2.5,
+              "end_s": 3.9,
+              "description": "player bicycle kicks the ball"
+            },
+            {
+              "start_s": 4.5,
+              "end_s": 6.0,
+              "description": "players chase the ball"
+            },
+            {
+              "start_s": 7.1,
+              "end_s": 8.5,
+              "description": "player receiving the ball"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-28.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 3.4,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "people playing volleyball",
+        "description": "",
+        "on_screen_text": "",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "people playing volleyball",
+          "summary": "Three people are playing beach volleyball on a sand court under a cloudy sky. One player sets the ball, and another player spikes it.",
+          "setting": "outdoor beach volleyball court on sand",
+          "activity": "playing beach volleyball",
+          "people": {
+            "count": 4,
+            "speaks_to_camera": false,
+            "note": "three young adults playing volleyball, one partially visible"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "music",
+          "notable_moments": []
+        }
+      }
+    },
+    {
+      "media_id": "clip-29.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 1.2,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "woman on volleyball court",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "woman on beach volleyball court",
+          "summary": "A woman stands on a sandy volleyball court, clapping her hands, while other people are visible playing in the background.",
+          "setting": "outdoor sandy beach volleyball court",
+          "activity": "clapping hands on a volleyball court",
+          "people": {
+            "count": 6,
+            "speaks_to_camera": false,
+            "note": "a woman in workout clothes and several other people playing volleyball in the background"
+          },
+          "speech": {
+            "has_speech": false,
+            "to_camera": false,
+            "transcript": ""
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "action",
+          "audio_type": "mixed",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.0,
+              "description": "woman claps hands on court"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "media_id": "clip-30.mp4",
+      "kind": "video",
+      "lane": "clip",
+      "duration_s": 2.166667,
+      "aspect": 0.5634,
+      "analysis": {
+        "subject": "woman making funny faces",
+        "description": "",
+        "on_screen_text": "(redacted spoken transcript)",
+        "best_moments": [
+          {
+            "end_s": 0.0,
+            "energy": 0.0,
+            "start_s": 0.0,
+            "description": ""
+          }
+        ],
+        "kind_hint": "screenshot",
+        "source": "clip_metadata",
+        "analysis_version": 6,
+        "understanding": {
+          "kind": "video",
+          "subject": "woman in foreground",
+          "summary": "A woman looks at the camera, sticking out her tongue and making a peace sign, then transitions to a close-up with wide eyes.",
+          "setting": "cafe or restaurant interior",
+          "activity": "posing for camera",
+          "people": {
+            "count": 2,
+            "speaks_to_camera": true,
+            "note": "a young woman and a man in background"
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": true,
+            "transcript": "(redacted spoken transcript, 5 words)"
+          },
+          "on_screen_text": "",
+          "brands": [],
+          "content_type": "talking_head",
+          "audio_type": "dialogue",
+          "notable_moments": [
+            {
+              "start_s": 1.0,
+              "end_s": 2.2,
+              "description": "woman widens eyes at camera"
+            }
+          ]
+        }
+      }
+    }
+  ]
 }
