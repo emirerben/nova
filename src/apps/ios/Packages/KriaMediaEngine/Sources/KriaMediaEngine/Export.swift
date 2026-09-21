@@ -35,7 +35,12 @@ public protocol LocalExporting: Sendable {
     public let stateStore: any ExportStatePersisting
     public let preset: LocalExportPreset
     public let instrumentation: (any MediaInstrumentation)?
-    public init(stateStore: any ExportStatePersisting, preset: LocalExportPreset = .default, instrumentation: (any MediaInstrumentation)? = nil) { self.stateStore = stateStore; self.preset = preset; self.instrumentation = instrumentation }
+    /// Brand furniture on the exported file: the watermark for the length of
+    /// the edit, then the outro. This is the only place it is applied -- the
+    /// editor's own composition stays unbranded so the creator's timeline
+    /// stays theirs. Pass `.none` for an internal export that must not carry it.
+    public let branding: KriaBranding.Options
+    public init(stateStore: any ExportStatePersisting, preset: LocalExportPreset = .default, instrumentation: (any MediaInstrumentation)? = nil, branding: KriaBranding.Options = .standard) { self.stateStore = stateStore; self.preset = preset; self.instrumentation = instrumentation; self.branding = branding }
     public func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String = UUID().uuidString, progress: (@Sendable (Double) -> Void)? = nil) async throws -> ExportCheckpoint {
         try recipe.validate()
         let resolvedOutput = outputURL.resolvingSymlinksInPath().standardizedFileURL
@@ -46,7 +51,7 @@ public protocol LocalExporting: Sendable {
         let startedAt = Date()
         do {
             traceDeviceExportPhase("prepare")
-            let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: assetURLs)
+            let preview = try await AVPlayerPreviewComposer(branding: branding).makePreview(recipe: recipe, assetURLs: assetURLs)
             traceDeviceExportPhase("prepared")
             guard preset.videoCodec == "h264", preset.audioCodec == "aac", preset.videoBitrate > 0 else { throw NativePreviewFeatureError("Export-51") }
             try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -65,7 +70,7 @@ public protocol LocalExporting: Sendable {
     }
 }
 #else
-public struct AVFoundationLocalExporter: LocalExporting { public let stateStore: any ExportStatePersisting; public let preset: LocalExportPreset; public let instrumentation: (any MediaInstrumentation)?; public init(stateStore: any ExportStatePersisting, preset: LocalExportPreset = .default, instrumentation: (any MediaInstrumentation)? = nil) { self.stateStore = stateStore; self.preset = preset; self.instrumentation = instrumentation }; public func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String = UUID().uuidString, progress: (@Sendable (Double) -> Void)? = nil) async throws -> ExportCheckpoint { throw MediaEngineError.avFoundationUnavailable } }
+public struct AVFoundationLocalExporter: LocalExporting { public let stateStore: any ExportStatePersisting; public let preset: LocalExportPreset; public let instrumentation: (any MediaInstrumentation)?; public let branding: KriaBranding.Options; public init(stateStore: any ExportStatePersisting, preset: LocalExportPreset = .default, instrumentation: (any MediaInstrumentation)? = nil, branding: KriaBranding.Options = .standard) { self.stateStore = stateStore; self.preset = preset; self.instrumentation = instrumentation; self.branding = branding }; public func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String = UUID().uuidString, progress: (@Sendable (Double) -> Void)? = nil) async throws -> ExportCheckpoint { throw MediaEngineError.avFoundationUnavailable } }
 #endif
 
 /// Local account-free device tests only; release builds do not emit these stages.

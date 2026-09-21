@@ -172,7 +172,31 @@ the hook so the two never fight.
 
 ---
 
-## 5. Rules that keep every account looking like Kria
+## 5. In the product
+
+The watermark and the outro are applied automatically to every video the iOS
+app exports. They are **not** part of the creator's edit: the composition they
+preview and scrub is unbranded, so their timeline duration stays theirs and the
+mark is not something they can select, move or trim. Branding is added by
+`AVFoundationLocalExporter` to the file that leaves the phone.
+
+- Code: `src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Branding.swift`
+  (placement, tones, resources) and the branding block in `Composition.swift`.
+- Assets: `build.py` copies the two watermark PNGs and the outro into the Swift
+  package's `Resources/`. `BrandingTests.testBundledAssetsMatchTheBrandKit`
+  fails if those copies drift from `dist/`, so re-run `build.py` after any
+  change here.
+- Off switch: construct the exporter with `branding: .none`. Internal exports
+  and the renderer-parity tests already do.
+- The app ships `mist` for every clip. Automatic per-clip tone selection (what
+  `build.py pick` does offline) is not wired into the renderer yet, so a very
+  bright shot will wash the mark out — see §2.
+
+Cloud renders are a separate path and are **not** branded by this change.
+
+---
+
+## 6. Rules that keep every account looking like Kria
 
 1. **One wordmark.** It comes from `favicon.svg`. Never retype `kria` in another
    typeface, never re-space the letters, never rotate them yourself. The letter
@@ -193,7 +217,7 @@ the hook so the two never fight.
 
 ---
 
-## 6. Legibility evidence
+## 7. Legibility evidence
 
 Every variant, measured against five footage classes — bright, dark, mid-grey,
 warm and high-frequency busy. Contrast is WCAG 2.2, measured between the glyph

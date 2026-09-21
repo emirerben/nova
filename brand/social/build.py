@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import verify  # noqa: E402
 from kria_brand import (  # noqa: E402
-    BUTTER, alpha_bbox, FPS, H, INK, PAPER, SKY, TEXT_SAFE, W,
+    REPO_ROOT, BUTTER, alpha_bbox, FPS, H, INK, PAPER, SKY, TEXT_SAFE, W,
     draw_rgba, ease_out_cubic, font, hex_to_color, save_png, shadow_filter,
     to_image,
     soft_shadow,
@@ -38,16 +38,30 @@ from kria_brand import (  # noqa: E402
 HERE = Path(__file__).resolve().parent
 DIST = HERE / "dist"
 
+# The iOS renderer needs these at runtime and `brand/` is not part of the app
+# bundle, so the build copies them into the Swift package's Resources. Rather
+# than keep a second hand-maintained copy, the build writes both and
+# `BrandingTests` fails if they drift.
+RUNTIME_ASSET_DIRS = (
+    REPO_ROOT / "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Resources",
+)
+RUNTIME_ASSET_FILES = (
+    "watermark/kria-watermark-mist-standard.png",
+    "watermark/kria-watermark-graphite-standard.png",
+    "outro/kria-outro-paper.mp4",
+)
+
 # --- placements (all verified against the chrome map before export) -----------
 WATERMARK_SIZES = {"compact": 140, "standard": 168, "demo": 210}
-# Bottom-left, as low as the frame allows. 1530 is where Reels starts drawing
-# the username block -- one pixel lower and the caption is composited over the
-# mark. Verified by `build.py place` and re-checked on every build.
+# Bottom-left. The hard floor is 1530, where Reels starts drawing the username
+# block, but the signed-off position is one notch above it: the standard mark's
+# top edge on 1400, i.e. its bottom edge on 1475. That leaves 55px of clearance
+# above the caption block rather than sitting flush against it.
 #
 # The slot is anchored by the mark's BOTTOM edge, not its top: the three sizes
 # have different heights, and pinning the top would push the tallest one into
 # the caption block (which is exactly what the placement gate caught).
-WATERMARK_BOTTOM = 1530
+WATERMARK_BOTTOM = 1475
 WATERMARK_LEFT = 60
 WATERMARK_TOP_Y = 210             # the top-left alternate is top-anchored
 
@@ -802,6 +816,14 @@ def pick_variant(frame: Path, at: float, slot: tuple[int, int],
 # plumbing
 # =============================================================================
 
+def sync_runtime_assets() -> None:
+    """Copy the files the renderers load into each runtime that bundles them."""
+    for directory in RUNTIME_ASSET_DIRS:
+        directory.mkdir(parents=True, exist_ok=True)
+        for rel in RUNTIME_ASSET_FILES:
+            shutil.copyfile(DIST / rel, directory / Path(rel).name)
+
+
 def _run(cmd: list[str]) -> None:
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -912,6 +934,7 @@ def main() -> int:
     }
     _TEMPLATE_RECTS = manifest["templates"]
     report = export_proofs()
+    sync_runtime_assets()
     (DIST / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     (DIST / "proofs" / "report.json").write_text(json.dumps(report, indent=2) + "\n")
 

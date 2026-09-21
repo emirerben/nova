@@ -3,9 +3,9 @@
     "watermark/compact/bottom-left": {
       "rect": [
         60,
-        1467,
+        1412,
         200,
-        1530
+        1475
       ],
       "collisions": {
         "tiktok": [],
@@ -31,9 +31,9 @@
     "watermark/standard/bottom-left": {
       "rect": [
         60,
-        1455,
+        1400,
         229,
-        1530
+        1475
       ],
       "collisions": {
         "tiktok": [],
@@ -59,9 +59,9 @@
     "watermark/demo/bottom-left": {
       "rect": [
         60,
-        1437,
+        1382,
         270,
-        1530
+        1475
       ],
       "collisions": {
         "tiktok": [],
@@ -166,8 +166,8 @@
       "passes_watermark_floor": false
     },
     "graphite/bright": {
-      "median": 4.52,
-      "worst_tile": 4.49,
+      "median": 4.53,
+      "worst_tile": 4.5,
       "passes_floor": true,
       "meets_target": false,
       "recommended_pairing": true,
@@ -184,8 +184,8 @@
       "passes_watermark_floor": false
     },
     "mist/dark": {
-      "median": 8.06,
-      "worst_tile": 8.04,
+      "median": 8.1,
+      "worst_tile": 8.08,
       "passes_floor": true,
       "meets_target": true,
       "recommended_pairing": true,
@@ -193,8 +193,8 @@
       "passes_watermark_floor": true
     },
     "graphite/dark": {
-      "median": 2.28,
-      "worst_tile": 2.28,
+      "median": 2.3,
+      "worst_tile": 2.3,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
@@ -202,8 +202,8 @@
       "passes_watermark_floor": true
     },
     "sky/dark": {
-      "median": 9.14,
-      "worst_tile": 9.14,
+      "median": 9.21,
+      "worst_tile": 9.21,
       "passes_floor": true,
       "meets_target": true,
       "recommended_pairing": false,
@@ -238,8 +238,8 @@
       "passes_watermark_floor": true
     },
     "mist/warm": {
-      "median": 2.24,
-      "worst_tile": 2.22,
+      "median": 2.2,
+      "worst_tile": 2.18,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
@@ -247,8 +247,8 @@
       "passes_watermark_floor": true
     },
     "graphite/warm": {
-      "median": 1.74,
-      "worst_tile": 1.73,
+      "median": 1.77,
+      "worst_tile": 1.77,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
@@ -256,8 +256,8 @@
       "passes_watermark_floor": false
     },
     "sky/warm": {
-      "median": 1.9,
-      "worst_tile": 1.9,
+      "median": 1.86,
+      "worst_tile": 1.86,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
@@ -265,8 +265,8 @@
       "passes_watermark_floor": false
     },
     "mist/busy": {
-      "median": 2.56,
-      "worst_tile": 2.53,
+      "median": 2.35,
+      "worst_tile": 2.12,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": true,
@@ -274,8 +274,8 @@
       "passes_watermark_floor": true
     },
     "graphite/busy": {
-      "median": 1.53,
-      "worst_tile": 1.51,
+      "median": 1.7,
+      "worst_tile": 1.62,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
@@ -283,13 +283,13 @@
       "passes_watermark_floor": false
     },
     "sky/busy": {
-      "median": 2.18,
-      "worst_tile": 2.1,
+      "median": 1.91,
+      "worst_tile": 1.84,
       "passes_floor": false,
       "meets_target": false,
       "recommended_pairing": false,
       "gated": false,
-      "passes_watermark_floor": true
+      "passes_watermark_floor": false
     }
   }
 }

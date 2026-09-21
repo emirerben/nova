@@ -40,7 +40,15 @@ struct PreviewAudioBinding: Sendable {
 }
 
 @MainActor public struct AVPlayerPreviewComposer: PreviewComposing {
-    public init() {}
+    /// Brand furniture to add to the composition this composer builds.
+    ///
+    /// Defaults to OFF, and the exporter is what turns it on. Branding is not
+    /// part of the creator's edit: it must not change the duration their
+    /// scrubber reports, must not appear in the internal sampling passes that
+    /// build blur fills and thumbnails, and must not be something they can
+    /// select or trim. It belongs to the file that leaves the phone.
+    public let branding: KriaBranding.Options
+    public init(branding: KriaBranding.Options = .none) { self.branding = branding }
     public func makePreview(recipe: EditRecipe, assetURLs: [String: URL]) async throws -> PreviewComposition {
         try recipe.validate()
         guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)", !recipe.audio.duckOriginalDuringMusic else {
@@ -247,7 +255,8 @@ struct PreviewAudioBinding: Sendable {
                 var base = recipe
                 base.visualFills = []; base.textLayers = []; base.motionScenes = nil; base.audio.muteWindows = []
                 base.tracks = recipe.tracks.filter { $0.kind == .video }
-                let background = try await makePreview(recipe: base, assetURLs: assetURLs)
+                let background = try await AVPlayerPreviewComposer()
+                    .makePreview(recipe: base, assetURLs: assetURLs)
                 let generator = AVAssetImageGenerator(asset: background.playerItem.asset)
                 generator.videoComposition = background.playerItem.videoComposition
                 generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
@@ -302,11 +311,39 @@ struct PreviewAudioBinding: Sendable {
             if fadeOut > 0 { parameter.setVolumeRamp(fromStartVolume: volume, toEndVolume: 0, timeRange: CMTimeRange(start: time(duration - fadeOut), duration: time(fadeOut))) }
             audioParameters.append(parameter)
         }
-        if composition.duration.seconds < total { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, duration: time(total - composition.duration.seconds))) }
+        // --- Kria branding -------------------------------------------------
+        // Added last so it sits above every clip, fill and caption, and after
+        // the still-clock coverage pass above, whose "is the timeline covered
+        // by video" check must only see the edit's own clips.
+        var brandedTotal = total
+        if branding.watermark, total > 0,
+           let watermark = KriaBranding.watermarkLayer(canvas: canvas, start: 0, end: total,
+                                                       variant: branding.variant) {
+            layers.append(watermark)
+        }
+        if branding.outro, let outroURL = KriaBranding.outroURL() {
+            let outro = AVURLAsset(url: outroURL)
+            if let source = try await outro.loadTracks(withMediaType: .video).first,
+               let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                let duration = try await outro.load(.duration)
+                try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: time(total))
+                let size = try await source.load(.naturalSize)
+                let preferred = try await source.load(.preferredTransform)
+                let end = total + duration.seconds
+                layers.append(RecipeVideoLayer(
+                    trackID: track.trackID, image: nil,
+                    transform: KriaBranding.coverTransform(naturalSize: size, preferred: preferred, canvas: canvas),
+                    start: total, end: end, fadeIn: 0, isPrimary: false, clipID: "kria-outro",
+                    naturalSize: size, preferredTransform: preferred, visualOrder: 9_001))
+                brandedTotal = end
+            }
+        }
+
+        if composition.duration.seconds < brandedTotal { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, duration: time(brandedTotal - composition.duration.seconds))) }
         let motion = try NativeMotionPainter.make(recipe.motionScenes, assets: assetURLs, canvas: canvas, duration: total, frameRate: recipe.frameRate)
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
         // video at all (audio over black, no error), while scrubbing and export stay correct.
-        let covered = max(total, composition.duration.seconds)
+        let covered = max(brandedTotal, composition.duration.seconds)
         videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
                 cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore)
@@ -319,7 +356,7 @@ struct PreviewAudioBinding: Sendable {
         // Coalesced paused seeks must finish only after their composed frame is displayed.
         item.seekingWaitsForVideoCompositionRendering = true
         item.audioMix = audioMix
-        var result = PreviewComposition(description: CompositionDescription(duration: total, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
+        var result = PreviewComposition(description: CompositionDescription(duration: brandedTotal, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
         result.audioBindings = audioBindings
         return result
     }

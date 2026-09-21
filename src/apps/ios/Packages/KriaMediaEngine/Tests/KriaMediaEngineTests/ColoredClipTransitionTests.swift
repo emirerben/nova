@@ -28,7 +28,7 @@ final class ColoredClipTransitionTests: XCTestCase {
                 ])])
             let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: urls)
             let output = directory.appendingPathComponent("native-\(name).mp4")
-            _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+            _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
                 .export(recipe: recipe, assetURLs: urls, outputURL: output)
             let previewFrames = AVAssetImageGenerator(asset: preview.playerItem.asset)
             previewFrames.videoComposition = preview.playerItem.videoComposition

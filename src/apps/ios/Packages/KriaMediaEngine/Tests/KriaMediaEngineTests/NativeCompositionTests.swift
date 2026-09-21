@@ -340,7 +340,7 @@ final class NativeCompositionTests: XCTestCase {
                         holdDuration: 1.75, overlayPopIn: true, overlayPreserveAlpha: false)])], assetManifest: manifest)
         let preview = try await LivePreviewComposition(recipe: recipe, assetURLs: urls)
         let output = directory.appendingPathComponent("overlay.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: urls, outputURL: output)
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none).export(recipe: recipe, assetURLs: urls, outputURL: output)
         let reference = AVAssetImageGenerator(asset: preview.preview.playerItem.asset)
         reference.videoComposition = preview.preview.playerItem.videoComposition
         let exported = AVAssetImageGenerator(asset: AVURLAsset(url: output))
@@ -390,7 +390,7 @@ final class NativeCompositionTests: XCTestCase {
         XCTAssertEqual(rotated.rotationDegrees, 90)
         XCTAssertEqual(rotated.width, 38.0 / 96, accuracy: 0.001, "Chrome uses the unrotated media box, then rotates once")
         let rotatedOutput = directory.appendingPathComponent("rotated-held-overlay.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("rotated-state")))
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("rotated-state")), branding: .none)
             .export(recipe: recipe, assetURLs: urls, outputURL: rotatedOutput)
         let heldPreview = AVAssetImageGenerator(asset: rotatedPreview.preview.playerItem.asset)
         heldPreview.videoComposition = rotatedPreview.preview.playerItem.videoComposition
@@ -462,7 +462,7 @@ final class NativeCompositionTests: XCTestCase {
         XCTAssertEqual(slow, .zero)
         XCTAssertGreaterThan(fast.height, 150)
         let output = directory.appendingPathComponent("styled.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: urls, outputURL: output)
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none).export(recipe: recipe, assetURLs: urls, outputURL: output)
         let saved = try await redBounds(AVAssetImageGenerator(asset: AVURLAsset(url: output)), at: 0.1)
         XCTAssertEqual(saved.height, fast.height, accuracy: 2)
         XCTAssertEqual(saved.width, fast.width, accuracy: 2)
@@ -517,7 +517,7 @@ final class NativeCompositionTests: XCTestCase {
         }
         player.replaceCurrentItem(with: nil)
         let output = directory.appendingPathComponent("photos.mp4")
-        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state"))).export(recipe: recipe, assetURLs: urls, outputURL: output)
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none).export(recipe: recipe, assetURLs: urls, outputURL: output)
         let exported = AVURLAsset(url: output)
         let duration = try await exported.load(.duration)
         XCTAssertEqual(duration.seconds, 1, accuracy: 1 / 30)
@@ -571,7 +571,7 @@ final class NativeCompositionTests: XCTestCase {
         let alias = directory.appendingPathComponent("export.mp4")
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: source)
         let recipe = EditRecipe(assets: [MediaAsset(id: "a", relativePath: "a")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "a", sourceDuration: 1)])])
-        let exporter = AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")))
+        let exporter = AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
         for output in [source, alias] {
             do {
                 _ = try await exporter.export(recipe: recipe, assetURLs: ["a": source], outputURL: output)
@@ -599,7 +599,7 @@ final class NativeCompositionTests: XCTestCase {
         let valid = try await preview.playerItem.videoComposition!.isValid(for: preview.playerItem.asset, timeRange: CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600)), validationDelegate: validator)
         XCTAssertTrue(valid)
         let output = directory.appendingPathComponent("output.mp4")
-        let exporter = AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("checkpoints")))
+        let exporter = AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("checkpoints")), branding: .none)
         let checkpoint = try await exporter.export(recipe: recipe, assetURLs: urls, outputURL: output, exportID: "test")
         XCTAssertEqual(checkpoint.status, .completed)
         let exported = AVURLAsset(url: output)
