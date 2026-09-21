@@ -1,0 +1,393 @@
+{
+  "watermark": {
+    "kria-watermark-plate-compact.png": {
+      "variant": "plate",
+      "for_footage": [
+        "bright",
+        "dark",
+        "mid",
+        "warm",
+        "busy"
+      ],
+      "mark_width_px": 140,
+      "tile_px": [
+        200,
+        123
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "top-left": [
+          30,
+          180
+        ],
+        "bottom-left": [
+          30,
+          1370
+        ]
+      }
+    },
+    "kria-watermark-plate-standard.png": {
+      "variant": "plate",
+      "for_footage": [
+        "bright",
+        "dark",
+        "mid",
+        "warm",
+        "busy"
+      ],
+      "mark_width_px": 168,
+      "tile_px": [
+        229,
+        135
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "top-left": [
+          30,
+          180
+        ],
+        "bottom-left": [
+          30,
+          1370
+        ]
+      }
+    },
+    "kria-watermark-plate-demo.png": {
+      "variant": "plate",
+      "for_footage": [
+        "bright",
+        "dark",
+        "mid",
+        "warm",
+        "busy"
+      ],
+      "mark_width_px": 210,
+      "tile_px": [
+        270,
+        153
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "top-left": [
+          30,
+          180
+        ],
+        "bottom-left": [
+          30,
+          1370
+        ]
+      }
+    },
+    "kria-watermark-white-compact.png": {
+      "variant": "white",
+      "for_footage": [
+        "dark",
+        "mid",
+        "busy"
+      ],
+      "mark_width_px": 140,
+      "tile_px": [
+        200,
+        123
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "top-left": [
+          30,
+          180
+        ],
+        "bottom-left": [
+          30,
+          1370
+        ]
+      }
+    },
+    "kria-watermark-white-standard.png": {
+      "variant": "white",
+      "for_footage": [
+        "dark",
+        "mid",
+        "busy"
+      ],
+      "mark_width_px": 168,
+      "tile_px": [
+        229,
+        135
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "top-left": [
+          30,
+          180
+        ],
+        "bottom-left": [
+          30,
+          1370
+        ]
+      }
+    },
+    "kria-watermark-white-demo.png": {
+      "variant": "white",
+      "for_footage": [
+        "dark",
+        "mid",
+        "busy"
+      ],
+      "mark_width_px": 210,
+      "tile_px": [
+        270,
+        153
+      ],
+      "transparent_pad_px": 30,
+      "overlay_xy": {
+        "top-left": [
+          30,
+          180
+        ],
+        "bottom-left": [
+          30,
+          1370
+        ]
+      }
+    },
+    "kria-watermark-ink-compact.png": {
+      "variant": "ink",
+      "for_footage": [
+        "bright",
+        "warm"
+      ],
+      "mark_width_px": 140,
+      "tile_px": [
+        140,
+        63
+      ],
+      "transparent_pad_px": 0,
+      "overlay_xy": {
+        "top-left": [
+          60,
+          210
+        ],
+        "bottom-left": [
+          60,
+          1400
+        ]
+      }
+    },
+    "kria-watermark-ink-standard.png": {
+      "variant": "ink",
+      "for_footage": [
+        "bright",
+        "warm"
+      ],
+      "mark_width_px": 168,
+      "tile_px": [
+        169,
+        75
+      ],
+      "transparent_pad_px": 0,
+      "overlay_xy": {
+        "top-left": [
+          60,
+          210
+        ],
+        "bottom-left": [
+          60,
+          1400
+        ]
+      }
+    },
+    "kria-watermark-ink-demo.png": {
+      "variant": "ink",
+      "for_footage": [
+        "bright",
+        "warm"
+      ],
+      "mark_width_px": 210,
+      "tile_px": [
+        210,
+        93
+      ],
+      "transparent_pad_px": 0,
+      "overlay_xy": {
+        "top-left": [
+          60,
+          210
+        ],
+        "bottom-left": [
+          60,
+          1400
+        ]
+      }
+    },
+    "kria-watermark-sky-compact.png": {
+      "variant": "sky",
+      "for_footage": "logotype only",
+      "mark_width_px": 140,
+      "tile_px": [
+        140,
+        63
+      ],
+      "transparent_pad_px": 0,
+      "overlay_xy": {
+        "top-left": [
+          60,
+          210
+        ],
+        "bottom-left": [
+          60,
+          1400
+        ]
+      }
+    },
+    "kria-watermark-sky-standard.png": {
+      "variant": "sky",
+      "for_footage": "logotype only",
+      "mark_width_px": 168,
+      "tile_px": [
+        169,
+        75
+      ],
+      "transparent_pad_px": 0,
+      "overlay_xy": {
+        "top-left": [
+          60,
+          210
+        ],
+        "bottom-left": [
+          60,
+          1400
+        ]
+      }
+    },
+    "kria-watermark-sky-demo.png": {
+      "variant": "sky",
+      "for_footage": "logotype only",
+      "mark_width_px": 210,
+      "tile_px": [
+        210,
+        93
+      ],
+      "transparent_pad_px": 0,
+      "overlay_xy": {
+        "top-left": [
+          60,
+          210
+        ],
+        "bottom-left": [
+          60,
+          1400
+        ]
+      }
+    }
+  },
+  "outro": {
+    "kria-outro-paper.mp4": {
+      "bytes": 43619,
+      "duration_s": 1.6,
+      "streams": [
+        {
+          "codec_name": "h264",
+          "width": 1080,
+          "height": 1920,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        },
+        {
+          "codec_name": "aac",
+          "width": null,
+          "height": null,
+          "pix_fmt": null,
+          "r_frame_rate": "0/0"
+        }
+      ]
+    },
+    "kria-endcard-paper.png": {
+      "px": [
+        1080,
+        1920
+      ]
+    },
+    "kria-outro-overlay.webm": {
+      "bytes": 74438,
+      "duration_s": 1.6,
+      "streams": [
+        {
+          "codec_name": "vp9",
+          "width": 1080,
+          "height": 1920,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        }
+      ]
+    },
+    "kria-outro-overlay.mov": {
+      "bytes": 7363016,
+      "duration_s": 1.6,
+      "streams": [
+        {
+          "codec_name": "prores",
+          "width": 1080,
+          "height": 1920,
+          "pix_fmt": "yuva444p12le",
+          "r_frame_rate": "30/1"
+        }
+      ]
+    },
+    "kria-endcard-overlay.png": {
+      "px": [
+        1080,
+        1920
+      ]
+    }
+  },
+  "templates": {
+    "hook-example-1.png": {
+      "px": [
+        1080,
+        1920
+      ],
+      "ink_rect": [
+        45,
+        255,
+        892,
+        698
+      ]
+    },
+    "hook-example-2.png": {
+      "px": [
+        1080,
+        1920
+      ],
+      "ink_rect": [
+        46,
+        304,
+        750,
+        520
+      ]
+    },
+    "step-example-1.png": {
+      "px": [
+        1080,
+        1920
+      ],
+      "ink_rect": [
+        60,
+        1294,
+        685,
+        1400
+      ]
+    },
+    "step-example-2.png": {
+      "px": [
+        1080,
+        1920
+      ],
+      "ink_rect": [
+        60,
+        1294,
+        686,
+        1400
+      ]
+    }
+  }
+}

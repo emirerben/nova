@@ -1,0 +1,320 @@
+{
+  "placements": {
+    "watermark/compact/top-left": {
+      "rect": [
+        60,
+        210,
+        200,
+        273
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/compact/bottom-left": {
+      "rect": [
+        60,
+        1400,
+        200,
+        1463
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/standard/top-left": {
+      "rect": [
+        60,
+        210,
+        229,
+        285
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/standard/bottom-left": {
+      "rect": [
+        60,
+        1400,
+        229,
+        1475
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/demo/top-left": {
+      "rect": [
+        60,
+        210,
+        270,
+        303
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "watermark/demo/bottom-left": {
+      "rect": [
+        60,
+        1400,
+        270,
+        1493
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "template/hook-example-1.png": {
+      "rect": [
+        45,
+        255,
+        892,
+        698
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "template/hook-example-2.png": {
+      "rect": [
+        46,
+        304,
+        750,
+        520
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "template/step-example-1.png": {
+      "rect": [
+        60,
+        1294,
+        685,
+        1400
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "template/step-example-2.png": {
+      "rect": [
+        60,
+        1294,
+        686,
+        1400
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    },
+    "safe-rectangle": {
+      "rect": [
+        60,
+        200,
+        890,
+        1520
+      ],
+      "collisions": {
+        "tiktok": [],
+        "reels": [],
+        "shorts": []
+      },
+      "clear": true
+    }
+  },
+  "legibility": {
+    "plate/bright": {
+      "median": 4.22,
+      "worst_tile": 4.16,
+      "passes_floor": true,
+      "meets_target": false,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "white/bright": {
+      "median": 1.29,
+      "worst_tile": 1.25,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "gated": false
+    },
+    "ink/bright": {
+      "median": 7.6,
+      "worst_tile": 7.6,
+      "passes_floor": true,
+      "meets_target": true,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "sky/bright": {
+      "median": 1.63,
+      "worst_tile": 1.63,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "gated": false
+    },
+    "plate/dark": {
+      "median": 17.76,
+      "worst_tile": 17.75,
+      "passes_floor": true,
+      "meets_target": true,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "white/dark": {
+      "median": 14.32,
+      "worst_tile": 14.3,
+      "passes_floor": true,
+      "meets_target": true,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "ink/dark": {
+      "median": 1.36,
+      "worst_tile": 1.36,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "gated": false
+    },
+    "sky/dark": {
+      "median": 10.67,
+      "worst_tile": 10.67,
+      "passes_floor": true,
+      "meets_target": true,
+      "recommended_pairing": false,
+      "gated": false
+    },
+    "plate/mid": {
+      "median": 9.97,
+      "worst_tile": 9.9,
+      "passes_floor": true,
+      "meets_target": true,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "white/mid": {
+      "median": 4.15,
+      "worst_tile": 4.06,
+      "passes_floor": true,
+      "meets_target": false,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "ink/mid": {
+      "median": 2.68,
+      "worst_tile": 2.68,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "gated": false
+    },
+    "sky/mid": {
+      "median": 2.31,
+      "worst_tile": 2.31,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "gated": false
+    },
+    "plate/warm": {
+      "median": 6.95,
+      "worst_tile": 6.84,
+      "passes_floor": true,
+      "meets_target": true,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "white/warm": {
+      "median": 2.41,
+      "worst_tile": 2.35,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "gated": false
+    },
+    "ink/warm": {
+      "median": 4.49,
+      "worst_tile": 4.49,
+      "passes_floor": true,
+      "meets_target": false,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "sky/warm": {
+      "median": 1.23,
+      "worst_tile": 1.23,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "gated": false
+    },
+    "plate/busy": {
+      "median": 9.67,
+      "worst_tile": 9.24,
+      "passes_floor": true,
+      "meets_target": true,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "white/busy": {
+      "median": 4.0,
+      "worst_tile": 3.74,
+      "passes_floor": true,
+      "meets_target": false,
+      "recommended_pairing": true,
+      "gated": true
+    },
+    "ink/busy": {
+      "median": 3.05,
+      "worst_tile": 2.68,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "gated": false
+    },
+    "sky/busy": {
+      "median": 2.0,
+      "worst_tile": 1.74,
+      "passes_floor": false,
+      "meets_target": false,
+      "recommended_pairing": false,
+      "gated": false
+    }
+  }
+}
