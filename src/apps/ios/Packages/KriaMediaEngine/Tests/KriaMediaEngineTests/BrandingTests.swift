@@ -61,6 +61,28 @@ final class BrandingTests: XCTestCase {
         XCTAssertGreaterThan(markOrigin.y, 1920 - 1530, "mark must clear the caption block")
     }
 
+    /// A canvas that is not 9:16 must still keep the whole mark on screen.
+    /// The canvas comes from a server snapshot, so this is reachable.
+    func testMarkStaysInsideNonVerticalCanvases() {
+        for canvas in [CGSize(width: 1920, height: 1080),   // landscape
+                       CGSize(width: 1080, height: 1080),   // square
+                       CGSize(width: 300, height: 200)] {   // tiny landscape
+            let t = KriaBranding.tileTransform(canvas: canvas)
+            let origin = CGPoint(x: KriaBranding.tilePad, y: KriaBranding.tilePad).applying(t)
+            let scale = min(canvas.width / KriaBranding.referenceWidth,
+                            canvas.height / KriaBranding.referenceHeight)
+            let size = CGSize(width: KriaBranding.markWidth * scale,
+                              height: KriaBranding.markHeight * scale)
+            XCTAssertGreaterThanOrEqual(origin.x, 0, "\(canvas)")
+            XCTAssertGreaterThanOrEqual(origin.y, 0, "\(canvas)")
+            XCTAssertLessThanOrEqual(origin.x + size.width, canvas.width, "\(canvas)")
+            XCTAssertLessThanOrEqual(origin.y + size.height, canvas.height, "\(canvas)")
+            // and never dominates the frame
+            XCTAssertLessThan(size.width / canvas.width, 0.30, "\(canvas)")
+            XCTAssertLessThan(size.height / canvas.height, 0.30, "\(canvas)")
+        }
+    }
+
     func testTileTransformScalesWithTheCanvas() {
         let half = KriaBranding.tileTransform(canvas: CGSize(width: 540, height: 960))
         let markOrigin = CGPoint(x: KriaBranding.tilePad, y: KriaBranding.tilePad).applying(half)

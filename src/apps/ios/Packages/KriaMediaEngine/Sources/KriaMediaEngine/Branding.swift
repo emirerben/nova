@@ -76,13 +76,21 @@ public enum KriaBranding {
     /// Where the padded PNG's own origin lands, in Core Image's bottom-left
     /// coordinate space, for a canvas of this size.
     static func tileTransform(canvas: CGSize) -> CGAffineTransform {
-        let scale = canvas.width / referenceWidth
-        // The tile's bottom edge sits `tilePad` below the mark's bottom edge,
-        // so the inset shrinks by the same padding the PNG carries.
-        let bottomGap = (markBottomInset - tilePad) * (canvas.height / referenceHeight)
+        // ONE scale for both the mark and its insets, taken from whichever axis
+        // is more constrained. Scaling the mark by width while insetting it by
+        // height silently diverges the moment the canvas is not 9:16 — the mark
+        // grows with width on a short frame while its inset shrinks with height,
+        // so it ends up oversized and creeping toward the edge. The canvas comes
+        // from a server snapshot (recipes.py defaults to 1080x1920 but does not
+        // enforce it), so that is reachable, not hypothetical.
+        //
+        // On 1080x1920 this is exactly 1 and the placement is unchanged.
+        let scale = min(canvas.width / referenceWidth, canvas.height / referenceHeight)
+        // The tile's own origin sits `tilePad` left of and below the mark's,
+        // because the PNG carries that margin for its shadow.
         return CGAffineTransform(scaleX: scale, y: scale)
             .concatenating(CGAffineTransform(translationX: (markLeft - tilePad) * scale,
-                                             y: bottomGap))
+                                             y: (markBottomInset - tilePad) * scale))
     }
 
     static func watermarkLayer(canvas: CGSize, start: Double, end: Double,
