@@ -1,4 +1,5 @@
 import AVFoundation
+import KriaMediaEngine
 import UIKit
 import XCTest
 @testable import Kria
@@ -456,8 +457,15 @@ final class NativeEditorSessionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: exported.cleanupURL) }
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: exported.fileURL.path))
+        // This is the file the user saves to Photos, so it is a published
+        // video and carries the brand outro after the edit. `session.duration`
+        // is the editor's own timeline, which deliberately does not include it
+        // — branding is added by the exporter, not by the composition the
+        // creator scrubs.
+        let outroURL = try XCTUnwrap(KriaBranding.outroURL())
+        let outro = try await AVURLAsset(url: outroURL).load(.duration).seconds
         let duration = try await AVURLAsset(url: exported.fileURL).load(.duration).seconds
-        XCTAssertEqual(duration, session.duration, accuracy: 0.05)
+        XCTAssertEqual(duration, session.duration + outro, accuracy: 0.1)
     }
 
     func testProjectSessionUsesFreshPlaybackHandoffBeforeHydration() throws {
