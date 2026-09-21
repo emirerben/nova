@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-09-21",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -202,6 +202,46 @@
       "filming_context": "mirror or building exterior, natural light, 6-10s, single look — the brevity IS the format; don't add explanation",
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "seasonal-identity-declaration-01",
+      "niche": "lifestyle & fashion",
+      "pillar": "seasonal identity declarations",
+      "idea": "declare yourself as the embodiment of [season] — not an outfit rotation, but a 7-10s clip of the season's mood with a caption that names your identity",
+      "hook_pattern": "forever a [season] girl",
+      "filming_context": "7-10s of seasonal textures, light, and a single outfit or setting — let the season speak; no narration needed",
+      "source": "tiktok:@allexmarielle (2026-09)",
+      "performance": {"engagement_rate": 0.165, "view_index": 24.76, "sampled_at": "2026-09"}
+    },
+    {
+      "id": "early-morning-effort-reveal-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "fitness milestones",
+      "idea": "document waking up at [early hour] to do a hard thing — the sacrifice named in the hook IS the draw; the payoff is the reward shot",
+      "hook_pattern": "woke up at [hour] to [hard thing]",
+      "filming_context": "dark-to-light reveal — start in dim early light and cut to the payoff moment; keep total under 15s",
+      "source": "tiktok:@izzsiomoi (2026-09)",
+      "performance": {"engagement_rate": 0.255, "view_index": 20.51, "sampled_at": "2026-09"}
+    },
+    {
+      "id": "audience-choice-fashion-01",
+      "niche": "lifestyle & fashion",
+      "pillar": "work outfits (#9to5)",
+      "idea": "show one item and put the decision to the audience — color A or B, this styling or that — turning passive viewers into active participants",
+      "hook_pattern": "which would you choose — [A] or [B]?",
+      "filming_context": "hold on the item or outfit with simple staging; the question is the hook — you do not need to provide the answer yourself",
+      "source": "tiktok:@allexmarielle (2026-09)",
+      "performance": {"engagement_rate": 0.132, "view_index": 3.20, "sampled_at": "2026-09"}
+    },
+    {
+      "id": "format-return-community-01",
+      "niche": "lifestyle / personal brand",
+      "pillar": "beloved-format comebacks",
+      "idea": "return to a format you have not posted for [X months/year] and acknowledge the gap — the return itself is the story, and it invites community to confirm they missed it",
+      "hook_pattern": "it's been [time] since I last posted [format]... did you miss it?",
+      "filming_context": "open with a nod to the gap — a single caption or to-camera line — then dive straight into the beloved format",
+      "source": "tiktok:@nermozdemir (2026-09)",
+      "performance": {"engagement_rate": 0.082, "view_index": 13.05, "sampled_at": "2026-09"}
     },
     {
       "id": "parallel-life-aspiration-01",

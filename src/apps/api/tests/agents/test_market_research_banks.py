@@ -223,8 +223,11 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
     # Bump 2026-07-11-kria: product rename only; banks untouched.
-    assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
+    # Bump 2026-09-21: weekly research refresh — added seasonal-identity-obsessive-01
+    #                  (allexmarielle autumn-girl vi=24.76x) and comeback-community-anchor-01
+    #                  (nermozdemir farm-vlog return vi=13x, 7487 reposts).
+    assert archetypes_version() == "2026-09-21"
+    assert PERSONA_PROMPT_VERSION == "2026-09-21-weekly-refresh"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -246,8 +249,11 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             banks untouched (new block is conditional-empty when no seeds).
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
-    assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-06-v3-creator-direction"
+    # 2026-09-21: weekly research refresh — added seasonal-identity-declaration-01
+    #             (vi=24.76x), early-morning-effort-reveal-01 (vi=20.5x),
+    #             audience-choice-fashion-01 (vi=3.2x), format-return-community-01 (vi=13x).
+    assert content_ideas_version() == "2026-09-21"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-21-weekly-refresh"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -267,12 +273,14 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Intro bumped to 2026-08-05: anti-slop pattern-class ban + translate-don't-echo
     #                  (plans/015 — monkey/marketing incident); banks untouched here
     #                  (success-factor bank unchanged; overlay bank moved separately).
-    assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-06-v3-creator-direction"
-    # Creator direction was added to the consuming prompt without changing
-    # the research bank, so only the agent version advances.
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"
+    # Bump 2026-09-21: weekly research refresh — added 3 corpus factors:
+    #   seasonal-identity-corpus-10 (vi=25x, identity > outfit show),
+    #   early-effort-hook-corpus-11 (5am hike vi=20x, 25% engagement),
+    #   format-return-nostalgia-corpus-12 (vi=13x, 7487 reposts).
+    assert success_factors_version() == "2026-09-21"
+    assert PERSONA_PROMPT_VERSION == "2026-09-21-weekly-refresh"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-09-21-weekly-refresh"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-21-weekly-refresh"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -304,11 +312,12 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  bank content edit, so BOTH consuming agents bump. Guard:
     #                  tests/agents/test_overlay_examples_slop_guard.py now lints
     #                  every exemplar against the slop pattern class.
-    assert library_version() == "2026-08-05"
-    # Creator direction was added to the consuming prompt without changing
-    # the exemplar bank, so only the agent version advances.
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-06-creator-direction"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-08-05"
+    # Bump 2026-09-21: weekly research refresh — added seasonal-identity-static-01
+    #                  (autumn-girl identity vi=24.76x) and early-effort-popin-01
+    #                  (5am hike vi=20.5x).
+    assert library_version() == "2026-09-21"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-09-21-weekly-refresh"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-09-21"
 
 
 @pytest.mark.parametrize(
