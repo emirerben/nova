@@ -471,6 +471,48 @@ def test_phone_subtitled_two_clips_fails_closed(monkeypatch) -> None:
         )
 
 
+@pytest.mark.parametrize("edit_format", ["narrated_planned", "narrated_ready", "montage"])
+def test_phone_voiceover_renders_with_prod_narration_identity_and_prompt_fidelity(
+    monkeypatch, edit_format
+) -> None:
+    """Prod shape (found on a real iPhone 2026-09-22): `creator_prompt_fidelity
+    _enabled` + guided editing are ON and an uploaded voiceover has a resolved
+    narration identity, so `guided_voiceover_executable` is True for EVERY
+    voiceover project. That used to mark `CAPABILITY_PHONE_SOURCE_AUDIO`
+    unavailable ("A voiceover can't render on your iPhone yet... Remove the
+    voiceover") -- blocking narrated AND #1116's montage voiceover in prod while
+    every unit test (no narration identity) stayed green. The guided-voiceover
+    lane is hard-blocked on phone separately (`CAPABILITY_GUIDED_VOICEOVER`), so
+    its mere executability must not veto the native voiceover render."""
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "creator_prompt_fidelity_enabled", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format=edit_format,
+        media=[{"media_id": "phone-a", "kind": "video"}],
+        phone_source_media_ids=["phone-a"],
+        phone_rendering_allowed=True,
+        has_voiceover=True,
+        narration={
+            "gcs_path": "voiceover-uploads/user/item/voice.m4a",
+            "generation": "voice-generation-1",
+            "duration_s": 48.0,
+        },
+    )
+    assert manifest.capabilities[capabilities.CAPABILITY_PHONE_SOURCE_AUDIO].available is True
+    assert manifest.capabilities[capabilities.CAPABILITY_DISPATCH_RENDER].available is True
+    # The guided-story narration lane itself stays blocked on the phone.
+    assert manifest.capabilities[capabilities.CAPABILITY_GUIDED_VOICEOVER].available is False
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format=edit_format, audio_strategy="voiceover", selected_media_ids=["phone-a"]
+        ),
+    )
+    assert plan.strategy.render_program == "native"
+
+
 def test_phone_narrated_with_recorded_voiceover_compiles_native_when_supported(
     monkeypatch,
 ) -> None:
